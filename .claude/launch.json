@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "smarthub-mock",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server-mock.js"],
+      "port": 3005
+    }
+  ]
+}

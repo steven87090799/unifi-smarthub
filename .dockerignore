@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+.claude
+data
+server-mock.js
+README.md
+CLAUDE.md

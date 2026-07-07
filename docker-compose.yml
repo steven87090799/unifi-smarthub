@@ -1,13 +1,28 @@
-version: '3.8'
-
 services:
   unifi-smarthub:
     build: .
-    container_name: unifi-smarthub-production
-    restart: always
+    image: unifi-smarthub:latest
+    container_name: unifi-smarthub
+    restart: unless-stopped
     ports:
       - "3000:3000"
-    volumes:
-      - ./.env:/app/.env
+    env_file:
+      - .env
     environment:
       - NODE_ENV=production
+      - DATA_DIR=/app/data
+    volumes:
+      # 具名 volume：持久化歷史趨勢、封鎖紀錄、資安設定 (容器重建不遺失)
+      - smarthub-data:/app/data
+    # 記憶體限制：此服務為輕量 Node 程序，256MB 足夠；預留下限確保排程穩定
+    mem_limit: 256m
+    mem_reservation: 128m
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  smarthub-data:
