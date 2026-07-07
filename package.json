@@ -1,0 +1,16 @@
+{
+  "name": "unifi-smarthub-production",
+  "version": "2.0.0",
+  "description": "Production Secure Proxy for UniFi Controller and UCG-Ultra",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "axios": "^1.7.2",
+    "ssh2": "^1.15.0",
+    "dotenv": "^16.4.5",
+    "cors": "^2.8.5"
+  }
+}

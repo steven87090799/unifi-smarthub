@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniFi SmartHub 旗艦戰情室 (Production)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #030712; }
+        .mono { font-family: 'Fira Code', monospace; }
+        .glow-blue { box-shadow: 0 0 15px rgba(59, 130, 246, 0.15); }
+        .glow-red { box-shadow: 0 0 15px rgba(239, 68, 68, 0.15); }
+        .glow-green { box-shadow: 0 0 15px rgba(16, 185, 129, 0.15); }
+        .terminal-scroll::-webkit-scrollbar { width: 4px; }
+        .terminal-scroll::-webkit-scrollbar-track { background: #020617; }
+        .terminal-scroll::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0b1329; }
+        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #334155; }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col selection:bg-blue-600 selection:text-white bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-950 via-slate-900 to-black">
+
+    <header class="border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-xl sticky top-0 z-50 px-6 py-4 flex flex-wrap justify-between items-center shadow-lg shadow-blue-950/10">
+        <div class="flex items-center space-x-4">
+            <div class="p-2.5 bg-blue-600/10 rounded-xl border border-blue-500/20 shadow-inner">
+                <svg class="w-8 h-8 text-blue-500 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-2xl font-black tracking-wider text-white">UniFi <span class="text-blue-500">SmartHub</span></h1>
+                    <span class="text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/25 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider animate-pulse">Dual-API Live</span>
+                </div>
+                <p class="text-xs text-slate-400">UCG-Ultra 生產級監控與威脅智能防禦面板</p>
+            </div>
+        </div>
+        <div class="flex items-center gap-4 mt-2 sm:mt-0">
+            <div class="text-right">
+                <p class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">UCG Uptime</p>
+                <p class="text-xs text-slate-300 font-semibold" id="sys-uptime">連線中...</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow p-4 md:p-8 max-w-7xl mx-auto w-full space-y-8">
+        
+        <!-- 第一部分：硬體監控與實體接口 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- CPU & 溫度 -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md transition-all duration-300" id="card-hardware">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UCG-Ultra 處理器 & 核心溫度</h3>
+                </div>
+                <div class="flex justify-between items-end mb-4">
+                    <div>
+                        <div class="flex items-baseline gap-1">
+                            <span class="text-5xl font-black text-blue-500 tracking-tight mono" id="cpu-temp">--</span>
+                            <span class="text-lg font-bold text-slate-500">°C</span>
+                            <span class="text-xs text-slate-600 ml-1 mono" id="cpu-temp-f">/ --°F</span>
+                        </div>
+                        <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                            <span class="inline-block w-2 h-2 rounded-full bg-blue-500" id="temp-indicator-dot"></span>
+                            溫度狀態：<span id="temp-status-text">連線中...</span>
+                        </p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">動態 CPU 負載</p>
+                        <p class="text-2xl font-black text-slate-200 mono" id="cpu-usage">--%</p>
+                    </div>
+                </div>
+                <div class="h-32"><canvas id="hardwareChart"></canvas></div>
+            </div>
+
+            <!-- 核心與儲存空間 -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between backdrop-blur-md">
+                <div>
+                    <h3 class="text-xs font-bold text-slate-400 mb-4 tracking-wider uppercase">處理器分配與實體資源</h3>
+                    <div class="space-y-2 mb-4">
+                        <p class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Quad-Core ARM Cortex-A53</p>
+                        <div class="grid grid-cols-2 gap-3 text-[11px]">
+                            <div>
+                                <div class="flex justify-between text-slate-400 mb-0.5"><span>Core 0</span><span class="mono" id="core0-val">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-blue-500 h-full transition-all duration-300" id="core0-bar" style="width: 0%;"></div></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-slate-400 mb-0.5"><span>Core 1</span><span class="mono" id="core1-val">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-blue-500 h-full transition-all duration-300" id="core1-bar" style="width: 0%;"></div></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-slate-400 mb-0.5"><span>Core 2</span><span class="mono" id="core2-val">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-blue-500 h-full transition-all duration-300" id="core2-bar" style="width: 0%;"></div></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-slate-400 mb-0.5"><span>Core 3</span><span class="mono" id="core3-val">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-blue-500 h-full transition-all duration-300" id="core3-bar" style="width: 0%;"></div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-800/60 pt-3 space-y-3">
+                        <div>
+                            <div class="flex justify-between text-xs mb-1.5">
+                                <span class="text-slate-400 font-semibold">RAM 記憶體佔用</span>
+                                <span class="text-slate-200 font-bold mono" id="mem-usage-str">-- GB / -- GB</span>
+                            </div>
+                            <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800 p-0.5">
+                                <div class="bg-blue-500 h-full rounded-full transition-all duration-500" id="mem-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-1.5">
+                                <span class="text-slate-400 font-semibold">eMMC 儲存空間</span>
+                                <span class="text-slate-200 font-bold mono" id="emmc-usage-str">-- GB / -- GB</span>
+                            </div>
+                            <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800 p-0.5">
+                                <div class="bg-indigo-500 h-full rounded-full transition-all duration-500" id="emmc-bar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 實體接口狀態 matrix -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between backdrop-blur-md">
+                <div>
+                    <h3 class="text-xs font-bold text-slate-400 mb-4 tracking-wider uppercase">UCG 實體網埠連線矩陣 (WAN / LAN)</h3>
+                    <div class="space-y-3" id="interface-list">
+                        <!-- 動態插入網卡狀態 -->
+                        <p class="text-xs text-slate-500 text-center py-4">網埠資料載入中...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第二部分：極致詳細 UCG-Ultra 威脅防禦戰情室 -->
+        <div class="bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-6 glow-red">
+            <!-- 標題頭 -->
+            <div class="flex flex-col md:flex-row justify-between md:items-center border-b border-slate-800/80 pb-4 gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="p-2.5 bg-red-500/10 rounded-xl border border-red-500/20 shadow-inner flex items-center justify-center">
+                        <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-black text-white tracking-wider">UCG-Ultra 威脅防禦戰情室</h3>
+                        <p class="text-xs text-slate-400">即時監控與主動入侵防禦 (Suricata IPS/IDS)</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-xs font-bold mono uppercase tracking-wider" id="cloud-status-badge">SITE MANAGER: ONLINE</div>
+                </div>
+            </div>
+
+            <!-- 主網格：分析、日誌、防禦規則 -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <!-- 左/中區：原本雷達卡片的外殼 (lg:col-span-8) -->
+                <div class="lg:col-span-8 bg-slate-950/80 p-6 rounded-xl border border-slate-800/60 relative flex flex-col justify-between overflow-hidden min-h-[480px]">
+                    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(239,68,68,0.04),transparent_70%)] pointer-events-none"></div>
+                    
+                    <div class="z-10 flex justify-between text-[11px] text-slate-500 font-bold uppercase mb-3">
+                        <span>主動安全偵測日誌與即時防護儀</span><span class="text-red-500 animate-pulse">● LIVE MONITOR</span>
+                    </div>
+
+                    <!-- 上半：最近一次攔截威脅 (一開始的鎖頭樣式，放大版) -->
+                    <div class="z-10 flex flex-col items-center justify-center space-y-4 p-6 border border-slate-800/60 rounded-lg bg-slate-900/20 mb-4 flex-grow">
+                        <div class="relative w-20 h-20">
+                            <span class="absolute inset-0 rounded-full bg-red-500/10 animate-ping"></span>
+                            <div class="absolute inset-4 bg-red-600/90 rounded-full flex items-center justify-center border-2 border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)]">
+                                <svg class="w-6 h-6 text-white animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="text-center">
+                            <span class="text-[11px] text-red-500 uppercase tracking-widest font-black block mb-1">最近一次攔截威脅</span>
+                            <p class="text-lg font-black text-slate-100 tracking-wide" id="threat-source">等待威脅警報中...</p>
+                            <p class="text-[10px] text-slate-500 font-mono mt-0.5" id="threat-time">-</p>
+                            <p class="text-xs text-slate-400 mt-1.5 font-mono break-all max-w-[500px]" id="threat-type">-</p>
+                        </div>
+                    </div>
+
+                    <!-- 下半：Suricata Log 終端區 -->
+                    <div class="z-10 flex flex-col border border-slate-800/80 rounded-lg overflow-hidden bg-slate-950 min-h-[180px]">
+                        <div class="bg-slate-900 px-3 py-1.5 flex items-center justify-between border-b border-slate-850">
+                            <span class="text-[9px] text-slate-400 font-mono">suricata_alert.log</span>
+                            <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                        </div>
+                        <div class="p-3 overflow-y-auto text-[9px] font-mono text-emerald-400 space-y-1.5 h-[140px] terminal-scroll" id="log-console">
+                            <p class="text-slate-500">[SYSTEM] Suricata Core Active.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右區：統計 Doughnut Chart (保留用以顯示 Suricata 事件特徵，lg:col-span-4，放大展示) -->
+                <div class="lg:col-span-4 bg-slate-950/80 p-5 rounded-xl border border-slate-800/60 shadow-lg flex flex-col justify-between min-h-[480px]">
+                    <div>
+                        <span class="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Suricata 威脅特徵分佈</span>
+                        <p class="text-[9px] text-slate-500 mb-2">威脅類別百分比統計圖</p>
+                    </div>
+                    <div class="h-64 relative flex items-center justify-center flex-grow">
+                        <canvas id="threatPieChart"></canvas>
+                    </div>
+                    <div class="text-[8px] text-slate-500 mt-2 text-center">
+                        圖表自動每 7 秒與 UCG 事件同步更新一次
+                    </div>
+                </div>
+            </div>
+
+            <!-- 威脅事件表格 -->
+            <div class="bg-slate-950/50 p-5 rounded-xl border border-slate-800/60 space-y-4">
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                    <span class="text-[11px] uppercase font-bold text-slate-400 tracking-wider block">攔截事件明細 (IPS Incident Log)</span>
+                    <!-- 篩選時間範圍按鈕 -->
+                    <div class="flex items-center gap-1.5 bg-slate-900 p-1 rounded-lg border border-slate-800 text-[10px]">
+                        <button onclick="setThreatTimeFilter(1)" id="btn-filter-1" class="px-2.5 py-1 rounded-md font-bold text-slate-450 hover:text-slate-200 transition">1天</button>
+                        <button onclick="setThreatTimeFilter(3)" id="btn-filter-3" class="px-2.5 py-1 rounded-md font-bold text-slate-450 hover:text-slate-200 transition">3天</button>
+                        <button onclick="setThreatTimeFilter(7)" id="btn-filter-7" class="px-2.5 py-1 rounded-md font-bold text-slate-450 hover:text-slate-200 transition">1週</button>
+                        <button onclick="setThreatTimeFilter(30)" id="btn-filter-30" class="px-2.5 py-1 rounded-md font-bold bg-blue-600 text-white transition">1月</button>
+                    </div>
+                </div>
+                <!-- 滾動包裝層 (max-h-80 or 320px) -->
+                <div class="overflow-y-auto max-h-[350px] terminal-scroll pr-1">
+                    <table class="w-full text-left text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider sticky top-0 bg-[#030712] z-10">
+                                <th class="pb-2.5">時間戳記</th>
+                                <th class="pb-2.5">分類</th>
+                                <th class="pb-2.5">來源 IP / 國家</th>
+                                <th class="pb-2.5">目標 IP / 設備</th>
+                                <th class="pb-2.5">特徵訊息</th>
+                                <th class="pb-2.5">連接埠</th>
+                                <th class="pb-2.5 text-right">防護動作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="threat-table-body" class="divide-y divide-slate-800/30"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第二部分：官方 Site Manager 雲端網管監控中心 (獨立區域) -->
+        <div class="bg-slate-900/10 border border-slate-800/50 rounded-2xl p-6 shadow-xl space-y-6">
+            <div class="border-b border-slate-800/60 pb-3 flex justify-between items-center">
+                <div>
+                    <h2 class="text-base font-bold text-white tracking-wide flex items-center gap-2">
+                        <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                        官方 Site Manager 雲端網管監控中心
+                    </h2>
+                    <p class="text-xs text-slate-400">連線 Site Manager 監測站點、託管設備、控制主機與 SD-WAN VPN 拓撲結構</p>
+                </div>
+                <span class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-xs font-bold mono uppercase tracking-wider" id="cloud-status-badge-sec">SITE MANAGER: ONLINE</span>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <!-- 雲端 Site Manager 站點與設備 (4-tab card) (lg:col-span-7) -->
+                <div class="lg:col-span-7 bg-slate-950/80 p-5 rounded-xl border border-slate-800/60 shadow-lg flex flex-col min-h-[250px]">
+                    <div class="flex border-b border-slate-850 pb-2 mb-3 gap-2 overflow-x-auto">
+                        <button id="tab-sites" onclick="switchCloudTab('sites')" class="text-[10px] font-bold pb-1 border-b-2 border-blue-500 text-blue-400 whitespace-nowrap transition">站點 (Sites)</button>
+                        <button id="tab-devices" onclick="switchCloudTab('devices')" class="text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition">設備 (Devices)</button>
+                        <button id="tab-hosts" onclick="switchCloudTab('hosts')" class="text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition">主機 (Hosts)</button>
+                        <button id="tab-sdwan" onclick="switchCloudTab('sdwan')" class="text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition">VPN (SD-WAN)</button>
+                    </div>
+                    
+                    <!-- 站點清單區 -->
+                    <div id="cloud-sites-content" class="space-y-2 flex-grow overflow-y-auto max-h-[160px] terminal-scroll">
+                        <p class="text-xs text-slate-500 text-center py-4">站點資料讀取中...</p>
+                    </div>
+
+                    <!-- 設備清單區 -->
+                    <div id="cloud-devices-content" class="space-y-2 flex-grow overflow-y-auto max-h-[160px] terminal-scroll hidden">
+                        <p class="text-xs text-slate-500 text-center py-4">設備資料讀取中...</p>
+                    </div>
+
+                    <!-- 主機清單區 -->
+                    <div id="cloud-hosts-content" class="space-y-2 flex-grow overflow-y-auto max-h-[160px] terminal-scroll hidden">
+                        <p class="text-xs text-slate-500 text-center py-4">主機資料讀取中...</p>
+                    </div>
+
+                    <!-- SD-WAN 清單區 -->
+                    <div id="cloud-sdwan-content" class="space-y-2 flex-grow overflow-y-auto max-h-[160px] terminal-scroll hidden">
+                        <p class="text-xs text-slate-500 text-center py-4">SD-WAN 資料讀取中...</p>
+                    </div>
+                </div>
+                
+                <!-- ISP 網路連接品質指標 (lg:col-span-5) -->
+                <div class="lg:col-span-5 bg-slate-950/80 p-5 rounded-xl border border-slate-800/60 shadow-lg flex flex-col justify-between">
+                    <div class="flex justify-between items-center border-b border-slate-850 pb-2 mb-3">
+                        <span class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">ISP 網路連接品質指標</span>
+                        <span class="text-[9px] text-blue-400 font-mono" id="isp-name">載入中...</span>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3 text-center text-xs flex-grow justify-center">
+                        <div class="p-3 bg-slate-900/50 rounded-lg border border-slate-850/60 flex flex-col justify-center">
+                            <p class="text-[9px] text-slate-500 uppercase tracking-wider">延遲 (Latency)</p>
+                            <p class="text-lg font-black text-slate-200 mono mt-1" id="isp-latency">-- ms</p>
+                        </div>
+                        <div class="p-3 bg-slate-900/50 rounded-lg border border-slate-850/60 flex flex-col justify-center">
+                            <p class="text-[9px] text-slate-500 uppercase tracking-wider">丟包率 (Loss)</p>
+                            <p class="text-lg font-black text-slate-200 mono mt-1" id="isp-loss">0.00 %</p>
+                        </div>
+                        <div class="p-3 bg-slate-900/50 rounded-lg border border-slate-850/60 flex flex-col justify-center col-span-2 sm:col-span-1">
+                            <p class="text-[9px] text-slate-500 uppercase tracking-wider">下載網速 (Download)</p>
+                            <p class="text-lg font-black text-emerald-400 mono mt-1" id="isp-speed-down">-- Mbps</p>
+                        </div>
+                        <div class="p-3 bg-slate-900/50 rounded-lg border border-slate-850/60 flex flex-col justify-center col-span-2 sm:col-span-1">
+                            <p class="text-[9px] text-slate-500 uppercase tracking-wider">上傳網速 (Upload)</p>
+                            <p class="text-lg font-black text-indigo-400 mono mt-1" id="isp-speed-up">-- Mbps</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第三部分：客戶端與網路廣播 -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- 客戶端管理 (col-span-2) -->
+            <div class="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-6">
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">活躍客戶端管理中心 <span class="text-xs bg-slate-800 text-slate-400 px-2.5 py-0.5 rounded-full border border-slate-850 mono" id="client-count">0</span></h3>
+                    <input type="text" id="clientSearch" oninput="filterClients()" placeholder="搜尋設備名稱或 IP..." class="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-300 w-full sm:w-64 focus:outline-none focus:border-blue-500">
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase">
+                                <th class="pb-3 pl-2">設備 / MAC / 網路位址</th>
+                                <th class="pb-3">連線介面 / 訊號強度</th>
+                                <th class="pb-3">即時流量吞吐 (Rx/Tx)</th>
+                                <th class="pb-3 text-right pr-2">存取控制</th>
+                            </tr>
+                        </thead>
+                        <tbody id="client-table-body" class="divide-y divide-slate-800/40"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Wi-Fi SSID 廣播控制 -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between backdrop-blur-md">
+                <div class="space-y-4">
+                    <h3 class="text-lg font-bold text-white tracking-wider">Wi-Fi 射頻與 SSID 廣播</h3>
+                    <div class="space-y-3" id="wifi-list">
+                        <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                    </div>
+                </div>
+                <button onclick="triggerSpeedtest()" class="mt-6 w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-xs font-bold text-white rounded-xl transition shadow-lg">執行 UCG 網速測試</button>
+            </div>
+        </div>
+        
+        <!-- 第四部分：自動化工具區 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                <h3 class="text-xs font-bold text-emerald-400 mb-4 tracking-wider uppercase">臨時訪客網路 QR 產生</h3>
+                <div class="space-y-3">
+                    <input type="text" id="v-ssid" placeholder="SSID" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500">
+                    <input type="password" id="v-pass" placeholder="密碼" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500">
+                    <button onclick="updateGuestQR()" class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded-xl transition">更新 QRCode 憑證</button>
+                    <div class="flex justify-center mt-4">
+                        <img id="qr-img" src="" class="w-24 h-24 p-1 bg-white rounded hidden">
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                <h3 class="text-xs font-bold text-yellow-500 mb-4 tracking-wider uppercase">PoE 設備死機斷電重開</h3>
+                <div class="space-y-3">
+                    <input type="text" id="p-mac" placeholder="Switch MAC" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-yellow-500">
+                    <input type="number" id="p-port" placeholder="Port Index (例如: 4)" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-yellow-500">
+                    <button onclick="triggerPoECycle()" class="w-full py-2.5 bg-yellow-600 hover:bg-yellow-500 text-xs font-bold rounded-xl transition">發送 PoE 斷電重啟指令</button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <div id="toast" class="fixed bottom-6 right-6 px-4 py-2.5 bg-slate-900 border border-blue-900/60 text-blue-200 text-xs rounded-xl shadow-2xl opacity-0 transition-all duration-300 flex items-center gap-2 z-50 transform translate-y-2 pointer-events-none">
+        <span class="w-2.5 h-2.5 bg-blue-500 rounded-full animate-ping" id="toast-dot"></span>
+        <span id="toast-text"></span>
+    </div>
+
+    <script>
+        let allClients = [];
+        let allThreats = [];
+        let activeTimeRangeDays = 30;
+        let loggedThreatIds = new Set();
+        let lastThreatId = null;
+        let hwChart = null;
+        let threatChart = null;
+        
+        let chartLabels = Array(12).fill('');
+        let tempChartData = Array(12).fill(0);
+        let usageChartData = Array(12).fill(0);
+
+
+        window.onload = () => {
+            initChart();
+            initThreatPieChart();
+            fetchHardware();
+            fetchClients();
+            fetchWiFiNetworks();
+            fetchCloudSites();
+            fetchCloudDevices();
+            fetchCloudHosts();
+            fetchCloudSdwan();
+            fetchIspMetrics();
+            fetchThreats();
+
+            setInterval(fetchHardware, 5000);
+            setInterval(fetchClients, 15000);
+            setInterval(fetchThreats, 7000);
+            setInterval(fetchCloudSites, 20000);
+            setInterval(fetchCloudDevices, 20000);
+            setInterval(fetchCloudHosts, 20000);
+            setInterval(fetchCloudSdwan, 20000);
+            setInterval(fetchIspMetrics, 10000);
+        };
+
+        function showToast(msg, isError = false) {
+            const t = document.getElementById('toast');
+            document.getElementById('toast-text').innerText = msg;
+            t.className = `fixed bottom-6 right-6 px-4 py-2.5 bg-slate-900 border ${isError ? 'border-red-900/60 text-red-200' : 'border-blue-900/60 text-blue-200'} text-xs rounded-xl shadow-2xl transition-all duration-300 z-50 transform translate-y-0 opacity-100`;
+            setTimeout(() => t.classList.add('translate-y-2', 'opacity-0', 'pointer-events-none'), 3000);
+        }
+
+        function setThreatTimeFilter(days) {
+            activeTimeRangeDays = days;
+            const filters = [1, 3, 7, 30];
+            filters.forEach(f => {
+                const btn = document.getElementById(`btn-filter-${f}`);
+                if (btn) {
+                    if (f === days) {
+                        btn.className = "px-2.5 py-1 rounded-md font-bold bg-blue-600 text-white transition";
+                    } else {
+                        btn.className = "px-2.5 py-1 rounded-md font-bold text-slate-450 hover:text-slate-200 transition";
+                    }
+                }
+            });
+            renderThreatTable();
+        }
+
+        function renderThreatTable() {
+            const tbody = document.getElementById('threat-table-body');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            
+            const cutoffTime = Date.now() - activeTimeRangeDays * 24 * 60 * 60 * 1000;
+            const filtered = allThreats.filter(t => new Date(t.datetime).getTime() >= cutoffTime);
+            
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-slate-500 font-medium">指定期間（${activeTimeRangeDays}天內）無安全威脅攔截事件</td></tr>`;
+                return;
+            }
+            
+            filtered.forEach(t => {
+                const timeStr = new Date(t.datetime).toLocaleString('zh-TW', { hour12: false });
+                const sevColor = t.severity === 'HIGH' ? 'bg-red-950/80 text-red-400 border-red-900/40' : 'bg-amber-950/80 text-amber-400 border-amber-900/40';
+                tbody.innerHTML += `
+                    <tr class="hover:bg-slate-900/40 transition border-b border-slate-850/30">
+                        <td class="py-2.5 mono text-[10px] text-slate-400">${timeStr}</td>
+                        <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[8px] border font-bold uppercase tracking-wider ${sevColor}">${t.category}</span></td>
+                        <td class="py-2.5 mono text-[11px] text-slate-200">${t.src_ip} <span class="text-[9px] text-slate-500">(${t.src_country})</span></td>
+                        <td class="py-2.5 mono text-[11px] text-slate-300">${t.target_ip} <span class="text-[9px] text-slate-500">(${t.target_device})</span></td>
+                        <td class="py-2.5 text-[11px] text-slate-450 truncate max-w-xs" title="${t.msg}">${t.msg}</td>
+                        <td class="py-2.5 mono text-[10px] text-slate-400">${t.port}</td>
+                        <td class="py-2.5 text-right font-black text-red-500 text-[10px] uppercase tracking-wider">${t.action_taken}</td>
+                    </tr>`;
+            });
+        }
+
+        function initChart() {
+            hwChart = new Chart(document.getElementById('hardwareChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: chartLabels,
+                    datasets: [
+                        { label: '溫度 °C', data: tempChartData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, yAxisID: 'yTemp', tension: 0.3 },
+                        { label: '負載 %', data: usageChartData, borderColor: '#64748b', borderDash: [3,3], fill: false, yAxisID: 'yUsage', tension: 0.3 }
+                    ]
+                },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    plugins: { legend: { display: false } }, 
+                    scales: { 
+                        x: { display: false }, 
+                        yTemp: { min: 30, max: 100, ticks: { color: '#64748b' } }, 
+                        yUsage: { min: 0, max: 100, position: 'right', ticks: { color: '#64748b' } } 
+                    } 
+                }
+            });
+        }
+
+        function initThreatPieChart() {
+            const ctx = document.getElementById('threatPieChart').getContext('2d');
+            threatChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Web Exploit', 'Brute Force', 'Scanner', 'Malware', 'DoS', 'Manual Block'],
+                    datasets: [{
+                        data: [0, 0, 0, 0, 0, 0],
+                        backgroundColor: ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#8b5cf6', '#ec4899'],
+                        borderWidth: 1,
+                        borderColor: '#020617'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 10, weight: 'bold' } }
+                        }
+                    },
+                    cutout: '65%'
+                }
+            });
+        }
+
+        async function fetchHardware() {
+            try {
+                const res = await fetch('/api/hardware');
+                if(!res.ok) throw new Error('API Error');
+                const data = await res.json();
+                
+                if(data.cpuTemp) {
+                    document.getElementById('cpu-temp').innerText = data.cpuTemp;
+                    document.getElementById('cpu-temp-f').innerText = `/ ${Math.round(data.cpuTemp*1.8+32)}°F`;
+                    
+                    const card = document.getElementById('card-hardware');
+                    if(data.cpuTemp >= 75) {
+                        card.className = "bg-slate-900/40 border border-red-700/60 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md shadow-red-950/20";
+                        document.getElementById('temp-indicator-dot').className = "inline-block w-2 h-2 rounded-full bg-red-500 animate-ping";
+                        document.getElementById('temp-status-text').innerText = "高溫警告";
+                    } else {
+                        card.className = "bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md";
+                        document.getElementById('temp-indicator-dot').className = "inline-block w-2 h-2 rounded-full bg-blue-500";
+                        document.getElementById('temp-status-text').innerText = "正常運作中";
+                    }
+                }
+                
+                if (data.uptime) {
+                    document.getElementById('sys-uptime').innerText = data.uptime;
+                }
+
+                document.getElementById('cpu-usage').innerText = data.cpuUsage + '%';
+                if(data.cores) {
+                    data.cores.forEach((val, i) => {
+                        document.getElementById(`core${i}-val`).innerText = val + '%';
+                        document.getElementById(`core${i}-bar`).style.width = val + '%';
+                    });
+                }
+                
+                // RAM & Storage
+                document.getElementById('mem-usage-str').innerText = `${data.memStr} (${data.memUsagePct}%)`;
+                document.getElementById('mem-bar').style.width = data.memUsagePct + '%';
+
+                if (data.emmcStr) {
+                    document.getElementById('emmc-usage-str').innerText = `${data.emmcStr} (${data.emmcUsagePct}%)`;
+                    document.getElementById('emmc-bar').style.width = data.emmcUsagePct + '%';
+                }
+
+                // WAN / LAN Ports matrix
+                if (data.interfaces) {
+                    const matrixDiv = document.getElementById('interface-list');
+                    matrixDiv.innerHTML = '';
+                    data.interfaces.forEach(iface => {
+                        const isConn = iface.status === 'connected';
+                        const badgeColor = isConn ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-800 text-slate-500 border-slate-700/30';
+                        matrixDiv.innerHTML += `
+                            <div class="flex items-center justify-between p-2.5 bg-slate-950/40 rounded-xl border border-slate-850 hover:bg-slate-950/80 transition">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full ${isConn ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}"></div>
+                                    <div>
+                                        <p class="text-xs font-bold text-slate-200">${iface.name}</p>
+                                        <p class="text-[9px] text-slate-500 mono">${iface.speed}</p>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase tracking-wider ${badgeColor}">${isConn ? '已連線' : '無連線'}</span>
+                                    ${isConn ? `<p class="text-[9px] text-slate-400 font-mono mt-0.5">⬇️ ${iface.rxRate} | ⬆️ ${iface.txRate}</p>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    });
+                }
+
+                tempChartData.shift(); tempChartData.push(data.cpuTemp || 0);
+                usageChartData.shift(); usageChartData.push(data.cpuUsage || 0);
+                chartLabels.shift(); chartLabels.push(new Date().toLocaleTimeString());
+                hwChart.update();
+            } catch (e) { console.error('Hardware fetch failed', e); }
+        }
+
+        async function fetchClients() {
+            try {
+                const res = await fetch('/api/clients');
+                if(!res.ok) throw new Error();
+                allClients = (await res.json()).clients || [];
+                filterClients();
+            } catch (e) { console.error('Clients fetch failed'); }
+        }
+
+        function filterClients() {
+            const term = document.getElementById('clientSearch').value.toLowerCase();
+            const filtered = allClients.filter(c => c.name.toLowerCase().includes(term) || c.ip.toLowerCase().includes(term) || c.mac.toLowerCase().includes(term));
+            
+            const tbody = document.getElementById('client-table-body');
+            tbody.innerHTML = '';
+            document.getElementById('client-count').innerText = filtered.length;
+
+            filtered.forEach(c => {
+                const tr = document.createElement('tr');
+                tr.className = `hover:bg-slate-800/15 ${c.blocked ? 'opacity-50' : ''}`;
+                tr.innerHTML = `
+                    <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked?'text-red-400 line-through':'text-slate-200'}">${c.name}</p><p class="text-[9px] text-slate-500 mono">${c.mac} | ${c.ip}</p></div></td>
+                    <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold">📶 Wi-Fi (${c.wifi_signal}dBm)</span>` : `<span class="text-emerald-400 font-semibold">🔌 LAN</span>`}</td>
+                    <td class="mono text-slate-400">⬇️ ${(c.rx_bytes/1048576).toFixed(1)}MB / ⬆️ ${(c.tx_bytes/1048576).toFixed(1)}MB</td>
+                    <td class="text-right py-3 pr-2"><button onclick="toggleBlock('${c.mac}', ${!c.blocked})" class="px-2.5 py-1.5 ${c.blocked?'bg-emerald-600 hover:bg-emerald-500':'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-lg text-[10px] transition">${c.blocked?'解封':'斷網'}</button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function toggleBlock(mac, state) {
+            try {
+                const res = await fetch('/api/device/restrict', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ deviceId: mac, blockState: state }) });
+                if(!res.ok) throw new Error();
+                showToast(`已成功下達 ${state ? '阻斷' : '解封'} 命令`);
+                fetchClients();
+            } catch (e) { showToast('操作失敗', true); }
+        }
+
+        async function fetchWiFiNetworks() {
+            try {
+                const res = await fetch('/api/wifi-networks');
+                if(!res.ok) throw new Error();
+                const networks = (await res.json()).networks || [];
+                const list = document.getElementById('wifi-list');
+                list.innerHTML = '';
+                networks.forEach(net => {
+                    list.innerHTML += `
+                        <div class="flex items-center justify-between p-3.5 bg-slate-950/70 rounded-xl border border-slate-800/60 ${net.enabled?'':'opacity-50'}">
+                            <div><p class="text-xs font-bold">${net.name}</p></div>
+                            <label class="relative inline-flex inline-flex items-center cursor-pointer">
+                                <input type="checkbox" ${net.enabled?'checked':''} onchange="toggleWiFi('${net._id}', this.checked)" class="sr-only peer">
+                                <div class="w-9 h-5 bg-slate-850 rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:rounded-full after:h-4 after:w-4 peer-checked:bg-blue-600 transition-all"></div>
+                            </label>
+                        </div>`;
+                });
+            } catch (e) { console.error('WiFi fetch failed'); }
+        }
+
+        async function toggleWiFi(id, state) {
+            try {
+                await fetch(`/api/wifi-networks/${id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ enabled: state }) });
+                showToast('WiFi 設定已更新');
+                fetchWiFiNetworks();
+            } catch (e) { showToast('WiFi 更新失敗', true); }
+        }
+
+        // 切換雲端管理頁籤
+        function switchCloudTab(tab) {
+            const tabs = ['sites', 'devices', 'hosts', 'sdwan'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`tab-${t}`);
+                const content = document.getElementById(`cloud-${t}-content`);
+                if (t === tab) {
+                    btn.className = "text-[10px] font-bold pb-1 border-b-2 border-blue-500 text-blue-400 whitespace-nowrap transition";
+                    content.classList.remove('hidden');
+                } else {
+                    btn.className = "text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition";
+                    content.classList.add('hidden');
+                }
+            });
+        }
+
+        // 讀取雲端站點清單
+        async function fetchCloudSites() {
+            try {
+                const res = await fetch('/api/cloud/sites');
+                if (!res.ok) throw new Error();
+                const result = await res.json();
+                const sites = result.data || [];
+                
+                // 動態切換 Cloud Status Badge
+                ['cloud-status-badge', 'cloud-status-badge-sec'].forEach(id => {
+                    const badge = document.getElementById(id);
+                    if (badge) {
+                        if (result.source && result.source.startsWith('fallback')) {
+                            badge.innerText = "SITE MANAGER: DEMO (FALLBACK)";
+                            badge.className = "px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs font-bold mono uppercase tracking-wider";
+                        } else {
+                            badge.innerText = "SITE MANAGER: ONLINE";
+                            badge.className = "px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-xs font-bold mono uppercase tracking-wider";
+                        }
+                    }
+                });
+
+                const container = document.getElementById('cloud-sites-content');
+                container.innerHTML = '';
+                if (sites.length === 0) {
+                    container.innerHTML = `<p class="text-xs text-slate-500 text-center py-4">無可用站點</p>`;
+                    return;
+                }
+                sites.forEach(site => {
+                    const desc = site.meta ? site.meta.desc : site.name;
+                    const totalDev = site.statistics && site.statistics.counts ? site.statistics.counts.totalDevice : 0;
+                    const wanUptime = site.statistics && site.statistics.percentages ? site.statistics.percentages.wanUptime : 100;
+                    container.innerHTML += `
+                        <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
+                            <div>
+                                <p class="font-bold text-slate-200">${desc}</p>
+                                <p class="text-[9px] text-slate-500">時區: ${site.meta ? site.meta.timezone : 'Asia/Taipei'}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-slate-300 font-semibold">${totalDev} 台設備</p>
+                                <p class="text-[9px] text-emerald-400 font-mono">WAN Uptime: ${wanUptime}%</p>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error('Fetch cloud sites failed', e);
+            }
+        }
+
+        // 讀取雲端託管設備清單
+        async function fetchCloudDevices() {
+            try {
+                const res = await fetch('/api/cloud/devices');
+                if (!res.ok) throw new Error();
+                const result = await res.json();
+                const devices = result.data || [];
+                const container = document.getElementById('cloud-devices-content');
+                container.innerHTML = '';
+                if (devices.length === 0) {
+                    container.innerHTML = `<p class="text-xs text-slate-500 text-center py-4">無託管設備</p>`;
+                    return;
+                }
+                devices.forEach(dev => {
+                    const isOnline = dev.status === 'online';
+                    const statusColor = isOnline ? 'text-emerald-400' : 'text-red-400';
+                    container.innerHTML += `
+                        <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
+                            <div>
+                                <p class="font-bold text-slate-200">${dev.name || dev.model}</p>
+                                <p class="text-[9px] text-slate-500 font-mono">${dev.model} | v${dev.version}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="font-mono text-slate-300">${dev.ip || 'DHCP'}</p>
+                                <p class="text-[9px] ${statusColor} font-bold uppercase tracking-wider">${dev.status}</p>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error('Fetch cloud devices failed', e);
+            }
+        }
+
+        // 讀取雲端主機列表
+        async function fetchCloudHosts() {
+            try {
+                const res = await fetch('/api/cloud/hosts');
+                if (!res.ok) throw new Error();
+                const result = await res.json();
+                const hosts = result.data || [];
+                const container = document.getElementById('cloud-hosts-content');
+                container.innerHTML = '';
+                if (hosts.length === 0) {
+                    container.innerHTML = `<p class="text-xs text-slate-500 text-center py-4">無可用控制主機</p>`;
+                    return;
+                }
+                hosts.forEach(host => {
+                    const name = host.reportedState ? host.reportedState.name : 'Unknown Host';
+                    const state = host.reportedState ? host.reportedState.state : 'offline';
+                    const isOnline = state === 'connected' || state === 'online';
+                    const statusColor = isOnline ? 'text-emerald-400' : 'text-red-400';
+                    container.innerHTML += `
+                        <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
+                            <div>
+                                <p class="font-bold text-slate-200">${name}</p>
+                                <p class="text-[9px] text-slate-500 font-mono">類型: ${host.type} | Hardware ID: ${host.hardwareId ? host.hardwareId.substring(0, 8) : ''}...</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="font-mono text-slate-300">${host.ipAddress || 'Unknown'}</p>
+                                <p class="text-[9px] ${statusColor} font-bold uppercase tracking-wider">${state}</p>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error('Fetch cloud hosts failed', e);
+            }
+        }
+
+        // 讀取雲端 SD-WAN 配置清單
+        async function fetchCloudSdwan() {
+            try {
+                const res = await fetch('/api/cloud/sdwan');
+                if (!res.ok) throw new Error();
+                const result = await res.json();
+                const configs = result.data || [];
+                const container = document.getElementById('cloud-sdwan-content');
+                container.innerHTML = '';
+                if (configs.length === 0) {
+                    container.innerHTML = `<p class="text-xs text-slate-500 text-center py-4">無可用 SD-WAN VPN</p>`;
+                    return;
+                }
+                configs.forEach(cfg => {
+                    container.innerHTML += `
+                        <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
+                            <div>
+                                <p class="font-bold text-slate-200">${cfg.name}</p>
+                                <p class="text-[9px] text-slate-500">類型: ${cfg.type}</p>
+                            </div>
+                            <div class="text-right">
+                                <span class="px-2 py-0.5 rounded text-[8px] bg-blue-950 text-blue-400 border border-blue-900/40 font-bold">CONNECTED</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error('Fetch cloud SD-WAN configs failed', e);
+            }
+        }
+
+        // 讀取 ISP 效能指標
+        async function fetchIspMetrics() {
+            try {
+                const res = await fetch('/api/cloud/isp-metrics');
+                if (!res.ok) throw new Error();
+                const result = await res.json();
+                const metrics = result.data || {};
+                
+                document.getElementById('isp-name').innerText = metrics.ispName || 'Unknown ISP';
+                document.getElementById('isp-latency').innerText = (metrics.latency || '--') + ' ms';
+                document.getElementById('isp-loss').innerText = (metrics.packetLoss !== undefined ? metrics.packetLoss.toFixed(2) : '0.00') + ' %';
+                document.getElementById('isp-speed-down').innerText = (metrics.downloadSpeedMbps || '--') + ' Mbps';
+                document.getElementById('isp-speed-up').innerText = (metrics.uploadSpeedMbps || '--') + ' Mbps';
+            } catch (e) {
+                console.error('Fetch ISP metrics failed', e);
+            }
+        }
+
+        async function fetchThreats() {
+            try {
+                const res = await fetch('/api/threats');
+                if(!res.ok) throw new Error();
+                const threats = (await res.json()).threats || [];
+                
+                // 儲存至全域變數以供前端時間過濾
+                allThreats = threats;
+                renderThreatTable();
+                
+                // 動態終端機日誌 (suricata_alert.log)
+                const consoleDiv = document.getElementById('log-console');
+                let hasNewThreat = false;
+
+                // 由舊到新反轉渲染日誌
+                [...threats].reverse().forEach(t => {
+                    if (!loggedThreatIds.has(t.id)) {
+                        loggedThreatIds.add(t.id);
+                        hasNewThreat = true;
+                        
+                        const logLine = document.createElement('p');
+                        logLine.className = 'text-red-400';
+                        logLine.innerText = `[${new Date(t.datetime).toISOString()}] [suricata] [ALERT] [${t.category}] Source: ${t.src_ip} (${t.src_country}) -> Target: ${t.target_ip} (${t.target_device}) | Msg: ${t.msg} | Action: ${t.action_taken}`;
+                        consoleDiv.appendChild(logLine);
+                    }
+                });
+
+                if (hasNewThreat) {
+                    consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                }
+
+                // 統計類別圓餅圖 (統計所有威脅)
+                const counts = { 'Web Exploit': 0, 'Brute Force': 0, 'Scanner': 0, 'Malware': 0, 'DoS': 0, 'Manual Block': 0 };
+                threats.forEach(t => {
+                    const cat = t.category || 'Scanner';
+                    if (counts[cat] !== undefined) {
+                        counts[cat]++;
+                    }
+                });
+                
+                threatChart.data.datasets[0].data = [
+                    counts['Web Exploit'],
+                    counts['Brute Force'],
+                    counts['Scanner'],
+                    counts['Malware'],
+                    counts['DoS'],
+                    counts['Manual Block']
+                ];
+                threatChart.update();
+
+                // 更新最近一次攔截威脅的資訊
+                if(threats.length > 0) {
+                    document.getElementById('threat-source').innerText = `來源 IP: ${threats[0].src_ip} (${threats[0].src_country})`;
+                    document.getElementById('threat-type').innerText = `特徵: ${threats[0].msg}`;
+                    
+                    const tTime = new Date(threats[0].datetime).toLocaleString('zh-TW', { hour12: false });
+                    const timeEl = document.getElementById('threat-time');
+                    if (timeEl) {
+                        timeEl.innerText = `時間: ${tTime}`;
+                    }
+                    
+                    if (threats[0].id !== lastThreatId) {
+                        lastThreatId = threats[0].id;
+                        showToast(`🔥 IPS 攔截: 來自 ${threats[0].src_ip} 的 ${threats[0].category}`, true);
+                    }
+                }
+            } catch (e) { console.error('Threats fetch failed', e); }
+        }
+
+        async function triggerSpeedtest() {
+            try {
+                showToast('正在下發測速命令...');
+                await fetch('/api/speedtest', { method: 'POST' });
+                showToast('測速指令已成功派送至 UCG');
+            } catch (e) { showToast('派送失敗', true); }
+        }
+
+        async function triggerPoECycle() {
+            const mac = document.getElementById('p-mac').value, port = document.getElementById('p-port').value;
+            if(!mac || !port) return showToast('請輸入 MAC 與 Port', true);
+            try {
+                await fetch('/api/poe/power-cycle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ switchMac: mac, portIndex: port }) });
+                showToast(`已向 ${mac} Port ${port} 發送重啟脈衝`);
+            } catch (e) { showToast('發送失敗', true); }
+        }
+
+        function updateGuestQR() {
+            const ssid = document.getElementById('v-ssid').value, pass = document.getElementById('v-pass').value;
+            if(!ssid) return;
+            const img = document.getElementById('qr-img');
+            img.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(`WIFI:S:${ssid};T:WPA;P:${pass};;`)}`;
+            img.classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
