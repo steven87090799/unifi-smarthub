@@ -106,8 +106,8 @@
             </button>
         </nav>
         <div class="px-5 py-4 border-t border-slate-800/60 space-y-1.5">
-            <div class="flex items-center gap-2 text-[10px]"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="side-ucg-dot"></span><span class="text-slate-400">UCG-Ultra</span><span class="text-slate-500 mono ml-auto" id="sys-uptime">連線中...</span></div>
-            <div class="flex items-center gap-2 text-[10px]"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-nas-dot"></span><span class="text-slate-400">UGREEN NAS</span><span class="text-slate-500 mono ml-auto" id="side-nas-state">--</span></div>
+            <div class="flex items-center gap-2 text-[10px]" title="綠=後端已透過 SSH 連上 UCG 並取得硬體數據；紅=連線失敗。右側為裝置實際運行時間（非 PING）"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="side-ucg-dot"></span><span class="text-slate-400">UCG-Ultra</span><span class="text-slate-500 mono ml-auto" id="sys-uptime">連線中...</span></div>
+            <div class="flex items-center gap-2 text-[10px]" title="綠 online=後端已呼叫到 NAS 真實 API；琥珀 demo=顯示展示假資料（未設定 NAS 帳密）；紅=連線失敗（非 PING，是 API 可達性）"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-nas-dot"></span><span class="text-slate-400">UGREEN NAS</span><span class="text-slate-500 mono ml-auto" id="side-nas-state">--</span></div>
         </div>
     </aside>
 
@@ -151,10 +151,76 @@
                     <p class="text-2xl font-black mt-2 text-red-400 mono" id="kpi-threats">--</p>
                     <p class="text-[9px] text-slate-500 mt-1" id="kpi-threats-sub">IPS 主動防禦中</p>
                 </div>
-                <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5" onclick="document.getElementById('hw-detail').scrollIntoView({behavior:'smooth'})">
-                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">UCG CPU 溫度</p>
-                    <p class="text-2xl font-black mt-2 mono"><span class="text-blue-500" id="kpi-temp">--</span><span class="text-sm text-slate-500"> °C</span></p>
+                <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5" onclick="document.getElementById('ov-vitals').scrollIntoView({behavior:'smooth'})">
+                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">設備溫度 (UCG / NAS)</p>
+                    <p class="text-2xl font-black mt-2 mono"><span class="text-blue-500" id="kpi-temp">--</span><span class="text-xs text-slate-600"> / </span><span class="text-emerald-400" id="kpi-nas-temp">--</span><span class="text-sm text-slate-500"> °C</span></p>
                     <p class="text-[9px] text-slate-500 mt-1" id="kpi-temp-sub">溫度狀態偵測中</p>
+                </div>
+            </div>
+
+            <!-- 雙設備即時體檢 (兩台重要指標一次看清，不用切頁) -->
+            <div id="ov-vitals" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <!-- UCG-Ultra -->
+                <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md cursor-pointer hover:border-blue-700/50 transition" onclick="document.getElementById('hw-detail').scrollIntoView({behavior:'smooth'})">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+                            <h3 class="text-sm font-bold text-white tracking-wider">UCG-Ultra 閘道器</h3>
+                        </div>
+                        <span id="ov-ucg-badge" class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">連線中</span>
+                    </div>
+                    <div class="flex items-center gap-5">
+                        <div class="text-center shrink-0 w-20">
+                            <p class="text-[9px] text-slate-500 uppercase font-bold tracking-wider">CPU 溫度</p>
+                            <p class="mono leading-none mt-1"><span class="text-4xl font-black" id="ov-ucg-temp" style="color:#3b82f6">--</span><span class="text-sm text-slate-500">°C</span></p>
+                            <p class="text-[9px] mt-1" id="ov-ucg-temp-status">--</p>
+                        </div>
+                        <div class="flex-grow space-y-2.5">
+                            <div>
+                                <div class="flex justify-between text-[10px] mb-1"><span class="text-slate-400">CPU 使用率</span><span class="mono text-slate-300" id="ov-ucg-cpu">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-blue-500 h-full rounded-full transition-all duration-500" id="ov-ucg-cpu-bar" style="width:0%"></div></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-[10px] mb-1"><span class="text-slate-400">記憶體</span><span class="mono text-slate-300" id="ov-ucg-mem">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-violet-500 h-full rounded-full transition-all duration-500" id="ov-ucg-mem-bar" style="width:0%"></div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/60 text-[10px]">
+                        <div class="flex justify-between"><span class="text-slate-500">運行時間</span><span class="text-slate-300 mono truncate ml-2" id="ov-ucg-uptime">--</span></div>
+                        <div class="flex justify-between"><span class="text-slate-500">線上設備</span><span class="text-slate-300 mono" id="ov-ucg-clients">--</span></div>
+                    </div>
+                </div>
+                <!-- UGREEN NAS -->
+                <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md cursor-pointer hover:border-emerald-700/50 transition" onclick="navigate('nas')">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8a2 2 0 00-2 2v1a2 2 0 002 2h14a2 2 0 002-2v-1a2 2 0 00-2-2m-9 9h.01M9 16h.01"/></svg>
+                            <h3 class="text-sm font-bold text-white tracking-wider">UGREEN NAS</h3>
+                        </div>
+                        <span id="ov-nas-badge" class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">連線中</span>
+                    </div>
+                    <div class="flex items-center gap-5">
+                        <div class="text-center shrink-0 w-20">
+                            <p class="text-[9px] text-slate-500 uppercase font-bold tracking-wider">CPU 溫度</p>
+                            <p class="mono leading-none mt-1"><span class="text-4xl font-black" id="ov-nas-temp" style="color:#10b981">--</span><span class="text-sm text-slate-500">°C</span></p>
+                            <p class="text-[9px] mt-1" id="ov-nas-temp-status">--</p>
+                        </div>
+                        <div class="flex-grow space-y-2.5">
+                            <div>
+                                <div class="flex justify-between text-[10px] mb-1"><span class="text-slate-400">CPU 使用率</span><span class="mono text-slate-300" id="ov-nas-cpu">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-emerald-500 h-full rounded-full transition-all duration-500" id="ov-nas-cpu-bar" style="width:0%"></div></div>
+                            </div>
+                            <div>
+                                <div class="flex justify-between text-[10px] mb-1"><span class="text-slate-400">記憶體</span><span class="mono text-slate-300" id="ov-nas-mem">--%</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-violet-500 h-full rounded-full transition-all duration-500" id="ov-nas-mem-bar" style="width:0%"></div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/60 text-[10px]">
+                        <div class="flex justify-between"><span class="text-slate-500">硬碟健康</span><span class="text-slate-300 mono" id="ov-nas-disk">--</span></div>
+                        <div class="flex justify-between"><span class="text-slate-500">儲存使用</span><span class="text-slate-300 mono" id="ov-nas-storage">--</span></div>
+                    </div>
                 </div>
             </div>
 
@@ -202,6 +268,7 @@
                             </div>
                         </div>
                         <p class="text-[10px] font-bold mt-3" id="sec-score-grade">評估中...</p>
+                        <p class="text-[9px] text-slate-500 mt-1.5 text-center leading-relaxed" id="ov-score-explain">評分依據計算中…</p>
                         <p class="text-[9px] text-slate-500 mt-1 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="ov-autodef-dot"></span><span id="ov-autodef-text">自動防禦：讀取中</span></p>
                     </div>
                     <!-- 24H 威脅時段分佈 -->
@@ -421,6 +488,55 @@
                         <p class="text-[9px] text-slate-500 mt-0.5">目前隔離中</p>
                     </div>
                 </div>
+
+                <!-- 安全評分計算方式說明 -->
+                <details class="bg-slate-950/70 border border-slate-800/60 rounded-xl overflow-hidden">
+                    <summary class="px-5 py-3 cursor-pointer flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-300 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            安全評分是怎麼算的？
+                        </span>
+                        <span class="text-[10px] text-slate-500" id="sec-score-explain">計算中…</span>
+                    </summary>
+                    <div class="px-5 pb-5 pt-1 text-xs text-slate-400 leading-relaxed space-y-3 border-t border-slate-800/60">
+                        <div>
+                            <p class="text-slate-300 font-bold mb-1">計算公式</p>
+                            <p>從 <span class="text-slate-200 font-bold">滿分 100</span> 開始，把「過去 24 小時」每一起 IPS/IDS 攔截事件的扣分加總後扣掉。只看近 24 小時，所以威脅停止後分數會隨時間自動回升。</p>
+                        </div>
+                        <div>
+                            <p class="text-slate-300 font-bold mb-1">每起事件的扣分 = 嚴重度 × 類別倍率</p>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                                <div class="bg-slate-900/50 border border-slate-800/60 rounded-lg p-3">
+                                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1.5">嚴重度基礎分</p>
+                                    <ul class="space-y-1 text-[11px]">
+                                        <li class="flex justify-between"><span class="text-red-400">高危 HIGH</span><span class="mono">−4 分</span></li>
+                                        <li class="flex justify-between"><span class="text-amber-400">中 MEDIUM</span><span class="mono">−2 分</span></li>
+                                        <li class="flex justify-between"><span class="text-slate-400">低 LOW / 其他</span><span class="mono">−1 分</span></li>
+                                    </ul>
+                                </div>
+                                <div class="bg-slate-900/50 border border-slate-800/60 rounded-lg p-3">
+                                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1.5">類別倍率</p>
+                                    <ul class="space-y-1 text-[11px]">
+                                        <li class="flex justify-between"><span class="text-red-400">Malware / DoS</span><span class="mono">×1.5</span></li>
+                                        <li class="flex justify-between"><span class="text-slate-400">其他類別</span><span class="mono">×1.0</span></li>
+                                    </ul>
+                                    <p class="text-[10px] text-slate-500 mt-2">例：1 起高危 Malware = 4 × 1.5 = 扣 6 分</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-slate-300 font-bold mb-1">等級對照</p>
+                            <div class="flex flex-wrap gap-2 text-[10px] font-bold">
+                                <span class="px-2 py-1 rounded" style="color:#10b981;background:#10b98118">A 優良 90–100</span>
+                                <span class="px-2 py-1 rounded" style="color:#3b82f6;background:#3b82f618">B 良好 75–89</span>
+                                <span class="px-2 py-1 rounded" style="color:#f59e0b;background:#f59e0b18">C 普通 60–74</span>
+                                <span class="px-2 py-1 rounded" style="color:#f97316;background:#f9731618">D 警戒 40–59</span>
+                                <span class="px-2 py-1 rounded" style="color:#ef4444;background:#ef444418">F 危險 <40</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/40">💡 目前是 F 通常代表 24 小時內攔截了大量（或多起高危）攻擊 —— 這是 IPS 有在運作、把攻擊擋下的紀錄，不代表你被入侵。想看分數回升可把時間拉開觀察，或在下方事件表確認攻擊是否已被 <span class="text-red-400 font-mono">BLOCKED</span>。</p>
+                    </div>
+                </details>
 
                 <!-- 自動防禦聯動控制 -->
                 <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1370,6 +1486,12 @@
                 document.getElementById('cpu-temp').innerText = data.cpuTemp;
                 document.getElementById('cpu-temp-f').innerText = `/ ${Math.round(data.cpuTemp * 1.8 + 32)}°F`;
                 document.getElementById('kpi-temp').innerText = data.cpuTemp;
+                // 總覽雙設備體檢 — UCG 溫度
+                const tc = tempColor(data.cpuTemp);
+                const ucgTempEl = document.getElementById('ov-ucg-temp');
+                if (ucgTempEl) { ucgTempEl.innerText = data.cpuTemp; ucgTempEl.style.color = tc; }
+                const ucgTempStatus = document.getElementById('ov-ucg-temp-status');
+                if (ucgTempStatus) { ucgTempStatus.innerText = tempLabel(data.cpuTemp); ucgTempStatus.style.color = tc; }
                 const isHot = data.cpuTemp >= 75;
                 document.getElementById('kpi-temp-sub').innerText = isHot ? '⚠️ 高溫警告' : '溫度正常';
                 const card = document.getElementById('card-hardware');
@@ -1383,7 +1505,18 @@
                     document.getElementById('temp-status-text').innerText = '正常運作中';
                 }
             }
-            if (data.uptime) document.getElementById('sys-uptime').innerText = data.uptime;
+            if (data.uptime) {
+                document.getElementById('sys-uptime').innerText = data.uptime;
+                const u = document.getElementById('ov-ucg-uptime'); if (u) u.innerText = data.uptime;
+            }
+            // 總覽雙設備體檢 — UCG CPU/記憶體 + 上線徽章
+            const setV = (id, v) => { const e = document.getElementById(id); if (e) e.innerText = v; };
+            const setBar = (id, v) => { const e = document.getElementById(id); if (e) e.style.width = (v || 0) + '%'; };
+            setV('ov-ucg-cpu', (data.cpuUsage != null ? data.cpuUsage : '--') + '%');
+            setBar('ov-ucg-cpu-bar', data.cpuUsage);
+            if (data.memUsagePct != null) { setV('ov-ucg-mem', data.memUsagePct + '%'); setBar('ov-ucg-mem-bar', data.memUsagePct); }
+            const ucgBadge = document.getElementById('ov-ucg-badge');
+            if (ucgBadge) { ucgBadge.innerText = '● 連線正常'; ucgBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-emerald-500/10 text-emerald-400 border-emerald-500/20'; }
 
             document.getElementById('cpu-usage').innerText = data.cpuUsage + '%';
             if (data.cores && data.cores.length) {
@@ -1437,9 +1570,15 @@
             hwChart.update();
         } catch (e) {
             document.getElementById('side-ucg-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
+            const ucgBadge = document.getElementById('ov-ucg-badge');
+            if (ucgBadge) { ucgBadge.innerText = '● 連線失敗'; ucgBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-red-500/10 text-red-400 border-red-500/20'; }
             console.error('Hardware fetch failed', e);
         }
     }
+
+    // 溫度配色與標籤 (共用於總覽雙設備體檢)
+    function tempColor(t) { return t == null ? '#64748b' : t >= 75 ? '#ef4444' : t >= 65 ? '#f59e0b' : t >= 55 ? '#3b82f6' : '#10b981'; }
+    function tempLabel(t) { return t == null ? '--' : t >= 75 ? '過熱' : t >= 65 ? '偏高' : t >= 55 ? '正常' : '涼爽'; }
 
     /* ==================== 客戶端 ==================== */
     async function fetchClients() {
@@ -1451,6 +1590,7 @@
             renderTrafficTop5();
             const blockedCount = allClients.filter(c => c.blocked).length;
             document.getElementById('kpi-clients').innerText = allClients.length - blockedCount;
+            const ovClients = document.getElementById('ov-ucg-clients'); if (ovClients) ovClients.innerText = (allClients.length - blockedCount) + ' 台';
             document.getElementById('kpi-clients-sub').innerText = `封鎖中 ${blockedCount} 台`;
         } catch (e) { console.error('Clients fetch failed'); }
     }
@@ -1819,17 +1959,22 @@
     }
 
     // 依威脅計算安全評分 (0-100)：以 24h 內事件數與嚴重度加權扣分
-    function computeSecurityScore(threats) {
+    // 回傳評分明細，讓分數高低有可解釋的依據
+    function securityScoreDetail(threats) {
         const dayAgo = Date.now() - 86400000;
         const recent = threats.filter(t => new Date(t.datetime).getTime() >= dayAgo);
-        let penalty = 0;
+        let penalty = 0, high = 0, medium = 0, low = 0, boosted = 0;
         recent.forEach(t => {
             const base = t.severity === 'HIGH' ? 4 : t.severity === 'MEDIUM' ? 2 : 1;
+            if (t.severity === 'HIGH') high++; else if (t.severity === 'MEDIUM') medium++; else low++;
             const catMul = (t.category === 'Malware' || t.category === 'DoS') ? 1.5 : 1;
+            if (catMul > 1) boosted++;
             penalty += base * catMul;
         });
-        return Math.max(0, Math.min(100, Math.round(100 - penalty)));
+        const score = Math.max(0, Math.min(100, Math.round(100 - penalty)));
+        return { score, count: recent.length, high, medium, low, boosted, penalty: Math.round(penalty) };
     }
+    function computeSecurityScore(threats) { return securityScoreDetail(threats).score; }
 
     function gradeFor(score) {
         if (score >= 90) return { label: '優良 (A)', color: '#10b981' };
@@ -1863,7 +2008,8 @@
         const highCount = threats.filter(t => t.severity === 'HIGH').length;
         const countries = new Set(threats.map(t => t.src_country).filter(c => c && c !== 'Unknown'));
         const blockedNow = allClients.filter(c => c.blocked).length;
-        const score = computeSecurityScore(threats);
+        const detail = securityScoreDetail(threats);
+        const score = detail.score;
         const grade = gradeFor(score);
 
         // 總覽評分環
@@ -1876,6 +2022,12 @@
         setTxt('sec-score', score);
         const grEl = document.getElementById('sec-score-grade');
         if (grEl) { grEl.innerText = grade.label; grEl.style.color = grade.color; }
+        // 評分依據說明 (總覽 + 資安頁)
+        const explainTxt = detail.count === 0
+            ? '滿分 100。過去 24 小時無攔截事件，未扣分。'
+            : `滿分 100，扣 ${detail.penalty} 分。<br>24H 共 ${detail.count} 起（高危 ${detail.high}·中 ${detail.medium}·低 ${detail.low}${detail.boosted ? `，其中 ${detail.boosted} 起 Malware/DoS 加重` : ''}）。`;
+        const ovExplain = document.getElementById('ov-score-explain'); if (ovExplain) ovExplain.innerHTML = explainTxt;
+        const secExplain = document.getElementById('sec-score-explain'); if (secExplain) secExplain.innerHTML = explainTxt;
         setTxt('ov-threat-24h', `${recent.length} 次攔截`);
 
         // 資安頁 KPI 列
@@ -2065,6 +2217,20 @@
             badge.className = `px-3 py-1 rounded-full text-xs font-bold mono uppercase tracking-wider border ${isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`;
             document.getElementById('side-nas-dot').className = `w-1.5 h-1.5 rounded-full ${isReal ? 'bg-emerald-500' : 'bg-amber-500'}`;
             document.getElementById('side-nas-state').innerText = isReal ? 'online' : 'demo';
+            const ovNasBadge = document.getElementById('ov-nas-badge');
+            if (ovNasBadge) {
+                ovNasBadge.innerText = isReal ? '● 連線正常' : '● 展示資料';
+                ovNasBadge.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`;
+            }
+
+            // 總覽雙設備體檢 — NAS 硬碟健康 + 儲存使用率
+            const goodDisks = disks.filter(d => { const h = String(nFind(d, ['status', 'health', 'health_status']) || '').toLowerCase(); return h.includes('good') || h === 'normal' || h === 'ok'; }).length;
+            const ovNasDisk = document.getElementById('ov-nas-disk');
+            if (ovNasDisk && disks.length) { ovNasDisk.innerText = `${goodDisks}/${disks.length} 良好`; ovNasDisk.style.color = goodDisks === disks.length ? '#10b981' : '#f59e0b'; }
+            let usedG = 0, totalG = 0;
+            vols.forEach(v => { usedG += asNum(nFind(v, ['used_gb', 'used'])) || 0; totalG += asNum(nFind(v, ['total_gb', 'total', 'size_gb'])) || 0; });
+            const ovNasStorage = document.getElementById('ov-nas-storage');
+            if (ovNasStorage && totalG) { const pct = Math.round(usedG / totalG * 100); ovNasStorage.innerText = pct + '%'; ovNasStorage.style.color = pct >= 90 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#cbd5e1'; }
 
             // 機型資訊
             const info = ov.info || {};
@@ -2081,6 +2247,14 @@
             document.getElementById('nas-cpu').innerText = cpuUsage != null ? Math.round(cpuUsage) : '--';
             document.getElementById('nas-cpu-temp').innerText = cpuTemp != null ? cpuTemp + '°C' : '--°C';
             document.getElementById('nas-cpu-bar').style.width = (cpuUsage || 0) + '%';
+            // 總覽雙設備體檢 — NAS 溫度/CPU + KPI
+            const ovNasTemp = document.getElementById('ov-nas-temp');
+            if (ovNasTemp) { ovNasTemp.innerText = cpuTemp != null ? cpuTemp : '--'; ovNasTemp.style.color = tempColor(cpuTemp); }
+            const ovNasTempStatus = document.getElementById('ov-nas-temp-status');
+            if (ovNasTempStatus) { ovNasTempStatus.innerText = tempLabel(cpuTemp); ovNasTempStatus.style.color = tempColor(cpuTemp); }
+            const kpiNasTemp = document.getElementById('kpi-nas-temp'); if (kpiNasTemp) kpiNasTemp.innerText = cpuTemp != null ? cpuTemp : '--';
+            const ovNasCpu = document.getElementById('ov-nas-cpu'); if (ovNasCpu) ovNasCpu.innerText = (cpuUsage != null ? Math.round(cpuUsage) : '--') + '%';
+            const ovNasCpuBar = document.getElementById('ov-nas-cpu-bar'); if (ovNasCpuBar) ovNasCpuBar.style.width = (cpuUsage || 0) + '%';
 
             const memObj = nFind(stats, ['memory', 'mem', 'ram']) || {};
             let memPct = asNum(nFind(memObj, ['usage', 'used_rate', 'usage_rate', 'percent', 'used_percent']));
@@ -2089,6 +2263,8 @@
             if (memPct == null && memTotal && memUsed) memPct = Math.round(memUsed / memTotal * 100);
             document.getElementById('nas-mem').innerText = memPct != null ? Math.round(memPct) : '--';
             document.getElementById('nas-mem-bar').style.width = (memPct || 0) + '%';
+            const ovNasMem = document.getElementById('ov-nas-mem'); if (ovNasMem) ovNasMem.innerText = (memPct != null ? Math.round(memPct) : '--') + '%';
+            const ovNasMemBar = document.getElementById('ov-nas-mem-bar'); if (ovNasMemBar) ovNasMemBar.style.width = (memPct || 0) + '%';
             if (memTotal && memUsed) {
                 const toG = v => v > 131072 ? (v / 1073741824).toFixed(1) : (v / 1024).toFixed(1); // bytes 或 MB 自動判斷
                 document.getElementById('nas-mem-str').innerText = `${toG(memUsed)} GB / ${toG(memTotal)} GB`;
@@ -2164,6 +2340,8 @@
         } catch (e) {
             document.getElementById('side-nas-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
             document.getElementById('side-nas-state').innerText = 'error';
+            const ovNasBadge = document.getElementById('ov-nas-badge');
+            if (ovNasBadge) { ovNasBadge.innerText = '● 連線失敗'; ovNasBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-red-500/10 text-red-400 border-red-500/20'; }
             console.error('NAS fetch failed', e);
         }
     }
