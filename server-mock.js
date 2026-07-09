@@ -572,7 +572,17 @@ app.post('/api/settings', (req, res) => {
 });
 
 app.post('/api/reports/run', (req, res) => {
-    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`].join('\n');
+    const cpus = mockWiimHistory.map(h => h.cpu).filter(v => v !== null);
+    const boards = mockWiimHistory.map(h => h.board).filter(v => v !== null);
+    let wiimLine = '';
+    if (cpus.length && boards.length) {
+        const maxCpu = Math.max(...cpus).toFixed(1);
+        const avgCpu = (cpus.reduce((a, b) => a + b, 0) / cpus.length).toFixed(1);
+        const maxBoard = Math.max(...boards).toFixed(1);
+        const avgBoard = (boards.reduce((a, b) => a + b, 0) / boards.length).toFixed(1);
+        wiimLine = `\n🔊 WiiM Amp 狀態：24H 均溫 CPU ${avgCpu}°C (最高 ${maxCpu}°C) / 主板 ${avgBoard}°C (最高 ${maxBoard}°C)`;
+    }
+    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`].join('\n') + wiimLine;
     if (mockNotif.enabled) pushMockNotif({ ts: new Date().toISOString(), title: '📊 SmartHub 報表 (手動觸發)', body, channel: mockNotif.channel, ok: true });
     res.json({ report: body, delivery: mockNotif.enabled ? { ok: true } : { skipped: 'disabled' } });
 });
@@ -589,7 +599,86 @@ self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.pathname.startsWith('/api/')||u.pathname==='/healthz')return;e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));});`));
 
+// --- WiiM Amp Mock Endpoints & Background Polling ---
+let mockWiimHistory = [];
+
+function pollMockWiimTemp() {
+    const cpu = parseFloat((45 + Math.random() * 8).toFixed(1));
+    const board = parseFloat((38 + Math.random() * 5).toFixed(1));
+    const ts = Math.floor(Date.now() / 1000);
+    mockWiimHistory.push({ ts, cpu, board });
+    if (mockWiimHistory.length > 5000) mockWiimHistory.shift();
+}
+pollMockWiimTemp();
+setInterval(pollMockWiimTemp, 10000);
+
+app.get('/api/wiim/history', (req, res) => {
+    res.json({
+        interval: 10,
+        cpu_alert: 70,
+        board_alert: 60,
+        data: mockWiimHistory
+    });
+});
+
+app.get('/api/wiim/status', (req, res) => {
+    const type = req.query.type || 'all';
+    const out = {};
+    if (type === 'all' || type === 'play') {
+        out.player = {
+            type: 0, ch: 0, mode: 10, status: "play", vol: 35, mute: 0, eq: 0,
+            curpos: 45000 + Math.floor(Math.random() * 1000), totlen: 240000
+        };
+        out.meta = {
+            metaData: {
+                title: "Mock WiiM Streaming Track",
+                artist: "WiiM Amp Renderer",
+                album: "SmartHub Album",
+                albumArtURI: "",
+                sampleRate: 44100, bitDepth: 16
+            }
+        };
+    }
+    if (type === 'all' || type === 'status') {
+        out.status = {
+            DeviceName: "WiiM Amp Testbed",
+            firmware: "4.8.618254",
+            hardware: "WiiM Amp",
+            temperature_cpu: 48.5,
+            temperature_tmp102: 40.2,
+            bt_remote_bat: "85",
+            bt_remote_rssi: "-65",
+            bt_remote_mac: "00:E0:4C:12:34:56",
+            bt_remote_status: "connected"
+        };
+    }
+    res.json({
+        ...out,
+        ip: "192.168.0.170"
+    });
+});
+
+app.get('/api/wiim/cmd', (req, res) => {
+    res.json({ result: "OK" });
+});
+
+app.get('/api/wiim/clear', (req, res) => {
+    mockWiimHistory = [];
+    res.json({ ok: true });
+});
+
+app.get('/api/wiim/csv', (req, res) => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=wiim_temp_log.csv');
+    let csv = 'timestamp,iso_time,cpu_c,board_tmp102_c\n';
+    for (const h of mockWiimHistory) {
+        const iso = new Date(h.ts * 1000).toISOString();
+        csv += `${h.ts},${iso},${h.cpu !== null && h.cpu !== undefined ? h.cpu : ''},${h.board !== null && h.board !== undefined ? h.board : ''}\n`;
+    }
+    res.send(csv);
+});
+
 app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
 
-const PORT = 3005;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));
