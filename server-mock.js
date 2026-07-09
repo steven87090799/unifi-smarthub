@@ -659,7 +659,21 @@ app.get('/api/wiim/status', (req, res) => {
 });
 
 app.get('/api/wiim/cmd', (req, res) => {
-    res.json({ result: "OK" });
+    const cmd = req.query.command || '';
+    // 查詢型指令回擬真 JSON，其餘回 OK
+    const canned = {
+        getStatusEx: { DeviceName: 'WiiM Amp Testbed', firmware: '4.8.618254', hardware: 'AmlogicA113', project: 'WiiM_Amp', PCB_version: '2', MAC: '00:22:6C:AA:BB:CC', uuid: 'FF31F09E-MOCK', netstat: 2, date: '2026:07:10', time: '09:30:00' },
+        getStaticIpInfo: { wlanStaticIpEnable: 0, wlanStaticIp: '', wlanGateWay: '192.168.0.1', wlanDnsServer: '8.8.8.8' },
+        EQGetStat: { EQStat: 'On' },
+        EQGetList: ['Flat', 'Rock', 'Jazz', 'Classical', 'Vocal', 'Bass Booster'],
+        getPresetInfo: { preset_num: 3, preset_list: [{ number: 1, name: 'KISS Radio' }, { number: 2, name: 'Jazz24' }, { number: 3, name: '晚安歌單' }] },
+        getShutdown: 0,
+        getbtpairstatus: { result: 3 },
+        'Squeezelite:getState': { state: 'stopped', discover_list: [] },
+        wlanGetConnectState: 'OK'
+    };
+    const hit = Object.keys(canned).find(k => cmd.startsWith(k));
+    res.json({ result: hit ? (typeof canned[hit] === 'string' ? canned[hit] : JSON.stringify(canned[hit])) : 'OK' });
 });
 
 app.get('/api/wiim/clear', (req, res) => {
@@ -675,6 +689,47 @@ app.get('/api/wiim/csv', (req, res) => {
         const iso = new Date(h.ts * 1000).toISOString();
         csv += `${h.ts},${iso},${h.cpu !== null && h.cpu !== undefined ? h.cpu : ''},${h.board !== null && h.board !== undefined ? h.board : ''}\n`;
     }
+    res.send(csv);
+});
+
+/* ===== CyberPower UPS 模擬端點 ===== */
+const mockUpsHistory = (() => {
+    const pts = [], now = Date.now();
+    for (let i = 2880; i >= 0; i--) { // 24h @30s
+        const t = now - i * 30000;
+        const isOutage = i <= 1210 && i >= 1180; // 模擬一段 15 分鐘的斷電
+        pts.push({
+            t: new Date(t).toISOString(),
+            inV: isOutage ? 0 : +(110 + Math.sin(t / 3.6e6) * 2.5 + Math.random()).toFixed(1),
+            outV: +(110 + Math.random() * 0.8).toFixed(1),
+            batt: isOutage ? Math.max(62, 100 - Math.round((1210 - i) * 1.2)) : 100,
+            load: Math.round(18 + Math.random() * 8),
+            rt: isOutage ? 1500 : 2520,
+            ob: isOutage ? 1 : 0
+        });
+    }
+    return pts;
+})();
+const mockUpsEvents = [
+    { start: new Date(Date.now() - 1210 * 30000).toISOString(), end: new Date(Date.now() - 1180 * 30000).toISOString(), durationSec: 900, minBattery: 62, startVoltage: 108.9 },
+    { start: new Date(Date.now() - 5 * 86400000).toISOString(), end: new Date(Date.now() - 5 * 86400000 + 120000).toISOString(), durationSec: 120, minBattery: 95, startVoltage: 109.4 }
+];
+app.get('/api/ups/status', (req, res) => res.json({
+    source: 'nut', model: 'CyberPower CP1500PFCLCDa', status: 'OL',
+    onBattery: false, inputV: +(110 + Math.random() * 2).toFixed(1), outputV: 110.2,
+    battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 30
+}));
+app.get('/api/ups/history', (req, res) => {
+    const hours = parseInt(req.query.hours || '24', 10);
+    const cutoff = Date.now() - hours * 3600000;
+    res.json({ history: mockUpsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
+});
+app.get('/api/ups/events', (req, res) => res.json({ events: mockUpsEvents }));
+app.get('/api/ups/csv', (req, res) => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');
+    let csv = 'time,input_v,output_v,battery_pct,load_pct,runtime_sec,on_battery\n';
+    for (const h of mockUpsHistory) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
     res.send(csv);
 });
 

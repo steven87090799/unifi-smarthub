@@ -45,6 +45,53 @@
         @keyframes spinSlow { to { transform: rotate(360deg); } }
         .spin-slow { animation: spinSlow 1.4s linear infinite; }
 
+        /* ===== 液態玻璃 Liquid Glass ===== */
+        /* 極光流動背景：兩顆超大模糊光暈緩慢漂移，營造深度 */
+        body::before, body::after {
+            content: ''; position: fixed; z-index: -1; border-radius: 50%;
+            filter: blur(120px); opacity: .16; pointer-events: none;
+        }
+        body::before { width: 60vw; height: 60vw; background: radial-gradient(circle, #2563eb, transparent 65%); top: -18vw; right: -12vw; animation: auroraA 26s ease-in-out infinite alternate; }
+        body::after { width: 50vw; height: 50vw; background: radial-gradient(circle, #0891b2, transparent 65%); bottom: -20vw; left: -10vw; animation: auroraB 32s ease-in-out infinite alternate; }
+        @keyframes auroraA { to { transform: translate(-12vw, 14vh) scale(1.15); } }
+        @keyframes auroraB { to { transform: translate(10vw, -10vh) scale(1.1); } }
+
+        /* 主內容卡片統一升級為玻璃材質：漸層半透明 + 高斯模糊 + 上緣高光 + 內外雙陰影 */
+        main .rounded-2xl {
+            background: linear-gradient(155deg, rgba(30,41,59,.42), rgba(10,16,30,.55)) !important;
+            backdrop-filter: blur(20px) saturate(1.5);
+            -webkit-backdrop-filter: blur(20px) saturate(1.5);
+            border: 1px solid rgba(148,163,184,.14) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07), inset 0 0 24px rgba(59,130,246,.03), 0 10px 36px rgba(2,6,23,.5);
+            transition: border-color .3s, box-shadow .3s;
+        }
+        main .rounded-2xl:hover { border-color: rgba(148,163,184,.24) !important; }
+        /* 卡片內層子卡：較薄的玻璃 */
+        main .rounded-2xl .rounded-xl {
+            background: rgba(2,6,23,.4) !important;
+            backdrop-filter: blur(8px);
+            border-color: rgba(148,163,184,.1) !important;
+        }
+        /* 側邊欄與頂欄玻璃化 */
+        aside { background: rgba(3,7,18,.72) !important; backdrop-filter: blur(24px) saturate(1.4); border-right: 1px solid rgba(148,163,184,.1) !important; }
+        header { background: rgba(3,7,18,.55) !important; backdrop-filter: blur(24px) saturate(1.4); }
+        /* 導航群組標籤 */
+        .nav-group { padding: 14px 20px 5px; font-size: 9px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: #475569; }
+        .nav-active { background: linear-gradient(90deg, rgba(59,130,246,.18), rgba(59,130,246,.04)); color: #93c5fd; border-left: 3px solid #3b82f6; box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
+
+        /* 淺色主題的玻璃對應 */
+        html.light body::before { opacity: .2; background: radial-gradient(circle, #93c5fd, transparent 65%); }
+        html.light body::after { opacity: .18; background: radial-gradient(circle, #a5f3fc, transparent 65%); }
+        html.light main .rounded-2xl {
+            background: linear-gradient(155deg, rgba(255,255,255,.72), rgba(241,245,249,.6)) !important;
+            border: 1px solid rgba(100,116,139,.18) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 10px 32px rgba(15,23,42,.08);
+        }
+        html.light main .rounded-2xl .rounded-xl { background: rgba(248,250,252,.75) !important; border-color: rgba(100,116,139,.15) !important; }
+        html.light aside { background: rgba(248,250,252,.8) !important; }
+        html.light header { background: rgba(248,250,252,.7) !important; }
+        html.light .nav-group { color: #94a3b8; }
+
         /* ===== 淺色主題 ===== */
         html.light body { background: #eef2f7 !important; color: #0f172a; }
         html.light .text-white, html.light .text-slate-100, html.light .text-slate-200, html.light .text-slate-300 { color: #0f172a !important; }
@@ -80,10 +127,11 @@
                 <p class="text-[9px] text-slate-500">UniFi × UGREEN 戰情室</p>
             </div>
         </div>
-        <nav class="flex-grow py-4 space-y-1 overflow-y-auto terminal-scroll">
+        <nav class="flex-grow py-2 space-y-1 overflow-y-auto terminal-scroll">
             <button data-page="overview" onclick="navigate('overview')" class="nav-btn nav-active w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10"/></svg>總覽 Overview
             </button>
+            <p class="nav-group">網路監控 Network</p>
             <button data-page="clients" onclick="navigate('clients')" class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6-4a3 3 0 11-3-3"/></svg>客戶端 Clients
             </button>
@@ -96,12 +144,17 @@
             <button data-page="cloud" onclick="navigate('cloud')" class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999A5.002 5.002 0 1013 5a4.5 4.5 0 00-8.9 1A4 4 0 003 15z"/></svg>雲端站點 Cloud
             </button>
+            <p class="nav-group">設備 Devices</p>
             <button data-page="nas" onclick="navigate('nas')" class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>NAS 儲存
             </button>
             <button data-page="wiim" onclick="navigate('wiim')" class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>WiiM 音響
             </button>
+            <button data-page="ups" onclick="navigate('ups')" class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>UPS 電源
+            </button>
+            <p class="nav-group">系統 System</p>
             <button data-page="tools" onclick="navigate('tools')" class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>工具 Tools
             </button>
@@ -115,6 +168,7 @@
         <div class="px-5 py-4 border-t border-slate-800/60 space-y-1.5">
             <div class="flex items-center gap-2 text-[10px]" title="綠=後端已透過 SSH 連上 UCG 並取得硬體數據；紅=連線失敗。右側為裝置實際運行時間（非 PING）"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="side-ucg-dot"></span><span class="text-slate-400">UCG-Ultra</span><span class="text-slate-500 mono ml-auto" id="sys-uptime">連線中...</span></div>
             <div class="flex items-center gap-2 text-[10px]" title="綠 online=後端已呼叫到 NAS 真實 API；琥珀 demo=顯示展示假資料（未設定 NAS 帳密）；紅=連線失敗（非 PING，是 API 可達性）"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-nas-dot"></span><span class="text-slate-400">UGREEN NAS</span><span class="text-slate-500 mono ml-auto" id="side-nas-state">--</span></div>
+            <div class="flex items-center gap-2 text-[10px]" title="綠 online=WiiM HTTP API 有回應；紅=裝置無回應（檢查 WIIM_IP）"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-wiim-dot"></span><span class="text-slate-400">WiiM Amp</span><span class="text-slate-500 mono ml-auto" id="side-wiim-state">--</span></div>
         </div>
     </aside>
 
@@ -159,14 +213,14 @@
                     <p class="text-[9px] text-slate-500 mt-1" id="kpi-threats-sub">IPS 主動防禦中</p>
                 </div>
                 <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5" onclick="document.getElementById('ov-vitals').scrollIntoView({behavior:'smooth'})">
-                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">設備溫度 (UCG / NAS)</p>
-                    <p class="text-2xl font-black mt-2 mono"><span class="text-blue-500" id="kpi-temp">--</span><span class="text-xs text-slate-600"> / </span><span class="text-emerald-400" id="kpi-nas-temp">--</span><span class="text-sm text-slate-500"> °C</span></p>
+                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">設備溫度 (UCG/NAS/WiiM)</p>
+                    <p class="text-xl font-black mt-2 mono"><span class="text-blue-500" id="kpi-temp">--</span><span class="text-xs text-slate-600">/</span><span class="text-emerald-400" id="kpi-nas-temp">--</span><span class="text-xs text-slate-600">/</span><span class="text-violet-400" id="kpi-wiim-temp">--</span><span class="text-sm text-slate-500"> °C</span></p>
                     <p class="text-[9px] text-slate-500 mt-1" id="kpi-temp-sub">溫度狀態偵測中</p>
                 </div>
             </div>
 
-            <!-- 雙設備即時體檢 (兩台重要指標一次看清，不用切頁) -->
-            <div id="ov-vitals" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- 三設備即時體檢 (重要指標一次看清，不用切頁) -->
+            <div id="ov-vitals" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <!-- UCG-Ultra -->
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md cursor-pointer hover:border-blue-700/50 transition" onclick="document.getElementById('hw-detail').scrollIntoView({behavior:'smooth'})">
                     <div class="flex justify-between items-center mb-4">
@@ -227,6 +281,34 @@
                     <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/60 text-[10px]">
                         <div class="flex justify-between"><span class="text-slate-500">硬碟健康</span><span class="text-slate-300 mono" id="ov-nas-disk">--</span></div>
                         <div class="flex justify-between"><span class="text-slate-500">儲存使用</span><span class="text-slate-300 mono" id="ov-nas-storage">--</span></div>
+                    </div>
+                </div>
+                <!-- WiiM Amp -->
+                <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md cursor-pointer hover:border-violet-700/50 transition" onclick="navigate('wiim')">
+                    <div class="flex justify-between items-center mb-4">
+                        <div class="flex items-center gap-2">
+                            <svg class="w-5 h-5 text-violet-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/></svg>
+                            <h3 class="text-sm font-bold text-white tracking-wider">WiiM Amp</h3>
+                        </div>
+                        <span id="ov-wiim-badge" class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">連線中</span>
+                    </div>
+                    <div class="flex items-center gap-5">
+                        <div class="text-center shrink-0 w-20">
+                            <p class="text-[9px] text-slate-500 uppercase font-bold tracking-wider">CPU 溫度</p>
+                            <p class="mono leading-none mt-1"><span class="text-4xl font-black" id="ov-wiim-temp" style="color:#8b5cf6">--</span><span class="text-sm text-slate-500">°C</span></p>
+                            <p class="text-[9px] mt-1" id="ov-wiim-temp-status">--</p>
+                        </div>
+                        <div class="flex-grow space-y-2.5 min-w-0">
+                            <div>
+                                <div class="flex justify-between text-[10px] mb-1"><span class="text-slate-400">主機板 (TMP102)</span><span class="mono text-slate-300" id="ov-wiim-board">--°C</span></div>
+                                <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-violet-500 h-full rounded-full transition-all duration-500" id="ov-wiim-board-bar" style="width:0%"></div></div>
+                            </div>
+                            <div class="text-[10px] text-slate-400 truncate">🎵 <span id="ov-wiim-track" class="text-slate-300">--</span></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/60 text-[10px]">
+                        <div class="flex justify-between"><span class="text-slate-500">播放狀態</span><span class="text-slate-300 mono" id="ov-wiim-play">--</span></div>
+                        <div class="flex justify-between"><span class="text-slate-500">音量</span><span class="text-slate-300 mono" id="ov-wiim-vol">--</span></div>
                     </div>
                 </div>
             </div>
@@ -1154,6 +1236,11 @@
                         <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">後端多久掃一次威脅事件，<span class="text-slate-300">自動隔離受感染的內網設備</span>（需先在「資安」頁開啟自動防禦聯動，否則此排程不動作）。</p>
                         <div class="flex items-center gap-2"><input type="number" id="srv-autoDefenseSec" min="5" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                     </div>
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                        <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 電壓取樣</label>
+                        <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">後端多久記錄一筆 UPS 電壓/電池/負載到持久化歷史。<span class="text-slate-300">此排程不做閒置降頻</span>——斷電與電壓紀錄無人瀏覽也要持續記錄（本地指令，成本低）。</p>
+                        <div class="flex items-center gap-2"><input type="number" id="srv-upsSampleSec" min="5" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                    </div>
                 </div>
                 <button onclick="saveServerSettings()" class="py-2.5 px-6 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition">儲存伺服器設定</button>
             </div>
@@ -1176,11 +1263,13 @@
                             <p class="text-[10px] text-slate-500 mono mt-0.5" id="wiim-hmeta">-</p>
                         </div>
                         
-                        <!-- 進度條 -->
+                        <!-- 進度條 (可點擊跳轉 setPlayerCmd:seek) -->
                         <div class="flex items-center gap-3 text-[10px] text-slate-500 mono">
                             <span id="wiim-pcur">0:00</span>
-                            <div class="flex-grow h-1.5 bg-slate-950 border border-slate-800 rounded-full overflow-hidden">
-                                <div class="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300" id="wiim-pbar" style="width: 0%"></div>
+                            <div class="flex-grow h-2.5 py-1 cursor-pointer group" id="wiim-pwrap" onclick="wiimSeek(event)" title="點擊跳轉播放位置">
+                                <div class="h-1.5 bg-slate-950 border border-slate-800 rounded-full overflow-hidden group-hover:border-blue-500/50 transition">
+                                    <div class="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300" id="wiim-pbar" style="width: 0%"></div>
+                                </div>
                             </div>
                             <span id="wiim-ptot">0:00</span>
                         </div>
@@ -1195,10 +1284,20 @@
                             </div>
                             
                             <!-- 音量與靜音 -->
-                            <div class="flex items-center gap-3 flex-grow max-w-xs">
+                            <div class="flex items-center gap-2 flex-grow max-w-sm">
                                 <span class="text-sm cursor-pointer select-none shrink-0" id="wiim-vico" onclick="wiimToggleMute()">🔊</span>
+                                <button onclick="wiimCmd('setPlayerCmd:vol--')" class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">−</button>
                                 <input type="range" id="wiim-vol" min="0" max="100" class="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="document.getElementById('wiim-volval').textContent = this.value" onchange="wiimCmd('setPlayerCmd:vol:' + this.value)">
+                                <button onclick="wiimCmd('setPlayerCmd:vol++')" class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">＋</button>
                                 <span id="wiim-volval" class="text-xs text-slate-400 mono w-8 text-right">--</span>
+                            </div>
+
+                            <!-- 循環模式 (僅 WiiM 主控模式生效) -->
+                            <div class="flex items-center gap-1.5" title="循環模式：僅在 WiiM 為主控端 (網路串流/USB) 時生效；AirPlay/Spotify 模式下由來源 App 控制">
+                                <button onclick="wiimCmd('setPlayerCmd:loopmode:0')" class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">順序</button>
+                                <button onclick="wiimCmd('setPlayerCmd:loopmode:-1')" class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔁 循環</button>
+                                <button onclick="wiimCmd('setPlayerCmd:loopmode:1')" class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔂 單曲</button>
+                                <button onclick="wiimCmd('setPlayerCmd:loopmode:2')" class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔀 隨機</button>
                             </div>
                         </div>
                     </div>
@@ -1317,6 +1416,7 @@
                             <button onclick="switchWiimSubTab('eq', this)" class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">均衡器</button>
                             <button onclick="switchWiimSubTab('source', this)" class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">輸入源</button>
                             <button onclick="switchWiimSubTab('bt', this)" class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">藍牙</button>
+                            <button onclick="switchWiimSubTab('stream', this)" class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">串流/群組</button>
                             <button onclick="switchWiimSubTab('sys', this)" class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">運維系統</button>
                             <button onclick="switchWiimSubTab('raw', this)" class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">原始指令</button>
                         </div>
@@ -1352,10 +1452,11 @@
 
                         <!-- 2. 均衡器設定 -->
                         <div id="wiim-subpage-eq" class="wiim-subpage hidden space-y-5">
-                            <div class="flex flex-wrap gap-2">
-                                <button onclick="wiimCmd('EQOn')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition">開啟 EQ</button>
-                                <button onclick="wiimCmd('EQOff')" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg transition">停用 EQ</button>
+                            <div class="flex flex-wrap gap-2 items-center">
+                                <button onclick="wiimCmd('EQOn'); setTimeout(wiimCheckEqStat, 500)" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition">開啟 EQ</button>
+                                <button onclick="wiimCmd('EQOff'); setTimeout(wiimCheckEqStat, 500)" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg transition">停用 EQ</button>
                                 <button onclick="wiimLoadPresets()" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg transition">取得預設清單</button>
+                                <span id="wiim-eq-stat" onclick="wiimCheckEqStat()" title="點擊重新查詢 EQGetStat" class="ml-auto cursor-pointer px-2.5 py-1 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">EQ: --</span>
                             </div>
                             <div>
                                 <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">選擇並載入 EQ 預設</label>
@@ -1426,12 +1527,51 @@
                             <pre id="wiim-bt-res" class="hidden bg-slate-950/60 border border-slate-800/40 rounded-lg p-2 text-[9px] text-slate-400 mono overflow-auto max-h-32"></pre>
                         </div>
 
-                        <!-- 5. 運維系統 -->
+                        <!-- 5. 串流注入與多房間群組 -->
+                        <div id="wiim-subpage-stream" class="wiim-subpage hidden space-y-5">
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">播放網路串流 URL (直接注入播放引擎)</label>
+                                <div class="flex gap-2">
+                                    <input type="text" id="wiim-stream-url" placeholder="http://.../stream.mp3 或 .m3u 清單網址" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                    <button onclick="wiimPlayUrl()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition shrink-0">▶ 播放</button>
+                                </div>
+                                <p class="text-[9px] text-slate-500 mt-1.5">.m3u/.asx 結尾自動改用 playlist 指令；一般網址用 setPlayerCmd:play</p>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">多房間群組 (Multiroom)</label>
+                                <div class="flex gap-2">
+                                    <input type="text" id="wiim-group-ip" placeholder="主設備 IP (本機加入該群組)" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                    <button onclick="wiimCmd('ConnectMasterAp:JoinGroupMaster:eth' + document.getElementById('wiim-group-ip').value)" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition shrink-0">加入</button>
+                                    <button onclick="wiimCmd('ConnectMasterAp:JoinGroupMaster:eth0')" class="px-3 py-2 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-400 rounded-lg transition shrink-0">解散</button>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2">協定整合服務</label>
+                                <div class="flex flex-wrap gap-2">
+                                    <button onclick="wiimGetVal('Squeezelite:getState', 'wiim-stream-res')" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg transition">LMS 狀態</button>
+                                    <button onclick="wiimCmd('Cast:EnableCast')" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg transition">Chromecast 開</button>
+                                    <button onclick="wiimCmd('Cast:DisableCast')" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg transition">Chromecast 關</button>
+                                    <button onclick="wiimGetVal('wlanGetConnectState', 'wiim-stream-res')" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg transition">WLAN 狀態</button>
+                                </div>
+                            </div>
+                            <pre id="wiim-stream-res" class="hidden bg-slate-950/60 border border-slate-800/40 rounded-lg p-2 text-[9px] text-slate-400 mono overflow-auto max-h-32"></pre>
+                        </div>
+
+                        <!-- 6. 運維系統 -->
                         <div id="wiim-subpage-sys" class="wiim-subpage hidden space-y-5">
                             <div class="flex flex-wrap gap-2">
                                 <button onclick="if(confirm('確定重啟 WiiM Amp 設備？')) wiimCmd('reboot')" class="px-3 py-1.5 bg-red-950/40 hover:bg-red-900/30 border border-red-900/40 text-red-400 text-xs font-bold rounded-lg transition">🔄 重新啟動</button>
                                 <button onclick="wiimSyncTime()" class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg transition">同步時間 (RTC)</button>
                             </div>
+                            <div>
+                                <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">定時關機 / 待機排程</label>
+                                <div class="flex gap-2 items-center">
+                                    <input type="number" id="wiim-shutdown-sec" placeholder="秒數 (0=取消)" min="0" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                    <button onclick="wiimCmd('setShutdown:' + (document.getElementById('wiim-shutdown-sec').value || 0))" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition shrink-0">設定</button>
+                                    <button onclick="wiimGetVal('getShutdown', 'wiim-sys-res')" class="px-3 py-2 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 rounded-lg transition shrink-0">查剩餘</button>
+                                </div>
+                            </div>
+                            <pre id="wiim-sys-res" class="hidden bg-slate-950/60 border border-slate-800/40 rounded-lg p-2 text-[9px] text-slate-400 mono overflow-auto max-h-24"></pre>
                             <div>
                                 <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">LED 狀態指示燈 / 按鍵鎖定</label>
                                 <div class="flex gap-2">
@@ -1490,6 +1630,119 @@
                             <span>MAC: <span id="wiim-remote-mac" class="text-slate-300 font-bold">--</span></span>
                         </div>
                     </div>
+
+                    <!-- 設備與網路資訊 (getStatusEx + getStaticIpInfo) -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-sm font-bold text-white tracking-wider">📋 設備與網路資訊</h3>
+                            <button onclick="fetchWiimDeviceInfo()" class="text-[10px] text-blue-400 hover:text-blue-300 font-bold">↻ 重新讀取</button>
+                        </div>
+                        <div class="space-y-2 text-[11px]" id="wiim-devinfo">
+                            <p class="text-slate-500 text-center py-4">按「重新讀取」載入 getStatusEx / getStaticIpInfo</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==================== 頁面：UPS 電源 ==================== -->
+        <section id="page-ups" class="space-y-6 hidden">
+            <!-- 狀態 KPI 列 -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
+                <div class="flex flex-col md:flex-row justify-between md:items-center gap-3">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2.5 bg-amber-500/10 rounded-xl border border-amber-500/20 flex items-center justify-center">
+                            <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-black text-white tracking-wider">CyberPower 不斷電系統</h3>
+                            <p class="text-xs text-slate-400" id="ups-model-line">NUT / pwrstat / pmset 多來源自動偵測</p>
+                        </div>
+                    </div>
+                    <span id="ups-source-badge" class="px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-slate-700/30 text-slate-400 border-slate-700/40 self-start md:self-auto">偵測中...</span>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                    <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
+                        <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">市電輸入電壓</p>
+                        <p class="text-2xl font-black mono mt-1 text-amber-400" id="ups-kpi-inv">--<span class="text-xs text-slate-500"> V</span></p>
+                        <p class="text-[9px] text-slate-500 mt-0.5" id="ups-kpi-inv-sub">Utility Voltage</p>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
+                        <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">UPS 輸出電壓</p>
+                        <p class="text-2xl font-black mono mt-1 text-emerald-400" id="ups-kpi-outv">--<span class="text-xs text-slate-500"> V</span></p>
+                        <p class="text-[9px] text-slate-500 mt-0.5">Output Voltage</p>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
+                        <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">電池容量</p>
+                        <p class="text-2xl font-black mono mt-1 text-blue-400" id="ups-kpi-batt">--<span class="text-xs text-slate-500"> %</span></p>
+                        <div class="w-full bg-slate-950 h-1 rounded-full overflow-hidden border border-slate-800 mt-1.5"><div class="bg-blue-500 h-full rounded-full transition-all" id="ups-kpi-batt-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
+                        <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">負載</p>
+                        <p class="text-2xl font-black mono mt-1 text-slate-200" id="ups-kpi-load">--<span class="text-xs text-slate-500"> %</span></p>
+                        <div class="w-full bg-slate-950 h-1 rounded-full overflow-hidden border border-slate-800 mt-1.5"><div class="bg-slate-400 h-full rounded-full transition-all" id="ups-kpi-load-bar" style="width:0%"></div></div>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
+                        <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">預估可撐</p>
+                        <p class="text-2xl font-black mono mt-1 text-slate-200" id="ups-kpi-rt">--<span class="text-xs text-slate-500"> 分</span></p>
+                        <p class="text-[9px] text-slate-500 mt-0.5">斷電後剩餘時間</p>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
+                        <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">電源狀態</p>
+                        <p class="text-lg font-black mono mt-1.5" id="ups-kpi-status">--</p>
+                        <p class="text-[9px] text-slate-500 mt-0.5" id="ups-kpi-status-sub">OL=市電 OB=電池</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 電壓歷史 (核心) -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
+                    <div>
+                        <h3 class="text-sm font-bold text-white tracking-wider">⚡ 電壓歷史紀錄</h3>
+                        <p class="text-[9px] text-slate-500">市電輸入 / UPS 輸出 — 每 <span id="ups-samplelbl">30</span> 秒取樣，持久化保存(重啟不遺失)，斷電時段輸入電壓歸零</p>
+                    </div>
+                    <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px]">
+                        <button onclick="setUpsRange(1, this)" class="ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">1 時</button>
+                        <button onclick="setUpsRange(6, this)" class="ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">6 時</button>
+                        <button onclick="setUpsRange(24, this)" class="ups-range-btn px-2.5 py-1 rounded-md font-bold bg-blue-600 text-white transition">24 時</button>
+                        <button onclick="setUpsRange(168, this)" class="ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">7 天</button>
+                        <button onclick="downloadUpsCsv()" class="px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition border-l border-slate-800 ml-1">⬇ CSV</button>
+                    </div>
+                </div>
+                <div class="h-64"><canvas id="upsVoltChart"></canvas></div>
+            </div>
+
+            <!-- 電池/負載歷史 + 斷電事件 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                    <h3 class="text-sm font-bold text-white tracking-wider mb-4">🔋 電池容量與負載歷史</h3>
+                    <div class="h-52"><canvas id="upsLoadChart"></canvas></div>
+                </div>
+                <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                    <h3 class="text-sm font-bold text-white tracking-wider mb-4">🚨 斷電事件記錄 <span class="text-[10px] text-slate-500 font-normal" id="ups-event-count"></span></h3>
+                    <div class="overflow-x-auto max-h-[240px] terminal-scroll">
+                        <table class="w-full text-xs text-left">
+                            <thead class="text-[10px] uppercase text-slate-500 border-b border-slate-800 sticky top-0">
+                                <tr><th class="py-2 pr-3">斷電開始</th><th class="py-2 pr-3">恢復時間</th><th class="py-2 pr-3">持續</th><th class="py-2 pr-3 text-right">最低電池</th></tr>
+                            </thead>
+                            <tbody id="ups-event-tbody">
+                                <tr><td colspan="4" class="py-6 text-center text-slate-500">讀取中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 接入指南 (未接上時顯示) -->
+            <div class="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-6" id="ups-setup-guide">
+                <h3 class="text-sm font-bold text-blue-300 tracking-wider mb-3">🔌 如何接上真實 CyberPower UPS？(NUT 架構已就緒)</h3>
+                <div class="text-xs text-slate-400 leading-relaxed space-y-2">
+                    <p>後端會依 <span class="mono text-slate-200">UPS_SOURCE</span> 自動嘗試三種來源（詳見 <span class="mono">cyberpower-ups-api.md</span>）：</p>
+                    <p>1. <span class="text-slate-200 font-bold">NUT（建議）</span>：<span class="mono">brew install nut</span> → <span class="mono">ups.conf</span> 設 <span class="mono">[cyberpower] driver=usbhid-ups port=auto</span> → 關閉 PowerPanel 與 macOS 節能器的 UPS 監控（釋放 USB HID 獨佔）→ <span class="mono">brew services start nut</span>。後端即自動以 <span class="mono">upsc cyberpower@localhost</span> 讀取。</p>
+                    <p>2. <span class="text-slate-200 font-bold">pwrstat</span>：安裝官方 PowerPanel 後，後端自動回退呼叫 <span class="mono">pwrstat -status</span>。</p>
+                    <p>3. <span class="text-slate-200 font-bold">pmset</span>：macOS 原生 HID（僅電池容量/充電狀態，無電壓數據）。</p>
+                    <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/40">環境變數：<span class="mono">UPS_SOURCE</span>(auto)、<span class="mono">NUT_HOST</span>(localhost)、<span class="mono">NUT_UPS_NAME</span>(cyberpower)、<span class="mono">PWRSTAT_PATH</span>。Docker 部署時 NUT 建議跑在宿主機，容器透過 <span class="mono">NUT_HOST=host.docker.internal</span> 連線。</p>
                 </div>
             </div>
         </section>
@@ -1526,6 +1779,13 @@
 </div>
 
 <script>
+    /* ==================== Debug 工具 ==================== */
+    // 前端除錯日誌：localStorage.debug='0' 可關閉。統一格式方便過濾: [HH:MM:SS][模組] 訊息
+    function dbg(module, ...args) {
+        if (localStorage.getItem('debug') === '0') return;
+        console.debug(`[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}][${module}]`, ...args);
+    }
+
     /* ==================== 全域狀態 ==================== */
     let allClients = [];
     let allThreats = [];
@@ -1534,6 +1794,7 @@
     let lastThreatId = null;
     let hwChart = null, threatChart = null, trendChart = null, ovHourlyChart = null, secHourlyChart = null;
     let nasSystemChart = null, nasTrafficChart = null, nasStorageChart = null, nasTempChart = null;
+    let upsVoltChart = null, upsLoadChart = null, upsRangeHours = 24;
     let trendHours = 24;
     let autoDefenseOn = false;
     const THREAT_CATS = ['Web Exploit', 'Brute Force', 'Scanner', 'Malware', 'DoS', 'Manual Block'];
@@ -1550,6 +1811,7 @@
         cloud: ['雲端站點 Cloud', 'UniFi Site Manager 多站點監控'],
         nas: ['NAS 儲存', 'UGREEN UGOS Pro 儲存與硬體監控'],
         wiim: ['WiiM 音響', 'WiiM Amp 音訊串流與硬體監控'],
+        ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (NUT)'],
         tools: ['工具 Tools', '網速測試與 PoE 管理'],
         notify: ['通知推播', '威脅與 NAS 警報自動推播到 Discord / Telegram / Webhook'],
         settings: ['設定 Settings', '調整所有輪詢間隔、主題、定期報表']
@@ -1566,7 +1828,7 @@
         document.getElementById('page-title').innerText = PAGE_META[page][0];
         document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
         toggleSidebar(false);
-        requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart].forEach(c => c && c.resize()); });
+        requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart].forEach(c => c && c.resize()); });
         window.scrollTo({ top: 0 });
     }
 
@@ -1582,6 +1844,7 @@
         initTrendChart();
         initHourlyCharts();
         initNasCharts();
+        initUpsCharts();
         initWorldMap();
         fetchSecuritySettings();
         fetchHardware();
@@ -1603,6 +1866,8 @@
         fetchNotifSettings();
         fetchNotifLog();
         fetchAppSettings();
+        fetchUps();
+        fetchWiimDeviceInfo();
         initWiimPage();
         setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
         renderPollConfig();
@@ -1627,6 +1892,7 @@
         wiimPlay: { fn: () => fetchWiimPlayback(), def: 10, label: 'WiiM 播放狀態與歌名', desc: '多久抓一次 WiiM Amp 的播放狀態、當前歌曲、專輯封面與取樣率。' },
         wiimSystem: { fn: () => fetchWiimSystem(), def: 10, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
         wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
+        ups: { fn: () => fetchUps(), def: 15, label: 'UPS 電源狀態', desc: '多久刷新一次 UPS 即時電壓/電池/負載與電壓歷史圖、斷電事件表。後端取樣寫檔頻率另由「伺服器端」的 UPS 取樣間隔控制。' },
         heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '心跳 (維持後端高頻取樣)', desc: '⭐ 關鍵橋樑：多久送一次心跳告訴後端「有人正在看」。只要心跳持續，後端就用「有人瀏覽」的高頻率取樣歷史；分頁關閉或切背景就停止，後端隨即降為閒置頻率。' }
     };
     let pollTimers = {};
@@ -3072,6 +3338,7 @@
             set('srv-trendActiveSec', s.trendActiveSec); set('srv-trendIdleSec', s.trendIdleSec);
             set('srv-activeWindowSec', s.activeWindowSec); set('srv-watcherSec', s.watcherSec);
             set('srv-autoDefenseSec', s.autoDefenseSec);
+            set('srv-upsSampleSec', s.upsSampleSec ?? 30);
             const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
             set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
         } catch (e) { console.error('app settings fetch failed', e); }
@@ -3082,6 +3349,7 @@
             trendActiveSec: num('srv-trendActiveSec'), trendIdleSec: num('srv-trendIdleSec'),
             activeWindowSec: num('srv-activeWindowSec'), watcherSec: num('srv-watcherSec'),
             autoDefenseSec: num('srv-autoDefenseSec'),
+            upsSampleSec: num('srv-upsSampleSec'),
             reportEnabled: document.getElementById('report-enabled').checked,
             reportFreq: document.getElementById('report-freq').value,
             reportHour: num('report-hour')
@@ -3199,6 +3467,8 @@
         // 初始載入數據 (後續定時輪詢已註冊於全域 POLL_JOBS 中)
         fetchWiimPlayback();
         fetchWiimSystem();
+        wiimLoadPresetNames();                 // 以 getPresetInfo 標記捷徑名稱
+        wiimCheckEqStat();
         setInterval(tickWiimProg, 1000);       // 本地進度條毫秒級預估預測
     }
 
@@ -3207,7 +3477,16 @@
             const res = await fetch('/api/wiim/status?type=play');
             if (!res.ok) throw new Error();
             const data = await res.json();
-            
+            dbg('WiiM', '播放狀態', data.source, data.player && data.player.status);
+
+            // 裝置無回應：誠實顯示連線失敗，不顯示假曲目
+            if (data.source === 'unreachable') {
+                document.getElementById('wiim-htitle').textContent = '無法連線 WiiM 裝置';
+                document.getElementById('wiim-hartist').textContent = `請確認 WIIM_IP (${data.ip}) 與裝置電源`;
+                const t = document.getElementById('ov-wiim-track'); if (t) t.textContent = '無法連線';
+                return;
+            }
+
             // 播放器狀態
             wiimPlayerState = data.player;
             if (wiimPlayerState) {
@@ -3216,6 +3495,10 @@
                 document.getElementById('wiim-vol').value = wiimPlayerState.vol;
                 document.getElementById('wiim-volval').textContent = wiimPlayerState.vol;
                 document.getElementById('wiim-play-btn').textContent = wiimPlayerState.status === 'play' ? '⏸' : '▶';
+                // 總覽 WiiM 卡：播放狀態/音量
+                const setOv = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+                setOv('ov-wiim-play', ({ play: '▶ 播放中', pause: '⏸ 暫停', stop: '⏹ 停止', loading: '載入中' })[wiimPlayerState.status] || wiimPlayerState.status);
+                setOv('ov-wiim-vol', wiimPlayerState.vol + '%' + (wiimIsMuted ? ' 🔇' : ''));
             }
 
             // 曲目資訊 (Metadata)
@@ -3223,6 +3506,7 @@
             if (meta) {
                 document.getElementById('wiim-htitle').textContent = meta.title || '無播放曲目';
                 document.getElementById('wiim-hartist').textContent = meta.artist || '-';
+                const ovT = document.getElementById('ov-wiim-track'); if (ovT) ovT.textContent = (meta.title || '無曲目') + (meta.artist ? ' — ' + meta.artist : '');
                 
                 let rateDepth = '';
                 if (meta.sampleRate) {
@@ -3255,16 +3539,44 @@
             const res = await fetch('/api/wiim/status?type=status');
             if (!res.ok) throw new Error();
             const data = await res.json();
+            dbg('WiiM', '系統狀態', data.source);
 
             // 儲存最新的 IP 位址
             if (data.ip) {
                 wiimLastIp = data.ip;
             }
 
+            // 側邊欄與總覽徽章 (真實 API 可達性)
+            const reachable = data.source !== 'unreachable';
+            const swDot = document.getElementById('side-wiim-dot');
+            const swState = document.getElementById('side-wiim-state');
+            if (swDot) swDot.className = `w-1.5 h-1.5 rounded-full ${reachable ? 'bg-emerald-500' : 'bg-red-500'}`;
+            if (swState) swState.textContent = reachable ? 'online' : 'offline';
+            const ovWb = document.getElementById('ov-wiim-badge');
+            if (ovWb) {
+                ovWb.textContent = reachable ? '● 連線正常' : '● 無法連線';
+                ovWb.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${reachable ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`;
+            }
+
             // 遙控器與配件狀態動態讀取
             const statusObj = data.status;
             if (statusObj) {
                 wiimLastStatusObj = statusObj; // 全域儲存以利後續更新時間使用
+
+                // 總覽 WiiM 卡 + KPI：CPU / 主機板溫度
+                const wTemp = parseFloat(statusObj.temperature_cpu);
+                const wBoard = parseFloat(statusObj.temperature_tmp102);
+                if (!isNaN(wTemp)) {
+                    const e1 = document.getElementById('ov-wiim-temp');
+                    if (e1) { e1.textContent = wTemp.toFixed(1); e1.style.color = tempColor(wTemp); }
+                    const e2 = document.getElementById('ov-wiim-temp-status');
+                    if (e2) { e2.textContent = tempLabel(wTemp); e2.style.color = tempColor(wTemp); }
+                    const e3 = document.getElementById('kpi-wiim-temp'); if (e3) e3.textContent = Math.round(wTemp);
+                }
+                if (!isNaN(wBoard)) {
+                    const b1 = document.getElementById('ov-wiim-board'); if (b1) b1.textContent = wBoard.toFixed(1) + '°C';
+                    const b2 = document.getElementById('ov-wiim-board-bar'); if (b2) b2.style.width = Math.min(100, wBoard / 80 * 100) + '%';
+                }
                 let remoteBat = null;
                 let remoteSig = null;
                 let remoteMac = null;
@@ -3594,6 +3906,171 @@
             showToast('取得 EQ 預設清單失敗', true);
         }
     }
+
+    /* ==================== WiiM 進階功能 ==================== */
+    // 點擊進度條跳轉 (setPlayerCmd:seek:<絕對秒數>)
+    function wiimSeek(ev) {
+        if (!wiimPlayerState || !wiimPlayerState.totlen) return;
+        const rect = document.getElementById('wiim-pwrap').getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+        const sec = Math.round(wiimPlayerState.totlen / 1000 * ratio);
+        dbg('WiiM', `Seek 至 ${sec}s (${Math.round(ratio * 100)}%)`);
+        wiimPlayerState.curpos = sec * 1000;
+        updateWiimProgUI();
+        wiimCmd('setPlayerCmd:seek:' + sec);
+    }
+
+    // 播放 URL：.m3u/.asx 用 playlist 指令，其餘用 play
+    function wiimPlayUrl() {
+        const url = document.getElementById('wiim-stream-url').value.trim();
+        if (!url) return showToast('請先輸入串流網址', true);
+        const isList = /\.(m3u8?|asx)(\?|$)/i.test(url);
+        dbg('WiiM', `注入串流 (${isList ? 'playlist' : 'play'}):`, url);
+        wiimCmd((isList ? 'setPlayerCmd:playlist:' : 'setPlayerCmd:play:') + url + (isList ? ':1' : ''));
+    }
+
+    async function wiimCheckEqStat() {
+        try {
+            const data = await (await fetch('/api/wiim/cmd?command=EQGetStat')).json();
+            const on = /on/i.test(data.result || '');
+            const el = document.getElementById('wiim-eq-stat');
+            el.textContent = 'EQ: ' + (on ? 'ON' : 'OFF');
+            el.className = `ml-auto cursor-pointer px-2.5 py-1 rounded-full text-[9px] font-bold uppercase border ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-400 border-slate-700/40'}`;
+            dbg('WiiM', 'EQGetStat →', data.result);
+        } catch (e) { dbg('WiiM', 'EQGetStat 失敗', e); }
+    }
+
+    // 設備與網路資訊面板 (getStatusEx + getStaticIpInfo)
+    async function fetchWiimDeviceInfo() {
+        const el = document.getElementById('wiim-devinfo');
+        if (!el) return;
+        try {
+            const [st, ip] = await Promise.all([
+                fetch('/api/wiim/cmd?command=getStatusEx').then(r => r.json()),
+                fetch('/api/wiim/cmd?command=getStaticIpInfo').then(r => r.json())
+            ]);
+            let s = {}, n = {};
+            try { s = JSON.parse(st.result); } catch { }
+            try { n = JSON.parse(ip.result); } catch { }
+            dbg('WiiM', '設備資訊', s, n);
+            if (!Object.keys(s).length) { el.innerHTML = '<p class="text-slate-500 text-center py-4">裝置無回應 (檢查 WIIM_IP 與網路)</p>'; return; }
+            const row = (k, v) => v ? `<div class="flex justify-between gap-3 border-b border-slate-800/40 pb-1.5"><span class="text-slate-500 shrink-0">${k}</span><span class="text-slate-300 mono text-right break-all">${v}</span></div>` : '';
+            el.innerHTML =
+                row('設備名稱', s.DeviceName) + row('韌體', s.firmware) + row('硬體', s.hardware || s.project) +
+                row('PCB 版本', s.PCB_version) + row('MAC', s.MAC) + row('UUID', s.uuid || s.UUID) +
+                row('網路狀態', s.netstat != null ? (s.netstat == 2 ? '已連線' : s.netstat) : null) +
+                row('WLAN IP 模式', n.wlanStaticIpEnable == 1 ? '靜態' : 'DHCP') +
+                row('閘道', n.wlanGateWay) + row('DNS', n.wlanDnsServer) +
+                row('設備時間', s.date && s.time ? `${s.date} ${s.time}` : null);
+        } catch (e) { dbg('WiiM', '設備資訊讀取失敗', e); el.innerHTML = '<p class="text-slate-500 text-center py-4">讀取失敗</p>'; }
+    }
+
+    // 以 getPresetInfo 取回捷徑名稱，為 1-12 按鈕加上標籤
+    async function wiimLoadPresetNames() {
+        try {
+            const data = await (await fetch('/api/wiim/cmd?command=getPresetInfo')).json();
+            const list = (JSON.parse(data.result).preset_list) || [];
+            dbg('WiiM', 'getPresetInfo →', list.length, '組');
+            const cont = document.getElementById('wiim-preset-container');
+            if (!cont || !list.length) return;
+            [...cont.children].forEach((btn, i) => {
+                const p = list.find(x => (x.number || x.index) == i + 1) || list[i];
+                if (p && (p.name || p.title)) {
+                    btn.innerHTML = `<span class="block text-[10px] font-black">${i + 1}</span><span class="block text-[8px] text-slate-500 truncate px-1">${p.name || p.title}</span>`;
+                    btn.title = p.name || p.title;
+                }
+            });
+        } catch (e) { dbg('WiiM', 'Preset 名稱載入失敗 (可能無預設)', e.message); }
+    }
+
+    /* ==================== UPS 電源監控 ==================== */
+    function initUpsCharts() {
+        const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } } } };
+        const x = { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } };
+        upsVoltChart = new Chart(document.getElementById('upsVoltChart'), {
+            type: 'line', data: { labels: [], datasets: [
+                { label: '市電輸入 (V)', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.07)', fill: true, tension: 0.25, pointRadius: 0, spanGaps: false },
+                { label: 'UPS 輸出 (V)', data: [], borderColor: '#10b981', fill: false, tension: 0.25, pointRadius: 0, spanGaps: true }
+            ] },
+            options: { ...base, scales: { x, y: { ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' }, suggestedMin: 90, suggestedMax: 125 } } }
+        });
+        upsLoadChart = new Chart(document.getElementById('upsLoadChart'), {
+            type: 'line', data: { labels: [], datasets: [
+                { label: '電池 %', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)', fill: true, tension: 0.25, pointRadius: 0 },
+                { label: '負載 %', data: [], borderColor: '#8b5cf6', fill: false, tension: 0.25, pointRadius: 0 }
+            ] },
+            options: { ...base, scales: { x, y: { beginAtZero: true, max: 100, ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } } } }
+        });
+        dbg('UPS', '圖表初始化完成');
+    }
+
+    async function fetchUps() {
+        // 即時狀態
+        try {
+            const s = await (await fetch('/api/ups/status')).json();
+            dbg('UPS', '即時狀態', s.source, s.status, `in=${s.inputV}V bat=${s.battery}%`);
+            const badge = document.getElementById('ups-source-badge');
+            const setT = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML = v; };
+            if (s.source === 'unreachable') {
+                badge.textContent = '未連接 (檢視下方接入指南)';
+                badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-red-500/10 text-red-400 border-red-500/20 self-start md:self-auto';
+                document.getElementById('ups-setup-guide').classList.remove('hidden');
+            } else {
+                badge.textContent = `來源: ${s.source.toUpperCase()}`;
+                badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 self-start md:self-auto';
+                if (s.source !== 'nut' || true) document.getElementById('ups-setup-guide').classList.toggle('hidden', s.source === 'nut');
+                setT('ups-model-line', `${s.model || 'UPS'} · 資料來源 ${s.source} · 後端每 ${s.sampleSec}s 取樣`);
+                setT('ups-kpi-inv', (s.inputV ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
+                setT('ups-kpi-outv', (s.outputV ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
+                setT('ups-kpi-batt', (s.battery ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
+                document.getElementById('ups-kpi-batt-bar').style.width = (s.battery || 0) + '%';
+                setT('ups-kpi-load', (s.loadPct ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
+                document.getElementById('ups-kpi-load-bar').style.width = (s.loadPct || 0) + '%';
+                setT('ups-kpi-rt', (s.runtimeSec != null ? Math.round(s.runtimeSec / 60) : '--') + '<span class="text-xs text-slate-500"> 分</span>');
+                const st = document.getElementById('ups-kpi-status');
+                st.textContent = s.onBattery ? '🔋 電池供電' : '🟢 市電正常';
+                st.className = `text-lg font-black mono mt-1.5 ${s.onBattery ? 'text-red-400' : 'text-emerald-400'}`;
+                const sl = document.getElementById('ups-samplelbl'); if (sl) sl.textContent = s.sampleSec;
+            }
+        } catch (e) { dbg('UPS', '狀態讀取失敗', e); }
+        // 歷史 + 事件
+        try {
+            const h = (await (await fetch(`/api/ups/history?hours=${upsRangeHours}`)).json()).history || [];
+            dbg('UPS', `歷史 ${upsRangeHours}h →`, h.length, '點');
+            const fmt = upsRangeHours > 24
+                ? p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit' })
+                : p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+            upsVoltChart.data.labels = h.map(fmt);
+            upsVoltChart.data.datasets[0].data = h.map(p => p.inV);
+            upsVoltChart.data.datasets[1].data = h.map(p => p.outV);
+            upsVoltChart.update('none');
+            upsLoadChart.data.labels = h.map(fmt);
+            upsLoadChart.data.datasets[0].data = h.map(p => p.batt);
+            upsLoadChart.data.datasets[1].data = h.map(p => p.load);
+            upsLoadChart.update('none');
+        } catch (e) { dbg('UPS', '歷史讀取失敗', e); }
+        try {
+            const evs = (await (await fetch('/api/ups/events')).json()).events || [];
+            document.getElementById('ups-event-count').textContent = evs.length ? `(共 ${evs.length} 次)` : '';
+            const tb = document.getElementById('ups-event-tbody');
+            tb.innerHTML = evs.length ? evs.map(e => `
+                <tr class="border-b border-slate-800/40 ${!e.end ? 'bg-red-500/5' : ''}">
+                    <td class="py-2 pr-3 mono text-slate-300">${new Date(e.start).toLocaleString('zh-TW')}</td>
+                    <td class="py-2 pr-3 mono text-slate-400">${e.end ? new Date(e.end).toLocaleString('zh-TW') : '<span class="text-red-400 font-bold animate-pulse">⚡ 進行中</span>'}</td>
+                    <td class="py-2 pr-3 mono text-slate-300">${e.durationSec != null ? (e.durationSec >= 60 ? Math.round(e.durationSec / 60) + ' 分' : e.durationSec + ' 秒') : '--'}</td>
+                    <td class="py-2 pr-3 mono text-right ${e.minBattery <= 50 ? 'text-red-400' : 'text-slate-300'}">${e.minBattery ?? '--'}%</td>
+                </tr>`).join('') : '<tr><td colspan="4" class="py-6 text-center text-slate-500">✅ 尚無斷電事件記錄</td></tr>';
+        } catch (e) { dbg('UPS', '事件讀取失敗', e); }
+    }
+
+    function setUpsRange(hours, btn) {
+        upsRangeHours = hours;
+        document.querySelectorAll('.ups-range-btn').forEach(b => b.className = 'ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition');
+        btn.className = 'ups-range-btn px-2.5 py-1 rounded-md font-bold bg-blue-600 text-white transition';
+        dbg('UPS', '切換範圍', hours + 'h');
+        fetchUps();
+    }
+    function downloadUpsCsv() { window.location.href = '/api/ups/csv'; }
 
     function setWiimChartWin(minutes, btn) {
         const btns = document.querySelectorAll('.wiim-win-btn');

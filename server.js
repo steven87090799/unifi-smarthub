@@ -10,6 +10,7 @@ const axios = require('axios');
 const { Client } = require('ssh2');
 const path = require('path');
 const https = require('https');
+const { exec } = require('child_process');
 require('dotenv').config();
 
 // 統一結構化日誌輸出
@@ -26,6 +27,15 @@ function sysLog(module, message, isError = false) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Debug 中介層：記錄所有 API 請求 (設 DEBUG_HTTP=0 可關閉)
+app.use((req, res, next) => {
+    if (process.env.DEBUG_HTTP !== '0' && req.path.startsWith('/api/')) {
+        const q = Object.keys(req.query).length ? ' ' + JSON.stringify(req.query) : '';
+        sysLog('HTTP', `${req.method} ${req.path}${q}`);
+    }
+    next();
+});
 
 // 託管前端靜態網頁
 app.use(express.static(path.join(__dirname, 'public')));
@@ -324,7 +334,8 @@ const APP_DEFAULTS = {
     autoDefenseSec: 30,     // 自動防禦掃描間隔
     reportEnabled: false,   // 定期報表
     reportFreq: 'daily',    // daily | weekly
-    reportHour: 8           // 每日幾點發送 (0-23)
+    reportHour: 8,          // 每日幾點發送 (0-23)
+    upsSampleSec: 30        // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
 };
 let appSettings = (() => { try { return { ...APP_DEFAULTS, ...JSON.parse(fs.readFileSync(APP_SETTINGS_FILE, 'utf8')) }; } catch { return { ...APP_DEFAULTS }; } })();
 function saveAppSettings() { try { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); } catch { } }
@@ -1216,7 +1227,7 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour'].forEach(k => {
+    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec'].forEach(k => {
         if (typeof b[k] === 'number' && b[k] >= 0) appSettings[k] = b[k];
     });
     if (typeof b.reportEnabled === 'boolean') appSettings.reportEnabled = b.reportEnabled;
@@ -1419,41 +1430,13 @@ app.get('/api/wiim/status', async (req, res) => {
             out[key] = { raw };
         }
     }
-    // 裝置無回應時回退展示資料 (依專案慣例以 source 標記，前端與除錯可辨識)
-    let usedFallback = false;
-    if (out.hasOwnProperty('player') && (!out.player || out.player.raw === null)) {
-        usedFallback = true;
-        out.player = {
-            type: 0, ch: 0, mode: 10, status: "play", vol: 35, mute: 0, eq: 0,
-            curpos: 45000 + Math.floor(Math.random() * 1000), totlen: 240000
-        };
-    }
-    if (out.hasOwnProperty('meta') && (!out.meta || out.meta.raw === null)) {
-        usedFallback = true;
-        out.meta = {
-            metaData: {
-                title: "Mock WiiM Streaming Track",
-                artist: "WiiM Amp Renderer",
-                album: "SmartHub Album",
-                albumArtURI: "",
-                sampleRate: 44100, bitDepth: 16
-            }
-        };
-    }
-    if (out.hasOwnProperty('status') && (!out.status || out.status.raw === null)) {
-        usedFallback = true;
-        out.status = {
-            DeviceName: "WiiM Amp Testbed",
-            firmware: "4.8.618254",
-            hardware: "WiiM Amp",
-            temperature_cpu: 48.5,
-            temperature_tmp102: 40.2
-        };
-    }
+    // 正式伺服器只回真實數據：裝置無回應時各欄位為 null 並標記 unreachable，不偽造展示資料
+    const unreachable = Object.values(out).every(v => v === null || (v && v.raw === null));
+    if (unreachable) sysLog('WiiM Proxy', `裝置 ${wiimIP} 無回應 (type=${type})，回傳 unreachable`, true);
     res.json({
         ...out,
         ip: wiimIP,
-        source: usedFallback ? 'fallback' : 'wiim_api'
+        source: unreachable ? 'unreachable' : 'wiim_api'
     });
 });
 
@@ -1478,6 +1461,150 @@ app.get('/api/wiim/csv', (req, res) => {
         const iso = new Date(h.ts * 1000).toISOString();
         csv += `${h.ts},${iso},${h.cpu !== null && h.cpu !== undefined ? h.cpu : ''},${h.board !== null && h.board !== undefined ? h.board : ''}\n`;
     }
+    res.send(csv);
+});
+
+/* ===================== CyberPower UPS 電源監控 (NUT 優先，多來源回退) ===================== */
+// 架構 (詳見 cyberpower-ups-api.md)：UPS_SOURCE=auto|nut|pwrstat|pmset
+//   1) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 建議方案 (brew install nut)
+//   2) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
+//   3) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
+// 電壓歷史與斷電事件「持久化」於 DATA_DIR (斷電紀錄不可因重啟遺失)。
+const UPS_SOURCE = process.env.UPS_SOURCE || 'auto';
+const NUT_HOST = process.env.NUT_HOST || 'localhost';
+const NUT_UPS_NAME = process.env.NUT_UPS_NAME || 'cyberpower';
+const PWRSTAT_PATH = process.env.PWRSTAT_PATH || 'pwrstat';
+const UPS_HISTORY_FILE = path.join(DATA_DIR, 'ups-history.json');
+const UPS_EVENTS_FILE = path.join(DATA_DIR, 'ups-events.json');
+const UPS_HISTORY_LIMIT = 20000; // 30 秒間隔 ≈ 7 天
+
+let upsHistory = (() => { try { return JSON.parse(fs.readFileSync(UPS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+let upsEvents = (() => { try { return JSON.parse(fs.readFileSync(UPS_EVENTS_FILE, 'utf8')); } catch { return []; } })();
+let upsLastLive = null;     // 最近一次成功讀取 (含 source)
+let upsWasOnBattery = false;
+
+function execCmd(cmd, timeoutMs = 5000) {
+    return new Promise(resolve => exec(cmd, { timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout)));
+}
+
+// --- 來源 1: NUT (upsc key: value 格式) ---
+async function readNut() {
+    const out = await execCmd(`upsc ${NUT_UPS_NAME}@${NUT_HOST} 2>/dev/null`);
+    if (!out || !out.includes(':')) return null;
+    const kv = {};
+    out.split('\n').forEach(l => { const i = l.indexOf(':'); if (i > 0) kv[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
+    if (!kv['ups.status']) return null;
+    return {
+        source: 'nut', model: kv['device.model'] || kv['ups.model'] || 'UPS',
+        status: kv['ups.status'],
+        onBattery: /\bOB\b/.test(kv['ups.status']),
+        inputV: parseFloat(kv['input.voltage']) || null,
+        outputV: parseFloat(kv['output.voltage']) || null,
+        battery: parseFloat(kv['battery.charge']) || null,
+        runtimeSec: parseFloat(kv['battery.runtime']) || null,
+        loadPct: parseFloat(kv['ups.load']) || null,
+        raw: kv
+    };
+}
+
+// --- 來源 2: pwrstat (CyberPower 官方 CLI，"Key.... Value" 格式) ---
+async function readPwrstat() {
+    const out = await execCmd(`${PWRSTAT_PATH} -status 2>/dev/null`);
+    if (!out || !out.includes('Utility Voltage')) return null;
+    const grab = re => { const m = out.match(re); return m ? m[1].trim() : null; };
+    const state = grab(/State\.+\s*(.+)/) || '';
+    return {
+        source: 'pwrstat', model: grab(/Model Name\.+\s*(.+)/) || 'CyberPower UPS',
+        status: state,
+        onBattery: /Utility Failure|Battery Power/i.test(state),
+        inputV: parseFloat(grab(/Utility Voltage\.+\s*([\d.]+)/)) || null,
+        outputV: parseFloat(grab(/Output Voltage\.+\s*([\d.]+)/)) || null,
+        battery: parseFloat(grab(/Battery Capacity\.+\s*([\d.]+)/)) || null,
+        runtimeSec: (parseFloat(grab(/Remaining Runtime\.+\s*([\d.]+)/)) || 0) * 60 || null,
+        loadPct: parseFloat(grab(/Load\.+\s*([\d.]+)/)) || null
+    };
+}
+
+// --- 來源 3: pmset (macOS 原生，資訊有限) ---
+async function readPmset() {
+    const out = await execCmd('pmset -g ps 2>/dev/null');
+    if (!out || !/UPS/i.test(out)) return null;
+    const cap = out.match(/(\d+)%/);
+    return {
+        source: 'pmset', model: (out.match(/-InternalBattery-0|'(.+?)'/) || [])[1] || 'USB HID UPS',
+        status: /AC Power/i.test(out) ? 'OL (AC)' : 'OB (Battery)',
+        onBattery: /Battery Power/i.test(out),
+        inputV: null, outputV: null,
+        battery: cap ? parseFloat(cap[1]) : null,
+        runtimeSec: (() => { const m = out.match(/(\d+):(\d+) remaining/); return m ? (+m[1] * 60 + +m[2]) * 60 : null; })(),
+        loadPct: null
+    };
+}
+
+async function readUpsLive() {
+    const order = UPS_SOURCE === 'auto' ? ['nut', 'pwrstat', 'pmset'] : [UPS_SOURCE];
+    for (const src of order) {
+        const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset }[src];
+        if (!fn) continue;
+        const r = await fn();
+        if (r) { sysLog('UPS', `讀取成功 via ${src}: ${r.status} 輸入${r.inputV}V 電池${r.battery}%`); return r; }
+        sysLog('UPS', `來源 ${src} 不可用，嘗試下一個`, false);
+    }
+    return null;
+}
+
+// 取樣 + 斷電事件偵測 (皆持久化)
+async function sampleUps() {
+    const live = await readUpsLive();
+    if (!live) { sysLog('UPS', '所有來源皆不可用，跳過本次取樣', true); upsLastLive = null; return; }
+    upsLastLive = { ...live, ts: Date.now() };
+    upsHistory.push({ t: new Date().toISOString(), inV: live.inputV, outV: live.outputV, batt: live.battery, load: live.loadPct, rt: live.runtimeSec, ob: live.onBattery ? 1 : 0 });
+    if (upsHistory.length > UPS_HISTORY_LIMIT) upsHistory = upsHistory.slice(-UPS_HISTORY_LIMIT);
+    try { fs.writeFileSync(UPS_HISTORY_FILE, JSON.stringify(upsHistory)); } catch (e) { sysLog('UPS', `歷史寫入失敗: ${e.message}`, true); }
+
+    // 斷電事件：市電斷 → 開新事件；恢復 → 補上結束時間與時長
+    if (live.onBattery && !upsWasOnBattery) {
+        upsEvents.unshift({ start: new Date().toISOString(), end: null, durationSec: null, minBattery: live.battery, startVoltage: live.inputV });
+        sysLog('UPS', `⚡ 偵測到斷電！事件已記錄 (電池 ${live.battery}%)`, true);
+    } else if (!live.onBattery && upsWasOnBattery && upsEvents[0] && !upsEvents[0].end) {
+        upsEvents[0].end = new Date().toISOString();
+        upsEvents[0].durationSec = Math.round((Date.now() - new Date(upsEvents[0].start).getTime()) / 1000);
+        sysLog('UPS', `✅ 市電恢復，斷電持續 ${upsEvents[0].durationSec} 秒`);
+    } else if (live.onBattery && upsEvents[0] && !upsEvents[0].end) {
+        if (live.battery != null) upsEvents[0].minBattery = Math.min(upsEvents[0].minBattery ?? 100, live.battery);
+    }
+    upsEvents = upsEvents.slice(0, 200);
+    try { fs.writeFileSync(UPS_EVENTS_FILE, JSON.stringify(upsEvents)); } catch { }
+    upsWasOnBattery = live.onBattery;
+}
+// UPS 取樣「不做閒置降頻」：斷電/電壓紀錄是核心需求，無人看網頁也要持續記錄 (本地指令，成本低)
+let lastUpsSampleTs = 0;
+setInterval(async () => {
+    const gap = (appSettings.upsSampleSec || 30) * 1000;
+    if (Date.now() - lastUpsSampleTs >= gap) { lastUpsSampleTs = Date.now(); await sampleUps(); }
+}, 1000);
+
+app.get('/api/ups/status', async (req, res) => {
+    // 讀取即時值；失敗時回報最後一次成功樣本供前端顯示「最後已知狀態」
+    const live = await readUpsLive();
+    if (live) upsLastLive = { ...live, ts: Date.now() };
+    res.json(live ? { ...live, sampleSec: appSettings.upsSampleSec || 30 }
+        : { source: 'unreachable', lastKnown: upsLastLive, sampleSec: appSettings.upsSampleSec || 30 });
+});
+
+app.get('/api/ups/history', (req, res) => {
+    const hours = parseInt(req.query.hours || '24', 10);
+    const cutoff = Date.now() - hours * 3600000;
+    res.json({ history: upsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
+});
+
+app.get('/api/ups/events', (req, res) => res.json({ events: upsEvents }));
+
+app.get('/api/ups/csv', (req, res) => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');
+    let csv = 'time,input_v,output_v,battery_pct,load_pct,runtime_sec,on_battery\n';
+    for (const h of upsHistory) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
     res.send(csv);
 });
 

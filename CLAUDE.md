@@ -26,7 +26,9 @@
 
 ## 前端版面 (public/index.html)
 
-- **側邊欄 + 分頁**:總覽 / 客戶端 / 資安 / WiFi / 雲端站點 / NAS / 工具;行動版為漢堡選單。
+- **側邊欄 + 分頁**(分群導航):總覽 →「網路監控」客戶端/資安/WiFi/雲端 →「設備」NAS/WiiM/UPS →「系統」工具/通知推播/設定;行動版為漢堡選單。左下角三行設備狀態(UCG/NAS/WiiM)。
+- **液態玻璃 UI**:`body::before/::after` 兩顆極光光暈緩慢漂移;`main .rounded-2xl` 統一升級玻璃材質(漸層半透明+blur(20px) saturate+上緣高光+雙陰影),內層 `.rounded-xl` 薄玻璃;aside/header 玻璃化;深淺主題皆有對應覆寫。**新卡片只要用 rounded-2xl/rounded-xl 即自動獲得玻璃效果**。
+- **Debug**:後端 `sysLog(module,msg,isError)` 統一格式 + HTTP 中介層記錄所有 /api 請求(`DEBUG_HTTP=0` 關閉);前端 `dbg(module,...)`(`localStorage.debug='0'` 關閉)。
 - **總覽**:4 張 KPI 卡(WAN、線上設備、24H 威脅、雙設備溫度 UCG/NAS)+ **雙設備即時體檢面板**(UCG 與 NAS 並排,各顯示 CPU 溫度大字 + CPU/記憶體條 + 關鍵指標與連線徽章,點擊可下鑽)+ 資安戰情速覽 + 歷史趨勢圖 + UCG 硬體詳情。體檢面板的 UCG 欄由 `fetchHardware`/`fetchClients` 填(`ov-ucg-*`),NAS 欄由 `fetchNas` 填(`ov-nas-*`);溫度配色用 `tempColor()`/`tempLabel()`(涼爽<55/正常<65/偏高<75/過熱≥75)。目的:兩台設備重點不用切頁即可一次看清。
 - **客戶端**:管理表格 + Top 5 流量排行榜 + 封鎖歷史時間軸。
 - **總覽 → 資安戰情速覽**:安全評分環(0-100 + 等級)、24H 每小時威脅柱狀圖、最新攔截事件流,點「進入完整戰情室」跳資安頁。
@@ -131,7 +133,19 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 | `GET /api/wiim/history` | 溫度歷史(記憶體,上限 5000 點;**只存真實樣本**,連不上裝置時跳過取樣不偽造) |
 | `GET /api/wiim/clear`, `GET /api/wiim/csv` | 清空 / 匯出溫度記錄 |
 
-溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 10 秒、閒置時 `trendIdleSec`。前端 WiiM 頁:Hero 播放卡(封面/進度/音量,進度條由本地 `tickWiimProg` 每秒推進預估)+ 左欄溫度監控(圖表窗格切換/CSV/清空)與歷史日誌 + 右欄六分頁設定卡(音訊 DSP/EQ/輸入源/藍牙/運維/原始指令)與遙控器狀態卡。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 10s / `wiimPlayback` 5s,可於設定頁調整)。遙控器欄位以 key 名稱模糊匹配(`remote`+`bat`/`rssi`/`mac`/`status`)。
+溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 10 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 10s / `wiimPlayback` 5s)。遙控器欄位以 key 名稱模糊匹配。
+
+### G. CyberPower UPS(NUT 優先多來源,對照 `cyberpower-ups-api.md`)
+`UPS_SOURCE=auto` 依序嘗試:**NUT**(`upsc <NUT_UPS_NAME>@<NUT_HOST>`)→ **pwrstat**(`pwrstat -status`)→ **pmset**(`pmset -g ps`,僅容量)。以 `child_process.exec` 呼叫本地指令,無需雲端。
+
+| 本專案端點 | 說明 |
+| :--- | :--- |
+| `GET /api/ups/status` | 即時讀取(來源/型號/輸入輸出電壓/電池/負載/剩餘時間/onBattery);全部失敗回 `source:'unreachable'`+lastKnown |
+| `GET /api/ups/history?hours=` | 電壓/電池/負載歷史(**持久化** `ups-history.json`,上限 20000 點 ≈ 7 天 @30s) |
+| `GET /api/ups/events` | 斷電事件(start/end/durationSec/minBattery,**持久化** `ups-events.json`,市電斷→開事件、恢復→補時長) |
+| `GET /api/ups/csv` | 匯出電壓歷史 |
+
+UPS 取樣(`appSettings.upsSampleSec` 預設 30s)**不做閒置降頻**——斷電/電壓紀錄無人瀏覽也要持續記錄。前端 UPS 頁:6 格 KPI(輸入/輸出電壓/電池/負載/可撐分鐘/狀態)+ 電壓歷史圖(1h/6h/24h/7d + CSV,斷電段輸入歸零)+ 電池負載圖 + 斷電事件表(進行中標紅)+ NUT 接入指南(unreachable 時顯示)。
 
 ## API 使用核對結果(對照 unifi-network-api.md)
 
