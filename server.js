@@ -1365,34 +1365,30 @@ async function wiimGet(command) {
     return result;
 }
 
+// 只記錄真實裝置回傳的溫度；連不上時跳過本次取樣，不偽造數據混入歷史
 async function pollWiimTemp() {
-    sysLog('WiiM Poll', '執行背景 WiiM 溫度感測器輪詢...');
     const raw = await wiimGet('getStatusEx');
+    if (!raw) { sysLog('WiiM Poll', 'WiiM 裝置無回應，跳過本次溫度取樣', true); return; }
     let cpu = null, board = null;
-    let isReal = false;
-    if (raw) {
-        try {
-            const d = JSON.parse(raw);
-            cpu = parseFloat(d.temperature_cpu);
-            board = parseFloat(d.temperature_tmp102);
-            if (!isNaN(cpu) && !isNaN(board)) isReal = true;
-        } catch {}
-    }
-    // Fallback/generate mock temp to keep dashboard alive if unconfigured
-    if (cpu === null || isNaN(cpu)) {
-        cpu = parseFloat((45 + Math.random() * 8).toFixed(1));
-    }
-    if (board === null || isNaN(board)) {
-        board = parseFloat((38 + Math.random() * 5).toFixed(1));
-    }
+    try {
+        const d = JSON.parse(raw);
+        cpu = parseFloat(d.temperature_cpu);
+        board = parseFloat(d.temperature_tmp102);
+    } catch { }
+    if (isNaN(cpu) && isNaN(board)) { sysLog('WiiM Poll', 'getStatusEx 回應中無溫度欄位，跳過本次取樣', true); return; }
     const ts = Math.floor(Date.now() / 1000);
-    wiimHistory.push({ ts, cpu, board });
+    wiimHistory.push({ ts, cpu: isNaN(cpu) ? null : cpu, board: isNaN(board) ? null : board });
     if (wiimHistory.length > 5000) wiimHistory.shift();
-    sysLog('WiiM Poll', `溫度採樣完成 - 來源: ${isReal ? '真實裝置' : '模擬數據'} (CPU: ${cpu}°C, Board: ${board}°C)`);
+    sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
-// Initial poll and set interval
-pollWiimTemp();
-setInterval(pollWiimTemp, 10000);
+// 自適應排程：有人瀏覽時每 10 秒取樣，閒置時降為 trendIdleSec (與趨勢取樣器同一套活躍判定)
+let lastWiimPollTs = 0;
+setInterval(async () => {
+    const now = Date.now();
+    const active = (now - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const gap = active ? 10000 : appSettings.trendIdleSec * 1000;
+    if (now - lastWiimPollTs >= gap) { lastWiimPollTs = now; await pollWiimTemp(); }
+}, 1000);
 
 app.get('/api/wiim/history', (req, res) => {
     res.json({
@@ -1423,14 +1419,17 @@ app.get('/api/wiim/status', async (req, res) => {
             out[key] = { raw };
         }
     }
-    // Fallback values if real WiiM device unconfigured
+    // 裝置無回應時回退展示資料 (依專案慣例以 source 標記，前端與除錯可辨識)
+    let usedFallback = false;
     if (out.hasOwnProperty('player') && (!out.player || out.player.raw === null)) {
+        usedFallback = true;
         out.player = {
             type: 0, ch: 0, mode: 10, status: "play", vol: 35, mute: 0, eq: 0,
             curpos: 45000 + Math.floor(Math.random() * 1000), totlen: 240000
         };
     }
     if (out.hasOwnProperty('meta') && (!out.meta || out.meta.raw === null)) {
+        usedFallback = true;
         out.meta = {
             metaData: {
                 title: "Mock WiiM Streaming Track",
@@ -1442,6 +1441,7 @@ app.get('/api/wiim/status', async (req, res) => {
         };
     }
     if (out.hasOwnProperty('status') && (!out.status || out.status.raw === null)) {
+        usedFallback = true;
         out.status = {
             DeviceName: "WiiM Amp Testbed",
             firmware: "4.8.618254",
@@ -1452,7 +1452,8 @@ app.get('/api/wiim/status', async (req, res) => {
     }
     res.json({
         ...out,
-        ip: wiimIP
+        ip: wiimIP,
+        source: usedFallback ? 'fallback' : 'wiim_api'
     });
 });
 

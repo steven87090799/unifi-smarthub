@@ -16,6 +16,10 @@
         if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // 補齊專案使用但 Tailwind 未內建的中間色階 (slate-750/850)，否則這些 class 會靜默失效
+        tailwind.config = { theme: { extend: { colors: { slate: { 750: '#293548', 850: '#172033' } } } } };
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
@@ -1302,30 +1306,6 @@
                         </div>
                     </div>
 
-                    <!-- 遙控器與週邊狀態 -->
-                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                        <h3 class="text-sm font-bold text-white tracking-wider mb-4">🎮 語音遙控器與週邊配件</h3>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
-                                <div>
-                                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">遙控器電量</p>
-                                    <p class="mono mt-1"><span class="text-2xl font-black text-emerald-400" id="wiim-remote-bat">--</span><span class="text-xs text-slate-500"> %</span></p>
-                                </div>
-                                <div class="text-2xl" id="wiim-remote-bat-icon">🔋</div>
-                            </div>
-                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
-                                <div>
-                                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">藍牙訊號強度</p>
-                                    <p class="mono mt-1"><span class="text-2xl font-black text-blue-400" id="wiim-remote-sig">--</span><span class="text-xs text-slate-500"> dBm</span></p>
-                                </div>
-                                <div class="text-2xl">📶</div>
-                            </div>
-                        </div>
-                        <div class="mt-4 pt-3 border-t border-slate-800/60 flex justify-between text-[10px] text-slate-500 mono">
-                            <span>配對狀態: <span id="wiim-remote-status" class="text-slate-300 font-bold">偵測中...</span></span>
-                            <span>MAC: <span id="wiim-remote-mac" class="text-slate-300 font-bold">--</span></span>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- 右側：設定與控制分類卡片 (5 cols) -->
@@ -1485,6 +1465,31 @@
                             <pre id="wiim-raw-res" class="hidden bg-slate-950/70 border border-slate-800/60 rounded-lg p-3 text-[10px] text-emerald-400 mono overflow-auto max-h-[200px]"></pre>
                         </div>
                     </div>
+
+                    <!-- 遙控器與週邊狀態 (獨立區塊，平衡左右欄高度) -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <h3 class="text-sm font-bold text-white tracking-wider mb-4">🎮 語音遙控器與週邊配件</h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
+                                <div>
+                                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">遙控器電量</p>
+                                    <p class="mono mt-1"><span class="text-2xl font-black text-emerald-400" id="wiim-remote-bat">--</span><span class="text-xs text-slate-500"> %</span></p>
+                                </div>
+                                <div class="text-2xl" id="wiim-remote-bat-icon">🔋</div>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
+                                <div>
+                                    <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">藍牙訊號強度</p>
+                                    <p class="mono mt-1"><span class="text-2xl font-black text-blue-400" id="wiim-remote-sig">--</span><span class="text-xs text-slate-500"> dBm</span></p>
+                                </div>
+                                <div class="text-2xl">📶</div>
+                            </div>
+                        </div>
+                        <div class="mt-4 pt-3 border-t border-slate-800/60 flex justify-between text-[10px] text-slate-500 mono">
+                            <span>配對狀態: <span id="wiim-remote-status" class="text-slate-300 font-bold">偵測中...</span></span>
+                            <span>MAC: <span id="wiim-remote-mac" class="text-slate-300 font-bold">--</span></span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1621,6 +1626,7 @@
         security: { fn: () => fetchSecuritySettings(), def: 30, label: '資安設定同步', desc: '多久同步一次自動防禦開關的最新狀態（避免多裝置操作時顯示不一致）。' },
         wiimPlay: { fn: () => fetchWiimPlayback(), def: 10, label: 'WiiM 播放狀態與歌名', desc: '多久抓一次 WiiM Amp 的播放狀態、當前歌曲、專輯封面與取樣率。' },
         wiimSystem: { fn: () => fetchWiimSystem(), def: 10, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
+        wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
         heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '心跳 (維持後端高頻取樣)', desc: '⭐ 關鍵橋樑：多久送一次心跳告訴後端「有人正在看」。只要心跳持續，後端就用「有人瀏覽」的高頻率取樣歷史；分頁關閉或切背景就停止，後端隨即降為閒置頻率。' }
     };
     let pollTimers = {};
@@ -3357,7 +3363,7 @@
                 const hw = statusObj.hardware || 'AmlogicA113';
                 
                 const baseInfo = `${devName} · 韌體 ${fw} · ${hw} · IP ${wiimLastIp}`;
-                document.getElementById('wiim-agolbl').textContent = `${diffSec} 秒前與${baseInfo}`;
+                document.getElementById('wiim-agolbl').textContent = `${diffSec} 秒前 · ${baseInfo}`;
             }
 
             renderWiimChart();
@@ -3411,12 +3417,14 @@
 
         wiimChart.update('none');
 
-        // 更新圖表上方區間與點數說明
+        // 更新圖表上方區間與點數說明 (卡片標題右側的範圍標籤一併同步)
+        const rangeText = wiimChartWindowMinutes > 0
+            ? (wiimChartWindowMinutes >= 60 ? `近 ${wiimChartWindowMinutes / 60} 小時` : `近 ${wiimChartWindowMinutes} 分`)
+            : '全部記錄';
         const rangeLbl = document.getElementById('wiim-chart-status');
-        if (rangeLbl) {
-            const rangeText = wiimChartWindowMinutes > 0 ? `近 ${wiimChartWindowMinutes} 分` : '全部';
-            rangeLbl.textContent = `${rangeText} · ${dataPoints.length} 點`;
-        }
+        if (rangeLbl) rangeLbl.textContent = `${rangeText} · ${dataPoints.length} 點`;
+        const hdrLbl = document.getElementById('wiim-rangelbl');
+        if (hdrLbl) hdrLbl.textContent = rangeText;
 
         // 更新大數字與已記錄統計
         if (wiimRawHistory.length > 0) {

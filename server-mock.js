@@ -680,5 +680,5 @@ app.get('/api/wiim/csv', (req, res) => {
 
 app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3005;
 app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));

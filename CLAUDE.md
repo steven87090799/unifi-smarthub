@@ -12,6 +12,8 @@
 | `../unifi-network-api.md` | UniFi API 規格參考文件 (v10.3.58 / Site Manager v1.0.0) |
 | `../ugreen-nas-api.md` | UGREEN UGOS Pro NAS API 規格參考文件(逆向工程) |
 | `README.md` | 使用者導向的部署文件(所需資料、Docker 步驟、記憶體、歷史資料持久化、疑難排解) |
+| `spec.md` | AI/開發者導向的高密度技術規格(完整目錄樹、模組邊界、資料流、全量 API 端點) |
+| `wiim_spec.md` | WiiM Amp 整合專用規格(User-Agent 繞過、指令映射、欄位定義) |
 | `Dockerfile` / `docker-compose.yml` | 容器部署:node:20-alpine + tini + 非 root + healthcheck;compose 含具名 volume、mem_limit 256m |
 
 啟動:`npm start`(需 `.env`)或 `node server-mock.js`(免環境設定)或 `docker compose up -d --build`。
@@ -119,6 +121,18 @@
 
 NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker 數)、系統負載歷史圖、流量歷史圖、儲存趨勢圖、散熱歷史圖、Docker 容器管理表(啟停/重啟/日誌彈窗)、警報事件清單。Docker 日誌彈窗置於 `<body>` 頂層(不可放進 `backdrop-blur` 祖先內,否則 `position:fixed` 會以該祖先為定位基準而跑位)。
 
+### F. WiiM Amp 串流音響(LinkPlay HTTP API,詳見 `wiim_spec.md`)
+上游:`https://<WIIM_IP>/httpapi.asp?command=...`(自簽憑證忽略驗證,失敗自動回退 HTTP)。**必帶 `User-Agent: wiim-temp/2.0`** 繞過新韌體的 Direct IP 封鎖。唯讀命令(getPlayerStatus/getMetaInfo/getStatusEx/getPresetInfo/getbtdiscoveryresult)有 2 秒後端快取,連線失敗時回傳舊快取。
+
+| 本專案端點 | 說明 |
+| :--- | :--- |
+| `GET /api/wiim/status?type=play\|status\|all` | 播放狀態+曲目 metadata / 系統資訊(溫度、遙控器電量)。裝置無回應時回退展示資料並標 `source: 'fallback'` |
+| `GET /api/wiim/cmd?command=...` | 通用指令代理(播放控制/EQ/輸入源/藍牙/LED/重啟等) |
+| `GET /api/wiim/history` | 溫度歷史(記憶體,上限 5000 點;**只存真實樣本**,連不上裝置時跳過取樣不偽造) |
+| `GET /api/wiim/clear`, `GET /api/wiim/csv` | 清空 / 匯出溫度記錄 |
+
+溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 10 秒、閒置時 `trendIdleSec`。前端 WiiM 頁:Hero 播放卡(封面/進度/音量,進度條由本地 `tickWiimProg` 每秒推進預估)+ 左欄溫度監控(圖表窗格切換/CSV/清空)與歷史日誌 + 右欄六分頁設定卡(音訊 DSP/EQ/輸入源/藍牙/運維/原始指令)與遙控器狀態卡。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 10s / `wiimPlayback` 5s,可於設定頁調整)。遙控器欄位以 key 名稱模糊匹配(`remote`+`bat`/`rssi`/`mac`/`status`)。
+
 ## API 使用核對結果(對照 unifi-network-api.md)
 
 ### 符合規格
@@ -140,6 +154,13 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 - 新增「存取控制歷史時間軸」:後端 `GET /api/block-history` + 前端時間軸卡片(位於客戶端頁下方)。定位為純監看面板,**不會**改動主控台 IDS/IPS 設定;封鎖動作與主控台為同一份狀態(`block-sta` 等同官方 Block)。
 - 大改版:前端重構為側邊欄 + 7 分頁 SPA;硬體數據移除全部 Math.random 模擬,改為 SSH 兩次取樣的真實差值;新增歷史趨勢取樣器、測速結果輪詢、威脅世界地圖、Top 5 流量排行、UGREEN NAS 整合(共 6 個新後端端點)。
 - 資安強化:總覽頁新增資安戰情速覽(評分環/每小時分佈/事件流);資安頁擴充 KPI 列、每小時堆疊圖、多維度 Top 分析、四重篩選 + CSV 匯出;新增自動防禦聯動(`/api/security/settings` + 後端 `autoDefenseSweep` 每 30s 掃描,偵測 Malware/Trojan/Botnet/C2 感染事件時自動 `block-sta` 隔離受感染內網設備,**預設關閉**,不改動主控台 IDS/IPS 設定,封鎖記於時間軸標記 `auto`)。
+
+### 已修正(2026-07-10,WiiM 整合審查)
+- **server-mock.js PORT 被 WiiM commit 誤改為 3000** → 還原 3005(否則與正式伺服器衝突、launch.json 失效)。
+- **Tailwind `slate-750`/`slate-850` 從未定義**(全專案多處使用但 CDN 版 Tailwind 無此色階,靜默失效)→ head 加 `tailwind.config` 補上(750:#293548、850:#172033)。
+- **WiiM 溫度輪詢固定 10s 永遠執行 + 連不上時偽造隨機溫度寫入歷史** → 改自適應排程 + 只記錄真實樣本。
+- **播放卡無輪詢**(僅初始化與下指令後更新)→ `POLL_JOBS` 新增 `wiimPlayback`(5s)。
+- 遙控器/週邊卡從左欄移至右欄(設定卡下方)平衡版面;`/api/wiim/status` 回退時補 `source` 標記;圖表範圍標籤與相對時間文案修正。
 
 ## 開發注意事項
 - `unifiClient` 使用 `rejectUnauthorized: false` 忽略自簽憑證 — 僅限內網使用。
