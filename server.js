@@ -324,11 +324,14 @@ app.get('/api/threats', async (req, res) => {
             else if (t.msg.includes("MALWARE") || t.msg.includes("Trojan")) category = "Malware";
             else if (t.msg.includes("DOS")) category = "DoS";
 
+            const geo = t.srcipGeo || {};
             return {
                 id: t._id,
                 datetime: new Date(t.datetime).toISOString(),
                 src_ip: t.src_ip,
-                src_country: t.src_country || 'Unknown',
+                src_country: geo.country_name || t.src_country || 'Unknown',
+                src_lat: geo.latitude || null,   // 0/未知一律視為無座標
+                src_lon: geo.longitude || null,
                 msg: t.msg,
                 port: t.dst_port ? `${t.dst_port}/${t.proto || 'TCP'}` : 'Any',
                 severity: 'HIGH',
@@ -337,7 +340,7 @@ app.get('/api/threats', async (req, res) => {
                 target_device: 'UCG-Ultra Core',
                 action_taken: 'BLOCKED'
             };
-        });
+        }).sort((a, b) => new Date(b.datetime) - new Date(a.datetime)); // list/alarm 由舊到新，前端要最新在前
         res.json({ threats });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -356,6 +359,7 @@ const APP_DEFAULTS = {
     trendIdleSec: 1800,     // 閒置時趨勢取樣間隔 (30 分鐘)
     activeWindowSec: 30,    // 最近幾秒內有活動視為「有人瀏覽」
     watcherSec: 20,         // 通知監看器間隔
+    toastSec: 10,           // 右下角通知泡泡顯示秒數
     autoDefenseSec: 30,     // 自動防禦掃描間隔
     reportEnabled: false,   // 定期報表
     reportFreq: 'daily',    // daily | weekly
@@ -394,6 +398,7 @@ app.put('/api/device/restrict', async (req, res) => {
             cmd: req.body.blockState ? 'block-sta' : 'unblock-sta',
             mac: req.body.deviceId
         }, { headers: { 'Cookie': cookie } });
+        { const ns = loadNotifSettings(); if (ns.enabled && ns.triggerBlockAction !== false) notify(req.body.blockState ? '🚫 設備已封鎖' : '✅ 設備已解除封鎖', `${req.body.deviceName || req.body.deviceId}`).catch(() => { }); }
         appendBlockHistory({
             datetime: new Date().toISOString(),
             mac: req.body.deviceId,
@@ -703,7 +708,7 @@ setInterval(autoDefenseSweep, 30 * 1000);
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true };
 function loadNotifSettings() {
     try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
 }
@@ -750,6 +755,8 @@ app.get('/api/notifications/settings', (req, res) => {
     res.json({
         enabled: s.enabled, channel: s.channel, chatId: s.chatId,
         triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts, triggerWiimTemp: s.triggerWiimTemp !== false,
+        triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
+        triggerNewClient: !!s.triggerNewClient, triggerWiimOffline: !!s.triggerWiimOffline, triggerBlockAction: s.triggerBlockAction !== false,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -764,6 +771,7 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     saveNotifSettings(s);
@@ -798,7 +806,7 @@ async function notificationWatcher() {
                 for (const a of alerts) {
                     if (notifiedThreatIds.has(a._id)) continue;
                     notifiedThreatIds.add(a._id);
-                    await notify('🛡️ IPS 攔截新威脅', `來源 ${a.src_ip || '?'} (${a.src_country || '未知'})\n${a.msg || ''}`);
+                    await notify('🛡️ IPS 攔截新威脅', `來源 ${a.src_ip || '?'} (${(a.srcipGeo && a.srcipGeo.country_name) || '未知'})\n${a.msg || ''}`);
                 }
             }
         } catch { }
@@ -827,8 +835,31 @@ async function notificationWatcher() {
             await notify('🔥 WiiM 溫度警報', `CPU ${last.cpu}°C (門檻 ${cpuA}°C)\n主機板 ${last.board}°C (門檻 ${brdA}°C)`);
         }
     }
+    // 新設備加入網路 (預設關閉；首輪只登記既有設備)
+    if (s.triggerNewClient) {
+        try {
+            const cookie = await getLocalSession();
+            const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+            for (const c of (sta.data.data || [])) {
+                if (knownClientMacs.has(c.mac)) continue;
+                knownClientMacs.add(c.mac);
+                if (notifBootstrapped) await notify('📱 新設備連上網路', `${c.name || c.hostname || c.mac}\nIP ${c.ip || '(取得中)'} · ${c.is_wired ? '有線' : 'WiFi'}`);
+            }
+        } catch { }
+    }
+    // WiiM 離線/恢復 (轉態才通知)
+    if (s.triggerWiimOffline) {
+        let ok = false;
+        try { ok = !!(await wiimGet('getStatusEx')); } catch { ok = false; }
+        if (wiimWasOnline !== null && ok !== wiimWasOnline && notifBootstrapped) {
+            await notify(ok ? '🔊 WiiM 已恢復連線' : '🔇 WiiM 失去連線', `裝置 IP ${wiimIP}`);
+        }
+        wiimWasOnline = ok;
+    }
     notifBootstrapped = true;
 }
+const knownClientMacs = new Set();
+let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0;
 
 /* ===================== 伺服器端排程 (間隔可於設定頁調整，變更後即時重排) ===================== */
@@ -1252,7 +1283,7 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert'].forEach(k => {
+    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert', 'toastSec'].forEach(k => {
         if (typeof b[k] === 'number' && b[k] >= 0) appSettings[k] = b[k];
     });
     if (typeof b.reportEnabled === 'boolean') appSettings.reportEnabled = b.reportEnabled;
@@ -1695,18 +1726,29 @@ async function sampleUps() {
     if (live.onBattery && !upsWasOnBattery) {
         upsEvents.unshift({ start: new Date().toISOString(), end: null, durationSec: null, minBattery: live.battery, startVoltage: live.inputV });
         sysLog('UPS', `⚡ 偵測到斷電！事件已記錄 (電池 ${live.battery}%)`, true);
+        const ns = loadNotifSettings();
+        if (ns.enabled && ns.triggerUpsOutage !== false) await notify('⚡ UPS 斷電！', `市電中斷，UPS 供電中 (電池 ${live.battery ?? '?'}%)`);
+        upsLowBattNotified = false;
     } else if (!live.onBattery && upsWasOnBattery && upsEvents[0] && !upsEvents[0].end) {
         upsEvents[0].end = new Date().toISOString();
         upsEvents[0].durationSec = Math.round((Date.now() - new Date(upsEvents[0].start).getTime()) / 1000);
         sysLog('UPS', `✅ 市電恢復，斷電持續 ${upsEvents[0].durationSec} 秒`);
+        const ns = loadNotifSettings();
+        if (ns.enabled && ns.triggerUpsOutage !== false) await notify('✅ 市電恢復', `斷電持續 ${upsEvents[0].durationSec} 秒，最低電池 ${upsEvents[0].minBattery ?? '?'}%`);
     } else if (live.onBattery && upsEvents[0] && !upsEvents[0].end) {
         if (live.battery != null) upsEvents[0].minBattery = Math.min(upsEvents[0].minBattery ?? 100, live.battery);
+        if (live.battery != null && live.battery <= 20 && !upsLowBattNotified) {
+            upsLowBattNotified = true;
+            const ns = loadNotifSettings();
+            if (ns.enabled && ns.triggerUpsLowBatt !== false) await notify('🪫 UPS 電池電量低', `僅剩 ${live.battery}%，請儘快處理或準備關機`);
+        }
     }
     upsEvents = upsEvents.slice(0, 200);
     try { fs.writeFileSync(UPS_EVENTS_FILE, JSON.stringify(upsEvents)); } catch { }
     upsWasOnBattery = live.onBattery;
 }
 // UPS 取樣「不做閒置降頻」：斷電/電壓紀錄是核心需求，無人看網頁也要持續記錄 (本地指令，成本低)
+let upsLowBattNotified = false;
 let lastUpsSampleTs = 0;
 setInterval(async () => {
     const gap = (appSettings.upsSampleSec || 30) * 1000;

@@ -226,6 +226,7 @@
             <div class="flex items-center gap-2 text-[10px]" title="綠=後端已透過 SSH 連上 UCG 並取得硬體數據；紅=連線失敗。右側為裝置實際運行時間（非 PING）"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500" id="side-ucg-dot"></span><span class="text-slate-400">UCG-Ultra</span><span class="text-slate-500 mono ml-auto" id="sys-uptime">連線中...</span></div>
             <div class="flex items-center gap-2 text-[10px]" title="綠 online=後端已呼叫到 NAS 真實 API；琥珀 demo=顯示展示假資料（未設定 NAS 帳密）；紅=連線失敗（非 PING，是 API 可達性）"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-nas-dot"></span><span class="text-slate-400">UGREEN NAS</span><span class="text-slate-500 mono ml-auto" id="side-nas-state">--</span></div>
             <div class="flex items-center gap-2 text-[10px]" title="綠 online=WiiM HTTP API 有回應；紅=裝置無回應（檢查 WIIM_IP）"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-wiim-dot"></span><span class="text-slate-400">WiiM Amp</span><span class="text-slate-500 mono ml-auto" id="side-wiim-state">--</span></div>
+            <div class="flex items-center gap-2 text-[10px]" title="綠=UPS 讀取成功，右側顯示目前使用的資料來源 (pmset/NUT/pwrstat)；紅=所有來源皆不可用"><span class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-ups-dot"></span><span class="text-slate-400">UPS</span><span class="text-slate-500 mono ml-auto" id="side-ups-state">--</span></div>
         </div>
     </aside>
 
@@ -1172,6 +1173,21 @@
                             <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                 <input type="checkbox" id="notif-trig-wiim" class="accent-blue-500 w-4 h-4"> WiiM 溫度超標 (門檻於 WiiM 頁設定)
                             </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-ups-outage" class="accent-blue-500 w-4 h-4"> UPS 斷電 / 市電恢復
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-ups-lowbatt" class="accent-blue-500 w-4 h-4"> UPS 電池低於 20%
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-newclient" class="accent-blue-500 w-4 h-4"> 新設備連上網路 (陌生設備警示)
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-wiim-offline" class="accent-blue-500 w-4 h-4"> WiiM 離線 / 恢復連線
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-block" class="accent-blue-500 w-4 h-4"> 設備封鎖 / 解封動作 (含自動防禦)
+                            </label>
                         </div>
                     </div>
 
@@ -1391,6 +1407,11 @@
                         <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 電壓取樣</label>
                         <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">後端多久記錄一筆 UPS 電壓/電池/負載到持久化歷史。<span class="text-slate-300">此排程不做閒置降頻</span>——斷電與電壓紀錄無人瀏覽也要持續記錄（本地指令，成本低）。</p>
                         <div class="flex items-center gap-2"><input type="number" id="srv-upsSampleSec" min="5" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                    </div>
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                        <label class="text-[11px] font-bold text-slate-300 block mb-1">通知泡泡顯示時間</label>
+                        <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">右下角小通知框（IPS 攔截、儲存成功等）顯示幾秒後自動消失。</p>
+                        <div class="flex items-center gap-2"><input type="number" id="srv-toastSec" min="1" max="60" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                     </div>
                 </div>
                 <button onclick="saveServerSettings()" class="py-2.5 px-6 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition">儲存伺服器設定</button>
@@ -2136,6 +2157,9 @@
         fetchUps();
         fetchWiimDeviceInfo();
         initWiimPage();
+        initWiimSrcDrag();
+        refreshSideUps();
+        setInterval(refreshSideUps, 60000);
         setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
         renderPollConfig();
         checkLastSpeedtest();
@@ -2181,11 +2205,57 @@
     // 分頁重新可見時立即補一次心跳，讓高頻取樣馬上恢復
     document.addEventListener('visibilitychange', () => { if (!document.hidden) sendHeartbeat(); });
 
+    // 共用小圖示 (線條 SVG，取代 emoji)
+    const _ic = (paths, extra = '') => `<svg class="w-3 h-3 inline-block ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+    const ICON_WIFI = _ic('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/>');
+    const ICON_LAN = _ic('<rect x="6" y="3" width="12" height="12" rx="2"/><line x1="9" y1="7" x2="9" y2="10"/><line x1="12" y1="7" x2="12" y2="10"/><line x1="15" y1="7" x2="15" y2="10"/><path d="M12 15v6"/>');
+    const ICON_DOWN = _ic('<line x1="12" y1="4" x2="12" y2="20"/><polyline points="6 14 12 20 18 14"/>');
+    const ICON_UP = _ic('<line x1="12" y1="20" x2="12" y2="4"/><polyline points="6 10 12 4 18 10"/>');
+
+    /* WiiM 輸入源順序：可拖曳排序，存於本機瀏覽器 */
+    let wiimDragChip = null;
+    function initWiimSrcDrag() {
+        const first = document.querySelector('.wiim-src-chip'); if (!first) return;
+        const wrap = first.parentElement;
+        const saved = JSON.parse(localStorage.getItem('wiimSrcOrder.v1') || 'null');
+        if (Array.isArray(saved)) saved.forEach(k => { const el = wrap.querySelector(`[data-src="${k}"]`); if (el) wrap.appendChild(el); });
+        wrap.querySelectorAll('.wiim-src-chip').forEach(ch => {
+            ch.draggable = true;
+            ch.title = '可拖曳調整順序';
+            ch.addEventListener('dragstart', e => { e.stopPropagation(); wiimDragChip = ch; e.dataTransfer.effectAllowed = 'move'; });
+            ch.addEventListener('dragover', e => {
+                e.preventDefault(); e.stopPropagation();
+                if (!wiimDragChip || wiimDragChip === ch) return;
+                const r = ch.getBoundingClientRect();
+                wrap.insertBefore(wiimDragChip, e.clientX < r.left + r.width / 2 ? ch : ch.nextSibling);
+            });
+            ch.addEventListener('dragend', e => {
+                e.stopPropagation(); wiimDragChip = null;
+                localStorage.setItem('wiimSrcOrder.v1', JSON.stringify([...wrap.querySelectorAll('.wiim-src-chip')].map(x => x.dataset.src)));
+            });
+        });
+    }
+
+    /* 側邊欄 UPS 狀態 (顯示目前使用的資料來源) */
+    async function refreshSideUps() {
+        try {
+            const s = await (await fetch('/api/ups/status')).json();
+            const ok = s.source && s.source !== 'unreachable';
+            const dot = document.getElementById('side-ups-dot');
+            const st = document.getElementById('side-ups-state');
+            if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-red-500'}`;
+            if (st) st.textContent = ok ? s.source : '未連接';
+        } catch { }
+    }
+
+    let toastSec = 10;      // 顯示秒數，於設定頁調整 (伺服器端保存)
+    let toastTimer = null;
     function showToast(msg, isError = false) {
         const t = document.getElementById('toast');
         document.getElementById('toast-text').innerText = msg;
         t.className = `fixed bottom-6 right-6 px-4 py-2.5 bg-slate-900 border ${isError ? 'border-red-900/60 text-red-200' : 'border-blue-900/60 text-blue-200'} text-xs rounded-xl shadow-2xl transition-all duration-300 z-[60] transform translate-y-0 opacity-100`;
-        setTimeout(() => t.classList.add('translate-y-2', 'opacity-0', 'pointer-events-none'), 3000);
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.add('translate-y-2', 'opacity-0', 'pointer-events-none'), Math.max(1, toastSec) * 1000);
     }
 
     /* ==================== 圖表初始化 ==================== */
@@ -2325,18 +2395,24 @@
 
     function updateWorldMap() {
         if (!mapProjection || !worldFeatures) return;
-        const counts = {};
+        const counts = {}, coords = {};
         allThreats.forEach(t => {
             const c = t.src_country || 'Unknown';
-            if (c !== 'Unknown') counts[c] = (counts[c] || 0) + 1;
+            if (c === 'Unknown') return;
+            counts[c] = (counts[c] || 0) + 1;
+            // UCG 警報自帶經緯度 (srcipGeo)，優先使用
+            if (coords[c] === undefined && t.src_lat != null && t.src_lon != null) coords[c] = [t.src_lon, t.src_lat];
         });
         const pts = [];
         Object.entries(counts).forEach(([country, n]) => {
             let xy = null;
-            const name = COUNTRY_ALIASES[country] || country;
-            const feat = worldFeatures.find(f => f.properties.name === name);
-            if (feat) xy = geoPathFn.centroid(feat);
-            else if (COUNTRY_COORDS[country]) xy = mapProjection(COUNTRY_COORDS[country]);
+            if (coords[country]) xy = mapProjection(coords[country]);
+            if (!xy || isNaN(xy[0])) {
+                const name = COUNTRY_ALIASES[country] || country;
+                const feat = worldFeatures.find(f => f.properties.name === name);
+                if (feat) xy = geoPathFn.centroid(feat);
+                else if (COUNTRY_COORDS[country]) xy = mapProjection(COUNTRY_COORDS[country]);
+            }
             if (xy && !isNaN(xy[0])) pts.push({ x: xy[0], y: xy[1], n, country });
         });
         const g = d3.select('#map-points');
@@ -2487,8 +2563,8 @@
             tr.onclick = (ev) => { if (!ev.target.closest('button')) showClientDetail(c.mac); };
             tr.innerHTML = `
                 <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'}">${c.name}</p><p class="text-[9px] text-slate-500 mono">${c.mac} | ${c.ip}</p></div></td>
-                <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold">📶 Wi-Fi (${c.wifi_signal}dBm)</span>` : `<span class="text-emerald-400 font-semibold">🔌 LAN</span>`}</td>
-                <td class="mono text-slate-400">⬇️ ${(c.rx_bytes / 1048576).toFixed(1)}MB / ⬆️ ${(c.tx_bytes / 1048576).toFixed(1)}MB</td>
+                <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold inline-flex items-center gap-1">${ICON_WIFI} Wi-Fi (${c.wifi_signal}dBm)</span>` : `<span class="text-emerald-400 font-semibold inline-flex items-center gap-1">${ICON_LAN} LAN</span>`}</td>
+                <td class="mono text-slate-400"><span class="inline-flex items-center gap-0.5">${ICON_DOWN} ${(c.rx_bytes / 1048576).toFixed(1)}MB</span> / <span class="inline-flex items-center gap-0.5">${ICON_UP} ${(c.tx_bytes / 1048576).toFixed(1)}MB</span></td>
                 <td class="text-right py-3 pr-2"><button onclick="toggleBlock('${c.mac}', ${!c.blocked})" class="px-2.5 py-1.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-lg text-[10px] transition">${c.blocked ? '解封' : '斷網'}</button></td>`;
             tbody.appendChild(tr);
         });
@@ -2537,7 +2613,7 @@
             row('設備名稱', c.name || '未知') +
             row('MAC 位址', c.mac) +
             row('IP 位址', c.ip) +
-            row('連線方式', c.is_wifi ? `📶 Wi-Fi (訊號 ${c.wifi_signal} dBm)` : '🔌 有線 LAN') +
+            row('連線方式', c.is_wifi ? `Wi-Fi (訊號 ${c.wifi_signal} dBm)` : '有線 LAN') +
             row('下載量 (Rx)', (c.rx_bytes / 1048576).toFixed(1) + ' MB') +
             row('上傳量 (Tx)', (c.tx_bytes / 1048576).toFixed(1) + ' MB') +
             row('累計流量', (totalMB >= 1024 ? (totalMB / 1024).toFixed(2) + ' GB' : totalMB.toFixed(1) + ' MB')) +
@@ -3524,6 +3600,12 @@
             document.getElementById('notif-trig-threats').checked = !!s.triggerThreats;
             document.getElementById('notif-trig-nas').checked = !!s.triggerNasAlerts;
             const tw = document.getElementById('notif-trig-wiim'); if (tw) tw.checked = s.triggerWiimTemp !== false;
+            const setCk = (id, v) => { const e = document.getElementById(id); if (e) e.checked = v; };
+            setCk('notif-trig-ups-outage', s.triggerUpsOutage !== false);
+            setCk('notif-trig-ups-lowbatt', s.triggerUpsLowBatt !== false);
+            setCk('notif-trig-newclient', !!s.triggerNewClient);
+            setCk('notif-trig-wiim-offline', !!s.triggerWiimOffline);
+            setCk('notif-trig-block', s.triggerBlockAction !== false);
             document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
             document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
             setNotifChannel(s.channel || 'discord');
@@ -3537,7 +3619,12 @@
             chatId: document.getElementById('notif-chatid').value.trim(),
             triggerThreats: document.getElementById('notif-trig-threats').checked,
             triggerNasAlerts: document.getElementById('notif-trig-nas').checked,
-            triggerWiimTemp: document.getElementById('notif-trig-wiim') ? document.getElementById('notif-trig-wiim').checked : true
+            triggerWiimTemp: document.getElementById('notif-trig-wiim') ? document.getElementById('notif-trig-wiim').checked : true,
+            triggerUpsOutage: document.getElementById('notif-trig-ups-outage')?.checked ?? true,
+            triggerUpsLowBatt: document.getElementById('notif-trig-ups-lowbatt')?.checked ?? true,
+            triggerNewClient: document.getElementById('notif-trig-newclient')?.checked ?? false,
+            triggerWiimOffline: document.getElementById('notif-trig-wiim-offline')?.checked ?? false,
+            triggerBlockAction: document.getElementById('notif-trig-block')?.checked ?? true
         };
         const wh = document.getElementById('notif-webhook').value.trim();
         const tk = document.getElementById('notif-token').value.trim();
@@ -3608,6 +3695,7 @@
             set('srv-activeWindowSec', s.activeWindowSec); set('srv-watcherSec', s.watcherSec);
             set('srv-autoDefenseSec', s.autoDefenseSec);
             set('srv-upsSampleSec', s.upsSampleSec ?? 30);
+            set('srv-toastSec', s.toastSec ?? 10); toastSec = s.toastSec ?? 10;
             const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
             set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
         } catch (e) { console.error('app settings fetch failed', e); }
@@ -3619,6 +3707,7 @@
             activeWindowSec: num('srv-activeWindowSec'), watcherSec: num('srv-watcherSec'),
             autoDefenseSec: num('srv-autoDefenseSec'),
             upsSampleSec: num('srv-upsSampleSec'),
+            toastSec: num('srv-toastSec'),
             reportEnabled: document.getElementById('report-enabled').checked,
             reportFreq: document.getElementById('report-freq').value,
             reportHour: num('report-hour')
@@ -3626,6 +3715,7 @@
         try {
             const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (!res.ok) throw new Error();
+            toastSec = num('srv-toastSec') || toastSec;
             showToast('伺服器設定已儲存並套用');
         } catch (e) { showToast('儲存失敗', true); }
     }
