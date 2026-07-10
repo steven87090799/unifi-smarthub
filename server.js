@@ -409,8 +409,12 @@ app.put('/api/device/restrict', async (req, res) => {
         sysLog('UniFi API', `客戶端 ${req.body.deviceId} 狀態設定成功。`);
         res.json({ success: true });
     } catch (error) {
-        sysLog('UniFi API', `阻斷控制失敗: ${error.message}`, true);
-        res.status(500).json({ error: error.message });
+        const perm = error.response && error.response.data && error.response.data.meta && error.response.data.meta.msg === 'api.err.NoPermission';
+        const msg = perm
+            ? 'UniFi 帳號權限不足 (NoPermission)：目前登入的本地帳號是「唯讀 (readonly)」角色，只能讀取資料不能下達封鎖指令。請到 UniFi 主控台 → Admins → 把此帳號角色改為「Full Management / Site Admin」'
+            : error.message;
+        sysLog('UniFi API', `阻斷控制失敗: ${msg}`, true);
+        res.status(error.response ? error.response.status : 500).json({ error: msg, code: perm ? 'no_permission' : undefined });
     }
 });
 

@@ -2599,12 +2599,13 @@
         try {
             const target = allClients.find(c => c.mac === mac);
             const res = await fetch('/api/device/restrict', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: mac, blockState: state, deviceName: target ? target.name : 'Unknown Device' }) });
-            if (!res.ok) throw new Error();
+            const rj = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(rj.error || '操作失敗');
             showToast(`已成功下達 ${state ? '阻斷' : '解封'} 命令`);
             fetchClients();
             fetchBlockHistory();
             closeClientDetail();
-        } catch (e) { showToast('操作失敗', true); }
+        } catch (e) { showToast(e.message || '操作失敗', true); }
     }
 
     function showClientDetail(mac) {
