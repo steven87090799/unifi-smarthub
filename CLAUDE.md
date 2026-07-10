@@ -29,6 +29,7 @@
 - **側邊欄 + 分頁**(分群導航):總覽 →「網路監控」客戶端/資安/WiFi/雲端 →「設備」NAS/WiiM/UPS →「系統」工具/通知推播/設定;行動版為漢堡選單。左下角三行設備狀態(UCG/NAS/WiiM)。
 - **液態玻璃 UI**:`body::before/::after` 兩顆極光光暈緩慢漂移;`main .rounded-2xl` 統一升級玻璃材質(漸層半透明+blur(20px) saturate+上緣高光+雙陰影),內層 `.rounded-xl` 薄玻璃;aside/header 玻璃化;深淺主題皆有對應覆寫。**新卡片只要用 rounded-2xl/rounded-xl 即自動獲得玻璃效果**。
 - **Debug**:後端 `sysLog(module,msg,isError)` 統一格式 + HTTP 中介層記錄所有 /api 請求(`DEBUG_HTTP=0` 關閉);前端 `dbg(module,...)`(`localStorage.debug='0'` 關閉)。
+- **版面編輯(巢狀拖曳)**:右上 🧩 進入編輯。可排序容器 = `main > section` 頂層(藍虛線+⠿標籤)+ 任何標記 **`data-drag`** 的內部容器(綠虛線;全站 21 處:資安/NAS/雲端大卡內容、各雙欄 grid、KPI 迷你卡列、WiiM 左右欄、總覽體檢列等)。排序存 localStorage `layoutOrder.v1`(容器 key = section id 或 `data-drag-key`),集合不符自動忽略。拖曳 handler 有 `stopPropagation` 防巢狀連動;grid 內橫向卡片以 X 軸判斷插入點。**新增區塊時**:放進 data-drag 容器即自動可拖;新容器加 `data-drag` 屬性即可。跨容器移動不支援(避免破壞欄位佈局)。
 - **總覽**:4 張 KPI 卡(WAN、線上設備、24H 威脅、雙設備溫度 UCG/NAS)+ **雙設備即時體檢面板**(UCG 與 NAS 並排,各顯示 CPU 溫度大字 + CPU/記憶體條 + 關鍵指標與連線徽章,點擊可下鑽)+ 資安戰情速覽 + 歷史趨勢圖 + UCG 硬體詳情。體檢面板的 UCG 欄由 `fetchHardware`/`fetchClients` 填(`ov-ucg-*`),NAS 欄由 `fetchNas` 填(`ov-nas-*`);溫度配色用 `tempColor()`/`tempLabel()`(涼爽<55/正常<65/偏高<75/過熱≥75)。目的:兩台設備重點不用切頁即可一次看清。
 - **客戶端**:管理表格 + Top 5 流量排行榜 + 封鎖歷史時間軸。
 - **總覽 → 資安戰情速覽**:安全評分環(0-100 + 等級)、24H 每小時威脅柱狀圖、最新攔截事件流,點「進入完整戰情室」跳資安頁。

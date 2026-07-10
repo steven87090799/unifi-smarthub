@@ -97,6 +97,9 @@
         body.layout-edit main > section > *:active { cursor: grabbing; }
         body.layout-edit main > section > *::after { content: '⠿ 拖曳移動'; position: absolute; top: -10px; left: 14px; font-size: 9px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: #1d4ed8; color: #fff; z-index: 40; letter-spacing: .1em; }
         body.layout-edit aside nav > * { outline: 1px dashed rgba(59,130,246,.4); outline-offset: -1px; cursor: grab; }
+        /* 內層 data-drag 容器的子卡：綠色細虛線 (與頂層藍色區隔) */
+        body.layout-edit [data-drag] > * { outline: 1.5px dashed rgba(16,185,129,.5); outline-offset: 2px; cursor: grab; }
+        body.layout-edit [data-drag] > *::after { content: none; }
         .drag-ghost { opacity: .3; }
 
         /* ===== 淺色主題 ===== */
@@ -206,7 +209,7 @@
         <!-- ==================== 頁面：總覽 ==================== -->
         <section id="page-overview" class="space-y-6">
             <!-- 4 張 KPI 卡 -->
-            <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+            <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                 <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5" onclick="navigate('cloud')">
                     <div class="flex justify-between items-start">
                         <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">WAN 狀態</p>
@@ -233,7 +236,7 @@
             </div>
 
             <!-- 三設備即時體檢 (重要指標一次看清，不用切頁) -->
-            <div id="ov-vitals" class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div id="ov-vitals" data-drag class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <!-- UCG-Ultra -->
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md cursor-pointer hover:border-blue-700/50 transition" onclick="document.getElementById('hw-detail').scrollIntoView({behavior:'smooth'})">
                     <div class="flex justify-between items-center mb-4">
@@ -410,7 +413,7 @@
             </div>
 
             <!-- UCG 硬體詳情（真實數據） -->
-            <div id="hw-detail" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div id="hw-detail" data-drag class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md transition-all duration-300" id="card-hardware">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UCG-Ultra 處理器 & 核心溫度</h3>
@@ -476,7 +479,7 @@
 
         <!-- ==================== 頁面：客戶端 ==================== -->
         <section id="page-clients" class="space-y-6 hidden">
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div data-drag class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div class="lg:col-span-2 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
                     <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
                         <h3 class="text-lg font-bold text-white flex items-center gap-2">活躍客戶端管理中心 <span class="text-xs bg-slate-800 text-slate-400 px-2.5 py-0.5 rounded-full border border-slate-850 mono" id="client-count">0</span></h3>
@@ -521,7 +524,7 @@
 
         <!-- ==================== 頁面：資安 ==================== -->
         <section id="page-security" class="space-y-6 hidden">
-            <div class="bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-6 glow-red">
+            <div data-drag class="bg-slate-900/40 border border-slate-850 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-6 glow-red">
                 <div class="flex flex-col md:flex-row justify-between md:items-center border-b border-slate-800/80 pb-4 gap-4">
                     <div class="flex items-center gap-3">
                         <div class="p-2.5 bg-red-500/10 rounded-xl border border-red-500/20 shadow-inner flex items-center justify-center">
@@ -558,7 +561,7 @@
                 </div>
 
                 <!-- 資安 KPI 統計列 -->
-                <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div data-drag class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
                         <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">安全評分</p>
                         <p class="text-2xl font-black mono mt-1" id="sec-kpi-score">--</p>
@@ -662,7 +665,7 @@
                 </div>
 
                 <!-- 多維度分析：Top 來源 IP / 目標設備 / 連接埠 -->
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div data-drag class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div class="bg-slate-950/80 p-5 rounded-xl border border-slate-800/60">
                         <span class="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-3">Top 攻擊來源 IP</span>
                         <div class="space-y-2.5" id="sec-top-srcip"><p class="text-xs text-slate-500 py-3">分析中...</p></div>
@@ -773,7 +776,7 @@
 
         <!-- ==================== 頁面：WiFi ==================== -->
         <section id="page-wifi" class="space-y-6 hidden">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div data-drag class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                     <h3 class="text-lg font-bold text-white tracking-wider mb-4">Wi-Fi 射頻與 SSID 廣播</h3>
                     <div class="space-y-3" id="wifi-list">
@@ -796,7 +799,7 @@
 
         <!-- ==================== 頁面：雲端站點 ==================== -->
         <section id="page-cloud" class="space-y-6 hidden">
-            <div class="bg-slate-900/10 border border-slate-800/50 rounded-2xl p-6 shadow-xl space-y-6">
+            <div data-drag class="bg-slate-900/10 border border-slate-800/50 rounded-2xl p-6 shadow-xl space-y-6">
                 <div class="border-b border-slate-800/60 pb-3 flex justify-between items-center">
                     <div>
                         <h2 class="text-base font-bold text-white tracking-wide">官方 Site Manager 雲端網管監控中心</h2>
@@ -847,7 +850,7 @@
 
         <!-- ==================== 頁面：NAS ==================== -->
         <section id="page-nas" class="space-y-6 hidden">
-            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-6">
+            <div data-drag class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-6">
                 <div class="flex flex-col md:flex-row justify-between md:items-center border-b border-slate-800/60 pb-4 gap-3">
                     <div>
                         <h3 class="text-lg font-black text-white tracking-wider">UGREEN NAS 儲存監控中心</h3>
@@ -857,7 +860,7 @@
                 </div>
 
                 <!-- NAS 即時遙測 -->
-                <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                         <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">CPU 使用率 / 溫度</p>
                         <p class="text-2xl font-black mt-2 mono"><span class="text-blue-400" id="nas-cpu">--</span><span class="text-sm text-slate-500">%</span>
@@ -883,7 +886,7 @@
                 </div>
 
                 <!-- 進階 KPI (系統 B) -->
-                <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                         <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">正常運行率 (30天)</p>
                         <p class="text-2xl font-black text-emerald-400 mono mt-2" id="nas-uptime-pct">--<span class="text-sm text-slate-500">%</span></p>
@@ -906,7 +909,7 @@
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <!-- 實體硬碟 -->
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                         <h4 class="text-xs font-bold text-slate-400 mb-4 tracking-wider uppercase">實體硬碟健康狀態</h4>
@@ -924,7 +927,7 @@
                 </div>
 
                 <!-- 系統歷史 & 流量歷史 -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                         <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">系統負載歷史 (CPU / 記憶體 / 溫度)</h4>
                         <div class="h-52"><canvas id="nasSystemChart"></canvas></div>
@@ -942,7 +945,7 @@
                 </div>
 
                 <!-- 儲存趨勢 + 溫度/風扇 -->
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                         <div class="flex justify-between items-start mb-3">
                             <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase">儲存容量趨勢 (30 天)</h4>
@@ -1055,7 +1058,7 @@
             </div>
 
             <!-- PoE 重啟 -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div data-drag class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                     <h3 class="text-xs font-bold text-yellow-500 mb-4 tracking-wider uppercase">PoE 設備死機斷電重開</h3>
                     <div class="space-y-3">
@@ -1069,7 +1072,7 @@
 
         <!-- ==================== 頁面：通知推播 ==================== -->
         <section id="page-notify" class="space-y-6 hidden">
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <!-- 設定 -->
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
                     <div class="flex justify-between items-start">
@@ -1416,7 +1419,7 @@
             <!-- 兩欄細節佈局 -->
             <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 <!-- 左側：溫度監控與記錄 (7 cols) -->
-                <div class="lg:col-span-7 space-y-6">
+                <div data-drag class="lg:col-span-7 space-y-6">
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                         <div class="flex justify-between items-center mb-6">
                             <h3 class="text-sm font-bold text-white tracking-wider">🌡️ WiiM 溫度監控</h3>
@@ -1517,7 +1520,7 @@
                 </div>
 
                 <!-- 右側：設定與控制分類卡片 (5 cols) -->
-                <div class="lg:col-span-5 space-y-6">
+                <div data-drag class="lg:col-span-5 space-y-6">
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                         <!-- 分頁標籤 -->
                         <div class="flex border-b border-slate-800 mb-6 overflow-x-auto terminal-scroll pb-1 gap-2">
@@ -1770,7 +1773,7 @@
                     </div>
                     <span id="ups-source-badge" class="px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-slate-700/30 text-slate-400 border-slate-700/40 self-start md:self-auto">偵測中...</span>
                 </div>
-                <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div data-drag class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
                         <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">市電輸入電壓</p>
                         <p class="text-2xl font-black mono mt-1 text-amber-400" id="ups-kpi-inv">--<span class="text-xs text-slate-500"> V</span></p>
@@ -1823,7 +1826,7 @@
             </div>
 
             <!-- 電池/負載歷史 + 斷電事件 -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                     <h3 class="text-sm font-bold text-white tracking-wider mb-4">🔋 電池容量與負載歷史</h3>
                     <div class="h-52"><canvas id="upsLoadChart"></canvas></div>
@@ -1898,26 +1901,38 @@
     /* ==================== 版面編輯 (全站區塊 + 導航列拖曳排序，存 localStorage) ==================== */
     let layoutEditing = false, dragEl = null;
 
-    // 為每個頁面 section 的直屬區塊與導航項目配發穩定 ID
+    // 可排序容器 = 各頁 section 頂層 + 任何標記 data-drag 的內部容器 (巢狀：大卡內區塊、grid 內卡片)
+    function layoutContainers() {
+        const list = [...document.querySelectorAll('main > section')];
+        document.querySelectorAll('main [data-drag]').forEach((el, i) => {
+            if (!el.dataset.dragKey) el.dataset.dragKey = el.id || 'dragc-' + i;
+            list.push(el);
+        });
+        return list;
+    }
+    const layoutKeyOf = c => c.tagName === 'SECTION' ? c.id : c.dataset.dragKey;
+
+    // 為每個容器的直屬區塊與導航項目配發穩定 ID
     function layoutTagAll() {
-        document.querySelectorAll('main > section').forEach(sec => {
-            [...sec.children].forEach((el, i) => { if (!el.dataset.bid) el.dataset.bid = sec.id + '-b' + i; });
+        layoutContainers().forEach(c => {
+            const key = layoutKeyOf(c);
+            [...c.children].forEach((el, i) => { if (!el.dataset.bid) el.dataset.bid = key + '-b' + i; });
         });
         [...document.querySelector('aside nav').children].forEach((el, i) => {
             if (!el.dataset.bid) el.dataset.bid = el.dataset.page ? 'nav-' + el.dataset.page : 'nav-g' + i;
         });
     }
 
-    // 套用已儲存的排序；若區塊集合與現版 DOM 不符 (改版新增/移除區塊) 則忽略該頁的舊排序
+    // 套用已儲存的排序；若區塊集合與現版 DOM 不符 (改版新增/移除區塊) 則忽略該容器的舊排序
     function layoutApplySaved() {
         let saved = {};
         try { saved = JSON.parse(localStorage.getItem('layoutOrder.v1')) || {}; } catch { }
-        document.querySelectorAll('main > section').forEach(sec => {
-            const order = saved[sec.id];
+        layoutContainers().forEach(c => {
+            const order = saved[layoutKeyOf(c)];
             if (!Array.isArray(order)) return;
-            const map = {}; [...sec.children].forEach(el => map[el.dataset.bid] = el);
-            if (order.length !== Object.keys(map).length || order.some(id => !map[id])) { dbg('Layout', sec.id, '排序與現版不符，略過'); return; }
-            order.forEach(id => sec.appendChild(map[id]));
+            const map = {}; [...c.children].forEach(el => map[el.dataset.bid] = el);
+            if (order.length !== Object.keys(map).length || order.some(id => !map[id])) { dbg('Layout', layoutKeyOf(c), '排序與現版不符，略過'); return; }
+            order.forEach(id => c.appendChild(map[id]));
         });
         const nav = document.querySelector('aside nav');
         const navOrder = saved.__nav;
@@ -1929,7 +1944,7 @@
 
     function layoutSave() {
         const saved = {};
-        document.querySelectorAll('main > section').forEach(sec => saved[sec.id] = [...sec.children].map(el => el.dataset.bid));
+        layoutContainers().forEach(c => saved[layoutKeyOf(c)] = [...c.children].map(el => el.dataset.bid));
         saved.__nav = [...document.querySelector('aside nav').children].map(el => el.dataset.bid);
         localStorage.setItem('layoutOrder.v1', JSON.stringify(saved));
         dbg('Layout', '排序已儲存');
@@ -1938,13 +1953,19 @@
     function layoutBindDrag(container) {
         [...container.children].forEach(el => {
             el.draggable = layoutEditing;
-            el.ondragstart = layoutEditing ? e => { dragEl = el; e.dataTransfer.effectAllowed = 'move'; setTimeout(() => el.classList.add('drag-ghost'), 0); } : null;
-            el.ondragend = layoutEditing ? () => { el.classList.remove('drag-ghost'); dragEl = null; layoutSave(); } : null;
+            // stopPropagation：巢狀容器中，拖內層卡片不可連動外層
+            el.ondragstart = layoutEditing ? e => { e.stopPropagation(); dragEl = el; e.dataTransfer.effectAllowed = 'move'; setTimeout(() => el.classList.add('drag-ghost'), 0); } : null;
+            el.ondragend = layoutEditing ? e => { e.stopPropagation(); el.classList.remove('drag-ghost'); dragEl = null; layoutSave(); } : null;
             el.ondragover = layoutEditing ? e => {
                 e.preventDefault();
                 if (!dragEl || dragEl === el || dragEl.parentElement !== el.parentElement) return;
+                e.stopPropagation();
                 const r = el.getBoundingClientRect();
-                el.parentElement.insertBefore(dragEl, (e.clientY - r.top) < r.height / 2 ? el : el.nextSibling);
+                // grid 橫向排列的卡片以 X 軸判斷插入點，直向堆疊用 Y 軸
+                const pr = el.parentElement.getBoundingClientRect();
+                const horiz = getComputedStyle(el.parentElement).display.includes('grid') && r.width < pr.width * 0.9;
+                const before = horiz ? (e.clientX - r.left) < r.width / 2 : (e.clientY - r.top) < r.height / 2;
+                el.parentElement.insertBefore(dragEl, before ? el : el.nextSibling);
             } : null;
         });
     }
@@ -1952,7 +1973,7 @@
     function toggleLayoutEdit() {
         layoutEditing = !layoutEditing;
         document.body.classList.toggle('layout-edit', layoutEditing);
-        document.querySelectorAll('main > section').forEach(sec => layoutBindDrag(sec));
+        layoutContainers().forEach(c => layoutBindDrag(c));
         layoutBindDrag(document.querySelector('aside nav'));
         document.getElementById('layout-edit-btn').classList.toggle('text-blue-400', layoutEditing);
         document.getElementById('layout-edit-btn').classList.toggle('border-blue-500', layoutEditing);
