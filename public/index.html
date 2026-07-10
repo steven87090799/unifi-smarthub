@@ -102,6 +102,53 @@
         body.layout-edit [data-drag] > *::after { content: none; }
         .drag-ghost { opacity: .3; }
 
+        /* ===== 光效與微動畫 ===== */
+        /* 極光光暈緩慢變色，更有生命力 */
+        body::before { animation: auroraA 26s ease-in-out infinite alternate, hueShift 40s linear infinite; }
+        body::after { animation: auroraB 32s ease-in-out infinite alternate, hueShift 55s linear infinite reverse; }
+        @keyframes hueShift { to { filter: blur(120px) hue-rotate(50deg); } }
+        /* 超淡科技格線鋪底 */
+        body { background-image: linear-gradient(rgba(59,130,246,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(59,130,246,.025) 1px, transparent 1px); background-size: 44px 44px; }
+        html.light body { background-image: linear-gradient(rgba(30,64,175,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(30,64,175,.04) 1px, transparent 1px); }
+
+        /* 卡片 hover：懸浮 + 光暈 + 掠光 */
+        main .rounded-2xl { overflow: hidden; }
+        main .rounded-2xl:hover { transform: translateY(-2px); box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 14px 44px rgba(2,6,23,.55), 0 0 24px rgba(59,130,246,.07); }
+        main .rounded-2xl { transition: border-color .3s, box-shadow .35s, transform .35s cubic-bezier(.22,.68,.36,1); }
+        main .rounded-2xl::before {
+            content: ''; position: absolute; top: 0; left: -70%; width: 45%; height: 100%;
+            background: linear-gradient(105deg, transparent, rgba(148,197,255,.05) 45%, rgba(148,197,255,.1) 50%, rgba(148,197,255,.05) 55%, transparent);
+            transform: skewX(-18deg); transition: left .7s ease; pointer-events: none;
+        }
+        main .rounded-2xl:hover::before { left: 130%; }
+        html.light main .rounded-2xl:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.95), 0 14px 40px rgba(15,23,42,.12); }
+
+        /* 分頁切換進場動畫 */
+        @keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+        main > section:not(.hidden) { animation: pageIn .35s ease both; }
+
+        /* 側邊欄 Logo 呼吸光暈 */
+        @keyframes logoBreath { 0%,100% { box-shadow: 0 0 8px rgba(59,130,246,.18); } 50% { box-shadow: 0 0 22px rgba(59,130,246,.45); } }
+        .logo-glow { animation: logoBreath 4.5s ease-in-out infinite; }
+
+        /* 導航 hover 微位移；active 左緣光條脈動 */
+        aside nav .nav-btn { transition: color .2s, background .2s, padding-left .25s; }
+        aside nav .nav-btn:hover { padding-left: 24px; }
+        @keyframes navPulse { 0%,100% { border-left-color: #3b82f6; } 50% { border-left-color: #93c5fd; } }
+        .nav-active { animation: navPulse 3s ease-in-out infinite; }
+
+        /* 按鈕點擊回饋 (排除滑桿/輸入) */
+        main button:active { transform: scale(.96); }
+        main button { transition: transform .12s ease, background .2s, color .2s, border-color .2s; }
+
+        /* WiiM 播放中：播放鍵光圈脈動 */
+        @keyframes playRing { 0% { box-shadow: 0 0 0 0 rgba(59,130,246,.45); } 70% { box-shadow: 0 0 0 12px rgba(59,130,246,0); } 100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); } }
+        .play-pulsing { animation: playRing 2.2s ease-out infinite; }
+
+        /* 數值更新彈跳 (JS 加 .stat-pop 後自動移除) */
+        @keyframes statPop { 0% { transform: scale(1); } 40% { transform: scale(1.14); } 100% { transform: scale(1); } }
+        .stat-pop { display: inline-block; animation: statPop .45s cubic-bezier(.34,1.56,.64,1); }
+
         /* ===== 淺色主題 ===== */
         html.light body { background: #eef2f7 !important; color: #0f172a; }
         html.light .text-white, html.light .text-slate-100, html.light .text-slate-200, html.light .text-slate-300 { color: #0f172a !important; }
@@ -127,7 +174,7 @@
     <div id="sidebar-backdrop" class="fixed inset-0 bg-black/60 z-40 hidden lg:hidden" onclick="toggleSidebar(false)"></div>
     <aside id="sidebar" class="fixed lg:sticky top-0 z-50 h-screen w-60 bg-slate-950/95 lg:bg-slate-950/60 backdrop-blur-xl border-r border-slate-800/80 flex flex-col transition-transform duration-200 -translate-x-full lg:translate-x-0">
         <div class="flex items-center gap-3 px-5 py-5 border-b border-slate-800/60">
-            <div class="p-2 bg-blue-600/10 rounded-xl border border-blue-500/20">
+            <div class="p-2 bg-blue-600/10 rounded-xl border border-blue-500/20 logo-glow">
                 <svg class="w-6 h-6 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                     <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -1412,6 +1459,7 @@
                             <button data-src="co-axial" onclick="wiimSwitchSource('co-axial')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🔌 同軸</button>
                             <button data-src="udisk" onclick="wiimSwitchSource('udisk')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">💾 USB</button>
                         </div>
+                        <p class="text-[9px] text-slate-600 mono pt-1" id="wiim-hero-dev">--</p>
                     </div>
                 </div>
             </div>
@@ -2019,6 +2067,9 @@
 
     /* ==================== 導航 ==================== */
     function navigate(page) {
+        // 重新觸發分頁進場動畫
+        const target = document.getElementById('page-' + page);
+        if (target) { target.style.animation = 'none'; void target.offsetWidth; target.style.animation = ''; }
         Object.keys(PAGE_META).forEach(p => {
             const sec = document.getElementById('page-' + p);
             if (sec) sec.classList.toggle('hidden', p !== page);
@@ -3782,6 +3833,7 @@
                 document.getElementById('wiim-vol').value = wiimPlayerState.vol;
                 document.getElementById('wiim-volval').textContent = wiimPlayerState.vol;
                 document.getElementById('wiim-play-btn').textContent = wiimPlayerState.status === 'play' ? '⏸' : '▶';
+                document.getElementById('wiim-play-btn').classList.toggle('play-pulsing', wiimPlayerState.status === 'play');
                 // 總覽 WiiM 卡：播放狀態/音量
                 const setOv = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
                 setOv('ov-wiim-play', ({ play: '▶ 播放中', pause: '⏸ 暫停', stop: '⏹ 停止', loading: '載入中' })[wiimPlayerState.status] || wiimPlayerState.status);
@@ -3966,8 +4018,10 @@
                 const fw = statusObj.firmware || 'Linkplay.5.2.814734';
                 const hw = statusObj.hardware || 'AmlogicA113';
                 
-                const baseInfo = `${devName} · 韌體 ${fw} · ${hw} · IP ${wiimLastIp}`;
-                document.getElementById('wiim-agolbl').textContent = `${diffSec} 秒前 · ${baseInfo}`;
+                document.getElementById('wiim-agolbl').textContent = `${diffSec} 秒前更新`;
+                // 設備摘要移到 Hero 播放卡底部 (與溫度卡分離，版面協調)
+                const devLine = document.getElementById('wiim-hero-dev');
+                if (devLine) devLine.textContent = `${devName} · 韌體 ${fw} · ${hw} · IP ${wiimLastIp}`;
             }
 
             renderWiimChart();
