@@ -79,6 +79,7 @@
 | `GET /api/notifications/log` | 近期推播紀錄(記憶體,50 筆) |
 | `GET/POST /api/settings` | 讀寫 `app-settings.json`(伺服器端間隔:趨勢取樣/活躍視窗/監看器/自動防禦、報表設定)。POST 後即時 `scheduleServerJobs()` 重排 |
 | `POST /api/reports/run` | 立即彙整並(若啟用)推播報表,回傳報表文字 |
+| `GET/POST /api/connections` | **連線設定網頁化**:讀寫 `.env` 中 `CONN_FIELDS` 白名單欄位(SSH/UniFi/NAS/NAS Monitor/WiiM/UPS)。GET 機密只回 `secretsSet` 布林;POST 留空=不變更,寫入 `.env`(`persistEnvVars`,含註解行取代)後 `rebuildClients()` 熱重建全部 axios client + 重置 session/token/快取,**免重啟生效**。相關宣告皆為 `let` + `build*()` 工廠(unifiClient/unifiCloudClient/nasClient/nasMonClient/wiimIP);UPS 的 `UPS_SOURCE/NUT_HOST/NUT_UPS_NAME/PWRSTAT_PATH` 為呼叫時讀 env 的函式 |
 | `GET /manifest.webmanifest`, `GET /sw.js` | PWA manifest 與 service worker(離線殼層快取,`/api/*` 不快取) |
 
 ### C. 雲端 Site Manager API (`https://api.ui.com/v1`,`X-API-KEY` 標頭)

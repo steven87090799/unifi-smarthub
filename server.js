@@ -41,11 +41,15 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 建立忽略內網自簽 HTTPS 憑證錯誤的 Axios 實例
-const unifiClient = axios.create({
-    baseURL: process.env.UNIFI_CONTROLLER_URL,
-    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    httpsAgent: new https.Agent({ rejectUnauthorized: false })
-});
+// 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
+function buildUnifiClient() {
+    return axios.create({
+        baseURL: process.env.UNIFI_CONTROLLER_URL,
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
+    });
+}
+let unifiClient = buildUnifiClient();
 
 let localCookie = '';
 let cookieExpiry = 0;
@@ -86,13 +90,16 @@ async function getLocalSession() {
 }
 
 // 建立 UniFi 官方雲端 Site Manager API 客戶端
-const unifiCloudClient = axios.create({
-    baseURL: 'https://api.ui.com/v1',
-    headers: {
-        'Accept': 'application/json',
-        'X-API-KEY': process.env.UNIFI_API_KEY || ''
-    }
-});
+function buildUnifiCloudClient() {
+    return axios.create({
+        baseURL: 'https://api.ui.com/v1',
+        headers: {
+            'Accept': 'application/json',
+            'X-API-KEY': process.env.UNIFI_API_KEY || ''
+        }
+    });
+}
+let unifiCloudClient = buildUnifiCloudClient();
 
 // 1. 獲取硬體即時狀態 (SSH) — /proc/stat 與 ip -s link 各取樣兩次(間隔 1 秒)，以差值計算真實核心使用率與網卡速率
 const HW_CMD = [
@@ -901,15 +908,21 @@ app.get('/api/heartbeat', (req, res) => {
 /* ===================== UGREEN NAS (UGOS Pro 原生 API) ===================== */
 // 認證流程：GET rsa_public_key → RSA PKCS1v15 加密密碼 → POST login 取 token (掛在 query ?token=)
 const crypto = require('crypto');
-const NAS_BASE = process.env.NAS_HOST
-    ? `${process.env.NAS_SCHEME || 'https'}://${process.env.NAS_HOST}:${process.env.NAS_PORT || '9443'}`
-    : null;
-const nasClient = NAS_BASE ? axios.create({
-    baseURL: NAS_BASE,
-    headers: { 'ug-agent': 'PC/WEB', 'Accept': 'application/json' },
-    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-    timeout: 10000
-}) : null;
+function buildNasClient() {
+    const base = process.env.NAS_HOST
+        ? `${process.env.NAS_SCHEME || 'https'}://${process.env.NAS_HOST}:${process.env.NAS_PORT || '9443'}`
+        : null;
+    return {
+        base,
+        client: base ? axios.create({
+            baseURL: base,
+            headers: { 'ug-agent': 'PC/WEB', 'Accept': 'application/json' },
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            timeout: 10000
+        }) : null
+    };
+}
+let { base: NAS_BASE, client: nasClient } = buildNasClient();
 
 function nasConfigured() {
     return !!(NAS_BASE && process.env.NAS_USER && process.env.NAS_PASSWORD)
@@ -1053,14 +1066,20 @@ app.get('/api/nas/ups-usb', async (req, res) => {
 /* ===================== NAS Monitor 擴充 REST API (系統 B / nas-monitor-interface) ===================== */
 // 選填：若另外部署了 nas-monitor-interface (Flask 中介層)，設定 NAS_MONITOR_URL + NAS_MONITOR_API_KEY 即可
 // 取得 Docker 管理、流量/儲存/溫度歷史、儲存滿載預測、警報等進階功能。未設定時全部回退展示資料。
-const NASMON_URL = process.env.NAS_MONITOR_URL || null;
-const NASMON_KEY = process.env.NAS_MONITOR_API_KEY || '';
-const nasMonClient = NASMON_URL ? axios.create({
-    baseURL: NASMON_URL.replace(/\/$/, ''),
-    headers: { 'Accept': 'application/json', 'X-API-Key': NASMON_KEY, 'Authorization': `Bearer ${NASMON_KEY}` },
-    httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-    timeout: 12000
-}) : null;
+function buildNasMonClient() {
+    const url = process.env.NAS_MONITOR_URL || null;
+    const key = process.env.NAS_MONITOR_API_KEY || '';
+    return {
+        url,
+        client: url ? axios.create({
+            baseURL: url.replace(/\/$/, ''),
+            headers: { 'Accept': 'application/json', 'X-API-Key': key, 'Authorization': `Bearer ${key}` },
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            timeout: 12000
+        }) : null
+    };
+}
+let { url: NASMON_URL, client: nasMonClient } = buildNasMonClient();
 function nasMonConfigured() { return !!NASMON_URL; }
 async function nasMonGet(p, params) { const r = await nasMonClient.get(p, { params }); return r.data; }
 
@@ -1248,6 +1267,74 @@ app.post('/api/settings', (req, res) => {
     res.json({ ok: true, settings: appSettings });
 });
 
+/* ===================== 連線設定 (網頁直接改 .env，熱重建免重啟) ===================== */
+const ENV_FILE = path.join(__dirname, '.env');
+// 允許透過設定頁修改的欄位 (secret: GET 時只回「是否已設定」)
+const CONN_FIELDS = [
+    { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
+    { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
+    { key: 'UNIFI_API_KEY', secret: true },
+    { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
+    { key: 'NAS_MONITOR_URL' }, { key: 'NAS_MONITOR_API_KEY', secret: true },
+    { key: 'WIIM_IP' },
+    { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' }
+];
+
+// 更新 .env 檔：既有 KEY= 行 (含註解掉的) 就地取代，否則附加到檔尾
+function persistEnvVars(updates) {
+    let content = '';
+    try { content = fs.readFileSync(ENV_FILE, 'utf8'); } catch { }
+    for (const [k, v] of Object.entries(updates)) {
+        const line = `${k}=${v}`;
+        const re = new RegExp(`^#?\\s*${k}=.*$`, 'm');
+        content = re.test(content) ? content.replace(re, line) : content + (content.endsWith('\n') || !content ? '' : '\n') + line + '\n';
+    }
+    fs.writeFileSync(ENV_FILE, content);
+}
+
+// 熱重建所有依賴 env 的客戶端與快取 (免重啟)
+function rebuildClients() {
+    unifiClient = buildUnifiClient();
+    unifiCloudClient = buildUnifiCloudClient();
+    ({ base: NAS_BASE, client: nasClient } = buildNasClient());
+    ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
+    wiimIP = process.env.WIIM_IP || wiimIP;
+    localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
+    nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
+    Object.keys(wiimCache).forEach(k => delete wiimCache[k]);
+    sysLog('Connections', '連線設定已更新，所有客戶端已熱重建');
+}
+
+// GET：非機密回明碼、機密只回是否已設定 (佔位字串視為未設定)
+app.get('/api/connections', (req, res) => {
+    const fields = {}, secretsSet = {};
+    for (const f of CONN_FIELDS) {
+        const v = process.env[f.key];
+        if (f.secret) secretsSet[f.key] = !isPlaceholder(v);
+        else fields[f.key] = isPlaceholder(v) ? '' : (v || '');
+    }
+    res.json({ fields, secretsSet });
+});
+
+// POST：留空 = 不變更；寫入 .env + 即時生效
+app.post('/api/connections', (req, res) => {
+    const b = req.body || {};
+    const updates = {};
+    for (const f of CONN_FIELDS) {
+        const v = b[f.key];
+        if (typeof v === 'string' && v.trim() !== '') updates[f.key] = v.trim();
+    }
+    if (!Object.keys(updates).length) return res.json({ ok: true, changed: 0 });
+    for (const [k, v] of Object.entries(updates)) process.env[k] = v;
+    try { persistEnvVars(updates); } catch (e) {
+        sysLog('Connections', `.env 寫入失敗: ${e.message}`, true);
+        return res.status(500).json({ error: '.env 寫入失敗: ' + e.message });
+    }
+    rebuildClients();
+    sysLog('Connections', `已更新 ${Object.keys(updates).length} 個欄位: ${Object.keys(updates).join(', ')}`);
+    res.json({ ok: true, changed: Object.keys(updates).length });
+});
+
 /* ===================== 定期報表 ===================== */
 // 彙整過去 24 小時的關鍵指標成一段文字
 async function buildReport() {
@@ -1336,7 +1423,7 @@ self.addEventListener('fetch',e=>{
 });
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---
-const wiimIP = process.env.WIIM_IP || '192.168.0.170';
+let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
 let wiimHistory = [];
 
 const wiimCache = {};
@@ -1481,10 +1568,11 @@ app.get('/api/wiim/csv', (req, res) => {
 //   2) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
 //   3) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
 // 電壓歷史與斷電事件「持久化」於 DATA_DIR (斷電紀錄不可因重啟遺失)。
-const UPS_SOURCE = process.env.UPS_SOURCE || 'auto';
-const NUT_HOST = process.env.NUT_HOST || 'localhost';
-const NUT_UPS_NAME = process.env.NUT_UPS_NAME || 'cyberpower';
-const PWRSTAT_PATH = process.env.PWRSTAT_PATH || 'pwrstat';
+// 呼叫時讀取 env，設定頁修改後即時生效
+const UPS_SOURCE = () => process.env.UPS_SOURCE || 'auto';
+const NUT_HOST = () => process.env.NUT_HOST || 'localhost';
+const NUT_UPS_NAME = () => process.env.NUT_UPS_NAME || 'cyberpower';
+const PWRSTAT_PATH = () => process.env.PWRSTAT_PATH || 'pwrstat';
 const UPS_HISTORY_FILE = path.join(DATA_DIR, 'ups-history.json');
 const UPS_EVENTS_FILE = path.join(DATA_DIR, 'ups-events.json');
 const UPS_HISTORY_LIMIT = 20000; // 30 秒間隔 ≈ 7 天
@@ -1500,7 +1588,7 @@ function execCmd(cmd, timeoutMs = 5000) {
 
 // --- 來源 1: NUT (upsc key: value 格式) ---
 async function readNut() {
-    const out = await execCmd(`upsc ${NUT_UPS_NAME}@${NUT_HOST} 2>/dev/null`);
+    const out = await execCmd(`upsc ${NUT_UPS_NAME()}@${NUT_HOST()} 2>/dev/null`);
     if (!out || !out.includes(':')) return null;
     const kv = {};
     out.split('\n').forEach(l => { const i = l.indexOf(':'); if (i > 0) kv[l.slice(0, i).trim()] = l.slice(i + 1).trim(); });
@@ -1520,7 +1608,7 @@ async function readNut() {
 
 // --- 來源 2: pwrstat (CyberPower 官方 CLI，"Key.... Value" 格式) ---
 async function readPwrstat() {
-    const out = await execCmd(`${PWRSTAT_PATH} -status 2>/dev/null`);
+    const out = await execCmd(`${PWRSTAT_PATH()} -status 2>/dev/null`);
     if (!out || !out.includes('Utility Voltage')) return null;
     const grab = re => { const m = out.match(re); return m ? m[1].trim() : null; };
     const state = grab(/State\.+\s*(.+)/) || '';
@@ -1553,7 +1641,7 @@ async function readPmset() {
 }
 
 async function readUpsLive() {
-    const order = UPS_SOURCE === 'auto' ? ['nut', 'pwrstat', 'pmset'] : [UPS_SOURCE];
+    const order = UPS_SOURCE() === 'auto' ? ['nut', 'pwrstat', 'pmset'] : [UPS_SOURCE()];
     for (const src of order) {
         const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset }[src];
         if (!fn) continue;

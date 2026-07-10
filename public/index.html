@@ -1158,6 +1158,86 @@
                 </div>
             </div>
 
+            <!-- 連線設定 (.env 網頁化，免改檔免重啟) -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
+                <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                    <div>
+                        <h3 class="text-lg font-bold text-white tracking-wider">🔌 設備連線設定</h3>
+                        <p class="text-[10px] text-slate-500 mt-0.5">直接在這裡填設備帳密與 IP — 儲存即寫入 .env 並<span class="text-slate-300">立即生效，免重啟</span>。密碼欄位留空 = 保留原值，不會被清空。</p>
+                    </div>
+                    <button onclick="saveConnections()" class="py-2.5 px-6 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition shrink-0 self-start">💾 儲存並立即套用</button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <!-- UCG SSH -->
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                        <p class="text-[11px] font-bold text-blue-400">🖥 UCG-Ultra 硬體監控 (SSH)</p>
+                        <p class="text-[9px] text-slate-500 leading-relaxed">主控台 → 設定 → 系統 → SSH 開啟並設定密碼</p>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">UCG IP</label><input id="conn-UCG_IP" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 帳號</label><input id="conn-SSH_USER" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                            <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Port</label><input id="conn-SSH_PORT" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        </div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 密碼 <span id="connset-SSH_PASSWORD" class="normal-case"></span></label><input id="conn-SSH_PASSWORD" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">WAN 介面名稱</label><input id="conn-WAN_IFACE" placeholder="eth4" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                    </div>
+                    <!-- UniFi 本地 -->
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                        <p class="text-[11px] font-bold text-blue-400">🌐 UniFi 本地控制器</p>
+                        <p class="text-[9px] text-slate-500 leading-relaxed">主控台 → 管理員 → 新增「本地」管理員 (勿用雲端 SSO 帳號)</p>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">控制器網址</label><input id="conn-UNIFI_CONTROLLER_URL" placeholder="https://192.168.0.1" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">本地帳號</label><input id="conn-UNIFI_USERNAME" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">本地密碼 <span id="connset-UNIFI_PASSWORD" class="normal-case"></span></label><input id="conn-UNIFI_PASSWORD" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">Site Manager API Key (選填) <span id="connset-UNIFI_API_KEY" class="normal-case"></span></label><input id="conn-UNIFI_API_KEY" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                    </div>
+                    <!-- WiiM + UPS -->
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                        <p class="text-[11px] font-bold text-violet-400">🎵 WiiM Amp</p>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">WiiM IP</label><input id="conn-WIIM_IP" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <p class="text-[11px] font-bold text-amber-400 pt-2">⚡ CyberPower UPS</p>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">資料來源</label>
+                            <select id="conn-UPS_SOURCE" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                <option value="auto">自動 (NUT → pwrstat → pmset)</option>
+                                <option value="nut">NUT (upsc，建議)</option>
+                                <option value="pwrstat">pwrstat (官方 PowerPanel CLI)</option>
+                                <option value="pmset">pmset (macOS 原生，僅電量)</option>
+                            </select>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label class="text-[9px] text-slate-500 uppercase font-bold">NUT 主機</label><input id="conn-NUT_HOST" placeholder="localhost" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                            <div><label class="text-[9px] text-slate-500 uppercase font-bold">NUT UPS 名稱</label><input id="conn-NUT_UPS_NAME" placeholder="cyberpower" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        </div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">pwrstat 路徑 (選填)</label><input id="conn-PWRSTAT_PATH" placeholder="/usr/local/bin/pwrstat" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                    </div>
+                    <!-- UGREEN NAS -->
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                        <p class="text-[11px] font-bold text-emerald-400">💾 UGREEN NAS (UGOS)</p>
+                        <p class="text-[9px] text-slate-500 leading-relaxed">密碼不可包含 # * § (UGOS API 限制)</p>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div class="col-span-2"><label class="text-[9px] text-slate-500 uppercase font-bold">NAS IP</label><input id="conn-NAS_HOST" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                            <div><label class="text-[9px] text-slate-500 uppercase font-bold">Port</label><input id="conn-NAS_PORT" placeholder="9443" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        </div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">帳號</label><input id="conn-NAS_USER" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">密碼 <span id="connset-NAS_PASSWORD" class="normal-case"></span></label><input id="conn-NAS_PASSWORD" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                    </div>
+                    <!-- NAS Monitor -->
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                        <p class="text-[11px] font-bold text-emerald-400">📊 NAS Monitor 中介層 (選填)</p>
+                        <p class="text-[9px] text-slate-500 leading-relaxed">另行部署的 Flask 服務，提供 Docker 管理與進階歷史圖</p>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">服務網址</label><input id="conn-NAS_MONITOR_URL" placeholder="http://192.168.0.x:8000" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                        <div><label class="text-[9px] text-slate-500 uppercase font-bold">API Key <span id="connset-NAS_MONITOR_API_KEY" class="normal-case"></span></label><input id="conn-NAS_MONITOR_API_KEY" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                    </div>
+                    <!-- 狀態一覽 -->
+                    <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2">
+                        <p class="text-[11px] font-bold text-slate-300">📡 目前連線狀態</p>
+                        <p class="text-[9px] text-slate-500 leading-relaxed mb-1">儲存後約 10–20 秒內更新 (依各輪詢間隔)</p>
+                        <div class="space-y-1.5 text-[11px]" id="conn-status-list">
+                            <p class="text-slate-500">載入中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 定期報表 -->
             <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
                 <div class="flex justify-between items-start">
@@ -1317,6 +1397,17 @@
                                 <button onclick="wiimCmd('setPlayerCmd:loopmode:1')" class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔂 單曲</button>
                                 <button onclick="wiimCmd('setPlayerCmd:loopmode:2')" class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔀 隨機</button>
                             </div>
+                        </div>
+
+                        <!-- 輸入源快速切換 (常用，置於播放卡) -->
+                        <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/40">
+                            <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mr-1">輸入源</span>
+                            <button data-src="wifi" onclick="wiimSwitchSource('wifi')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">📶 WiFi</button>
+                            <button data-src="bluetooth" onclick="wiimSwitchSource('bluetooth')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🅱 藍牙</button>
+                            <button data-src="line-in" onclick="wiimSwitchSource('line-in')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🎚 Line-In</button>
+                            <button data-src="optical" onclick="wiimSwitchSource('optical')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">💡 光纖</button>
+                            <button data-src="co-axial" onclick="wiimSwitchSource('co-axial')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🔌 同軸</button>
+                            <button data-src="udisk" onclick="wiimSwitchSource('udisk')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">💾 USB</button>
                         </div>
                     </div>
                 </div>
@@ -1956,6 +2047,7 @@
         fetchNotifSettings();
         fetchNotifLog();
         fetchAppSettings();
+        fetchConnections();
         fetchUps();
         fetchWiimDeviceInfo();
         initWiimPage();
@@ -3450,6 +3542,60 @@
             showToast('伺服器設定已儲存並套用');
         } catch (e) { showToast('儲存失敗', true); }
     }
+    /* ==================== 連線設定 (.env 網頁化) ==================== */
+    async function fetchConnections() {
+        try {
+            const d = await (await fetch('/api/connections')).json();
+            dbg('Conn', '連線設定載入', d);
+            for (const [k, v] of Object.entries(d.fields || {})) {
+                const el = document.getElementById('conn-' + k);
+                if (el) el.value = v || '';
+            }
+            for (const [k, set] of Object.entries(d.secretsSet || {})) {
+                const badge = document.getElementById('connset-' + k);
+                const input = document.getElementById('conn-' + k);
+                if (badge) badge.innerHTML = set ? '<span class="text-emerald-400">✓ 已設定</span>' : '<span class="text-amber-400">尚未設定</span>';
+                if (input) input.placeholder = set ? '已設定 (留空=不變更)' : '尚未設定，請填入';
+            }
+            renderConnStatus();
+        } catch (e) { dbg('Conn', '載入失敗', e); }
+    }
+
+    // 以各裝置的側邊欄/徽章即時狀態彙整
+    function renderConnStatus() {
+        const list = document.getElementById('conn-status-list');
+        if (!list) return;
+        const dot = ok => `<span class="w-2 h-2 rounded-full inline-block ${ok === true ? 'bg-emerald-500' : ok === false ? 'bg-red-500' : 'bg-slate-600'}"></span>`;
+        const ucgOk = document.getElementById('side-ucg-dot')?.className.includes('emerald');
+        const nasState = document.getElementById('side-nas-state')?.textContent;
+        const wiimState = document.getElementById('side-wiim-state')?.textContent;
+        const upsBadge = document.getElementById('ups-source-badge')?.textContent || '';
+        list.innerHTML = `
+            <div class="flex items-center gap-2">${dot(ucgOk)}<span class="text-slate-400">UCG-Ultra (SSH)</span><span class="ml-auto mono text-slate-300">${ucgOk ? '已連線' : '未連線'}</span></div>
+            <div class="flex items-center gap-2">${dot(nasState === 'online')}<span class="text-slate-400">UGREEN NAS</span><span class="ml-auto mono text-slate-300">${nasState || '--'}</span></div>
+            <div class="flex items-center gap-2">${dot(wiimState === 'online')}<span class="text-slate-400">WiiM Amp</span><span class="ml-auto mono text-slate-300">${wiimState || '--'}</span></div>
+            <div class="flex items-center gap-2">${dot(!upsBadge.includes('未連接') && !upsBadge.includes('偵測中'))}<span class="text-slate-400">CyberPower UPS</span><span class="ml-auto mono text-slate-300 text-[9px]">${upsBadge || '--'}</span></div>`;
+    }
+
+    async function saveConnections() {
+        const body = {};
+        document.querySelectorAll('.conn-input').forEach(el => {
+            const key = el.id.replace('conn-', '');
+            if (el.value && el.value.trim()) body[key] = el.value.trim();
+        });
+        dbg('Conn', '儲存欄位:', Object.keys(body));
+        try {
+            const r = await (await fetch('/api/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+            if (!r.ok) throw new Error(r.error || 'save failed');
+            showToast(`✅ 已套用 ${r.changed} 個連線設定 (免重啟)，各設備將於數秒內重新連線`);
+            document.querySelectorAll('.conn-secret').forEach(el => el.value = '');
+            // 立即觸發各設備重新抓取
+            fetchHardware(); fetchClients(); fetchThreats(); fetchNas(); fetchWiimSystem(); fetchWiimPlayback(); fetchUps();
+            setTimeout(fetchConnections, 1500);
+            setTimeout(renderConnStatus, 12000);
+        } catch (e) { showToast('儲存失敗: ' + e.message, true); }
+    }
+
     async function runReportNow() {
         showToast('產生報表中...');
         try {
@@ -3495,6 +3641,23 @@
         return map[m] || (m >= 10 && m <= 19 ? '網路串流' : m ? '訊源 ' + m : '');
     }
     const wiimIsExternalInput = m => [40, 41, 43, 47, 51].includes(parseInt(m));
+    // mode → 輸入源 chip key (播放卡快速切換列高亮用)
+    function wiimModeToSrcKey(m) {
+        m = parseInt(m);
+        return ({ 11: 'udisk', 40: 'line-in', 41: 'bluetooth', 43: 'optical', 47: 'line-in', 51: 'co-axial' })[m] || 'wifi';
+    }
+    function wiimSwitchSource(src) {
+        dbg('WiiM', '切換輸入源 →', src);
+        wiimCmd('setPlayerCmd:switchmode:' + src);
+        setTimeout(fetchWiimPlayback, 1200); // 切換需時，稍後刷新高亮
+    }
+    function wiimHighlightSource(mode) {
+        const active = wiimModeToSrcKey(mode);
+        document.querySelectorAll('.wiim-src-chip').forEach(b => {
+            const on = b.dataset.src === active;
+            b.className = `wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition ${on ? 'bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-500/20' : 'bg-slate-900/60 text-slate-400 border-slate-700/60 hover:text-slate-200 hover:border-slate-600'}`;
+        });
+    }
     // LinkPlay 無資料時回 "unknow"/"un_known" 等字串，一律視為空值
     const wiimBadVal = v => !v || /^un_?know/i.test(String(v).trim());
 
@@ -3592,6 +3755,7 @@
             wiimPlayerState = data.player;
             if (wiimPlayerState) {
                 wiimIsLive = wiimIsExternalInput(wiimPlayerState.mode);
+                wiimHighlightSource(wiimPlayerState.mode);
                 wiimIsMuted = parseInt(wiimPlayerState.mute) === 1;
                 document.getElementById('wiim-vico').textContent = wiimIsMuted ? '🔇' : '🔊';
                 document.getElementById('wiim-vol').value = wiimPlayerState.vol;

@@ -733,6 +733,20 @@ app.get('/api/ups/csv', (req, res) => {
     res.send(csv);
 });
 
+/* ===== 連線設定 (模擬) ===== */
+let mockConn = { UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4', UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo', NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '', NAS_MONITOR_URL: '', WIIM_IP: '192.168.0.170', UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '' };
+let mockConnSecrets = { SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false, NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false };
+app.get('/api/connections', (req, res) => res.json({ fields: mockConn, secretsSet: mockConnSecrets }));
+app.post('/api/connections', (req, res) => {
+    let n = 0;
+    for (const [k, v] of Object.entries(req.body || {})) {
+        if (typeof v !== 'string' || !v.trim()) continue;
+        if (k in mockConnSecrets) mockConnSecrets[k] = true; else if (k in mockConn) mockConn[k] = v.trim();
+        n++;
+    }
+    res.json({ ok: true, changed: n });
+});
+
 app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
 
 const PORT = 3005;
