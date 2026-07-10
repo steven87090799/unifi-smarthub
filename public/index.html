@@ -1156,8 +1156,12 @@
                             <input type="text" id="notif-token" placeholder="123456:ABC... (留空=不變更)" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-blue-500">
                         </div>
                         <div>
-                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Chat ID</label>
-                            <input type="text" id="notif-chatid" placeholder="例如 123456789" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Chat ID <span class="normal-case text-slate-600">(數字，不是 bot 名稱)</span></label>
+                            <div class="flex gap-2">
+                                <input type="text" id="notif-chatid" placeholder="例如 123456789" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                <button onclick="detectChatId()" class="shrink-0 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] font-bold text-slate-200 rounded-lg transition" title="先在 Telegram 對你的 bot 傳一句話，再按此自動抓 Chat ID">偵測 Chat ID</button>
+                            </div>
+                            <p class="text-[9px] text-slate-600 mt-1.5 leading-relaxed">步驟：① 向 @BotFather 建立 bot 取得 Token 並填上方儲存 → ② 在 Telegram 搜尋你的 bot 並傳送任一訊息 → ③ 按「偵測 Chat ID」自動填入。</p>
                         </div>
                     </div>
 
@@ -3638,6 +3642,18 @@
             document.getElementById('notif-token').value = '';
             fetchNotifSettings();
         } catch (e) { showToast('儲存失敗', true); }
+    }
+
+    async function detectChatId() {
+        showToast('查詢 Telegram Chat ID 中...');
+        try {
+            const res = await fetch('/api/notifications/telegram-chatid');
+            const r = await res.json();
+            if (!res.ok) return showToast(r.error || '查詢失敗', true);
+            if (!r.chats.length) return showToast('沒找到聊天室：請先在 Telegram 對你的 bot 傳送任一訊息再試', true);
+            document.getElementById('notif-chatid').value = r.chats[0].id;
+            showToast(`✅ 已填入 Chat ID ${r.chats[0].id} (${r.chats[0].name})，記得按儲存`);
+        } catch (e) { showToast('查詢失敗: ' + e.message, true); }
     }
 
     async function testNotif() {

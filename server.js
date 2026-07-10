@@ -723,7 +723,15 @@ async function dispatchNotification(title, body, settings) {
     const text = `${title}\n${body}`;
     if (s.channel === 'telegram') {
         if (!s.botToken || !s.chatId) throw new Error('Telegram 未設定 botToken / chatId');
-        await axios.post(`https://api.telegram.org/bot${s.botToken}/sendMessage`, { chat_id: s.chatId, text }, { timeout: 8000 });
+        try {
+            await axios.post(`https://api.telegram.org/bot${s.botToken}/sendMessage`, { chat_id: s.chatId, text }, { timeout: 8000 });
+        } catch (e) {
+            const st = e.response && e.response.status;
+            const desc = e.response && e.response.data && e.response.data.description;
+            if (st === 404) throw new Error('Telegram 回應 404：Bot Token 錯誤 (請向 @BotFather 重新複製完整 token，格式如 123456789:AAxxxx)');
+            if (st === 400 && /chat not found/i.test(desc || '')) throw new Error('Telegram：找不到聊天室。Chat ID 必須是數字 (不是 bot 名稱)，且你要先在 Telegram 對這個 bot 送出任一訊息，再按「偵測 Chat ID」');
+            throw new Error(`Telegram ${st || ''}: ${desc || e.message}`);
+        }
     } else if (s.channel === 'discord') {
         if (!s.webhookUrl) throw new Error('Discord Webhook URL 未設定');
         await axios.post(s.webhookUrl, { content: text }, { timeout: 8000 });
@@ -732,6 +740,24 @@ async function dispatchNotification(title, body, settings) {
         await axios.post(s.webhookUrl, { title, body, text, ts: new Date().toISOString() }, { timeout: 8000 });
     }
 }
+
+// Telegram Chat ID 偵測：讀 bot 的 getUpdates，列出最近跟它說過話的聊天室
+app.get('/api/notifications/telegram-chatid', async (req, res) => {
+    const s = loadNotifSettings();
+    if (!s.botToken) return res.status(400).json({ error: '請先填入 Bot Token 並儲存' });
+    try {
+        const r = await axios.get(`https://api.telegram.org/bot${s.botToken}/getUpdates`, { timeout: 8000 });
+        const chats = {};
+        (r.data.result || []).forEach(u => {
+            const c = (u.message || u.channel_post || u.my_chat_member || {}).chat;
+            if (c) chats[c.id] = { id: c.id, name: c.title || c.username || `${c.first_name || ''} ${c.last_name || ''}`.trim() || String(c.id), type: c.type };
+        });
+        res.json({ chats: Object.values(chats) });
+    } catch (e) {
+        const st = e.response && e.response.status;
+        res.status(500).json({ error: st === 404 ? 'Bot Token 無效 (Telegram 回應 404)，請向 @BotFather 重新複製' : e.message });
+    }
+});
 
 async function notify(title, body) {
     const s = loadNotifSettings();
