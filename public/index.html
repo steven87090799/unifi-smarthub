@@ -548,11 +548,11 @@
                     </div>
                 </div>
 
-                <!-- Top 5 流量排行榜 -->
+                <!-- 全設備流量排行榜 -->
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                    <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">Top 5 流量用戶排行</h3>
-                    <p class="text-[9px] text-slate-500 mb-4">依累計 Rx + Tx 總量排序</p>
-                    <div class="space-y-4" id="traffic-top5">
+                    <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">全部設備流量排行 <span class="mono text-slate-600" id="traffic-rank-count"></span></h3>
+                    <p class="text-[9px] text-slate-500 mb-4">依累計 Rx + Tx 總量排序，全部裝置</p>
+                    <div class="space-y-4 max-h-[420px] overflow-y-auto pr-1" id="traffic-top5">
                         <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
                     </div>
                 </div>
@@ -2575,9 +2575,11 @@
     }
 
     function renderTrafficTop5() {
-        const top = [...allClients].sort((a, b) => (b.rx_bytes + b.tx_bytes) - (a.rx_bytes + a.tx_bytes)).slice(0, 5);
+        const top = [...allClients].sort((a, b) => (b.rx_bytes + b.tx_bytes) - (a.rx_bytes + a.tx_bytes));
         const max = top.length ? (top[0].rx_bytes + top[0].tx_bytes) : 1;
-        const colors = ['bg-blue-500', 'bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-slate-500'];
+        const cnt = document.getElementById('traffic-rank-count'); if (cnt) cnt.textContent = top.length ? `(${top.length} 台)` : '';
+        // 前三名有專屬色，其餘統一灰藍
+        const colors = ['bg-blue-500', 'bg-indigo-500', 'bg-emerald-500'];
         document.getElementById('traffic-top5').innerHTML = top.map((c, i) => {
             const total = c.rx_bytes + c.tx_bytes;
             const gb = total / 1073741824;
@@ -2589,7 +2591,7 @@
                         <span class="mono text-slate-400">${label}</span>
                     </div>
                     <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
-                        <div class="${colors[i]} h-full rounded-full transition-all duration-700" style="width: ${Math.max(total / max * 100, 3)}%;"></div>
+                        <div class="${colors[i] || 'bg-slate-500'} h-full rounded-full transition-all duration-700" style="width: ${Math.max(total / max * 100, 3)}%;"></div>
                     </div>
                 </div>`;
         }).join('') || '<p class="text-xs text-slate-500 text-center py-4">無客戶端資料</p>';

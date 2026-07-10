@@ -1025,21 +1025,41 @@ async function getNasToken() {
         return nasToken;
     }
     try {
-        sysLog('NAS Auth', '開始進行 UGREEN NAS RSA 登入認證流程...');
-        const pkRes = await nasClient.get('/ugreen/v1/verify/rsa_public_key');
-        const publicKey = deepFind(pkRes.data, ['public_key', 'publicKey', 'rsa_public_key', 'key']);
-        if (!publicKey || !String(publicKey).includes('KEY')) throw new Error('NAS RSA public key not found in response');
-        
+        sysLog('NAS Auth', '開始進行 UGREEN NAS RSA 登入認證流程 (UGOS Pro)...');
+        // UGOS Pro (>=1.1x)：POST /verify/check，RSA 公鑰放在回應標頭 x-rsa-token (base64 DER)
+        let keyObj = null;
+        try {
+            const chk = await nasClient.post('/ugreen/v1/verify/check?token=', { username: process.env.NAS_USER });
+            const hdr = chk.headers['x-rsa-token'] || '';
+            if (hdr) {
+                // 標頭是 base64 的 PEM；注意 UGOS 的 PEM 標籤寫 "RSA PUBLIC KEY" 但內容其實是 SPKI 格式 (標籤誤植)
+                const pem = Buffer.from(hdr, 'base64').toString('utf8');
+                const der = Buffer.from(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''), 'base64');
+                try { keyObj = crypto.createPublicKey({ key: der, format: 'der', type: 'spki' }); }
+                catch { keyObj = crypto.createPublicKey({ key: der, format: 'der', type: 'pkcs1' }); }
+            }
+        } catch (e) { sysLog('NAS Auth', `verify/check 失敗 (${e.message})，改試舊版端點`, false); }
+        if (!keyObj) {
+            // 舊版 UGOS：GET /verify/rsa_public_key 直接回 PEM
+            const pkRes = await nasClient.get('/ugreen/v1/verify/rsa_public_key');
+            const publicKey = deepFind(pkRes.data, ['public_key', 'publicKey', 'rsa_public_key', 'key']);
+            if (!publicKey || !String(publicKey).includes('KEY')) throw new Error('取不到 NAS RSA 公鑰 (新舊端點皆失敗)');
+            keyObj = crypto.createPublicKey(publicKey);
+        }
+
         const encrypted = crypto.publicEncrypt(
-            { key: publicKey, padding: crypto.constants.RSA_PKCS1_PADDING },
+            { key: keyObj, padding: crypto.constants.RSA_PKCS1_PADDING },
             Buffer.from(process.env.NAS_PASSWORD)
         ).toString('base64');
-        
+
         const loginRes = await nasClient.post('/ugreen/v1/verify/login', {
+            is_simple: true, keepalive: true, otp: false,
             username: process.env.NAS_USER,
-            password: encrypted,
-            device_type: 1
+            password: encrypted
         });
+        if (loginRes.data && loginRes.data.code && loginRes.data.code !== 200) {
+            throw new Error(`NAS 登入被拒 (code ${loginRes.data.code}): ${loginRes.data.msg || loginRes.data.debug || '帳號或密碼錯誤'}`);
+        }
         const token = deepFind(loginRes.data, ['token', 'access_token']);
         if (!token) throw new Error('NAS login did not return a token');
         
@@ -1056,6 +1076,13 @@ async function getNasToken() {
 async function nasGet(pathName, params = {}) {
     const token = await getNasToken();
     const r = await nasClient.get(pathName, { params: { ...params, token } });
+    // UGOS 一律回 HTTP 200，錯誤放在 body.code (1004/1008 = 權限不足，需管理員帳號)
+    if (r.data && typeof r.data.code === 'number' && r.data.code !== 200) {
+        const permErr = [1004, 1008].includes(r.data.code);
+        throw new Error(permErr
+            ? `NAS 帳號權限不足 (code ${r.data.code})：此 API 僅限管理員帳號，請在 UGOS 將使用者設為管理員或改用管理員帳密`
+            : `UGOS code ${r.data.code}: ${r.data.msg || r.data.debug || ''}`);
+    }
     return r.data && r.data.data !== undefined ? r.data.data : r.data;
 }
 
@@ -1082,11 +1109,11 @@ const mockNasUps = { present: true, model: 'APC Back-UPS 700VA', battery_percent
 app.get('/api/nas/overview', async (req, res) => {
     if (!nasConfigured()) return res.json({ info: null, stats: null, source: 'not_configured' });
     try {
-        const [info, stats] = await Promise.all([
-            nasGet('/ugreen/v1/sysinfo/machine/common'),
-            nasGet('/ugreen/v1/taskmgr/stat/get_all')
-        ]);
-        res.json({ info, stats, source: 'nas_api' });
+        const info = await nasGet('/ugreen/v1/sysinfo/machine/common');
+        // 遙測 (taskmgr) 需管理員權限；一般帳號拿不到就只給機型資訊，不整卡報錯
+        let stats = null, statsError = null;
+        try { stats = await nasGet('/ugreen/v1/taskmgr/stat/get_all'); } catch (e) { statsError = e.message; }
+        res.json({ info, stats, statsError, source: 'nas_api' });
     } catch (error) {
         res.json({ info: null, stats: null, source: 'error', error: error.message });
     }
