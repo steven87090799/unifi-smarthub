@@ -50,8 +50,14 @@ const unifiClient = axios.create({
 let localCookie = '';
 let cookieExpiry = 0;
 
+// 佔位字串檢查：帳密未填時「完全不發起連線」，避免反覆嘗試被 IPS 判定為掃描行為
+const isPlaceholder = v => !v || /your_/i.test(v);
+
 // 本地 API 登入 Session 管理
 async function getLocalSession() {
+    if (isPlaceholder(process.env.UNIFI_USERNAME) || isPlaceholder(process.env.UNIFI_PASSWORD)) {
+        throw new Error('unifi_not_configured (UNIFI_USERNAME/PASSWORD 尚未填寫，略過連線)');
+    }
     const now = Date.now();
     if (localCookie && now < cookieExpiry) {
         sysLog('UniFi Auth', '使用快取的本地控制器 Session Cookie。');
@@ -128,6 +134,10 @@ function parseIpLinks(txt) {
 }
 
 app.get('/api/hardware', (req, res) => {
+    // 帳密未填時不發起 SSH：反覆的 SSH 連線嘗試會被 UniFi IPS 判定為 SSH 掃描 (ET SCAN 2003068)
+    if (isPlaceholder(process.env.SSH_PASSWORD) || !process.env.UCG_IP) {
+        return res.status(503).json({ error: 'ssh_not_configured', hint: '請在 .env 填寫 SSH_PASSWORD 後重啟' });
+    }
     sysLog('Hardware', `發起 SSH 連線至 UCG-Ultra (${process.env.UCG_IP}:${process.env.SSH_PORT || 22})...`);
     const conn = new Client();
     conn.on('ready', () => {
@@ -902,7 +912,8 @@ const nasClient = NAS_BASE ? axios.create({
 }) : null;
 
 function nasConfigured() {
-    return !!(NAS_BASE && process.env.NAS_USER && process.env.NAS_PASSWORD);
+    return !!(NAS_BASE && process.env.NAS_USER && process.env.NAS_PASSWORD)
+        && !isPlaceholder(process.env.NAS_PASSWORD);
 }
 
 // 在未知巢狀結構中依鍵名尋找值 (UGOS 回應包裝層級不固定)

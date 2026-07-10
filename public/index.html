@@ -191,8 +191,13 @@
             </div>
             <div class="ml-auto flex items-center gap-2">
                 <span class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-[10px] font-bold mono uppercase tracking-wider hidden sm:inline" id="cloud-status-badge">SITE MANAGER: ONLINE</span>
-                <button onclick="toggleLayoutEdit()" id="layout-edit-btn" title="編輯版面：拖曳卡片與導航項目調整順序" class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition">🧩</button>
-                <button onclick="toggleTheme()" title="切換主題" class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition"><span id="theme-icon">🌙</span></button>
+                <button onclick="toggleLayoutEdit()" id="layout-edit-btn" title="編輯版面：拖曳卡片與導航項目調整順序" class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke-linejoin="round"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" stroke-linejoin="round"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" stroke-linejoin="round"/><path stroke-linecap="round" stroke-linejoin="round" d="M17 14v6m-3-3h6"/></svg>
+                </button>
+                <button onclick="toggleTheme()" title="切換主題" class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition">
+                    <svg id="theme-icon-moon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+                    <svg id="theme-icon-sun" class="w-4 h-4 hidden" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path stroke-linecap="round" d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+                </button>
             </div>
         </header>
 
@@ -3384,8 +3389,8 @@
     function setTheme(t) {
         document.documentElement.classList.toggle('light', t === 'light');
         localStorage.setItem('theme', t);
-        const icon = document.getElementById('theme-icon');
-        if (icon) icon.innerText = t === 'light' ? '☀️' : '🌙';
+        const moon = document.getElementById('theme-icon-moon'), sun = document.getElementById('theme-icon-sun');
+        if (moon && sun) { moon.classList.toggle('hidden', t === 'light'); sun.classList.toggle('hidden', t !== 'light'); }
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.setAttribute('content', t === 'light' ? '#eef2f7' : '#030712');
         document.querySelectorAll('[data-theme-btn]').forEach(b => {
