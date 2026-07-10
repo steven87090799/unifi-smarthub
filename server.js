@@ -352,7 +352,9 @@ const APP_DEFAULTS = {
     reportEnabled: false,   // 定期報表
     reportFreq: 'daily',    // daily | weekly
     reportHour: 8,          // 每日幾點發送 (0-23)
-    upsSampleSec: 30        // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
+    upsSampleSec: 30,       // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
+    wiimCpuAlert: 70,       // WiiM CPU 溫度警示門檻 (°C，圖上門檻線 + 超標推播)
+    wiimBoardAlert: 60      // WiiM 主機板溫度警示門檻 (°C)
 };
 let appSettings = (() => { try { return { ...APP_DEFAULTS, ...JSON.parse(fs.readFileSync(APP_SETTINGS_FILE, 'utf8')) }; } catch { return { ...APP_DEFAULTS }; } })();
 function saveAppSettings() { try { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); } catch { } }
@@ -708,7 +710,7 @@ setInterval(autoDefenseSweep, 30 * 1000);
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true };
 function loadNotifSettings() {
     try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
 }
@@ -754,7 +756,7 @@ app.get('/api/notifications/settings', (req, res) => {
     const s = loadNotifSettings();
     res.json({
         enabled: s.enabled, channel: s.channel, chatId: s.chatId,
-        triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts,
+        triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts, triggerWiimTemp: s.triggerWiimTemp !== false,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -768,6 +770,7 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.chatId === 'string') s.chatId = b.chatId;
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
+    if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     saveNotifSettings(s);
@@ -820,8 +823,20 @@ async function notificationWatcher() {
             }
         } catch { }
     }
+    // WiiM 溫度超標推播 (30 分鐘冷卻，避免洗版)
+    if (s.triggerWiimTemp !== false) {
+        const last = wiimHistory[wiimHistory.length - 1];
+        const cpuA = appSettings.wiimCpuAlert ?? 70, brdA = appSettings.wiimBoardAlert ?? 60;
+        if (last && ((last.cpu != null && last.cpu >= cpuA) || (last.board != null && last.board >= brdA))
+            && Date.now() - lastWiimTempAlertTs > 30 * 60 * 1000) {
+            lastWiimTempAlertTs = Date.now();
+            sysLog('Watcher', `WiiM 溫度超標！CPU ${last.cpu}°C / 主機板 ${last.board}°C`, true);
+            await notify('🔥 WiiM 溫度警報', `CPU ${last.cpu}°C (門檻 ${cpuA}°C)\n主機板 ${last.board}°C (門檻 ${brdA}°C)`);
+        }
+    }
     notifBootstrapped = true;
 }
+let lastWiimTempAlertTs = 0;
 
 /* ===================== 伺服器端排程 (間隔可於設定頁調整，變更後即時重排) ===================== */
 let jobTimers = {};
@@ -1257,7 +1272,7 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec'].forEach(k => {
+    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert'].forEach(k => {
         if (typeof b[k] === 'number' && b[k] >= 0) appSettings[k] = b[k];
     });
     if (typeof b.reportEnabled === 'boolean') appSettings.reportEnabled = b.reportEnabled;
@@ -1502,8 +1517,8 @@ setInterval(async () => {
 app.get('/api/wiim/history', (req, res) => {
     res.json({
         interval: 10,
-        cpu_alert: 70,
-        board_alert: 60,
+        cpu_alert: appSettings.wiimCpuAlert ?? 70,
+        board_alert: appSettings.wiimBoardAlert ?? 60,
         data: wiimHistory
     });
 });

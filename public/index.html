@@ -107,9 +107,16 @@
         body::before { animation: auroraA 26s ease-in-out infinite alternate, hueShift 40s linear infinite; }
         body::after { animation: auroraB 32s ease-in-out infinite alternate, hueShift 55s linear infinite reverse; }
         @keyframes hueShift { to { filter: blur(120px) hue-rotate(50deg); } }
-        /* 超淡科技格線鋪底 */
-        body { background-image: linear-gradient(rgba(59,130,246,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(59,130,246,.025) 1px, transparent 1px); background-size: 44px 44px; }
-        html.light body { background-image: linear-gradient(rgba(30,64,175,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(30,64,175,.04) 1px, transparent 1px); }
+        /* 極淡科技格線：只在視窗邊緣隱約可見，中央乾淨 */
+        body { position: relative; }
+        #grid-backdrop {
+            position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            background-image: linear-gradient(rgba(59,130,246,.012) 1px, transparent 1px), linear-gradient(90deg, rgba(59,130,246,.012) 1px, transparent 1px);
+            background-size: 96px 96px;
+            -webkit-mask-image: radial-gradient(ellipse at center, transparent 35%, black 100%);
+            mask-image: radial-gradient(ellipse at center, transparent 35%, black 100%);
+        }
+        html.light #grid-backdrop { background-image: linear-gradient(rgba(30,64,175,.02) 1px, transparent 1px), linear-gradient(90deg, rgba(30,64,175,.02) 1px, transparent 1px); }
 
         /* 卡片 hover：懸浮 + 光暈 + 掠光 */
         main .rounded-2xl { overflow: hidden; }
@@ -168,6 +175,7 @@
     </style>
 </head>
 <body class="text-slate-100 min-h-screen selection:bg-blue-600 selection:text-white bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-950 via-slate-900 to-black">
+<div id="grid-backdrop"></div>
 
 <div class="flex min-h-screen">
     <!-- ============ 側邊欄導航 ============ -->
@@ -1169,6 +1177,9 @@
                             <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                 <input type="checkbox" id="notif-trig-nas" class="accent-blue-500 w-4 h-4"> NAS 嚴重警報 (warning / critical)
                             </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-wiim" class="accent-blue-500 w-4 h-4"> WiiM 溫度超標 (門檻於 WiiM 頁設定)
+                            </label>
                         </div>
                     </div>
 
@@ -1479,7 +1490,7 @@
                             <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex flex-col justify-between">
                                 <div>
                                     <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">CPU 溫度</p>
-                                    <p class="mono leading-none mt-1"><span class="text-3xl font-black text-rose-500" id="wiim-cpuNow">--</span><span class="text-xs text-slate-500">°C</span></p>
+                                    <p class="mono leading-none mt-1"><span class="text-3xl font-black text-rose-500" id="wiim-cpuNow">--</span><span class="text-xs text-slate-500">°C</span><span class="text-xs ml-1.5 font-bold" id="wiim-cpuTrend"></span></p>
                                 </div>
                                 <div class="text-[10px] text-slate-500 mt-2 font-mono leading-tight" id="wiim-cpuMM">最低 -- / 平均 -- / 最高 --</div>
                             </div>
@@ -1487,7 +1498,7 @@
                             <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex flex-col justify-between">
                                 <div>
                                     <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">主機板 (TMP102)</p>
-                                    <p class="mono leading-none mt-1"><span class="text-3xl font-black text-blue-400" id="wiim-boardNow">--</span><span class="text-xs text-slate-500">°C</span></p>
+                                    <p class="mono leading-none mt-1"><span class="text-3xl font-black text-blue-400" id="wiim-boardNow">--</span><span class="text-xs text-slate-500">°C</span><span class="text-xs ml-1.5 font-bold" id="wiim-boardTrend"></span></p>
                                 </div>
                                 <div class="text-[10px] text-slate-500 mt-2 font-mono leading-tight" id="wiim-boardMM">最低 -- / 平均 -- / 最高 --</div>
                             </div>
@@ -1519,8 +1530,12 @@
                             <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-rose-500"></span> CPU</span>
                             <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-blue-500"></span> 主機板</span>
                             <label class="flex items-center gap-1.5 cursor-pointer select-none ml-2 text-slate-400 hover:text-slate-200">
-                                <input type="checkbox" id="wiim-showDots" checked onchange="toggleWiimDots()" class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
+                                <input type="checkbox" id="wiim-showDots" onchange="toggleWiimDots()" class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
                                 顯示資料點
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer select-none text-slate-400 hover:text-slate-200" title="5 點移動平均，撫平感測器整數跳動">
+                                <input type="checkbox" id="wiim-smooth" checked onchange="renderWiimChart()" class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
+                                平滑曲線
                             </label>
                             <label class="flex items-center gap-1.5 cursor-pointer select-none text-slate-400 hover:text-slate-200">
                                 <input type="checkbox" id="wiim-liveScroll" checked class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
@@ -1541,9 +1556,15 @@
                             <button onclick="wiimClearHistory()" class="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/30 border border-red-900/40 text-red-400 rounded-lg transition active:scale-95">🗑 清空記錄</button>
                         </div>
                         
-                        <p class="text-[11px] text-slate-500 mt-3 leading-relaxed">
-                            滑鼠移到圖上任一位置，會顯示那個時間點的精確溫度。門檻：CPU ≥ 70°C、主機板 ≥ 60°C 觸發警示。
-                        </p>
+                        <div class="flex flex-wrap items-center gap-2 mt-3 text-[11px] text-slate-500">
+                            <span>警示門檻：CPU ≥</span>
+                            <input type="number" id="wiim-cpu-alert" min="40" max="110" class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                            <span>°C、主機板 ≥</span>
+                            <input type="number" id="wiim-board-alert" min="35" max="100" class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                            <span>°C</span>
+                            <button onclick="saveWiimAlerts()" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-[10px] font-bold text-white rounded-lg transition">儲存門檻</button>
+                            <span class="text-[10px] text-slate-600">超標會在圖上標線、卡片變紅，並透過通知推播警報 (30 分鐘冷卻)</span>
+                        </div>
                     </div>
 
                     <!-- 溫度日誌表格 -->
@@ -3510,6 +3531,7 @@
             document.getElementById('notif-chatid').value = s.chatId || '';
             document.getElementById('notif-trig-threats').checked = !!s.triggerThreats;
             document.getElementById('notif-trig-nas').checked = !!s.triggerNasAlerts;
+            const tw = document.getElementById('notif-trig-wiim'); if (tw) tw.checked = s.triggerWiimTemp !== false;
             document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
             document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
             setNotifChannel(s.channel || 'discord');
@@ -3522,7 +3544,8 @@
             channel: notifChannel,
             chatId: document.getElementById('notif-chatid').value.trim(),
             triggerThreats: document.getElementById('notif-trig-threats').checked,
-            triggerNasAlerts: document.getElementById('notif-trig-nas').checked
+            triggerNasAlerts: document.getElementById('notif-trig-nas').checked,
+            triggerWiimTemp: document.getElementById('notif-trig-wiim') ? document.getElementById('notif-trig-wiim').checked : true
         };
         const wh = document.getElementById('notif-webhook').value.trim();
         const tk = document.getElementById('notif-token').value.trim();
@@ -3704,7 +3727,8 @@
     let wiimIsMuted = false;
     let wiimLastStatusObj = null;
     let wiimLastIp = '192.168.0.170';
-    let wiimIsLive = false; // 外部訊源 (Line-In/藍牙/光纖/同軸)：無曲目長度概念，進度顯示 LIVE
+    let wiimIsLive = false;
+    let wiimCpuAlert = 70, wiimBoardAlert = 60; // 溫度警示門檻 (由後端 appSettings 同步) // 外部訊源 (Line-In/藍牙/光纖/同軸)：無曲目長度概念，進度顯示 LIVE
 
     // LinkPlay mode 欄位 → 訊源名稱 (wiim-amp-api.md §2)
     function wiimModeLabel(m) {
@@ -3755,26 +3779,10 @@
                 data: {
                     labels: [],
                     datasets: [
-                        {
-                            label: 'CPU 溫度 (°C)',
-                            data: [],
-                            borderColor: '#f43f5e',
-                            backgroundColor: 'rgba(244, 63, 94, 0.1)',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            tension: 0.2,
-                            fill: true
-                        },
-                        {
-                            label: '主機板 溫度 (°C)',
-                            data: [],
-                            borderColor: '#3b82f6',
-                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            tension: 0.2,
-                            fill: true
-                        }
+                        { label: 'CPU 溫度 (°C)', data: [], borderColor: '#f43f5e', backgroundColor: 'rgba(244, 63, 94, 0.1)', borderWidth: 1.8, pointRadius: 0, tension: 0.4, cubicInterpolationMode: 'monotone', fill: true },
+                        { label: '主機板 溫度 (°C)', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderWidth: 1.8, pointRadius: 0, tension: 0.4, cubicInterpolationMode: 'monotone', fill: true },
+                        { label: 'CPU 門檻', data: [], borderColor: 'rgba(244,63,94,.45)', borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false },
+                        { label: '主機板 門檻', data: [], borderColor: 'rgba(59,130,246,.45)', borderDash: [6, 4], borderWidth: 1, pointRadius: 0, fill: false }
                     ]
                 },
                 options: {
@@ -3994,6 +4002,8 @@
             if (!res.ok) throw new Error();
             const hist = await res.json();
             wiimRawHistory = hist.data || [];
+            if (hist.cpu_alert) { wiimCpuAlert = hist.cpu_alert; const i = document.getElementById('wiim-cpu-alert'); if (i && document.activeElement !== i) i.value = hist.cpu_alert; }
+            if (hist.board_alert) { wiimBoardAlert = hist.board_alert; const i = document.getElementById('wiim-board-alert'); if (i && document.activeElement !== i) i.value = hist.board_alert; }
             
             // 更新最後更新時間卡片與詳細連線資訊
             if (wiimRawHistory.length > 0) {
@@ -4061,12 +4071,18 @@
             dataPoints = wiimRawHistory.filter(d => (d.ts * 1000) >= cutoff);
         }
         const labels = dataPoints.map(d => new Date(d.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-        const cpuData = dataPoints.map(d => d.cpu);
-        const boardData = dataPoints.map(d => d.board);
+        let cpuData = dataPoints.map(d => d.cpu);
+        let boardData = dataPoints.map(d => d.board);
+        // 平滑曲線：5 點移動平均，撫平感測器整數階梯
+        const smoothOn = document.getElementById('wiim-smooth')?.checked;
+        if (smoothOn) { cpuData = movAvg(cpuData, 5); boardData = movAvg(boardData, 5); }
 
         wiimChart.data.labels = labels;
         wiimChart.data.datasets[0].data = cpuData;
         wiimChart.data.datasets[1].data = boardData;
+        // 門檻虛線 (跨全圖)
+        wiimChart.data.datasets[2].data = labels.map(() => wiimCpuAlert);
+        wiimChart.data.datasets[3].data = labels.map(() => wiimBoardAlert);
 
         // 讀取顯示資料點核取方塊
         const showDots = document.getElementById('wiim-showDots') ? document.getElementById('wiim-showDots').checked : true;
@@ -4087,8 +4103,27 @@
         // 更新大數字與已記錄統計
         if (wiimRawHistory.length > 0) {
             const last = wiimRawHistory[wiimRawHistory.length - 1];
-            document.getElementById('wiim-cpuNow').textContent = last.cpu !== null ? last.cpu : '--';
-            document.getElementById('wiim-boardNow').textContent = last.board !== null ? last.board : '--';
+            const cpuEl = document.getElementById('wiim-cpuNow'), brdEl = document.getElementById('wiim-boardNow');
+            cpuEl.textContent = last.cpu !== null ? last.cpu : '--';
+            brdEl.textContent = last.board !== null ? last.board : '--';
+            // 超標警示：數字轉紅 + 脈動
+            const cpuHot = last.cpu != null && last.cpu >= wiimCpuAlert;
+            const brdHot = last.board != null && last.board >= wiimBoardAlert;
+            cpuEl.className = `text-3xl font-black ${cpuHot ? 'text-red-500 animate-pulse' : 'text-rose-500'}`;
+            brdEl.className = `text-3xl font-black ${brdHot ? 'text-red-500 animate-pulse' : 'text-blue-400'}`;
+            // 近 10 分鐘趨勢箭頭 (與 10 分鐘前樣本比較)
+            const tenAgo = last.ts - 600;
+            const ref = [...wiimRawHistory].reverse().find(d => d.ts <= tenAgo);
+            const trend = (now, then, el) => {
+                if (!el) return;
+                if (now == null || !ref || then == null) { el.textContent = ''; return; }
+                const d = +(now - then).toFixed(1);
+                el.textContent = d > 0.3 ? `↗ +${d}` : d < -0.3 ? `↘ ${d}` : '→ 平穩';
+                el.style.color = d > 0.3 ? '#f59e0b' : d < -0.3 ? '#10b981' : '#64748b';
+                el.title = '與 10 分鐘前相比';
+            };
+            trend(last.cpu, ref && ref.cpu, document.getElementById('wiim-cpuTrend'));
+            trend(last.board, ref && ref.board, document.getElementById('wiim-boardTrend'));
             document.getElementById('wiim-cnt').textContent = wiimRawHistory.length;
 
             const span = wiimRawHistory[wiimRawHistory.length - 1].ts - wiimRawHistory[0].ts;
@@ -4097,6 +4132,30 @@
 
         // 更新統計最小值/平均值/最大值
         updateWiimStats(dataPoints);
+    }
+
+    // 移動平均 (忽略 null)
+    function movAvg(arr, w = 5) {
+        const out = [];
+        for (let i = 0; i < arr.length; i++) {
+            let sum = 0, c = 0;
+            for (let j = Math.max(0, i - w + 1); j <= i; j++) { const v = arr[j]; if (v != null && !isNaN(v)) { sum += v; c++; } }
+            out.push(c ? +(sum / c).toFixed(2) : null);
+        }
+        return out;
+    }
+
+    async function saveWiimAlerts() {
+        const cpu = parseInt(document.getElementById('wiim-cpu-alert').value, 10);
+        const board = parseInt(document.getElementById('wiim-board-alert').value, 10);
+        if (!cpu || !board) return showToast('請輸入有效門檻', true);
+        try {
+            await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wiimCpuAlert: cpu, wiimBoardAlert: board }) });
+            wiimCpuAlert = cpu; wiimBoardAlert = board;
+            renderWiimChart();
+            showToast(`✅ 溫度門檻已更新：CPU ${cpu}°C / 主機板 ${board}°C (推播警報同步生效)`);
+            dbg('WiiM', '門檻更新', cpu, board);
+        } catch (e) { showToast('儲存失敗', true); }
     }
 
     function toggleWiimDots() {
