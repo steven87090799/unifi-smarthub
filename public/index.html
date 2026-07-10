@@ -3486,6 +3486,17 @@
     let wiimIsMuted = false;
     let wiimLastStatusObj = null;
     let wiimLastIp = '192.168.0.170';
+    let wiimIsLive = false; // 外部訊源 (Line-In/藍牙/光纖/同軸)：無曲目長度概念，進度顯示 LIVE
+
+    // LinkPlay mode 欄位 → 訊源名稱 (wiim-amp-api.md §2)
+    function wiimModeLabel(m) {
+        m = parseInt(m);
+        const map = { 1: 'AirPlay', 2: 'DLNA', 10: 'WiFi 串流', 11: 'USB 隨身碟', 31: 'Spotify Connect', 32: 'TIDAL Connect', 40: 'Line-In', 41: '藍牙', 43: '光纖', 47: 'Line-In 2', 51: '同軸' };
+        return map[m] || (m >= 10 && m <= 19 ? '網路串流' : m ? '訊源 ' + m : '');
+    }
+    const wiimIsExternalInput = m => [40, 41, 43, 47, 51].includes(parseInt(m));
+    // LinkPlay 無資料時回 "unknow"/"un_known" 等字串，一律視為空值
+    const wiimBadVal = v => !v || /^un_?know/i.test(String(v).trim());
 
     function initWiimPage() {
         // 產生捷徑按鈕 1-12
@@ -3580,6 +3591,7 @@
             // 播放器狀態
             wiimPlayerState = data.player;
             if (wiimPlayerState) {
+                wiimIsLive = wiimIsExternalInput(wiimPlayerState.mode);
                 wiimIsMuted = parseInt(wiimPlayerState.mute) === 1;
                 document.getElementById('wiim-vico').textContent = wiimIsMuted ? '🔇' : '🔊';
                 document.getElementById('wiim-vol').value = wiimPlayerState.vol;
@@ -3594,19 +3606,24 @@
             // 曲目資訊 (Metadata)
             const meta = data.meta && data.meta.metaData;
             if (meta) {
-                document.getElementById('wiim-htitle').textContent = meta.title || '無播放曲目';
-                document.getElementById('wiim-hartist').textContent = meta.artist || '-';
-                const ovT = document.getElementById('ov-wiim-track'); if (ovT) ovT.textContent = (meta.title || '無曲目') + (meta.artist ? ' — ' + meta.artist : '');
-                
+                // 外部訊源 (Line-In 等) 的 metadata 是 "unknow" → 改顯示訊源名稱，不顯示無意義字串
+                const srcLabel = wiimModeLabel(wiimPlayerState && wiimPlayerState.mode);
+                const title = wiimBadVal(meta.title) ? (wiimIsLive ? `${srcLabel} 輸入` : '無播放曲目') : meta.title;
+                const artist = wiimBadVal(meta.artist) ? (wiimIsLive ? '外部訊源即時輸入 · 無曲目資訊' : '-') : meta.artist;
+                document.getElementById('wiim-htitle').textContent = title;
+                document.getElementById('wiim-hartist').textContent = artist;
+                const ovT = document.getElementById('ov-wiim-track');
+                if (ovT) ovT.textContent = wiimIsLive ? `${srcLabel} 輸入 (LIVE)` : title + (artist && artist !== '-' ? ' — ' + artist : '');
+
                 let rateDepth = '';
                 if (meta.sampleRate) {
                     rateDepth = (meta.sampleRate / 1000) + ' kHz / ' + (meta.bitDepth || 16) + ' bit';
                 }
-                document.getElementById('wiim-hmeta').textContent = (meta.album ? meta.album + ' · ' : '') + rateDepth;
-                
+                document.getElementById('wiim-hmeta').textContent = [srcLabel, wiimBadVal(meta.album) ? null : meta.album, rateDepth].filter(Boolean).join(' · ');
+
                 const artEl = document.getElementById('wiim-art');
                 const bgEl = document.getElementById('wiim-hero-bg');
-                if (meta.albumArtURI) {
+                if (!wiimBadVal(meta.albumArtURI)) {
                     artEl.style.backgroundImage = `url('${meta.albumArtURI}')`;
                     artEl.style.backgroundSize = 'cover';
                     artEl.style.backgroundPosition = 'center';
@@ -3868,6 +3885,13 @@
     }
 
     function updateWiimProgUI() {
+        // 外部訊源 (Line-In/藍牙/光纖/同軸)：curpos/totlen 為裝置回報的無意義亂值，凍結為 LIVE 顯示
+        if (wiimIsLive) {
+            document.getElementById('wiim-pbar').style.width = '100%';
+            document.getElementById('wiim-pcur').textContent = 'LIVE';
+            document.getElementById('wiim-ptot').textContent = '--:--';
+            return;
+        }
         if (!wiimPlayerState || wiimPlayerState.totlen <= 0) {
             document.getElementById('wiim-pbar').style.width = '0%';
             document.getElementById('wiim-pcur').textContent = '0:00';
@@ -3877,13 +3901,14 @@
         const cur = wiimPlayerState.curpos / 1000;
         const tot = wiimPlayerState.totlen / 1000;
         const pct = Math.min(100, (cur / tot) * 100);
-        
+
         document.getElementById('wiim-pbar').style.width = pct + '%';
         document.getElementById('wiim-pcur').textContent = formatSec(cur);
         document.getElementById('wiim-ptot').textContent = formatSec(tot);
     }
 
     function tickWiimProg() {
+        if (wiimIsLive) return; // LIVE 訊源無進度概念，不自走
         if (wiimPlayerState && wiimPlayerState.status === "play" && wiimPlayerState.totlen > 0) {
             wiimPlayerState.curpos = Math.min(wiimPlayerState.totlen, wiimPlayerState.curpos + 1000);
             updateWiimProgUI();
@@ -4000,6 +4025,7 @@
     /* ==================== WiiM 進階功能 ==================== */
     // 點擊進度條跳轉 (setPlayerCmd:seek:<絕對秒數>)
     function wiimSeek(ev) {
+        if (wiimIsLive) return showToast('外部訊源 (LIVE) 模式無法跳轉進度', true);
         if (!wiimPlayerState || !wiimPlayerState.totlen) return;
         const rect = document.getElementById('wiim-pwrap').getBoundingClientRect();
         const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
