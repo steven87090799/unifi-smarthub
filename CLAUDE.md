@@ -93,7 +93,7 @@
 | `GET /api/cloud/isp-metrics` | `GET /v1/isp-metrics/5m?duration=24h` | ✅ 正確 |
 
 ### D. UGREEN NAS(UGOS Pro 原生 API,對照 `../ugreen-nas-api.md` 系統 A)
-認證:`GET /ugreen/v1/verify/rsa_public_key` → 密碼 RSA PKCS1v15 加密 + Base64 → `POST /ugreen/v1/verify/login`(`device_type: 1`)取 token。Token 快取 12 小時,後續請求掛 `?token=` 並帶 `ug-agent: PC/WEB` 標頭。
+認證(UGOS Pro ≥1.17 實機驗證):`POST /ugreen/v1/verify/check?token=` → RSA 公鑰在回應標頭 `x-rsa-token`(base64 PEM;**標籤寫 RSA PUBLIC KEY 但內容是 SPKI**,需剝殼後以 der/spki 解析)→ 密碼 RSA PKCS1v15 加密 → `POST /ugreen/v1/verify/login`(`is_simple:true, keepalive:true, otp:false`)取 `data.token`。舊版 UGOS 的 `GET /verify/rsa_public_key` 作為回退。Token 快取 12 小時,後續請求掛 `?token=` query 參數。**UGOS 錯誤都回 HTTP 200,錯誤碼在 body.code**:1004/1008 = 該 API 僅限管理員帳號(disk/list、taskmgr、UPS 都要管理員;volume/list 一般帳號可讀)。
 
 | 本專案端點 | 上游 UGOS 端點 |
 | :--- | :--- |
