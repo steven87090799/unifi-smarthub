@@ -42,12 +42,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // 建立忽略內網自簽 HTTPS 憑證錯誤的 Axios 實例
 // 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
+let unifiCsrfToken = '';
 function buildUnifiClient() {
-    return axios.create({
+    const c = axios.create({
         baseURL: process.env.UNIFI_CONTROLLER_URL,
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         httpsAgent: new https.Agent({ rejectUnauthorized: false })
     });
+    // UniFi OS 的寫入操作 (POST/PUT) 需要登入時取得的 CSRF token
+    c.interceptors.request.use(cfg => { if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken; return cfg; });
+    return c;
 }
 let unifiClient = buildUnifiClient();
 
@@ -56,6 +60,9 @@ let cookieExpiry = 0;
 
 // 佔位字串檢查：帳密未填時「完全不發起連線」，避免反覆嘗試被 IPS 判定為掃描行為
 const isPlaceholder = v => !v || /your_/i.test(v);
+
+// list/alarm 的 IPS 紀錄 key 依韌體版本不同 (ips:alert / EVT_IPS_IpsAlert)，統一用 isIpsAlarm 判斷
+const isIpsAlarm = a => a && (a.key === 'ips:alert' || /^EVT_IPS/i.test(a.key || '') || /^IPS Alert/i.test(a.msg || ''));
 
 // 本地 API 登入 Session 管理
 async function getLocalSession() {
@@ -77,6 +84,7 @@ async function getLocalSession() {
         
         const cookies = response.headers['set-cookie'];
         if (cookies) {
+            unifiCsrfToken = response.headers['x-csrf-token'] || unifiCsrfToken;
             localCookie = cookies.join('; ');
             cookieExpiry = now + 15 * 60 * 1000; // 15 分鐘過期
             sysLog('UniFi Auth', '登入成功，已快取 Session Cookie (15分鐘)。');
@@ -251,7 +259,7 @@ app.get('/api/clients', async (req, res) => {
     try {
         sysLog('UniFi API', '獲取活躍客戶端清單...');
         const cookie = await getLocalSession();
-        const response = await unifiClient.get('/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+        const response = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
         
         const clients = response.data.data.map(c => ({
             mac: c.mac,
@@ -276,7 +284,7 @@ app.get('/api/wifi-networks', async (req, res) => {
     try {
         sysLog('UniFi API', '獲取 SSID 設定清單...');
         const cookie = await getLocalSession();
-        const response = await unifiClient.get('/api/s/default/rest/wlanconf', { headers: { 'Cookie': cookie } });
+        const response = await unifiClient.get('/proxy/network/api/s/default/rest/wlanconf', { headers: { 'Cookie': cookie } });
         sysLog('UniFi API', `成功獲取 ${response.data.data.length} 個 SSID 配置。`);
         res.json({ networks: response.data.data });
     } catch (error) {
@@ -290,7 +298,7 @@ app.put('/api/wifi-networks/:id', async (req, res) => {
     try {
         sysLog('UniFi API', `調整 SSID 狀態：ID ${req.params.id} -> 啟用: ${req.body.enabled}`);
         const cookie = await getLocalSession();
-        const response = await unifiClient.put(`/api/s/default/rest/wlanconf/${req.params.id}`, {
+        const response = await unifiClient.put(`/proxy/network/api/s/default/rest/wlanconf/${req.params.id}`, {
             enabled: req.body.enabled
         }, { headers: { 'Cookie': cookie } });
         sysLog('UniFi API', `SSID 狀態變更成功。`);
@@ -305,10 +313,10 @@ app.put('/api/wifi-networks/:id', async (req, res) => {
 app.get('/api/threats', async (req, res) => {
     try {
         const cookie = await getLocalSession();
-        const response = await unifiClient.get('/api/s/default/stat/alarm', { headers: { 'Cookie': cookie } });
+        const response = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
         
         // 過濾出與 IPS 相關的警告並擴充結構
-        const threats = response.data.data.filter(a => a.key === 'ips:alert').map(t => {
+        const threats = response.data.data.filter(isIpsAlarm).map(t => {
             // 嘗試解析威脅種類
             let category = "Intrusion Attempt";
             if (t.msg.includes("EXPLOIT")) category = "Web Exploit";
@@ -382,7 +390,7 @@ app.put('/api/device/restrict', async (req, res) => {
     try {
         sysLog('UniFi API', `收到客戶端控制請求：MAC ${req.body.deviceId} -> 阻斷: ${req.body.blockState}`);
         const cookie = await getLocalSession();
-        await unifiClient.post('/api/s/default/cmd/stamgr', {
+        await unifiClient.post('/proxy/network/api/s/default/cmd/stamgr', {
             cmd: req.body.blockState ? 'block-sta' : 'unblock-sta',
             mac: req.body.deviceId
         }, { headers: { 'Cookie': cookie } });
@@ -411,7 +419,7 @@ app.post('/api/poe/power-cycle', async (req, res) => {
     try {
         sysLog('UniFi API', `收到 PoE Port 重啟請求：Switch ${req.body.switchMac}, Port ${req.body.portIndex}`);
         const cookie = await getLocalSession();
-        await unifiClient.post('/api/s/default/cmd/devmgr', {
+        await unifiClient.post('/proxy/network/api/s/default/cmd/devmgr', {
             cmd: "power-cycle",
             mac: req.body.switchMac,
             port_idx: parseInt(req.body.portIndex, 10)
@@ -429,7 +437,7 @@ app.post('/api/speedtest', async (req, res) => {
     try {
         sysLog('UniFi API', '收到手動觸發 Speedtest 指令。');
         const cookie = await getLocalSession();
-        await unifiClient.post('/api/s/default/cmd/devmgr', {
+        await unifiClient.post('/proxy/network/api/s/default/cmd/devmgr', {
             cmd: "speedtest"
         }, { headers: { 'Cookie': cookie } });
         sysLog('UniFi API', '測速指令發送成功，控制器開始測速。');
@@ -444,7 +452,7 @@ app.post('/api/speedtest', async (req, res) => {
 app.get('/api/speedtest/status', async (req, res) => {
     try {
         const cookie = await getLocalSession();
-        const response = await unifiClient.get('/api/s/default/stat/health', { headers: { 'Cookie': cookie } });
+        const response = await unifiClient.get('/proxy/network/api/s/default/stat/health', { headers: { 'Cookie': cookie } });
         const www = (response.data.data || []).find(s => s.subsystem === 'www') || {};
         res.json({
             status: www.speedtest_status || 'unknown',
@@ -673,14 +681,14 @@ async function autoDefenseSweep() {
     try {
         sysLog('AutoDefense', '啟動自動防禦威脅日誌掃描...');
         const cookie = await getLocalSession();
-        const alarm = await unifiClient.get('/api/s/default/stat/alarm', { headers: { 'Cookie': cookie } });
+        const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
         const recent = (alarm.data.data || []).filter(a =>
-            a.key === 'ips:alert' && Date.now() - new Date(a.datetime).getTime() < 10 * 60 * 1000);
+            isIpsAlarm(a) && Date.now() - new Date(a.datetime).getTime() < 10 * 60 * 1000);
         if (!recent.length) {
             sysLog('AutoDefense', '掃描完成，未偵測到近 10 分鐘內的高危 IPS 威脅。');
             return;
         }
-        const sta = await unifiClient.get('/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+        const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
         const clients = sta.data.data || [];
         for (const t of recent) {
             const msg = (t.msg || '').toUpperCase();
@@ -688,7 +696,7 @@ async function autoDefenseSweep() {
             const victim = clients.find(c => c.ip === t.dest_ip && !c.blocked);
             if (victim && !autoBlockedMacs.has(victim.mac)) {
                 sysLog('AutoDefense', `⚠️ 偵測到重大感染威脅：設備 IP ${t.dest_ip} (${victim.mac}) 觸發「${t.msg}」，即將自動進行網絡物理隔離！`, true);
-                await unifiClient.post('/api/s/default/cmd/stamgr', { cmd: 'block-sta', mac: victim.mac }, { headers: { 'Cookie': cookie } });
+                await unifiClient.post('/proxy/network/api/s/default/cmd/stamgr', { cmd: 'block-sta', mac: victim.mac }, { headers: { 'Cookie': cookie } });
                 autoBlockedMacs.add(victim.mac);
                 appendBlockHistory({
                     datetime: new Date().toISOString(),
@@ -797,8 +805,8 @@ async function notificationWatcher() {
     if (s.triggerThreats) {
         try {
             const cookie = await getLocalSession();
-            const alarm = await unifiClient.get('/api/s/default/stat/alarm', { headers: { 'Cookie': cookie } });
-            const alerts = (alarm.data.data || []).filter(a => a.key === 'ips:alert');
+            const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
+            const alerts = (alarm.data.data || []).filter(isIpsAlarm);
             // 首輪只記錄既有事件，避免啟動時一次推播歷史全部
             if (!notifBootstrapped) { alerts.forEach(a => notifiedThreatIds.add(a._id)); }
             else {
@@ -866,11 +874,11 @@ async function sampleTrends() {
     const point = { t: new Date().toISOString(), clients: null, threats24h: null, latency: null };
     try {
         const cookie = await getLocalSession();
-        const sta = await unifiClient.get('/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+        const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
         point.clients = (sta.data.data || []).length;
-        const alarm = await unifiClient.get('/api/s/default/stat/alarm', { headers: { 'Cookie': cookie } });
+        const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
         const dayAgo = Date.now() - 86400000;
-        point.threats24h = (alarm.data.data || []).filter(a => a.key === 'ips:alert' && new Date(a.datetime).getTime() >= dayAgo).length;
+        point.threats24h = (alarm.data.data || []).filter(a => isIpsAlarm(a) && new Date(a.datetime).getTime() >= dayAgo).length;
     } catch { /* 本地控制器不可用時該欄位保留 null */ }
     try {
         if (process.env.UNIFI_API_KEY && !process.env.UNIFI_API_KEY.includes('your_unifi')) {
@@ -1357,10 +1365,10 @@ async function buildReport() {
     const dayAgo = Date.now() - 86400000;
     try {
         const cookie = await getLocalSession();
-        const alarm = await unifiClient.get('/api/s/default/stat/alarm', { headers: { 'Cookie': cookie } });
-        const threats = (alarm.data.data || []).filter(a => a.key === 'ips:alert' && new Date(a.datetime).getTime() >= dayAgo);
+        const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
+        const threats = (alarm.data.data || []).filter(a => isIpsAlarm(a) && new Date(a.datetime).getTime() >= dayAgo);
         lines.push(`🛡️ 24H 威脅攔截：${threats.length} 次`);
-        const sta = await unifiClient.get('/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+        const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
         lines.push(`📱 目前線上客戶端：${(sta.data.data || []).length} 台`);
     } catch { lines.push('🛡️ 威脅/客戶端：本地控制器未連線'); }
     const trends = loadTrends().filter(p => new Date(p.t).getTime() >= dayAgo);
@@ -1672,15 +1680,20 @@ async function readPwrstat() {
 // --- 來源 3: pmset (macOS 原生，資訊有限) ---
 async function readPmset() {
     const out = await execCmd('pmset -g ps 2>/dev/null');
-    if (!out || !/UPS/i.test(out)) return null;
-    const cap = out.match(/(\d+)%/);
+    // UPS 會以電源裝置行出現，例如「 -CP1000AVRLCDa (id=xxx) 100%; AC attached; ...」
+    // 不能靠字面 "UPS" 判斷（CyberPower 顯示的是型號名）；排除筆電內建電池
+    const devLine = (out || '').split('\n').find(l => /^\s*-.*\d+%/.test(l) && !/InternalBattery/i.test(l));
+    if (!devLine) return null;
+    const cap = devLine.match(/(\d+)%/);
+    const onBattery = /'UPS Power'|Battery Power/i.test(out) || /discharging/i.test(devLine);
     return {
-        source: 'pmset', model: (out.match(/-InternalBattery-0|'(.+?)'/) || [])[1] || 'USB HID UPS',
-        status: /AC Power/i.test(out) ? 'OL (AC)' : 'OB (Battery)',
-        onBattery: /Battery Power/i.test(out),
-        inputV: null, outputV: null,
+        source: 'pmset',
+        model: (devLine.match(/^\s*-\s*([^(]+?)\s*(?:\(|\t|\d+%)/) || [])[1] || 'USB HID UPS',
+        status: onBattery ? 'OB (Battery)' : 'OL (AC)',
+        onBattery,
+        inputV: null, outputV: null, // pmset 不提供電壓；要電壓紀錄請改用 NUT
         battery: cap ? parseFloat(cap[1]) : null,
-        runtimeSec: (() => { const m = out.match(/(\d+):(\d+) remaining/); return m ? (+m[1] * 60 + +m[2]) * 60 : null; })(),
+        runtimeSec: (() => { const m = devLine.match(/(\d+):(\d+) remaining/); return m ? (+m[1] * 60 + +m[2]) * 60 : null; })(),
         loadPct: null
     };
 }

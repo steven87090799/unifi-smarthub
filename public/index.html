@@ -1436,7 +1436,7 @@
                             
                             <!-- 音量與靜音 -->
                             <div class="flex items-center gap-2 flex-grow max-w-sm">
-                                <span class="text-sm cursor-pointer select-none shrink-0" id="wiim-vico" onclick="wiimToggleMute()">🔊</span>
+                                <span class="cursor-pointer select-none shrink-0 text-slate-300 hover:text-white transition" id="wiim-vico" onclick="wiimToggleMute()"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></span>
                                 <button onclick="wiimCmd('setPlayerCmd:vol--')" class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">−</button>
                                 <input type="range" id="wiim-vol" min="0" max="100" class="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="document.getElementById('wiim-volval').textContent = this.value" onchange="wiimCmd('setPlayerCmd:vol:' + this.value)">
                                 <button onclick="wiimCmd('setPlayerCmd:vol++')" class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">＋</button>
@@ -1455,12 +1455,12 @@
                         <!-- 輸入源快速切換 (常用，置於播放卡) -->
                         <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-800/40">
                             <span class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mr-1">輸入源</span>
-                            <button data-src="wifi" onclick="wiimSwitchSource('wifi')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">📶 WiFi</button>
-                            <button data-src="bluetooth" onclick="wiimSwitchSource('bluetooth')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🅱 藍牙</button>
-                            <button data-src="line-in" onclick="wiimSwitchSource('line-in')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🎚 Line-In</button>
-                            <button data-src="optical" onclick="wiimSwitchSource('optical')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">💡 光纖</button>
-                            <button data-src="co-axial" onclick="wiimSwitchSource('co-axial')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">🔌 同軸</button>
-                            <button data-src="udisk" onclick="wiimSwitchSource('udisk')" class="wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition">💾 USB</button>
+                            <button data-src="wifi" onclick="wiimSwitchSource('wifi')" class="wiim-src-chip inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border transition"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>WiFi</button>
+                            <button data-src="bluetooth" onclick="wiimSwitchSource('bluetooth')" class="wiim-src-chip inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border transition"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>藍牙</button>
+                            <button data-src="line-in" onclick="wiimSwitchSource('line-in')" class="wiim-src-chip inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border transition"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>Line-In</button>
+                            <button data-src="optical" onclick="wiimSwitchSource('optical')" class="wiim-src-chip inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border transition"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="3"/><circle cx="12" cy="12" r="3"/></svg>光纖</button>
+                            <button data-src="co-axial" onclick="wiimSwitchSource('co-axial')" class="wiim-src-chip inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border transition"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>同軸</button>
+                            <button data-src="udisk" onclick="wiimSwitchSource('udisk')" class="wiim-src-chip inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-bold border transition"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="8" rx="1.5"/><path d="M8 10H4.5A1.5 1.5 0 0 0 3 11.5v1A1.5 1.5 0 0 0 4.5 14H8"/><line x1="17" y1="11" x2="17" y2="13"/><line x1="13" y1="11" x2="13" y2="13"/></svg>USB</button>
                         </div>
                         <p class="text-[9px] text-slate-600 mono pt-1" id="wiim-hero-dev">--</p>
                     </div>
@@ -3830,13 +3830,21 @@
                 && dev.totlen === wiimPlayerState.totlen
                 && Math.abs((dev.curpos || 0) - (wiimPlayerState.curpos || 0)) < 3000) {
                 dev.curpos = Math.max(dev.curpos || 0, wiimPlayerState.curpos || 0);
+            } else if (dev && wiimPlayerState && dev.totlen > 0
+                && (dev.curpos || 0) >= dev.totlen - 1500
+                && (wiimPlayerState.curpos || 0) < dev.totlen - 8000) {
+                // 換曲瞬間 LinkPlay 常短暫回報 curpos≈totlen (舊曲殘值)，會讓進度條先衝到底再彈回。
+                // 若上一刻離曲尾還很遠卻突然「跳到底」，視為過渡假樣本，維持原進度等下一次輪詢。
+                dev.curpos = wiimPlayerState.curpos;
             }
             wiimPlayerState = dev;
             if (wiimPlayerState) {
                 wiimIsLive = wiimIsExternalInput(wiimPlayerState.mode);
                 wiimHighlightSource(wiimPlayerState.mode);
                 wiimIsMuted = parseInt(wiimPlayerState.mute) === 1;
-                document.getElementById('wiim-vico').textContent = wiimIsMuted ? '🔇' : '🔊';
+                document.getElementById('wiim-vico').innerHTML = wiimIsMuted
+                    ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>'
+                    : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
                 document.getElementById('wiim-vol').value = wiimPlayerState.vol;
                 document.getElementById('wiim-volval').textContent = wiimPlayerState.vol;
                 document.getElementById('wiim-play-btn').textContent = wiimPlayerState.status === 'play' ? '⏸' : '▶';
