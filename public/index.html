@@ -92,6 +92,13 @@
         html.light header { background: rgba(248,250,252,.7) !important; }
         html.light .nav-group { color: #94a3b8; }
 
+        /* ===== 版面編輯模式 (拖曳排序) ===== */
+        body.layout-edit main > section > * { outline: 2px dashed rgba(59,130,246,.45); outline-offset: 4px; cursor: grab; position: relative; }
+        body.layout-edit main > section > *:active { cursor: grabbing; }
+        body.layout-edit main > section > *::after { content: '⠿ 拖曳移動'; position: absolute; top: -10px; left: 14px; font-size: 9px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: #1d4ed8; color: #fff; z-index: 40; letter-spacing: .1em; }
+        body.layout-edit aside nav > * { outline: 1px dashed rgba(59,130,246,.4); outline-offset: -1px; cursor: grab; }
+        .drag-ghost { opacity: .3; }
+
         /* ===== 淺色主題 ===== */
         html.light body { background: #eef2f7 !important; color: #0f172a; }
         html.light .text-white, html.light .text-slate-100, html.light .text-slate-200, html.light .text-slate-300 { color: #0f172a !important; }
@@ -184,6 +191,7 @@
             </div>
             <div class="ml-auto flex items-center gap-2">
                 <span class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-[10px] font-bold mono uppercase tracking-wider hidden sm:inline" id="cloud-status-badge">SITE MANAGER: ONLINE</span>
+                <button onclick="toggleLayoutEdit()" id="layout-edit-btn" title="編輯版面：拖曳卡片與導航項目調整順序" class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition">🧩</button>
                 <button onclick="toggleTheme()" title="切換主題" class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition"><span id="theme-icon">🌙</span></button>
             </div>
         </header>
@@ -578,54 +586,6 @@
                     </div>
                 </div>
 
-                <!-- 安全評分計算方式說明 -->
-                <details class="bg-slate-950/70 border border-slate-800/60 rounded-xl overflow-hidden">
-                    <summary class="px-5 py-3 cursor-pointer flex items-center justify-between">
-                        <span class="text-xs font-bold text-slate-300 flex items-center gap-2">
-                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                            安全評分是怎麼算的？
-                        </span>
-                        <span class="text-[10px] text-slate-500" id="sec-score-explain">計算中…</span>
-                    </summary>
-                    <div class="px-5 pb-5 pt-1 text-xs text-slate-400 leading-relaxed space-y-3 border-t border-slate-800/60">
-                        <div>
-                            <p class="text-slate-300 font-bold mb-1">計算公式</p>
-                            <p>從 <span class="text-slate-200 font-bold">滿分 100</span> 開始，把「過去 24 小時」每一起 IPS/IDS 攔截事件的扣分加總後扣掉。只看近 24 小時，所以威脅停止後分數會隨時間自動回升。</p>
-                        </div>
-                        <div>
-                            <p class="text-slate-300 font-bold mb-1">每起事件的扣分 = 嚴重度 × 類別倍率</p>
-                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-                                <div class="bg-slate-900/50 border border-slate-800/60 rounded-lg p-3">
-                                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1.5">嚴重度基礎分</p>
-                                    <ul class="space-y-1 text-[11px]">
-                                        <li class="flex justify-between"><span class="text-red-400">高危 HIGH</span><span class="mono">−4 分</span></li>
-                                        <li class="flex justify-between"><span class="text-amber-400">中 MEDIUM</span><span class="mono">−2 分</span></li>
-                                        <li class="flex justify-between"><span class="text-slate-400">低 LOW / 其他</span><span class="mono">−1 分</span></li>
-                                    </ul>
-                                </div>
-                                <div class="bg-slate-900/50 border border-slate-800/60 rounded-lg p-3">
-                                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1.5">類別倍率</p>
-                                    <ul class="space-y-1 text-[11px]">
-                                        <li class="flex justify-between"><span class="text-red-400">Malware / DoS</span><span class="mono">×1.5</span></li>
-                                        <li class="flex justify-between"><span class="text-slate-400">其他類別</span><span class="mono">×1.0</span></li>
-                                    </ul>
-                                    <p class="text-[10px] text-slate-500 mt-2">例：1 起高危 Malware = 4 × 1.5 = 扣 6 分</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div>
-                            <p class="text-slate-300 font-bold mb-1">等級對照</p>
-                            <div class="flex flex-wrap gap-2 text-[10px] font-bold">
-                                <span class="px-2 py-1 rounded" style="color:#10b981;background:#10b98118">A 優良 90–100</span>
-                                <span class="px-2 py-1 rounded" style="color:#3b82f6;background:#3b82f618">B 良好 75–89</span>
-                                <span class="px-2 py-1 rounded" style="color:#f59e0b;background:#f59e0b18">C 普通 60–74</span>
-                                <span class="px-2 py-1 rounded" style="color:#f97316;background:#f9731618">D 警戒 40–59</span>
-                                <span class="px-2 py-1 rounded" style="color:#ef4444;background:#ef444418">F 危險 <40</span>
-                            </div>
-                        </div>
-                        <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/40">💡 目前是 F 通常代表 24 小時內攔截了大量（或多起高危）攻擊 —— 這是 IPS 有在運作、把攻擊擋下的紀錄，不代表你被入侵。想看分數回升可把時間拉開觀察，或在下方事件表確認攻擊是否已被 <span class="text-red-400 font-mono">BLOCKED</span>。</p>
-                    </div>
-                </details>
 
                 <!-- 自動防禦聯動控制 -->
                 <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -754,6 +714,55 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- 安全評分計算方式說明 -->
+                <details class="bg-slate-950/70 border border-slate-800/60 rounded-xl overflow-hidden">
+                    <summary class="px-5 py-3 cursor-pointer flex items-center justify-between">
+                        <span class="text-xs font-bold text-slate-300 flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            安全評分是怎麼算的？
+                        </span>
+                        <span class="text-[10px] text-slate-500" id="sec-score-explain">計算中…</span>
+                    </summary>
+                    <div class="px-5 pb-5 pt-1 text-xs text-slate-400 leading-relaxed space-y-3 border-t border-slate-800/60">
+                        <div>
+                            <p class="text-slate-300 font-bold mb-1">計算公式</p>
+                            <p>從 <span class="text-slate-200 font-bold">滿分 100</span> 開始，把「過去 24 小時」每一起 IPS/IDS 攔截事件的扣分加總後扣掉。只看近 24 小時，所以威脅停止後分數會隨時間自動回升。</p>
+                        </div>
+                        <div>
+                            <p class="text-slate-300 font-bold mb-1">每起事件的扣分 = 嚴重度 × 類別倍率</p>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                                <div class="bg-slate-900/50 border border-slate-800/60 rounded-lg p-3">
+                                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1.5">嚴重度基礎分</p>
+                                    <ul class="space-y-1 text-[11px]">
+                                        <li class="flex justify-between"><span class="text-red-400">高危 HIGH</span><span class="mono">−4 分</span></li>
+                                        <li class="flex justify-between"><span class="text-amber-400">中 MEDIUM</span><span class="mono">−2 分</span></li>
+                                        <li class="flex justify-between"><span class="text-slate-400">低 LOW / 其他</span><span class="mono">−1 分</span></li>
+                                    </ul>
+                                </div>
+                                <div class="bg-slate-900/50 border border-slate-800/60 rounded-lg p-3">
+                                    <p class="text-[10px] text-slate-500 uppercase font-bold mb-1.5">類別倍率</p>
+                                    <ul class="space-y-1 text-[11px]">
+                                        <li class="flex justify-between"><span class="text-red-400">Malware / DoS</span><span class="mono">×1.5</span></li>
+                                        <li class="flex justify-between"><span class="text-slate-400">其他類別</span><span class="mono">×1.0</span></li>
+                                    </ul>
+                                    <p class="text-[10px] text-slate-500 mt-2">例：1 起高危 Malware = 4 × 1.5 = 扣 6 分</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-slate-300 font-bold mb-1">等級對照</p>
+                            <div class="flex flex-wrap gap-2 text-[10px] font-bold">
+                                <span class="px-2 py-1 rounded" style="color:#10b981;background:#10b98118">A 優良 90–100</span>
+                                <span class="px-2 py-1 rounded" style="color:#3b82f6;background:#3b82f618">B 良好 75–89</span>
+                                <span class="px-2 py-1 rounded" style="color:#f59e0b;background:#f59e0b18">C 普通 60–74</span>
+                                <span class="px-2 py-1 rounded" style="color:#f97316;background:#f9731618">D 警戒 40–59</span>
+                                <span class="px-2 py-1 rounded" style="color:#ef4444;background:#ef444418">F 危險 <40</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/40">💡 目前是 F 通常代表 24 小時內攔截了大量（或多起高危）攻擊 —— 這是 IPS 有在運作、把攻擊擋下的紀錄，不代表你被入侵。想看分數回升可把時間拉開觀察，或在下方事件表確認攻擊是否已被 <span class="text-red-400 font-mono">BLOCKED</span>。</p>
+                    </div>
+                </details>
             </div>
         </section>
 
@@ -1132,11 +1141,15 @@
         <section id="page-settings" class="space-y-6 hidden">
             <!-- 外觀 -->
             <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                <h3 class="text-lg font-bold text-white tracking-wider mb-1">外觀主題</h3>
-                <p class="text-[10px] text-slate-500 mb-4">深色 / 淺色主題（也可用右上角按鈕快速切換）</p>
-                <div class="grid grid-cols-2 gap-3 max-w-sm">
-                    <button onclick="setTheme('dark')" data-theme-btn="dark" class="theme-btn py-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2">🌙 深色</button>
-                    <button onclick="setTheme('light')" data-theme-btn="light" class="theme-btn py-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2">☀️ 淺色</button>
+                <h3 class="text-lg font-bold text-white tracking-wider mb-1">外觀主題與版面</h3>
+                <p class="text-[10px] text-slate-500 mb-4">深色 / 淺色主題（也可用右上角按鈕快速切換）。版面排序：按右上角 🧩 進入編輯模式後拖曳卡片與導航項目。</p>
+                <div class="flex flex-wrap gap-3 items-center">
+                    <div class="grid grid-cols-2 gap-3 w-64">
+                        <button onclick="setTheme('dark')" data-theme-btn="dark" class="theme-btn py-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2">🌙 深色</button>
+                        <button onclick="setTheme('light')" data-theme-btn="light" class="theme-btn py-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2">☀️ 淺色</button>
+                    </div>
+                    <button onclick="toggleLayoutEdit()" class="py-3 px-5 rounded-xl text-xs font-bold border bg-slate-950 text-slate-300 border-slate-800 hover:text-white transition">🧩 編輯版面排序</button>
+                    <button onclick="resetLayout()" class="py-3 px-5 rounded-xl text-xs font-bold border bg-slate-950 text-slate-400 border-slate-800 hover:text-red-400 transition">↺ 重置版面為預設</button>
                 </div>
             </div>
 
@@ -1786,6 +1799,76 @@
         console.debug(`[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}][${module}]`, ...args);
     }
 
+    /* ==================== 版面編輯 (全站區塊 + 導航列拖曳排序，存 localStorage) ==================== */
+    let layoutEditing = false, dragEl = null;
+
+    // 為每個頁面 section 的直屬區塊與導航項目配發穩定 ID
+    function layoutTagAll() {
+        document.querySelectorAll('main > section').forEach(sec => {
+            [...sec.children].forEach((el, i) => { if (!el.dataset.bid) el.dataset.bid = sec.id + '-b' + i; });
+        });
+        [...document.querySelector('aside nav').children].forEach((el, i) => {
+            if (!el.dataset.bid) el.dataset.bid = el.dataset.page ? 'nav-' + el.dataset.page : 'nav-g' + i;
+        });
+    }
+
+    // 套用已儲存的排序；若區塊集合與現版 DOM 不符 (改版新增/移除區塊) 則忽略該頁的舊排序
+    function layoutApplySaved() {
+        let saved = {};
+        try { saved = JSON.parse(localStorage.getItem('layoutOrder.v1')) || {}; } catch { }
+        document.querySelectorAll('main > section').forEach(sec => {
+            const order = saved[sec.id];
+            if (!Array.isArray(order)) return;
+            const map = {}; [...sec.children].forEach(el => map[el.dataset.bid] = el);
+            if (order.length !== Object.keys(map).length || order.some(id => !map[id])) { dbg('Layout', sec.id, '排序與現版不符，略過'); return; }
+            order.forEach(id => sec.appendChild(map[id]));
+        });
+        const nav = document.querySelector('aside nav');
+        const navOrder = saved.__nav;
+        if (Array.isArray(navOrder)) {
+            const map = {}; [...nav.children].forEach(el => map[el.dataset.bid] = el);
+            if (navOrder.length === Object.keys(map).length && navOrder.every(id => map[id])) navOrder.forEach(id => nav.appendChild(map[id]));
+        }
+    }
+
+    function layoutSave() {
+        const saved = {};
+        document.querySelectorAll('main > section').forEach(sec => saved[sec.id] = [...sec.children].map(el => el.dataset.bid));
+        saved.__nav = [...document.querySelector('aside nav').children].map(el => el.dataset.bid);
+        localStorage.setItem('layoutOrder.v1', JSON.stringify(saved));
+        dbg('Layout', '排序已儲存');
+    }
+
+    function layoutBindDrag(container) {
+        [...container.children].forEach(el => {
+            el.draggable = layoutEditing;
+            el.ondragstart = layoutEditing ? e => { dragEl = el; e.dataTransfer.effectAllowed = 'move'; setTimeout(() => el.classList.add('drag-ghost'), 0); } : null;
+            el.ondragend = layoutEditing ? () => { el.classList.remove('drag-ghost'); dragEl = null; layoutSave(); } : null;
+            el.ondragover = layoutEditing ? e => {
+                e.preventDefault();
+                if (!dragEl || dragEl === el || dragEl.parentElement !== el.parentElement) return;
+                const r = el.getBoundingClientRect();
+                el.parentElement.insertBefore(dragEl, (e.clientY - r.top) < r.height / 2 ? el : el.nextSibling);
+            } : null;
+        });
+    }
+
+    function toggleLayoutEdit() {
+        layoutEditing = !layoutEditing;
+        document.body.classList.toggle('layout-edit', layoutEditing);
+        document.querySelectorAll('main > section').forEach(sec => layoutBindDrag(sec));
+        layoutBindDrag(document.querySelector('aside nav'));
+        document.getElementById('layout-edit-btn').classList.toggle('text-blue-400', layoutEditing);
+        document.getElementById('layout-edit-btn').classList.toggle('border-blue-500', layoutEditing);
+        if (layoutEditing) showToast('🧩 版面編輯中：拖曳卡片或左側導航項目調整順序，可切換分頁逐頁調整，再按一次 🧩 完成');
+        else { layoutSave(); showToast('✅ 版面已儲存 (此瀏覽器)'); }
+    }
+    function resetLayout() { localStorage.removeItem('layoutOrder.v1'); showToast('版面已重置，重新載入中...'); setTimeout(() => location.reload(), 600); }
+    // 編輯模式時攔截主內容區點擊，避免拖曳時誤觸卡片跳頁
+    document.addEventListener('click', e => {
+        if (layoutEditing && e.target.closest('main > section')) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+
     /* ==================== 全域狀態 ==================== */
     let allClients = [];
     let allThreats = [];
@@ -1839,6 +1922,8 @@
 
     /* ==================== 初始化 ==================== */
     window.onload = () => {
+        layoutTagAll();
+        layoutApplySaved();
         initChart();
         initThreatPieChart();
         initTrendChart();

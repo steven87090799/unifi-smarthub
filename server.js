@@ -11,7 +11,7 @@ const { Client } = require('ssh2');
 const path = require('path');
 const https = require('https');
 const { exec } = require('child_process');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') }); // 以專案目錄定位 .env，與啟動時的 cwd 無關
 
 // 統一結構化日誌輸出
 function sysLog(module, message, isError = false) {
