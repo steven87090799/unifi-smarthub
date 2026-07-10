@@ -559,12 +559,12 @@ const mockSdwanFallback = [
 app.get('/api/cloud/sites', async (req, res) => {
     try {
         if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) {
-            return res.json({ data: mockSitesFallback, source: 'fallback' });
+            return res.json({ data: [], source: 'not_configured' });
         }
         const response = await unifiCloudClient.get('/sites');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: mockSitesFallback, source: 'fallback_on_error', error: error.message });
+        res.json({ data: [], source: 'error', error: error.message });
     }
 });
 
@@ -572,12 +572,12 @@ app.get('/api/cloud/sites', async (req, res) => {
 app.get('/api/cloud/devices', async (req, res) => {
     try {
         if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) {
-            return res.json({ data: mockDevicesFallback, source: 'fallback' });
+            return res.json({ data: [], source: 'not_configured' });
         }
         const response = await unifiCloudClient.get('/devices');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: mockDevicesFallback, source: 'fallback_on_error', error: error.message });
+        res.json({ data: [], source: 'error', error: error.message });
     }
 });
 
@@ -585,14 +585,7 @@ app.get('/api/cloud/devices', async (req, res) => {
 app.get('/api/cloud/isp-metrics', async (req, res) => {
     try {
         if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) {
-            const latencyVal = (12 + Math.random() * 2).toFixed(1);
-            return res.json({
-                data: {
-                    ...mockIspMetricsFallback,
-                    latency: parseFloat(latencyVal)
-                },
-                source: 'fallback'
-            });
+            return res.json({ data: null, source: 'not_configured' });
         }
         const response = await unifiCloudClient.get('/isp-metrics/5m', { params: { duration: '24h' } });
         if (response.data && response.data.data && response.data.data.length > 0) {
@@ -616,15 +609,7 @@ app.get('/api/cloud/isp-metrics', async (req, res) => {
         }
         throw new Error('No WAN metrics data returned from Cloud API');
     } catch (error) {
-        const latencyVal = (12 + Math.random() * 2).toFixed(1);
-        res.json({
-            data: {
-                ...mockIspMetricsFallback,
-                latency: parseFloat(latencyVal)
-            },
-            source: 'fallback_on_error',
-            error: error.message
-        });
+        res.json({ data: null, source: 'error', error: error.message });
     }
 });
 
@@ -632,12 +617,12 @@ app.get('/api/cloud/isp-metrics', async (req, res) => {
 app.get('/api/cloud/hosts', async (req, res) => {
     try {
         if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) {
-            return res.json({ data: mockHostsFallback, source: 'fallback' });
+            return res.json({ data: [], source: 'not_configured' });
         }
         const response = await unifiCloudClient.get('/hosts');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: mockHostsFallback, source: 'fallback_on_error', error: error.message });
+        res.json({ data: [], source: 'error', error: error.message });
     }
 });
 
@@ -645,12 +630,12 @@ app.get('/api/cloud/hosts', async (req, res) => {
 app.get('/api/cloud/sdwan', async (req, res) => {
     try {
         if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) {
-            return res.json({ data: mockSdwanFallback, source: 'fallback' });
+            return res.json({ data: [], source: 'not_configured' });
         }
         const response = await unifiCloudClient.get('/sd-wan-configs');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: mockSdwanFallback, source: 'fallback_on_error', error: error.message });
+        res.json({ data: [], source: 'error', error: error.message });
     }
 });
 
@@ -1028,7 +1013,7 @@ const mockNasUps = { present: true, model: 'APC Back-UPS 700VA', battery_percent
 
 // 15. NAS 總覽 (硬體資訊 + 即時遙測 taskmgr/stat/get_all)
 app.get('/api/nas/overview', async (req, res) => {
-    if (!nasConfigured()) return res.json({ ...mockNasOverview, source: 'fallback' });
+    if (!nasConfigured()) return res.json({ info: null, stats: null, source: 'not_configured' });
     try {
         const [info, stats] = await Promise.all([
             nasGet('/ugreen/v1/sysinfo/machine/common'),
@@ -1036,53 +1021,53 @@ app.get('/api/nas/overview', async (req, res) => {
         ]);
         res.json({ info, stats, source: 'nas_api' });
     } catch (error) {
-        res.json({ ...mockNasOverview, source: 'fallback_on_error', error: error.message });
+        res.json({ info: null, stats: null, source: 'error', error: error.message });
     }
 });
 
 // 16. NAS 實體硬碟清單 (含溫度與健康狀態)
 app.get('/api/nas/disks', async (req, res) => {
-    if (!nasConfigured()) return res.json({ disks: mockNasDisks, source: 'fallback' });
+    if (!nasConfigured()) return res.json({ disks: [], source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
         const disks = deepFind({ d: data }, ['result', 'list', 'disks']) || (Array.isArray(data) ? data : []);
         res.json({ disks, source: 'nas_api' });
     } catch (error) {
-        res.json({ disks: mockNasDisks, source: 'fallback_on_error', error: error.message });
+        res.json({ disks: [], source: 'error', error: error.message });
     }
 });
 
 // 17. NAS 邏輯儲存區清單 (回應包裝於 data.result)
 app.get('/api/nas/volumes', async (req, res) => {
-    if (!nasConfigured()) return res.json({ volumes: mockNasVolumes, source: 'fallback' });
+    if (!nasConfigured()) return res.json({ volumes: [], source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
         const volumes = deepFind({ d: data }, ['result', 'list', 'volumes']) || (Array.isArray(data) ? data : []);
         res.json({ volumes, source: 'nas_api' });
     } catch (error) {
-        res.json({ volumes: mockNasVolumes, source: 'fallback_on_error', error: error.message });
+        res.json({ volumes: [], source: 'error', error: error.message });
     }
 });
 
 // 18. NAS UPS 狀態
 app.get('/api/nas/ups', async (req, res) => {
-    if (!nasConfigured()) return res.json({ ups: mockNasUps, source: 'fallback' });
+    if (!nasConfigured()) return res.json({ ups: null, source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/hardware/ups/config');
         res.json({ ups: data, source: 'nas_api' });
     } catch (error) {
-        res.json({ ups: mockNasUps, source: 'fallback_on_error', error: error.message });
+        res.json({ ups: null, source: 'error', error: error.message });
     }
 });
 
 // 18-1. NAS UPS USB 快速存在性檢查 (系統 A)
 app.get('/api/nas/ups-usb', async (req, res) => {
-    if (!nasConfigured()) return res.json({ present: true, source: 'fallback' });
+    if (!nasConfigured()) return res.json({ present: null, source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/hardware/ups/usb/info');
         res.json({ data, source: 'nas_api' });
     } catch (error) {
-        res.json({ present: false, source: 'fallback_on_error', error: error.message });
+        res.json({ present: null, source: 'error', error: error.message });
     }
 });
 
@@ -1149,23 +1134,25 @@ function mockStorageHistory(hours) {
 
 // 通用代理：優先呼叫系統 B，失敗或未設定時回退 fallback
 async function nasMonProxy(res, path, params, fallback) {
-    if (!nasMonConfigured()) return res.json({ ...fallback, source: 'fallback' });
+    // 誠實模式：未設定就回空殼 (保留欄位結構、陣列清空)，絕不回傳模擬數據
+    const emptyLike = v => Array.isArray(v) ? [] : (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, emptyLike(x)])) : null);
+    if (!nasMonConfigured()) return res.json({ ...emptyLike(fallback), source: 'not_configured' });
     try {
         const data = await nasMonGet(path, params);
         res.json({ data, source: 'nas_monitor' });
     } catch (error) {
-        res.json({ ...fallback, source: 'fallback_on_error', error: error.message });
+        res.json({ ...emptyLike(fallback), source: 'error', error: error.message });
     }
 }
 
 // 19. Docker 容器清單 (含即時 CPU/RAM)
 app.get('/api/nas/docker', async (req, res) => {
-    if (!nasMonConfigured()) return res.json({ containers: mockDockerContainers, source: 'fallback' });
+    if (!nasMonConfigured()) return res.json({ containers: [], source: 'not_configured' });
     try {
         const data = await nasMonGet('/api/docker/containers');
         res.json({ containers: Array.isArray(data) ? data : (data.containers || data.data || []), source: 'nas_monitor' });
     } catch (error) {
-        res.json({ containers: mockDockerContainers, source: 'fallback_on_error', error: error.message });
+        res.json({ containers: [], source: 'error', error: error.message });
     }
 });
 
@@ -1173,16 +1160,7 @@ app.get('/api/nas/docker', async (req, res) => {
 app.post('/api/nas/docker/:id/:action', async (req, res) => {
     const { id, action } = req.params;
     if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'invalid action' });
-    if (!nasMonConfigured()) {
-        // 展示模式：直接改記憶體內狀態
-        const c = mockDockerContainers.find(x => x.id === id || x.name === id);
-        if (c) {
-            c.state = action === 'stop' ? 'exited' : 'running';
-            c.status = action === 'stop' ? 'Exited (0) just now' : 'Up 1 second';
-            if (action === 'stop') { c.cpu_percent = 0; c.mem_usage_mb = 0; }
-        }
-        return res.json({ success: true, source: 'fallback' });
-    }
+    if (!nasMonConfigured()) return res.status(503).json({ success: false, error: 'nas_monitor_not_configured', source: 'not_configured' });
     try {
         const r = await nasMonClient.post(`/api/docker/containers/${id}/${action}`);
         res.json({ success: true, data: r.data, source: 'nas_monitor' });
@@ -1194,11 +1172,7 @@ app.post('/api/nas/docker/:id/:action', async (req, res) => {
 // 21. Docker 容器日誌
 app.get('/api/nas/docker/:id/logs', async (req, res) => {
     if (!nasMonConfigured()) {
-        return res.json({
-            logs: `[demo] ${req.params.id} 日誌 (未接 NAS Monitor)\n` +
-                Array.from({ length: 12 }, (_, i) => `${new Date(Date.now() - i * 5000).toISOString()}  INFO  service tick #${1000 - i}`).join('\n'),
-            source: 'fallback'
-        });
+        return res.json({ logs: '', source: 'not_configured' });
     }
     try {
         const data = await nasMonGet(`/api/docker/containers/${req.params.id}/logs`, { lines: req.query.lines || 200 });
@@ -1252,21 +1226,19 @@ app.get('/api/nas/downtime', (req, res) => {
 
 // 29. 警報事件
 app.get('/api/nas/alerts', async (req, res) => {
-    if (!nasMonConfigured()) return res.json({ events: mockAlertEvents, source: 'fallback' });
+    if (!nasMonConfigured()) return res.json({ events: [], source: 'not_configured' });
     try {
         const data = await nasMonGet('/api/alerts/events', { hours: req.query.hours || 24 });
         res.json({ events: Array.isArray(data) ? data : (data.events || data.data || []), source: 'nas_monitor' });
     } catch (error) {
-        res.json({ events: mockAlertEvents, source: 'fallback_on_error', error: error.message });
+        res.json({ events: [], source: 'error', error: error.message });
     }
 });
 
 // 30. 確認 (清除) 警報
 app.post('/api/nas/alerts/:id/ack', async (req, res) => {
     if (!nasMonConfigured()) {
-        const a = mockAlertEvents.find(x => x.id === req.params.id);
-        if (a) a.acknowledged = true;
-        return res.json({ success: true, source: 'fallback' });
+        return res.status(503).json({ success: false, error: 'nas_monitor_not_configured', source: 'not_configured' });
     }
     try {
         await nasMonClient.post(`/api/alerts/events/${req.params.id}/acknowledge`);

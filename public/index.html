@@ -2641,8 +2641,8 @@
             ['cloud-status-badge', 'cloud-status-badge-sec'].forEach(id => {
                 const badge = document.getElementById(id);
                 if (badge) {
-                    if (result.source && result.source.startsWith('fallback')) {
-                        badge.innerText = 'SITE MANAGER: DEMO';
+                    if (['not_configured', 'error', 'fallback', 'fallback_on_error'].includes(result.source)) {
+                        badge.innerText = 'SITE MANAGER: 未設定';
                         badge.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-500/20');
                         badge.classList.add('bg-amber-500/10', 'text-amber-400', 'border-amber-500/20');
                     } else {
@@ -2750,7 +2750,7 @@
             const metrics = (await res.json()).data || {};
             document.getElementById('isp-name').innerText = metrics.ispName || 'Unknown ISP';
             document.getElementById('isp-latency').innerText = (metrics.latency || '--') + ' ms';
-            document.getElementById('isp-loss').innerText = (metrics.packetLoss !== undefined ? metrics.packetLoss.toFixed(2) : '0.00') + ' %';
+            document.getElementById('isp-loss').innerText = (metrics.packetLoss != null ? metrics.packetLoss.toFixed(2) : '--') + ' %';
             document.getElementById('isp-speed-down').innerText = (metrics.downloadSpeedMbps || '--') + ' Mbps';
             document.getElementById('isp-speed-up').innerText = (metrics.uploadSpeedMbps || '--') + ' Mbps';
             document.getElementById('kpi-wan-sub').innerText = `延遲 ${metrics.latency || '--'} ms · ${metrics.ispName || ''}`;
@@ -3093,13 +3093,13 @@
             // 狀態徽章與側邊欄
             const badge = document.getElementById('nas-status-badge');
             const isReal = ov.source === 'nas_api';
-            badge.innerText = isReal ? 'NAS: ONLINE' : 'NAS: DEMO';
+            badge.innerText = isReal ? 'NAS: ONLINE' : 'NAS: 未設定';
             badge.className = `px-3 py-1 rounded-full text-xs font-bold mono uppercase tracking-wider border ${isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`;
             document.getElementById('side-nas-dot').className = `w-1.5 h-1.5 rounded-full ${isReal ? 'bg-emerald-500' : 'bg-amber-500'}`;
-            document.getElementById('side-nas-state').innerText = isReal ? 'online' : 'demo';
+            document.getElementById('side-nas-state').innerText = isReal ? 'online' : '未設定';
             const ovNasBadge = document.getElementById('ov-nas-badge');
             if (ovNasBadge) {
-                ovNasBadge.innerText = isReal ? '● 連線正常' : '● 展示資料';
+                ovNasBadge.innerText = isReal ? '● 連線正常' : '● 未設定';
                 ovNasBadge.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`;
             }
 
