@@ -118,17 +118,9 @@
         }
         html.light #grid-backdrop { background-image: linear-gradient(rgba(30,64,175,.02) 1px, transparent 1px), linear-gradient(90deg, rgba(30,64,175,.02) 1px, transparent 1px); }
 
-        /* 卡片 hover：懸浮 + 光暈 + 掠光 */
-        main .rounded-2xl { overflow: hidden; }
-        main .rounded-2xl:hover { transform: translateY(-2px); box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 14px 44px rgba(2,6,23,.55), 0 0 24px rgba(59,130,246,.07); }
-        main .rounded-2xl { transition: border-color .3s, box-shadow .35s, transform .35s cubic-bezier(.22,.68,.36,1); }
-        main .rounded-2xl::before {
-            content: ''; position: absolute; top: 0; left: -70%; width: 45%; height: 100%;
-            background: linear-gradient(105deg, transparent, rgba(148,197,255,.05) 45%, rgba(148,197,255,.1) 50%, rgba(148,197,255,.05) 55%, transparent);
-            transform: skewX(-18deg); transition: left .7s ease; pointer-events: none;
-        }
-        main .rounded-2xl:hover::before { left: 130%; }
-        html.light main .rounded-2xl:hover { box-shadow: inset 0 1px 0 rgba(255,255,255,.95), 0 14px 40px rgba(15,23,42,.12); }
+        /* 卡片 hover：僅輕微上浮 (低調) */
+        main .rounded-2xl { transition: border-color .3s, transform .35s cubic-bezier(.22,.68,.36,1); }
+        main .rounded-2xl:hover { transform: translateY(-2px); }
 
         /* 分頁切換進場動畫 */
         @keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -4080,9 +4072,15 @@
         wiimChart.data.labels = labels;
         wiimChart.data.datasets[0].data = cpuData;
         wiimChart.data.datasets[1].data = boardData;
-        // 門檻虛線 (跨全圖)
+        // 門檻虛線 (跨全圖；若超出自動縮放範圍會被裁切，不影響曲線解析度)
         wiimChart.data.datasets[2].data = labels.map(() => wiimCpuAlert);
         wiimChart.data.datasets[3].data = labels.map(() => wiimBoardAlert);
+        // Y 軸自動貼合「實際溫度」範圍 (±2°C 邊距)：不被門檻線撐開，微小變化也看得清楚
+        const vals = [...cpuData, ...boardData].filter(v => v != null && !isNaN(v));
+        if (vals.length) {
+            wiimChart.options.scales.y.min = Math.floor(Math.min(...vals)) - 2;
+            wiimChart.options.scales.y.max = Math.ceil(Math.max(...vals)) + 2;
+        }
 
         // 讀取顯示資料點核取方塊
         const showDots = document.getElementById('wiim-showDots') ? document.getElementById('wiim-showDots').checked : true;
