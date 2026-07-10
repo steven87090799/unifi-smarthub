@@ -1560,6 +1560,36 @@ app.get('/api/wiim/cmd', async (req, res) => {
     res.json({ result: raw || "OK" });
 });
 
+// 專輯封面代理：WiiM 回的 albumArtURI 常是裝置自簽 HTTPS 或外部 CDN，瀏覽器直連會被擋
+// 由後端抓取後轉發 (忽略自簽憑證)，記憶體快取 5 分鐘
+const wiimArtCache = {};
+app.get('/api/wiim/art', async (req, res) => {
+    const u = req.query.u || '';
+    if (!/^https?:\/\//i.test(u)) return res.status(400).end();
+    // AirPlay 的封面 URI 固定不變、內容隨曲目更換 → 以前端傳來的曲名 (v) 作為快取版本鍵
+    const key = u + '|' + (req.query.v || '');
+    const hit = wiimArtCache[key];
+    if (hit && Date.now() - hit.ts < 5 * 60 * 1000) {
+        res.set('Content-Type', hit.type); return res.send(hit.buf);
+    }
+    try {
+        const r = await axios.get(u, {
+            responseType: 'arraybuffer', timeout: 6000,
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            headers: { 'User-Agent': 'wiim-temp/2.0' }
+        });
+        const type = r.headers['content-type'] || 'image/jpeg';
+        wiimArtCache[key] = { buf: r.data, type, ts: Date.now() };
+        // 快取上限 20 張，超過清最舊
+        const keys = Object.keys(wiimArtCache);
+        if (keys.length > 20) delete wiimArtCache[keys.sort((a, b) => wiimArtCache[a].ts - wiimArtCache[b].ts)[0]];
+        res.set('Content-Type', type); res.send(r.data);
+    } catch (e) {
+        sysLog('WiiM Art', `封面抓取失敗: ${e.message}`, true);
+        res.status(502).end();
+    }
+});
+
 app.get('/api/wiim/clear', (req, res) => {
     wiimHistory = [];
     res.json({ ok: true });
