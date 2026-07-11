@@ -4807,17 +4807,20 @@
                 const staticBy = {}; (nasDiskStatic || []).forEach(d => { staticBy[d.name] = d; });
                 const disks = lite.map(l => ({ ...(staticBy[l.name] || {}), name: l.name, temperature: l.temperature, sleeping: l.sleeping, status: (staticBy[l.name] || {}).status || 'good' }));
 
-                // 狀態徽章與側邊欄
+                // 狀態徽章與側邊欄：區分「未設定」(沒填帳密) 與「離線」(填了但連不上，例如 NAS 關機/重開中)
                 const badge = document.getElementById('nas-status-badge');
                 const isReal = ov.source === 'nas_api';
-                badge.innerText = isReal ? 'NAS: ONLINE' : 'NAS: 未設定';
-                badge.className = `px-3 py-1 rounded-full text-xs font-bold mono uppercase tracking-wider border ${isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`;
-                document.getElementById('side-nas-dot').className = `w-1.5 h-1.5 rounded-full ${isReal ? 'bg-emerald-500' : 'bg-amber-500'}`;
-                document.getElementById('side-nas-state').innerText = isReal ? 'online' : '未設定';
+                const isOffline = ov.source === 'error';
+                const label = isReal ? 'ONLINE' : isOffline ? '離線' : '未設定';
+                const cls = isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : isOffline ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+                badge.innerText = `NAS: ${label}`;
+                badge.className = `px-3 py-1 rounded-full text-xs font-bold mono uppercase tracking-wider border ${cls}`;
+                document.getElementById('side-nas-dot').className = `w-1.5 h-1.5 rounded-full ${isReal ? 'bg-emerald-500' : isOffline ? 'bg-red-500' : 'bg-amber-500'}`;
+                document.getElementById('side-nas-state').innerText = isReal ? 'online' : isOffline ? '離線' : '未設定';
                 const ovNasBadge = document.getElementById('ov-nas-badge');
                 if (ovNasBadge) {
-                    ovNasBadge.innerText = isReal ? '● 連線正常' : '● 未設定';
-                    ovNasBadge.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${isReal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border-amber-500/20'}`;
+                    ovNasBadge.innerText = isReal ? '● 連線正常' : isOffline ? '● 離線' : '● 未設定';
+                    ovNasBadge.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${cls}`;
                 }
 
                 // 總覽雙設備體檢 — NAS 硬碟健康 + 儲存使用率

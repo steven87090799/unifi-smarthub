@@ -1183,12 +1183,19 @@ async function getNasToken() {
     }
 }
 
-async function nasGet(pathName, params = {}) {
+async function nasGet(pathName, params = {}, _retried = false) {
     const token = await getNasToken();
     const r = await nasClient.get(pathName, { params: { ...params, token } });
     // UGOS 一律回 HTTP 200，錯誤放在 body.code (1004/1008 = 權限不足，需管理員帳號)
     if (r.data && typeof r.data.code === 'number' && r.data.code !== 200) {
         const permErr = [1004, 1008].includes(r.data.code);
+        // 權限錯誤重試也沒用；其他錯誤(含 token 失效，例如 NAS 重開機後舊 token 被清空)一律
+        // 清掉快取 token 重新登入後重試一次 —— 不用去猜 UGOS 到底吐哪個代碼表示 token 失效
+        if (!permErr && !_retried) {
+            sysLog('NAS Auth', `${pathName} 回 code ${r.data.code}，可能是 token 失效 (如 NAS 重開機)，清除快取重新登入後重試`, false);
+            nasToken = ''; nasTokenExpiry = 0;
+            return nasGet(pathName, params, true);
+        }
         throw new Error(permErr
             ? `NAS 帳號權限不足 (code ${r.data.code})：此 API 僅限管理員帳號，請在 UGOS 將使用者設為管理員或改用管理員帳密`
             : `UGOS code ${r.data.code}: ${r.data.msg || r.data.debug || ''}`);
