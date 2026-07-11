@@ -2119,6 +2119,7 @@
     let lastIpsToastTs = 0; // 即使有多筆不同的新威脅，同一波最多每 15 秒跳一次通知泡泡，避免看起來「卡住不消失」
     let hwChart = null, threatChart = null, trendChart = null, ovHourlyChart = null, secHourlyChart = null;
     let nasSystemChart = null, nasTrafficChart = null, nasStorageChart = null, nasTempChart = null;
+    let nasDiskMeta = {};
     let upsVoltChart = null, upsLoadChart = null, upsRangeHours = 24;
     let trendHours = 24;
     let autoDefenseOn = false;
@@ -3383,6 +3384,21 @@
             // 硬碟
             const diskList = document.getElementById('nas-disk-list');
             diskList.innerHTML = disks.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無硬碟資料</p>';
+            // 建立「硬碟名稱 → 型號/容量」對照，供溫度歷史圖的圖例使用 (讓 硬碟1/2/3 能分辨是哪顆)
+            nasDiskMeta = {};
+            disks.forEach(d => {
+                const nm = nFind(d, ['name', 'label']);
+                const md = nFind(d, ['model']) || '';
+                const sg = asNum(nFind(d, ['size_gb']));
+                const szStr = sg ? (sg >= 1000 ? (sg / 1000).toFixed(0) + 'TB' : sg + 'GB') : '';
+                // 品牌辨識：ST 開頭視為 Seagate、WD 視為 WD，其餘取關鍵字，讓標籤簡潔又能分辨
+                let brand = (md.match(/seagate|samsung|kioxia|western digital|wd|toshiba|crucial|micron|intel|sandisk/i) || [])[0] || '';
+                if (!brand && /^st\d/i.test(md)) brand = 'Seagate';
+                if (!brand && /^wd/i.test(md)) brand = 'WD';
+                if (!brand) brand = md.split(/[\s-]/)[0];
+                brand = brand.replace(/western digital/i, 'WD');
+                if (nm) nasDiskMeta[nm] = [szStr, brand].filter(Boolean).join(' ');
+            });
             disks.forEach(d => {
                 const name = nFind(d, ['name', 'label']) || 'Disk';
                 const dModel = nFind(d, ['model']) || '';
@@ -3546,7 +3562,8 @@
             const diskNames = tpRes.diskNames || [];
             nasTempChart.data.labels = fmtH(tp);
             nasTempChart.data.datasets = diskNames.map((name, i) => ({
-                label: name, data: tp.map(p => (p.disks || {})[name] ?? null),
+                label: nasDiskMeta[name] ? `${name} (${nasDiskMeta[name]})` : name,
+                data: tp.map(p => (p.disks || {})[name] ?? null),
                 borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
             }));
             nasTempChart.update('none');
