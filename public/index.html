@@ -1734,6 +1734,63 @@
                                 id="nas-status-badge">NAS: 連線中...</span>
                         </div>
 
+                        <!-- NAS 處理器 & 溫度 (仿 UCG 頁風格：大數字 + 即時曲線 + 資源列表) -->
+                        <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UGREEN NAS 處理器 & 溫度</h3>
+                                    <span class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UGOS get_all API">REAL DATA</span>
+                                </div>
+                                <div class="flex justify-between items-end mb-4">
+                                    <div>
+                                        <div class="flex items-baseline gap-1">
+                                            <span class="text-5xl font-black text-emerald-500 tracking-tight mono" id="nas-hero-temp">--</span>
+                                            <span class="text-lg font-bold text-slate-500">°C</span>
+                                        </div>
+                                        <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                            <span class="inline-block w-2 h-2 rounded-full bg-emerald-500" id="nas-hero-dot"></span>
+                                            溫度狀態：<span id="nas-hero-temp-status">連線中...</span>
+                                        </p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">CPU 使用率</p>
+                                        <p class="text-2xl font-black text-slate-200 mono" id="nas-hero-usage">--%</p>
+                                    </div>
+                                </div>
+                                <div class="h-32"><canvas id="nasHeroChart"></canvas></div>
+                            </div>
+
+                            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between backdrop-blur-md">
+                                <div>
+                                    <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">UGREEN NAS 各項資源與吞吐</h3>
+                                    <p class="text-[9px] text-slate-500 mb-3">記憶體 / 網路即時傳輸 / UPS 供電（本機 NAS，非 UCG）</p>
+                                    <div class="space-y-3">
+                                        <div>
+                                            <div class="flex justify-between text-xs mb-1.5">
+                                                <span class="text-slate-400 font-semibold">RAM 記憶體佔用</span>
+                                                <span class="text-slate-200 font-bold mono" id="nas-hero-mem-str">-- GB / -- GB</span>
+                                            </div>
+                                            <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800 p-0.5">
+                                                <div class="bg-indigo-500 h-full rounded-full transition-all duration-500" id="nas-hero-mem-bar" style="width: 0%;"></div>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between text-xs pt-1">
+                                            <span class="text-slate-400 font-semibold">網路 ⬇️ 下載</span>
+                                            <span class="text-emerald-400 font-bold mono" id="nas-hero-net-down">--</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs">
+                                            <span class="text-slate-400 font-semibold">網路 ⬆️ 上傳</span>
+                                            <span class="text-blue-400 font-bold mono" id="nas-hero-net-up">--</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs pt-1 border-t border-slate-800/60">
+                                            <span class="text-slate-400 font-semibold">UPS 電池</span>
+                                            <span class="text-slate-200 font-bold mono" id="nas-hero-ups">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- NAS 即時遙測 -->
                         <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                             <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
@@ -3271,6 +3328,64 @@
                             <span id="ups-source-badge"
                                 class="px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-slate-700/30 text-slate-400 border-slate-700/40 self-start md:self-auto">偵測中...</span>
                         </div>
+
+                        <!-- UPS 電池 & 電壓 (仿 UCG 頁風格：大數字 + 即時曲線 + 資源列表) -->
+                        <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md">
+                                <div class="flex justify-between items-center mb-4">
+                                    <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UPS 電池電量 & 輸出電壓</h3>
+                                    <span class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UPS 取樣">REAL DATA</span>
+                                </div>
+                                <div class="flex justify-between items-end mb-4">
+                                    <div>
+                                        <div class="flex items-baseline gap-1">
+                                            <span class="text-5xl font-black text-blue-500 tracking-tight mono" id="ups-hero-batt">--</span>
+                                            <span class="text-lg font-bold text-slate-500">%</span>
+                                        </div>
+                                        <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                            <span class="inline-block w-2 h-2 rounded-full bg-blue-500" id="ups-hero-dot"></span>
+                                            供電狀態：<span id="ups-hero-status">連線中...</span>
+                                        </p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">輸出電壓</p>
+                                        <p class="text-2xl font-black text-slate-200 mono" id="ups-hero-outv">--V</p>
+                                    </div>
+                                </div>
+                                <div class="h-32"><canvas id="upsHeroChart"></canvas></div>
+                            </div>
+
+                            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col justify-between backdrop-blur-md">
+                                <div>
+                                    <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">UPS 供電細節</h3>
+                                    <p class="text-[9px] text-slate-500 mb-3">市電輸入 / 負載 / 預估可撐時間</p>
+                                    <div class="space-y-3">
+                                        <div>
+                                            <div class="flex justify-between text-xs mb-1.5">
+                                                <span class="text-slate-400 font-semibold">負載</span>
+                                                <span class="text-slate-200 font-bold mono" id="ups-hero-load-str">--%</span>
+                                            </div>
+                                            <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800 p-0.5">
+                                                <div class="bg-slate-400 h-full rounded-full transition-all duration-500" id="ups-hero-load-bar" style="width: 0%;"></div>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between text-xs pt-1">
+                                            <span class="text-slate-400 font-semibold">市電輸入電壓</span>
+                                            <span class="text-amber-400 font-bold mono" id="ups-hero-inv">--V</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs">
+                                            <span class="text-slate-400 font-semibold">斷電後可撐</span>
+                                            <span class="text-slate-200 font-bold mono" id="ups-hero-rt">-- 分</span>
+                                        </div>
+                                        <div class="flex justify-between text-xs pt-1 border-t border-slate-800/60">
+                                            <span class="text-slate-400 font-semibold">來源</span>
+                                            <span class="text-slate-200 font-bold mono" id="ups-hero-src">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div data-drag class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                             <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-4">
                                 <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">市電輸入電壓</p>
@@ -3652,6 +3767,42 @@
         let hwChart = null, threatChart = null, trendChart = null, ovHourlyChart = null, secHourlyChart = null;
         let nasSystemChart = null, nasTrafficChart = null, nasStorageChart = null, nasTempChart = null;
         let nasDiskMeta = {};
+        let nasHeroChart = null, nasHeroTempData = Array(12).fill(0), nasHeroUsageData = Array(12).fill(0);
+        let upsHeroChart = null, upsHeroBattData = Array(12).fill(0), upsHeroVoltData = Array(12).fill(0);
+        function initNasHeroChart() {
+            const c = document.getElementById('nasHeroChart'); if (!c) return;
+            nasHeroChart = new Chart(c, {
+                type: 'line', data: { labels: Array(12).fill(''), datasets: [
+                    { label: '溫度 °C', data: nasHeroTempData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.05)', fill: true, yAxisID: 'yTemp', tension: 0.3, pointRadius: 0 },
+                    { label: '負載 %', data: nasHeroUsageData, borderColor: '#64748b', borderDash: [3, 3], fill: false, yAxisID: 'yUsage', tension: 0.3, pointRadius: 0 }
+                ] },
+                options: {
+                    responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        yTemp: { position: 'left', ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
+                        yUsage: { position: 'right', min: 0, max: 100, ticks: { display: false }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+        function initUpsHeroChart() {
+            const c = document.getElementById('upsHeroChart'); if (!c) return;
+            upsHeroChart = new Chart(c, {
+                type: 'line', data: { labels: Array(12).fill(''), datasets: [
+                    { label: '電池 %', data: upsHeroBattData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, yAxisID: 'yBatt', tension: 0.3, pointRadius: 0 },
+                    { label: '輸出電壓', data: upsHeroVoltData, borderColor: '#f59e0b', borderDash: [3, 3], fill: false, yAxisID: 'yVolt', tension: 0.3, pointRadius: 0 }
+                ] },
+                options: {
+                    responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    scales: {
+                        x: { display: false },
+                        yBatt: { position: 'left', min: 0, max: 100, ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
+                        yVolt: { position: 'right', ticks: { display: false }, grid: { display: false } }
+                    }
+                }
+            });
+        }
         let upsVoltChart = null, upsLoadChart = null, upsRangeHours = 24;
         let trendHours = 24;
         let autoDefenseOn = false;
@@ -3690,7 +3841,7 @@
             document.getElementById('page-title').innerText = PAGE_META[page][0];
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
             toggleSidebar(false);
-            requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart].forEach(c => c && c.resize()); });
+            requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize()); });
             window.scrollTo({ top: 0 });
         }
 
@@ -3711,6 +3862,8 @@
             initNasCharts();
             initUpsCharts();
             initUcgHistChart();
+            initNasHeroChart();
+            initUpsHeroChart();
             fetchUcgHist();
             initWorldMap();
             fetchSecuritySettings();
@@ -4905,6 +5058,18 @@
                 document.getElementById('nas-cpu').innerText = cpuUsage != null ? Math.round(cpuUsage) : '--';
                 document.getElementById('nas-cpu-temp').innerText = cpuTemp != null ? cpuTemp + '°C' : '--°C';
                 document.getElementById('nas-cpu-bar').style.width = (cpuUsage || 0) + '%';
+                // NAS 處理器熱區卡 (仿 UCG 風格)
+                const nasHeroTempEl = document.getElementById('nas-hero-temp');
+                if (nasHeroTempEl) {
+                    nasHeroTempEl.textContent = cpuTemp != null ? cpuTemp : '--';
+                    nasHeroTempEl.className = `text-5xl font-black tracking-tight mono ${tempColor(cpuTemp) === '#ef4444' ? 'text-red-500' : 'text-emerald-500'}`;
+                    document.getElementById('nas-hero-usage').textContent = (cpuUsage != null ? Math.round(cpuUsage) : '--') + '%';
+                    document.getElementById('nas-hero-temp-status').textContent = tempLabel(cpuTemp);
+                    document.getElementById('nas-hero-dot').style.background = tempColor(cpuTemp);
+                    nasHeroTempData.shift(); nasHeroTempData.push(cpuTemp || 0);
+                    nasHeroUsageData.shift(); nasHeroUsageData.push(cpuUsage || 0);
+                    if (nasHeroChart) nasHeroChart.update('none');
+                }
                 // 總覽雙設備體檢 — NAS 溫度/CPU + KPI
                 const ovNasTemp = document.getElementById('ov-nas-temp');
                 if (ovNasTemp) { ovNasTemp.innerText = cpuTemp != null ? cpuTemp : '--'; ovNasTemp.style.color = tempColor(cpuTemp); }
@@ -4926,6 +5091,8 @@
                 if (memTotal && memUsed) {
                     const toG = v => v > 131072 ? (v / 1073741824).toFixed(1) : (v / 1024).toFixed(1); // bytes 或 MB 自動判斷
                     document.getElementById('nas-mem-str').innerText = `${toG(memUsed)} GB / ${toG(memTotal)} GB`;
+                    const heroMemStr = document.getElementById('nas-hero-mem-str');
+                    if (heroMemStr) heroMemStr.textContent = `${toG(memUsed)} GB / ${toG(memTotal)} GB`;
                 }
 
                 const netObj = nFind(stats, ['network', 'net']) || {};
@@ -4933,6 +5100,11 @@
                 const down = asNum(nFind(netObj, ['download_bps', 'down_speed', 'recv_speed', 'download_speed', 'rx_speed']));
                 document.getElementById('nas-net-up').innerText = fmtBps(up);
                 document.getElementById('nas-net-down').innerText = fmtBps(down);
+                if (document.getElementById('nas-hero-mem-str')) {
+                    document.getElementById('nas-hero-mem-bar').style.width = (memPct || 0) + '%';
+                    document.getElementById('nas-hero-net-down').textContent = fmtBps(down);
+                    document.getElementById('nas-hero-net-up').textContent = fmtBps(up);
+                }
 
                 // UPS
                 const upsPresent = nFind(ups, ['present', 'exist', 'connected']);
@@ -4942,6 +5114,8 @@
                 document.getElementById('nas-ups-batt').innerText = battery != null ? Math.round(battery) : '--';
                 document.getElementById('nas-ups-info').innerText = upsPresent === false ? '未偵測到 UPS'
                     : `${upsModel}${runtime != null ? ' · 可撐 ' + Math.round(runtime) + ' 分鐘' : ''}`;
+                const nasHeroUpsEl = document.getElementById('nas-hero-ups');
+                if (nasHeroUpsEl) nasHeroUpsEl.textContent = battery != null ? Math.round(battery) + '%' : '--';
 
                 // 硬碟
                 const diskList = document.getElementById('nas-disk-list');
@@ -6471,6 +6645,22 @@
                     st.textContent = s.onBattery ? '🔋 電池供電' : '🟢 市電正常';
                     st.className = `text-lg font-black mono mt-1.5 ${s.onBattery ? 'text-red-400' : 'text-emerald-400'}`;
                     const sl = document.getElementById('ups-samplelbl'); if (sl) sl.textContent = s.sampleSec;
+                    // UPS 熱區卡 (仿 UCG 風格)
+                    const heroBatt = document.getElementById('ups-hero-batt');
+                    if (heroBatt) {
+                        heroBatt.textContent = s.battery ?? '--';
+                        document.getElementById('ups-hero-outv').textContent = (s.outputV ?? '--') + 'V';
+                        document.getElementById('ups-hero-status').textContent = s.onBattery ? '🔋 電池供電' : '🟢 市電正常';
+                        document.getElementById('ups-hero-dot').style.background = s.onBattery ? '#ef4444' : '#3b82f6';
+                        document.getElementById('ups-hero-load-str').textContent = (s.loadPct ?? '--') + '%';
+                        document.getElementById('ups-hero-load-bar').style.width = (s.loadPct || 0) + '%';
+                        document.getElementById('ups-hero-inv').textContent = (s.inputV ?? '--') + 'V';
+                        document.getElementById('ups-hero-rt').textContent = (s.runtimeSec != null ? Math.round(s.runtimeSec / 60) : '--') + ' 分';
+                        document.getElementById('ups-hero-src').textContent = s.source.toUpperCase();
+                        upsHeroBattData.shift(); upsHeroBattData.push(s.battery || 0);
+                        upsHeroVoltData.shift(); upsHeroVoltData.push(s.outputV || 0);
+                        if (upsHeroChart) upsHeroChart.update('none');
+                    }
                 }
             } catch (e) { dbg('UPS', '狀態讀取失敗', e); }
             // 歷史 + 事件
