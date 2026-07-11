@@ -322,6 +322,16 @@
             display: none;
         }
 
+        /* 釘選標籤(📌釘選自.../✕移除)平常隱藏，只有編輯模式才顯示，避免總覽平時很醜
+           用 !important 蓋過 Tailwind CDN 的 .flex 工具類 (同時掛在這個元素上) */
+        .pin-badge {
+            display: none !important;
+        }
+
+        body.layout-edit .pin-badge {
+            display: flex !important;
+        }
+
         .drag-ghost {
             opacity: .3;
         }
@@ -754,8 +764,6 @@
 
                 <!-- ==================== 頁面：總覽 ==================== -->
                 <section id="page-overview" class="space-y-6">
-                    <!-- 從其他分頁釘選到總覽的區塊 (即時鏡像) -->
-                    <div id="ov-pinned" class="space-y-4"></div>
                     <!-- 4 張 KPI 卡 -->
                     <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                         <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5"
@@ -1077,6 +1085,9 @@
                             <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
                         </div>
                     </div>
+
+                    <!-- 從其他分頁釘選到總覽的區塊 (即時鏡像，放在總覽最下面) -->
+                    <div id="ov-pinned" class="space-y-4"></div>
                 </section>
 
                 <!-- ==================== 頁面：UCG 閘道器 ==================== -->
@@ -3521,7 +3532,7 @@
                 holder.className = 'relative rounded-2xl';
                 holder.dataset.mirrorOf = bid;
                 const badge = document.createElement('div');
-                badge.className = 'flex items-center justify-between mb-1 px-1';
+                badge.className = 'pin-badge flex items-center justify-between mb-1 px-1';
                 const t = pageTitleOfBid(bid);
                 badge.innerHTML = `<span class="text-[9px] text-blue-400/80 font-bold uppercase tracking-wider">📌 釘選自 ${t || '其他分頁'}</span>`;
                 const rm = document.createElement('button');
@@ -4193,14 +4204,6 @@
             if (confirm(msg)) showDiskSmart(dev, name);
         }
         async function showDiskSmart(dev, name) {
-            // 反正這次已經要存取硬碟了，順便更新一次 disk/list 靜態資訊快取 (型號/容量/通電時數)
-            fetch('/api/nas/disks').then(r => r.json()).then(j => {
-                if (j.disks && j.disks.length) {
-                    nasDiskStatic = j.disks;
-                    localStorage.setItem('nasDiskStatic.v1', JSON.stringify(j.disks));
-                    fetchNas().catch(() => { });
-                }
-            }).catch(() => { });
             const m = document.getElementById('smart-modal');
             m.classList.remove('hidden'); m.classList.add('flex');
             document.getElementById('smart-title').textContent = `${name} — SMART 詳情`;
@@ -4786,20 +4789,21 @@
             return mbps >= 1 ? mbps.toFixed(1) + ' Mbps' : (bps / 1024).toFixed(0) + ' KB/s';
         }
 
-        let nasDiskStatic = null; // disk/list 的靜態資訊 (型號/容量/通電時數/dev_name)，每次進 NAS 頁只抓一次，避免頻繁 disk/list 喚醒硬碟
+        let nasDiskStatic = null; // disk/list 的靜態資訊 (型號/容量/通電時數/dev_name)
         async function fetchNas() {
             try {
-                const [ovRes, volRes, upsRes] = await Promise.all([
-                    fetch('/api/nas/overview'), fetch('/api/nas/volumes'), fetch('/api/nas/ups')
+                const [ovRes, diskRes, volRes, upsRes] = await Promise.all([
+                    fetch('/api/nas/overview'), fetch('/api/nas/disks'), fetch('/api/nas/volumes'), fetch('/api/nas/ups')
                 ]);
                 const ov = await ovRes.json();
                 const vols = (await volRes.json()).volumes || [];
                 const ups = (await upsRes.json()).ups || {};
-                // 硬碟卡：溫度/休眠狀態一律取自 get_all(免喚醒)。
-                // 型號/容量等靜態資訊「絕不自動」呼叫 disk/list —— 只有你點看 SMART 時才會抓，
-                // 抓到後存 localStorage 快取，之後開網頁直接用快取顯示。
+                // 硬碟卡：溫度/休眠狀態取自 get_all(免喚醒)；型號/容量/通電時數來自 disk/list。
+                // disk/list 實測回應時間僅 0.00005 秒 (UGOS 內部記憶體快取，非即時 SMART 查詢)，
+                // 不會喚醒休眠硬碟，可安全定期呼叫。真正會發 SMART 指令、有喚醒風險的是 smart/info，
+                // 那支僅在你點擊「看 SMART」時才呼叫 (且有確認彈窗)。
+                nasDiskStatic = (await diskRes.json()).disks || nasDiskStatic || [];
                 const lite = ov.disksLite || [];
-                if (!nasDiskStatic) { try { nasDiskStatic = JSON.parse(localStorage.getItem('nasDiskStatic.v1')) || []; } catch { nasDiskStatic = []; } }
                 const staticBy = {}; (nasDiskStatic || []).forEach(d => { staticBy[d.name] = d; });
                 const disks = lite.map(l => ({ ...(staticBy[l.name] || {}), name: l.name, temperature: l.temperature, sleeping: l.sleeping, status: (staticBy[l.name] || {}).status || 'good' }));
 

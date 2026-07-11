@@ -2127,6 +2127,51 @@ async function readPwrstat() {
     };
 }
 
+// --- 來源 4: CyberPower PowerPanel Business 本機 REST API (無 pwrstat CLI 時用這個) ---
+let ppbToken = null, ppbHttpsPort = null;
+async function ppbDiscoverPort() {
+    if (ppbHttpsPort) return ppbHttpsPort;
+    const r = await axios.get('http://127.0.0.1:3052/local/', { maxRedirects: 0, validateStatus: () => true, timeout: 5000 });
+    const loc = r.headers.location || '';
+    const m = loc.match(/^https:\/\/127\.0\.0\.1:(\d+)/);
+    if (m) ppbHttpsPort = m[1];
+    return ppbHttpsPort;
+}
+async function ppbLogin() {
+    const port = await ppbDiscoverPort();
+    if (!port) return null;
+    const r = await axios.post(`https://${PPB_HOST()}:${port}/local/rest/v1/login/verify`,
+        { userName: process.env.PPB_USER, password: process.env.PPB_PASSWORD },
+        { httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true });
+    if (r.status !== 200) return null;
+    ppbToken = r.data; return ppbToken;
+}
+const PPB_HOST = () => '127.0.0.1';
+async function readPpb() {
+    if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) return null;
+    try {
+        const port = await ppbDiscoverPort();
+        if (!port) return null;
+        if (!ppbToken) await ppbLogin();
+        let resp = await axios.get(`https://127.0.0.1:${port}/local/rest/v1/ups/status`,
+            { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true });
+        if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://127.0.0.1:${port}/local/rest/v1/ups/status`, { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true }); }
+        if (resp.status !== 200) return null;
+        const d = resp.data;
+        const numV = s => { const m = (s || '').toString().match(/[\d.]+/); return m ? parseFloat(m[0]) : null; };
+        return {
+            source: 'ppb', model: 'CyberPower UPS (PowerPanel Business)',
+            status: d.input?.stateText || 'Unknown',
+            onBattery: (d.input?.state ?? 0) !== 0,
+            inputV: numV(d.input?.voltages?.[0]),
+            outputV: numV(d.output?.voltages?.[0]),
+            battery: numV(d.battery?.capacity),
+            runtimeSec: d.battery?.remainingRunTimeInSecs ?? null,
+            loadPct: numV(d.output?.loads?.[0])
+        };
+    } catch { return null; }
+}
+
 // --- 來源 3: pmset (macOS 原生，資訊有限) ---
 async function readPmset() {
     const out = await execCmd('pmset -g ps 2>/dev/null');
@@ -2152,10 +2197,10 @@ let upsLastReason = '';
 async function readUpsLive() {
     // 指定來源優先嘗試；即使指定的來源失敗，仍回退到其他來源 (避免選錯來源就整個抓不到)
     const chosen = UPS_SOURCE();
-    const order = chosen === 'auto' ? ['nut', 'pwrstat', 'pmset'] : [chosen, ...['nut', 'pwrstat', 'pmset'].filter(s => s !== chosen)];
+    const order = chosen === 'auto' ? ['ppb', 'nut', 'pwrstat', 'pmset'] : [chosen, ...['ppb', 'nut', 'pwrstat', 'pmset'].filter(s => s !== chosen)];
     const tried = [];
     for (const src of order) {
-        const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset }[src];
+        const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset, ppb: readPpb }[src];
         if (!fn) continue;
         const r = await fn();
         if (r) {
