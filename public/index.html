@@ -985,6 +985,8 @@
                     </div>
                 </div>
 
+                <p id="nas-charts-note" class="hidden text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">📈 這四張歷史圖由本站自行每分鐘取樣 NAS 即時數據累積而成（UGOS 本身不提供歷史 API）。剛啟動時資料點還不足，圖表會在數分鐘後逐漸長出曲線，掛著越久越完整。</p>
+
                 <!-- 系統歷史 & 流量歷史 -->
                 <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
@@ -1016,7 +1018,7 @@
                         <div class="h-52"><canvas id="nasStorageChart"></canvas></div>
                     </div>
                     <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
-                        <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">散熱歷史 (風扇 RPM / 硬碟溫度)</h4>
+                        <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">各硬碟溫度歷史 (°C)</h4>
                         <div class="h-52"><canvas id="nasTempChart"></canvas></div>
                     </div>
                 </div>
@@ -3408,22 +3410,17 @@
             ] }, options: lineOpts()
         });
         nasTempChart = new Chart(document.getElementById('nasTempChart'), {
-            type: 'line', data: { labels: [], datasets: [
-                { label: '風扇 RPM', data: [], borderColor: '#64748b', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yRpm' },
-                { label: 'HDD1 °C', data: [], borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yTemp' },
-                { label: 'HDD2 °C', data: [], borderColor: '#10b981', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yTemp' },
-                { label: 'HDD3 °C', data: [], borderColor: '#f59e0b', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yTemp' }
-            ] }, options: {
+            type: 'line', data: { labels: [], datasets: [] }, options: {
                 responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
                 plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 8 } } } },
                 scales: {
                     x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 8 }, grid: { display: false } },
-                    yRpm: { position: 'left', beginAtZero: true, ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
-                    yTemp: { position: 'right', ticks: { color: '#f59e0b', font: { size: 8 } }, grid: { display: false } }
+                    y: { ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } }
                 }
             }
         });
     }
+    const NAS_DISK_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#eab308'];
 
     async function fetchNasAdvanced() {
         try {
@@ -3468,13 +3465,19 @@
             nasStorageChart.data.datasets[0].data = st.map(p => p.used_gb);
             nasStorageChart.update('none');
 
-            const tp = (await (await fetch('/api/nas/temperature-history?hours=24')).json()).data || [];
+            const tpRes = await (await fetch('/api/nas/temperature-history?hours=24')).json();
+            const tp = tpRes.data || [];
+            const diskNames = tpRes.diskNames || [];
             nasTempChart.data.labels = fmtH(tp);
-            nasTempChart.data.datasets[0].data = tp.map(p => p.fan_rpm);
-            nasTempChart.data.datasets[1].data = tp.map(p => p.disk1);
-            nasTempChart.data.datasets[2].data = tp.map(p => p.disk2);
-            nasTempChart.data.datasets[3].data = tp.map(p => p.disk3);
+            nasTempChart.data.datasets = diskNames.map((name, i) => ({
+                label: name, data: tp.map(p => (p.disks || {})[name] ?? null),
+                borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
+            }));
             nasTempChart.update('none');
+
+            // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
+            const note = document.getElementById('nas-charts-note');
+            if (note) note.classList.toggle('hidden', tp.length >= 2);
         } catch (e) { console.error('NAS charts fetch failed', e); }
     }
 

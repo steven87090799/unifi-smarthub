@@ -1291,6 +1291,62 @@ app.get('/api/nas/ups-usb', async (req, res) => {
     }
 });
 
+/* ===================== NAS 歷史自建取樣器 =====================
+   UGOS 沒有提供歷史 API (只有即時快照 get_all)，這裡自己定期取樣 get_all + volume/list 並持久化，
+   讓「系統負載 / 網路流量 / 散熱 / 儲存趨勢」四張圖有真實歷史可畫，不需要另外部署 NAS Monitor (系統 B)。 */
+const NAS_HISTORY_FILE = path.join(DATA_DIR, 'nas-history.json');
+const NAS_HISTORY_LIMIT = 6000;   // 60 秒間隔 ≈ 4 天
+let nasHistory = (() => { try { return JSON.parse(fs.readFileSync(NAS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+let lastNasSampleTs = 0;
+
+async function sampleNasHistory() {
+    if (!nasConfigured()) return;
+    try {
+        const raw = await nasGet('/ugreen/v1/taskmgr/stat/get_all');
+        if (!raw || !raw.cpu) return;
+        const cpu = (raw.cpu.series && raw.cpu.series[0]) || {};
+        const mem = (raw.mem && raw.mem.series && raw.mem.series[0]) || {};
+        const netOv = ((raw.net && raw.net.series) || []).find(n => n.name === 'overview') || {};
+        const diskTemps = {};
+        ((raw.disk && raw.disk.series) || []).filter(d => d.name !== 'overview').forEach(d => {
+            if (d.temperature != null) diskTemps[d.label || d.name] = d.temperature;
+        });
+        // 容量：另外讀 volume/list 加總 (get_all 的 used_percent 常為 0)
+        let volUsedGb = null, volTotalGb = null;
+        try {
+            const vdata = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
+            const vols = (deepFind({ d: vdata }, ['result', 'list', 'volumes']) || []).filter(v => v.total);
+            if (vols.length) {
+                volUsedGb = Math.round(vols.reduce((a, v) => a + (v.used || 0), 0) / 1073741824);
+                volTotalGb = Math.round(vols.reduce((a, v) => a + (v.total || 0), 0) / 1073741824);
+            }
+        } catch { }
+        nasHistory.push({
+            t: new Date().toISOString(),
+            cpu: cpu.used_percent != null ? Math.round(cpu.used_percent) : null,
+            memory: mem.used_percent != null ? Math.round(mem.used_percent) : null,
+            temperature: cpu.temp ?? null,
+            up_mbps: +(((netOv.send_rate || 0) * 8 / 1e6).toFixed(2)),
+            down_mbps: +(((netOv.recv_rate || 0) * 8 / 1e6).toFixed(2)),
+            disks: diskTemps,
+            used_gb: volUsedGb, total_gb: volTotalGb
+        });
+        if (nasHistory.length > NAS_HISTORY_LIMIT) nasHistory = nasHistory.slice(-NAS_HISTORY_LIMIT);
+        try { fs.writeFileSync(NAS_HISTORY_FILE, JSON.stringify(nasHistory)); } catch { }
+    } catch (e) { sysLog('NAS History', `取樣失敗: ${e.message}`, false); }
+}
+// 自適應：有人看網頁時每 60 秒、閒置時每 10 分鐘 (歷史圖不需要太密)
+setInterval(() => {
+    const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const gap = (active ? 60 : 600) * 1000;
+    if (Date.now() - lastNasSampleTs >= gap) { lastNasSampleTs = Date.now(); sampleNasHistory(); }
+}, 5000);
+
+function nasHistorySince(hours) {
+    const cutoff = Date.now() - hours * 3600000;
+    return nasHistory.filter(p => new Date(p.t).getTime() >= cutoff);
+}
+
 /* ===================== NAS Monitor 擴充 REST API (系統 B / nas-monitor-interface) ===================== */
 // 選填：若另外部署了 nas-monitor-interface (Flask 中介層)，設定 NAS_MONITOR_URL + NAS_MONITOR_API_KEY 即可
 // 取得 Docker 管理、流量/儲存/溫度歷史、儲存滿載預測、警報等進階功能。未設定時全部回退展示資料。
@@ -1406,28 +1462,39 @@ app.get('/api/nas/docker/:id/logs', async (req, res) => {
 app.get('/api/nas/traffic-summary', (req, res) => nasMonProxy(res, '/api/traffic/summary', {},
     { data: { today_gb: 42.6, week_gb: 318.2, month_gb: 1240.7, today_up_gb: 8.1, today_down_gb: 34.5 } }));
 
-// 23. 流量歷史
+// 23. 流量歷史 — 優先系統 B；否則用自建 NAS 取樣歷史
 app.get('/api/nas/traffic-history', (req, res) => {
     const hours = parseInt(req.query.hours || '24', 10);
-    nasMonProxy(res, '/api/traffic/history', { hours }, { data: mockTrafficHistory(hours) });
+    if (nasMonConfigured()) return nasMonProxy(res, '/api/traffic/history', { hours }, { data: [] });
+    const data = nasHistorySince(hours).map(p => ({ t: p.t, upload_mbps: p.up_mbps, download_mbps: p.down_mbps }));
+    res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 24. 系統歷史 (CPU / 記憶體 / 溫度)
 app.get('/api/nas/system-history', (req, res) => {
     const hours = parseInt(req.query.hours || '24', 10);
-    nasMonProxy(res, '/api/system/history', { hours }, { data: mockSystemHistory(hours) });
+    if (nasMonConfigured()) return nasMonProxy(res, '/api/system/history', { hours }, { data: [] });
+    const data = nasHistorySince(hours).map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature }));
+    res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
-// 25. 溫度歷史 (風扇 RPM + 各硬碟溫度)
+// 25. 溫度歷史 (各硬碟溫度；此機型 API 無風扇轉速)
 app.get('/api/nas/temperature-history', (req, res) => {
     const hours = parseInt(req.query.hours || '24', 10);
-    nasMonProxy(res, '/api/temperature/history', { hours }, { data: mockTemperatureHistory(hours) });
+    if (nasMonConfigured()) return nasMonProxy(res, '/api/temperature/history', { hours }, { data: [] });
+    const pts = nasHistorySince(hours);
+    // 收集所有出現過的硬碟名稱，供前端動態畫線
+    const diskNames = [...new Set(pts.flatMap(p => Object.keys(p.disks || {})))];
+    const data = pts.map(p => ({ t: p.t, disks: p.disks || {} }));
+    res.json({ data, diskNames, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 26. 儲存容量歷史
 app.get('/api/nas/storage-history', (req, res) => {
     const hours = parseInt(req.query.hours || '720', 10);
-    nasMonProxy(res, '/api/storage/history', { hours }, { data: mockStorageHistory(hours) });
+    if (nasMonConfigured()) return nasMonProxy(res, '/api/storage/history', { hours }, { data: [] });
+    const data = nasHistorySince(hours).filter(p => p.used_gb != null).map(p => ({ t: p.t, used_gb: p.used_gb, total_gb: p.total_gb }));
+    res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 27. 儲存滿載預測 (線性迴歸估算剩餘天數)
