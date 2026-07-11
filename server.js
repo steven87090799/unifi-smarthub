@@ -289,6 +289,47 @@ app.get('/api/clients', async (req, res) => {
     }
 });
 
+// 2-1. 全網路裝置的實體網埠矩陣 (UCG/USW/AP)，含即時速率與埠上連接的裝置對照
+// UniFi 自己已經算好即時速率 (port_table[].tx_bytes-r / rx_bytes-r，單位 bytes/sec)，不需要像 SSH 那樣手動兩次取樣差值
+app.get('/api/network/switches', async (req, res) => {
+    try {
+        const cookie = await getLocalSession();
+        const [devRes, staRes] = await Promise.all([
+            unifiClient.get('/proxy/network/api/s/default/stat/device', { headers: { 'Cookie': cookie } }),
+            unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } })
+        ]);
+        // 依 sw_mac + sw_port 建立「哪個埠接了哪個客戶端」的對照表
+        const bySwPort = {};
+        (staRes.data.data || []).forEach(c => {
+            if (c.sw_mac && c.sw_port != null) bySwPort[`${c.sw_mac}_${c.sw_port}`] = { name: c.name || c.hostname || 'Unknown', mac: c.mac, ip: c.ip };
+        });
+        const devices = (devRes.data.data || [])
+            .filter(d => Array.isArray(d.port_table) && d.port_table.length)
+            .map(d => ({
+                mac: d.mac,
+                name: d.name || d.model,
+                model: d.model,
+                type: d.type, // udm=閘道器, usw=交換器, uap=無線
+                ports: d.port_table.map(p => ({
+                    port_idx: p.port_idx,
+                    name: p.name || `Port ${p.port_idx}`,
+                    up: !!p.up,
+                    is_uplink: !!p.is_uplink,
+                    speedMbps: p.speed || 0,
+                    poe: !!p.port_poe,
+                    rxMbps: +(((p['rx_bytes-r'] || 0) * 8 / 1e6).toFixed(2)),
+                    txMbps: +(((p['tx_bytes-r'] || 0) * 8 / 1e6).toFixed(2)),
+                    client: bySwPort[`${d.mac}_${p.port_idx}`] || (p.last_connection && p.last_connection.connected
+                        ? { name: '未知裝置 (無客戶端紀錄，可能是上聯埠)', mac: p.last_connection.mac, ip: p.last_connection.ip }
+                        : null)
+                }))
+            }));
+        res.json({ devices });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 3. 獲取 SSID 列表
 app.get('/api/wifi-networks', async (req, res) => {
     try {

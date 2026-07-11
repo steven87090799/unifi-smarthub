@@ -525,6 +525,15 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 全網路裝置埠對照（UCG + 所有 UniFi 交換器/AP，含每個埠接了什麼裝置） -->
+            <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">全網路裝置埠對照（含連接裝置）</h3>
+                <p class="text-[9px] text-slate-500 mb-4">來自 UniFi 控制器，涵蓋所有受管理的設備（閘道器/交換器/AP），每個埠標出目前接了哪個裝置與即時速率；速率為 0 代表該埠當下確實沒有流量，不是讀取失敗</p>
+                <div id="switch-matrix" class="space-y-5">
+                    <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                </div>
+            </div>
         </section>
 
         <!-- ==================== 頁面：客戶端 ==================== -->
@@ -2080,6 +2089,7 @@
     let activeTimeRangeDays = 30;
     let loggedThreatIds = new Set();
     let lastThreatId = null;
+    let lastIpsToastTs = 0; // 即使有多筆不同的新威脅，同一波最多每 15 秒跳一次通知泡泡，避免看起來「卡住不消失」
     let hwChart = null, threatChart = null, trendChart = null, ovHourlyChart = null, secHourlyChart = null;
     let nasSystemChart = null, nasTrafficChart = null, nasStorageChart = null, nasTempChart = null;
     let upsVoltChart = null, upsLoadChart = null, upsRangeHours = 24;
@@ -2149,6 +2159,7 @@
         fetchCloudSdwan();
         fetchIspMetrics();
         fetchThreats();
+        fetchSwitchMatrix();
         fetchBlockHistory();
         fetchTrends();
         fetchNas();
@@ -2176,6 +2187,7 @@
     /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
     const POLL_JOBS = {
         hardware: { fn: () => fetchHardware(), def: 8, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
+        switches: { fn: () => fetchSwitchMatrix(), def: 10, label: '全網路裝置埠對照', desc: '多久向 UniFi 控制器抓一次所有交換器/AP 的每個實體埠狀態與接入裝置 → 更新「全網路裝置埠對照」卡。' },
         clients: { fn: () => fetchClients(), def: 15, label: '客戶端清單', desc: '多久抓一次連線設備清單 → 更新客戶端表格、Top 5 流量排行、以及總覽的「線上設備數」KPI。' },
         threats: { fn: () => fetchThreats(), def: 7, label: '威脅偵測 (IPS/IDS)', desc: '多久抓一次 IPS/IDS 攔截警報 → 更新資安戰情室、世界地圖、威脅事件表、每小時圖與「最近威脅」橫幅。' },
         cloud: { fn: () => { fetchCloudSites(); fetchCloudDevices(); fetchCloudHosts(); fetchCloudSdwan(); }, def: 20, label: '雲端站點 (Site Manager)', desc: '多久抓一次 UniFi 官方雲端的站點、託管設備、控制主機與 SD-WAN VPN 清單。' },
@@ -2535,6 +2547,40 @@
             const ucgBadge = document.getElementById('ov-ucg-badge');
             if (ucgBadge) { ucgBadge.innerText = '● 連線失敗'; ucgBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-red-500/10 text-red-400 border-red-500/20'; }
             console.error('Hardware fetch failed', e);
+        }
+    }
+
+    const DEV_TYPE_LABEL = { udm: '閘道器', usw: '交換器', uap: '無線 AP' };
+    async function fetchSwitchMatrix() {
+        const wrap = document.getElementById('switch-matrix');
+        try {
+            const res = await fetch('/api/network/switches');
+            if (!res.ok) throw new Error();
+            const { devices } = await res.json();
+            if (!devices || !devices.length) { wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">無法取得裝置清單</p>'; return; }
+            wrap.innerHTML = devices.map(d => `
+                <div>
+                    <p class="text-[11px] font-bold text-slate-300 mb-2">${d.name} <span class="text-slate-600 font-normal">（${DEV_TYPE_LABEL[d.type] || d.type} · ${d.model}）</span></p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                        ${d.ports.map(p => `
+                            <div class="flex items-center justify-between p-2.5 bg-slate-950/40 rounded-xl border border-slate-850">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <div class="w-2 h-2 rounded-full shrink-0 ${p.up ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}"></div>
+                                    <div class="min-w-0">
+                                        <p class="text-[11px] font-bold text-slate-200">Port ${p.port_idx}${p.is_uplink ? ' (上聯)' : ''}${p.poe ? ' ⚡PoE' : ''}</p>
+                                        <p class="text-[9px] text-slate-500 truncate">${p.client ? p.client.name : (p.up ? '已連線 (無客戶端紀錄)' : '無連線')}</p>
+                                    </div>
+                                </div>
+                                <div class="text-right shrink-0 ml-2">
+                                    <p class="text-[9px] text-slate-400 mono">${p.speedMbps ? (p.speedMbps >= 1000 ? (p.speedMbps / 1000) + 'G' : p.speedMbps + 'M') : '--'}</p>
+                                    ${p.up ? `<p class="text-[8px] text-slate-500 mono">↓${p.rxMbps} ↑${p.txMbps}</p>` : ''}
+                                </div>
+                            </div>`).join('')}
+                    </div>
+                </div>`).join('');
+        } catch (e) {
+            wrap.innerHTML = '<p class="text-xs text-red-400 text-center py-4">讀取失敗</p>';
+            console.error('Switch matrix fetch failed', e);
         }
     }
 
@@ -3112,7 +3158,10 @@
                 setTxt2('ov-latest-time', timeStr);
                 if (t0.id !== lastThreatId) {
                     lastThreatId = t0.id;
-                    showToast(`🔥 IPS 攔截: 來自 ${t0.src_ip} 的 ${t0.category}`, true);
+                    if (Date.now() - lastIpsToastTs > 15000) {
+                        lastIpsToastTs = Date.now();
+                        showToast(`🔥 IPS 攔截: 來自 ${t0.src_ip} 的 ${t0.category}`, true);
+                    }
                 }
             }
         } catch (e) { console.error('Threats fetch failed', e); }
