@@ -252,11 +252,15 @@ app.get('/api/hardware', (req, res) => {
                 ? 'SSH 密碼被 UCG 拒絕。注意：SSH 密碼是獨立的，不是 UniFi 登入密碼 — 請到 UniFi 主控台 → Console Settings → Advanced → SSH，在那裡「設定 SSH 專用密碼」後填入本頁'
                 : err.message
         });
+    }).on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
+        // UniFi OS 的 sshd 只開放 keyboard-interactive，不接受純 password 認證
+        finish(prompts.map(() => process.env.SSH_PASSWORD));
     }).connect({
         host: process.env.UCG_IP,
         port: parseInt(process.env.SSH_PORT || '22', 10),
         username: process.env.SSH_USER,
-        password: process.env.SSH_PASSWORD
+        password: process.env.SSH_PASSWORD,
+        tryKeyboard: true
     });
 });
 
