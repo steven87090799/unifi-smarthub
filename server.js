@@ -1242,7 +1242,15 @@ app.get('/api/nas/overview', async (req, res) => {
                 };
             }
         } catch { }
-        res.json({ info, stats, statsRaw, statsError, source: 'nas_api' });
+        // 從 get_all 的 disk series 取出每顆硬碟的即時溫度/運轉狀態 (免喚醒)，供前端硬碟卡使用，
+        // 讓前端不必再輪詢會喚醒硬碟的 disk/list。
+        let disksLite = [];
+        try {
+            disksLite = ((statsRaw && statsRaw.disk && statsRaw.disk.series) || [])
+                .filter(d => d.name !== 'overview')
+                .map(d => ({ name: d.label || d.name, temperature: d.activate ? d.temperature : null, sleeping: !d.activate }));
+        } catch { }
+        res.json({ info, stats, disksLite, statsRaw, statsError, source: 'nas_api' });
     } catch (error) {
         res.json({ info: null, stats: null, source: 'error', error: error.message });
     }
