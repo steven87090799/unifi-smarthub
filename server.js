@@ -1280,9 +1280,16 @@ app.get('/api/nas/disks', async (req, res) => {
 // 16-1. 單顆硬碟 SMART 詳情 (UGOS 端點需要 disk=/dev/<dev_name>)
 app.get('/api/nas/disk-smart', async (req, res) => {
     if (!nasConfigured()) return res.status(503).json({ error: 'nas_not_configured' });
-    const dev = req.query.dev; // 前端傳 dev_name，例如 sdb / nvme0n1
-    if (!dev) return res.status(400).json({ error: 'missing dev' });
+    let dev = req.query.dev; // 前端傳 dev_name (sdb / nvme0n1)，或只傳 name (硬碟1) 由後端查對照
     try {
+        if (!dev && req.query.name) {
+            // 前端平時不打 disk/list (避免喚醒)；使用者點看 SMART 才在此查一次 label→dev_name
+            const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
+            const list = deepFind({ d: data }, ['result', 'list', 'disks']) || [];
+            const hit = list.find(d => (d.label || d.name) === req.query.name);
+            if (hit) dev = hit.dev_name;
+        }
+        if (!dev) return res.status(400).json({ error: 'missing dev' });
         const diskPath = dev.startsWith('/dev/') ? dev : `/dev/${dev}`;
         const data = await nasGet('/ugreen/v1/storage/disk/smart/info', { disk: diskPath });
         res.json({ smart: data, source: 'nas_api' });

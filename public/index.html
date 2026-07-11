@@ -633,6 +633,12 @@
                     </svg>雲端站點 Cloud
                 </button>
                 <p class="nav-group">設備 Devices</p>
+                <button data-page="ucg" onclick="navigate('ucg')"
+                    class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                    </svg>UCG 閘道器
+                </button>
                 <button data-page="nas" onclick="navigate('nas')"
                     class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -1062,6 +1068,19 @@
                         <div class="h-64"><canvas id="trendChart"></canvas></div>
                     </div>
 
+                    <!-- 全網路裝置埠對照（UCG + 所有 UniFi 交換器/AP，含每個埠接了什麼裝置） -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">全網路裝置埠對照（含連接裝置）</h3>
+                        <p class="text-[9px] text-slate-500 mb-4">來自 UniFi
+                            控制器，涵蓋所有受管理的設備（閘道器/交換器/AP），每個埠標出目前接了哪個裝置與即時速率；速率為 0 代表該埠當下確實沒有流量，不是讀取失敗</p>
+                        <div id="switch-matrix" class="space-y-5">
+                            <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ==================== 頁面：UCG 閘道器 ==================== -->
+                <section id="page-ucg" class="space-y-6 hidden">
                     <!-- UCG 硬體詳情（真實數據） -->
                     <div id="hw-detail" data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md transition-all duration-300"
@@ -1136,15 +1155,6 @@
 
                     </div>
 
-                    <!-- 全網路裝置埠對照（UCG + 所有 UniFi 交換器/AP，含每個埠接了什麼裝置） -->
-                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                        <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">全網路裝置埠對照（含連接裝置）</h3>
-                        <p class="text-[9px] text-slate-500 mb-4">來自 UniFi
-                            控制器，涵蓋所有受管理的設備（閘道器/交換器/AP），每個埠標出目前接了哪個裝置與即時速率；速率為 0 代表該埠當下確實沒有流量，不是讀取失敗</p>
-                        <div id="switch-matrix" class="space-y-5">
-                            <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
-                        </div>
-                    </div>
                 </section>
 
                 <!-- ==================== 頁面：客戶端 ==================== -->
@@ -1852,10 +1862,7 @@
                                 <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase">NAS 系統日誌與警報 <span
                                         class="text-slate-600 normal-case" id="nas-alert-count"></span></h4>
                                 <div class="flex items-center gap-3">
-                                    <div class="flex items-center gap-1 text-[10px]" id="nas-log-level-tabs">
-                                        <button data-lvl="all" class="nas-log-tab px-2 py-0.5 rounded font-bold bg-blue-600 text-white" onclick="setNasLogFilter('all')">全部</button>
-                                        <button data-lvl="warnerr" class="nas-log-tab px-2 py-0.5 rounded font-bold text-slate-400 hover:text-slate-200" onclick="setNasLogFilter('warnerr')">僅警告/嚴重</button>
-                                    </div>
+                                    <div class="flex items-center gap-1 text-[10px] flex-wrap" id="nas-log-level-tabs"></div>
                                     <label class="flex items-center gap-1.5 text-[10px] text-slate-500 cursor-pointer"><input
                                             type="checkbox" id="nas-log-hideself" class="accent-blue-500 w-3 h-3" checked
                                             onchange="fetchNasAlerts()"> 隱藏本站登入</label>
@@ -3564,6 +3571,8 @@
         }
         // 編輯模式時攔截主內容區點擊，避免拖曳時誤觸卡片跳頁
         document.addEventListener('click', e => {
+            // 「＋總覽」按鈕要放行，否則編輯模式的防誤觸攔截會吃掉它的點擊
+            if (layoutEditing && e.target.closest('.pin-add-btn')) return;
             if (layoutEditing && e.target.closest('main > section')) { e.stopPropagation(); e.preventDefault(); }
         }, true);
 
@@ -3592,6 +3601,7 @@
             security: ['資安 Security', 'IPS/IDS 威脅監看（純監看，不影響主控台設定）'],
             wifi: ['WiFi 射頻', 'SSID 廣播控制與訪客憑證'],
             cloud: ['雲端站點 Cloud', 'UniFi Site Manager 多站點監控'],
+            ucg: ['UCG 閘道器', 'UCG-Ultra 處理器溫度、核心負載與硬體資源 (SSH 真實數據)'],
             nas: ['NAS 儲存', 'UGREEN UGOS Pro 儲存與硬體監控'],
             wiim: ['WiiM 音響', 'WiiM Amp 音訊串流與硬體監控'],
             ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (NUT)'],
@@ -4183,14 +4193,24 @@
             if (confirm(msg)) showDiskSmart(dev, name);
         }
         async function showDiskSmart(dev, name) {
+            // 反正這次已經要存取硬碟了，順便更新一次 disk/list 靜態資訊快取 (型號/容量/通電時數)
+            fetch('/api/nas/disks').then(r => r.json()).then(j => {
+                if (j.disks && j.disks.length) {
+                    nasDiskStatic = j.disks;
+                    localStorage.setItem('nasDiskStatic.v1', JSON.stringify(j.disks));
+                    fetchNas().catch(() => { });
+                }
+            }).catch(() => { });
             const m = document.getElementById('smart-modal');
             m.classList.remove('hidden'); m.classList.add('flex');
             document.getElementById('smart-title').textContent = `${name} — SMART 詳情`;
             const body = document.getElementById('smart-body');
             body.innerHTML = '<p class="text-xs text-slate-500 text-center py-8">讀取中...</p>';
-            if (!dev) { body.innerHTML = '<p class="text-xs text-amber-400 text-center py-8">此硬碟無 dev_name，無法查詢 SMART</p>'; return; }
+
             try {
-                const r = await (await fetch('/api/nas/disk-smart?dev=' + encodeURIComponent(dev))).json();
+                // 有 dev 用 dev；只有名稱時傳 name 由後端即時對照 (此時使用者已確認要存取硬碟)
+                const q = dev ? 'dev=' + encodeURIComponent(dev) : 'name=' + encodeURIComponent(name);
+                const r = await (await fetch('/api/nas/disk-smart?' + q)).json();
                 if (r.error) throw new Error(r.error);
                 const s = r.smart || {};
                 const rows = (s.report || []);
@@ -4775,9 +4795,11 @@
                 const ov = await ovRes.json();
                 const vols = (await volRes.json()).volumes || [];
                 const ups = (await upsRes.json()).ups || {};
-                // 硬碟卡：溫度/休眠狀態一律取自 get_all(免喚醒);型號等靜態資訊只抓一次 disk/list 合併
+                // 硬碟卡：溫度/休眠狀態一律取自 get_all(免喚醒)。
+                // 型號/容量等靜態資訊「絕不自動」呼叫 disk/list —— 只有你點看 SMART 時才會抓，
+                // 抓到後存 localStorage 快取，之後開網頁直接用快取顯示。
                 const lite = ov.disksLite || [];
-                if (!nasDiskStatic && lite.length) { try { nasDiskStatic = (await (await fetch('/api/nas/disks')).json()).disks || []; } catch { nasDiskStatic = []; } }
+                if (!nasDiskStatic) { try { nasDiskStatic = JSON.parse(localStorage.getItem('nasDiskStatic.v1')) || []; } catch { nasDiskStatic = []; } }
                 const staticBy = {}; (nasDiskStatic || []).forEach(d => { staticBy[d.name] = d; });
                 const disks = lite.map(l => ({ ...(staticBy[l.name] || {}), name: l.name, temperature: l.temperature, sleeping: l.sleeping, status: (staticBy[l.name] || {}).status || 'good' }));
 
@@ -5138,10 +5160,23 @@
                 // 回退：UGOS 內建日誌中心 (真實系統事件)
                 const hideSelf = document.getElementById('nas-log-hideself')?.checked !== false;
                 const r = await (await fetch('/api/nas/logs?size=120' + (hideSelf ? '&hideSelf=1' : ''))).json();
-                let logs = r.logs || [];
-                if (nasLogFilter === 'warnerr') logs = logs.filter(l => l.level === 'warning' || l.level === 'error' || l.level === 'critical');
-                const sev = logs.filter(l => l.level !== 'info').length;
-                document.getElementById('nas-alert-count').innerText = r.total ? `— 共 ${r.total.toLocaleString()} 筆${sev ? `，⚠ ${sev} 筆需注意` : '，全部正常'}` : '';
+                const logsAll = r.logs || [];
+                // 級別統計晶片 (依近期日誌計數，點擊篩選)
+                const counts = { all: logsAll.length };
+                logsAll.forEach(l => counts[l.level] = (counts[l.level] || 0) + 1);
+                const LVL_META = [
+                    ['all', '全部', 'bg-blue-600 text-white', 'text-slate-400'],
+                    ['info', 'INFO', 'bg-slate-600 text-white', 'text-slate-500'],
+                    ['warning', '⚠ 警告', 'bg-amber-600 text-white', 'text-amber-500'],
+                    ['error', '❌ 錯誤', 'bg-red-600 text-white', 'text-red-400'],
+                    ['critical', '🚨 嚴重', 'bg-red-700 text-white', 'text-red-400']
+                ];
+                const tabsEl = document.getElementById('nas-log-level-tabs');
+                if (tabsEl) tabsEl.innerHTML = LVL_META.map(([k, label, onCls, offCls]) =>
+                    `<button onclick="setNasLogFilter('${k}')" class="px-2 py-0.5 rounded font-bold transition ${nasLogFilter === k ? onCls : offCls + ' hover:text-slate-200'}">${label} ${counts[k] || 0}</button>`).join('');
+                let logs = nasLogFilter === 'all' ? logsAll : logsAll.filter(l => l.level === nasLogFilter);
+                const sev = logsAll.filter(l => l.level !== 'info').length;
+                document.getElementById('nas-alert-count').innerText = r.total ? `— 共 ${r.total.toLocaleString()} 筆${sev ? `，⚠ 近期 ${sev} 筆需注意` : '，近期全部正常'}` : '';
                 list.innerHTML = logs.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">此篩選下無日誌</p>';
                 const icon = { critical: '🚨', error: '❌', warning: '⚠️' };
                 logs.forEach(l => {
@@ -5161,14 +5196,7 @@
         }
 
         let nasLogFilter = 'all';
-        function setNasLogFilter(f) {
-            nasLogFilter = f;
-            document.querySelectorAll('.nas-log-tab').forEach(b => {
-                const on = b.dataset.lvl === f;
-                b.className = `nas-log-tab px-2 py-0.5 rounded font-bold ${on ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
-            });
-            fetchNasAlerts();
-        }
+        function setNasLogFilter(f) { nasLogFilter = f; fetchNasAlerts(); }
 
         async function fetchNasSleepStats() {
             const el = document.getElementById('nas-sleep-stats');
