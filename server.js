@@ -378,7 +378,7 @@ app.get('/api/threats', async (req, res) => {
             const geo = t.srcipGeo || {};
             return {
                 id: t._id,
-                datetime: new Date(t.datetime).toISOString(),
+                datetime: new Date(t.time || Date.parse(t.datetime)).toISOString(), // 優先用不會有時區歧義的 epoch time 欄位
                 src_ip: t.src_ip,
                 src_country: geo.country_name || t.src_country || 'Unknown',
                 src_lat: geo.latitude || null,   // 0/未知一律視為無座標
@@ -1683,40 +1683,95 @@ app.post('/api/connections', (req, res) => {
 /* ===================== 定期報表 ===================== */
 // 彙整過去 24 小時的關鍵指標成一段文字
 async function buildReport() {
-    const lines = [];
+    const L = [];
     const dayAgo = Date.now() - 86400000;
+    const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+    L.push(`🗓️ SmartHub 系統報表 · ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`);
+
+    // ── 資安 / 網路 ──
+    L.push('\n━━ 🛡️ 資安與網路 ━━');
     try {
         const cookie = await getLocalSession();
         const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
-        const threats = (alarm.data.data || []).filter(a => isIpsAlarm(a) && new Date(a.datetime).getTime() >= dayAgo);
-        lines.push(`🛡️ 24H 威脅攔截：${threats.length} 次`);
-        const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
-        lines.push(`📱 目前線上客戶端：${(sta.data.data || []).length} 台`);
-    } catch { lines.push('🛡️ 威脅/客戶端：本地控制器未連線'); }
-    const trends = loadTrends().filter(p => new Date(p.t).getTime() >= dayAgo);
-    if (trends.length) {
-        const lat = trends.map(p => p.latency).filter(v => v != null);
-        if (lat.length) lines.push(`📶 平均 ISP 延遲：${(lat.reduce((a, b) => a + b, 0) / lat.length).toFixed(1)} ms`);
-    }
-    if (nasMonConfigured()) {
+        const threats = (alarm.data.data || []).filter(a => isIpsAlarm(a) && (a.time || Date.parse(a.datetime)) >= dayAgo);
+        L.push(`• 24H 威脅攔截：${threats.length} 次`);
+        if (threats.length) {
+            const cat = {};
+            threats.forEach(t => { const m = /SCAN/.test(t.msg) ? '掃描' : /EXPLOIT/.test(t.msg) ? '漏洞攻擊' : /MALWARE|Trojan/i.test(t.msg) ? '惡意程式' : /DOS/.test(t.msg) ? 'DoS' : '其他'; cat[m] = (cat[m] || 0) + 1; });
+            L.push(`  類別：${Object.entries(cat).map(([k, v]) => `${k} ${v}`).join('、')}`);
+            const srcs = {};
+            threats.forEach(t => { const ip = t.src_ip || '?'; srcs[ip] = (srcs[ip] || 0) + 1; });
+            const top = Object.entries(srcs).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            L.push(`  主要來源：${top.map(([ip, n]) => `${ip}(${n})`).join('、')}`);
+        }
+        const sta = (await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } })).data.data || [];
+        const wired = sta.filter(c => c.is_wired).length;
+        L.push(`• 線上客戶端：${sta.length} 台 (有線 ${wired} / 無線 ${sta.length - wired})`);
+        const totalRx = sta.reduce((a, c) => a + (c.rx_bytes || 0), 0), totalTx = sta.reduce((a, c) => a + (c.tx_bytes || 0), 0);
+        L.push(`• 客戶端累計流量：↓${(totalRx / 1073741824).toFixed(1)} GB / ↑${(totalTx / 1073741824).toFixed(1)} GB`);
+    } catch { L.push('• 本地控制器未連線'); }
+    const trends = loadTrends().filter(p => (Date.parse(p.t)) >= dayAgo);
+    const lat = trends.map(p => p.latency).filter(v => v != null);
+    if (lat.length) L.push(`• ISP 延遲：平均 ${avg(lat).toFixed(1)} ms (最高 ${Math.max(...lat)} ms)`);
+    const cli = trends.map(p => p.clients).filter(v => v != null);
+    if (cli.length) L.push(`• 客戶端數 24H：平均 ${Math.round(avg(cli))} / 最高 ${Math.max(...cli)} 台`);
+
+    // ── UCG 硬體 ──
+    if (!isPlaceholder(process.env.SSH_PASSWORD)) {
         try {
-            const dt = await nasMonGet('/api/downtime', { days: 30 });
-            const d = dt.data || dt; if (d && d.uptime_percent != null) lines.push(`💾 NAS 30 天正常運行率：${d.uptime_percent}%`);
+            const hw = (await axios.get(`http://127.0.0.1:${process.env.PORT || 3000}/api/hardware`, { timeout: 15000 })).data;
+            L.push('\n━━ 🖥️ UCG-Ultra 閘道器 ━━');
+            L.push(`• CPU：${hw.cpuUsage ?? '--'}% / ${hw.cpuTemp ?? '--'}°C　記憶體：${hw.memUsagePct ?? '--'}%`);
+            if (hw.uptime) L.push(`• 運行時間：${hw.uptime}`);
+            const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
+            if (wan) L.push(`• WAN(${wan.speed})：${wan.status === 'connected' ? '正常' : '離線'} ↓${wan.rxRate} ↑${wan.txRate}`);
         } catch { }
     }
+
+    // ── NAS ──
+    if (nasConfigured()) {
+        try {
+            L.push('\n━━ 💾 UGREEN NAS ━━');
+            const disks = (await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 }).catch(() => null));
+            let dl = disks ? (deepFind({ d: disks }, ['result', 'list', 'disks']) || []) : [];
+            if (dl.length) {
+                const temps = dl.filter(d => d.activate && d.temperature).map(d => d.temperature);
+                const bad = dl.filter(d => d.status !== 1);
+                L.push(`• 硬碟：${dl.length} 顆，${bad.length ? `⚠ ${bad.length} 顆異常` : '全部健康'}${temps.length ? `，溫度 ${Math.min(...temps)}–${Math.max(...temps)}°C` : ''}`);
+                const sleeping = dl.filter(d => d.is_standby || d.activate === false).length;
+                if (sleeping) L.push(`  ${sleeping} 顆休眠中`);
+            }
+            const vdata = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 }).catch(() => null);
+            const vols = vdata ? (deepFind({ d: vdata }, ['result', 'list', 'volumes']) || []) : [];
+            vols.filter(v => v.total).forEach(v => {
+                const pct = Math.round(v.used / v.total * 100);
+                L.push(`• ${v.label || v.name}：${(v.used / 1073741824 / 1024).toFixed(2)}/${(v.total / 1073741824 / 1024).toFixed(2)} TB (${pct}%)${pct >= 85 ? ' ⚠' : ''}`);
+            });
+        } catch { L.push('• NAS 讀取失敗 (可能需管理員權限)'); }
+    }
+
+    // ── UPS ──
+    try {
+        const ups = await readUpsLive();
+        if (ups) {
+            L.push('\n━━ 🔋 UPS ━━');
+            L.push(`• ${ups.model || 'UPS'}：${ups.onBattery ? '⚡ 電池供電中' : '🟢 市電正常'}，電池 ${ups.battery ?? '--'}%${ups.inputV ? `，輸入 ${ups.inputV}V` : ''}`);
+            const outages = upsEvents.filter(e => Date.parse(e.start) >= dayAgo);
+            if (outages.length) L.push(`• 24H 斷電事件：${outages.length} 次`);
+        }
+    } catch { }
+
+    // ── WiiM ──
     const wiim24h = wiimHistory.filter(h => (h.ts * 1000) >= dayAgo);
     if (wiim24h.length) {
         const cpus = wiim24h.map(h => h.cpu).filter(v => v !== null);
         const boards = wiim24h.map(h => h.board).filter(v => v !== null);
         if (cpus.length && boards.length) {
-            const maxCpu = Math.max(...cpus).toFixed(1);
-            const avgCpu = (cpus.reduce((a, b) => a + b, 0) / cpus.length).toFixed(1);
-            const maxBoard = Math.max(...boards).toFixed(1);
-            const avgBoard = (boards.reduce((a, b) => a + b, 0) / boards.length).toFixed(1);
-            lines.push(`🔊 WiiM Amp 狀態：24H 均溫 CPU ${avgCpu}°C (最高 ${maxCpu}°C) / 主板 ${avgBoard}°C (最高 ${maxBoard}°C)`);
+            L.push('\n━━ 🔊 WiiM Amp ━━');
+            L.push(`• 24H 均溫：CPU ${avg(cpus).toFixed(1)}°C (最高 ${Math.max(...cpus).toFixed(1)}) / 主板 ${avg(boards).toFixed(1)}°C (最高 ${Math.max(...boards).toFixed(1)})`);
         }
     }
-    return lines.join('\n') || '（無可彙整的資料）';
+    return L.join('\n') || '（無可彙整的資料）';
 }
 
 let lastReportKey = '';
