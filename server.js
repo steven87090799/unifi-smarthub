@@ -1308,6 +1308,66 @@ app.get('/api/nas/logs', async (req, res) => {
     }
 });
 
+// 16-3. 硬碟休眠統計 — 解析 UGOS 日誌中心的 sleeping 事件，算出每顆機械碟每天的休眠時數/次數/平均/喚醒時間
+app.get('/api/nas/sleep-stats', async (req, res) => {
+    if (!nasConfigured()) return res.json({ days: [], source: 'not_configured' });
+    try {
+        const pages = Math.min(parseInt(req.query.pages || '10', 10), 20);
+        let all = [];
+        for (let p = 0; p < pages; p++) {
+            const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: p, size: 200, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
+            const lst = data.log_list || [];
+            all = all.concat(lst);
+            if (lst.length < 200) break;
+        }
+        // 取出 sleeping 事件（時間升冪），配對 sleep→wake
+        const sw = all.filter(l => /sleeping/i.test(l.content))
+            .map(l => ({ t: l.create_time, drive: (l.content.match(/Hard Drive (\d+)/) || [])[1], action: /stopped/i.test(l.content) ? 'wake' : 'sleep' }))
+            .filter(e => e.drive).sort((a, b) => a.t - b.t);
+        const open = {};   // drive → 開始休眠的 epoch
+        const byDay = {};  // 'YYYY/M/D' → { driveN: { sec, n } }
+        const wakeEvents = {}; // day → [{drive, t}]
+        const dayKey = ts => new Date(ts * 1000).toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' });
+        const ensure = (d, drv) => { byDay[d] = byDay[d] || {}; byDay[d][drv] = byDay[d][drv] || { sec: 0, n: 0, longest: 0 }; return byDay[d][drv]; };
+        for (const e of sw) {
+            if (e.action === 'sleep') open[e.drive] = e.t;
+            else if (e.action === 'wake') {
+                const day = dayKey(e.t);
+                (wakeEvents[day] = wakeEvents[day] || []).push({ drive: '硬碟' + e.drive, t: e.t * 1000 });
+                if (open[e.drive]) {
+                    const start = open[e.drive], end = e.t, drv = '硬碟' + e.drive, totalDur = end - start;
+                    // 跨日的休眠時段按日切分，讓每天的休眠時數 ≤ 24h、比例 ≤ 100%
+                    let cur = start;
+                    while (cur < end) {
+                        const midnight = new Date(cur * 1000); midnight.setHours(24, 0, 0, 0);
+                        const segEnd = Math.min(end, Math.floor(midnight.getTime() / 1000));
+                        const seg = segEnd - cur, rec = ensure(dayKey(cur), drv);
+                        rec.sec += seg;
+                        cur = segEnd;
+                    }
+                    // 「次數」與「最長單次」記在開始日
+                    const rec0 = ensure(dayKey(start), drv);
+                    rec0.n++; rec0.longest = Math.max(rec0.longest, totalDur);
+                    open[e.drive] = null;
+                }
+            }
+        }
+        const days = Object.keys(byDay).sort().reverse().slice(0, 14).map(day => ({
+            day,
+            drives: Object.entries(byDay[day]).map(([name, v]) => ({
+                name, sleepHours: +(v.sec / 3600).toFixed(1), sessions: v.n,
+                avgMin: v.n ? Math.round(v.sec / v.n / 60) : 0,
+                longestMin: Math.round(v.longest / 60),
+                sleepPct: Math.min(100, Math.round(v.sec / 86400 * 100))
+            })).sort((a, b) => a.name.localeCompare(b.name)),
+            wakes: (wakeEvents[day] || []).map(w => ({ drive: w.drive, time: new Date(w.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' }) }))
+        }));
+        res.json({ days, source: 'nas_api' });
+    } catch (error) {
+        res.status(500).json({ days: [], error: error.message });
+    }
+});
+
 // 17. NAS 邏輯儲存區清單 (回應包裝於 data.result)
 app.get('/api/nas/volumes', async (req, res) => {
     if (!nasConfigured()) return res.json({ volumes: [], source: 'not_configured' });

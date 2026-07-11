@@ -1806,15 +1806,34 @@
                             </div>
                         </div>
 
+                        <!-- 硬碟休眠統計 (解析 UGOS 日誌) -->
+                        <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
+                            <div class="flex justify-between items-center mb-1">
+                                <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase">機械碟休眠統計</h4>
+                                <span class="text-[9px] text-slate-600">來自 UGOS 日誌 · 僅機械碟會休眠</span>
+                            </div>
+                            <p class="text-[9px] text-slate-500 mb-3">每天各硬碟的休眠總時數 / 次數 / 平均與最長單次 / 全日休眠比例；比例越高代表越省電越延壽</p>
+                            <div class="overflow-x-auto">
+                                <div id="nas-sleep-stats" class="min-w-[520px]">
+                                    <p class="text-xs text-slate-500 text-center py-4">休眠統計讀取中...</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 警報事件 -->
                         <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
-                            <div class="flex justify-between items-center mb-4">
+                            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-4">
                                 <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase">NAS 系統日誌與警報 <span
                                         class="text-slate-600 normal-case" id="nas-alert-count"></span></h4>
-                                <label
-                                    class="flex items-center gap-1.5 text-[10px] text-slate-500 cursor-pointer"><input
-                                        type="checkbox" id="nas-log-hideself" class="accent-blue-500 w-3 h-3" checked
-                                        onchange="fetchNasAlerts()"> 隱藏本站監控登入</label>
+                                <div class="flex items-center gap-3">
+                                    <div class="flex items-center gap-1 text-[10px]" id="nas-log-level-tabs">
+                                        <button data-lvl="all" class="nas-log-tab px-2 py-0.5 rounded font-bold bg-blue-600 text-white" onclick="setNasLogFilter('all')">全部</button>
+                                        <button data-lvl="warnerr" class="nas-log-tab px-2 py-0.5 rounded font-bold text-slate-400 hover:text-slate-200" onclick="setNasLogFilter('warnerr')">僅警告/嚴重</button>
+                                    </div>
+                                    <label class="flex items-center gap-1.5 text-[10px] text-slate-500 cursor-pointer"><input
+                                            type="checkbox" id="nas-log-hideself" class="accent-blue-500 w-3 h-3" checked
+                                            onchange="fetchNasAlerts()"> 隱藏本站登入</label>
+                                </div>
                             </div>
                             <div class="space-y-2 max-h-[420px] overflow-y-auto terminal-scroll" id="nas-alert-list">
                                 <p class="text-xs text-slate-500 text-center py-4">日誌讀取中...</p>
@@ -3525,6 +3544,7 @@
             fetchNas();
             fetchNasAdvanced();
             fetchNasCharts();
+            fetchNasSleepStats();
             fetchNasDocker();
             fetchNasAlerts();
             fetchNotifSettings();
@@ -3553,7 +3573,7 @@
             cloud: { fn: () => { fetchCloudSites(); fetchCloudDevices(); fetchCloudHosts(); fetchCloudSdwan(); }, def: 20, label: '雲端站點 (Site Manager)', desc: '多久抓一次 UniFi 官方雲端的站點、託管設備、控制主機與 SD-WAN VPN 清單。' },
             isp: { fn: () => fetchIspMetrics(), def: 10, label: 'ISP 網路品質', desc: '多久抓一次延遲、丟包率、上/下載速度 → 更新雲端頁的 ISP 卡與總覽的「WAN 狀態」KPI。' },
             nas: { fn: () => fetchNas(), def: 20, label: 'NAS 即時遙測', desc: '多久抓一次 NAS 的 CPU/記憶體/網路/UPS、硬碟健康與儲存區容量。' },
-            nasAdvanced: { fn: () => { fetchNasAdvanced(); fetchNasCharts(); fetchNasAlerts(); }, def: 60, label: 'NAS 進階 (歷史圖/警報)', desc: '多久抓一次 NAS 的系統/流量/溫度/儲存歷史圖、滿載預估與警報事件（資料量較大，建議較長間隔）。' },
+            nasAdvanced: { fn: () => { fetchNasAdvanced(); fetchNasCharts(); fetchNasAlerts(); fetchNasSleepStats(); }, def: 60, label: 'NAS 進階 (歷史圖/警報)', desc: '多久抓一次 NAS 的系統/流量/溫度/儲存歷史圖、滿載預估、警報事件與硬碟休眠統計（資料量較大，建議較長間隔）。' },
             docker: { fn: () => fetchNasDocker(), def: 20, label: 'Docker 容器', desc: '多久刷新一次 Docker 容器清單與其即時 CPU/記憶體占用。' },
             trend: { fn: () => fetchTrends(), def: 15, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
             notifLog: { fn: () => fetchNotifLog(), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄清單。' },
@@ -4994,23 +5014,65 @@
                 }
                 // 回退：UGOS 內建日誌中心 (真實系統事件)
                 const hideSelf = document.getElementById('nas-log-hideself')?.checked !== false;
-                const r = await (await fetch('/api/nas/logs?size=60' + (hideSelf ? '&hideSelf=1' : ''))).json();
-                const logs = r.logs || [];
-                document.getElementById('nas-alert-count').innerText = r.total ? `— 來自 UGOS 日誌中心，共 ${r.total.toLocaleString()} 筆` : '';
-                list.innerHTML = logs.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無日誌</p>';
+                const r = await (await fetch('/api/nas/logs?size=120' + (hideSelf ? '&hideSelf=1' : ''))).json();
+                let logs = r.logs || [];
+                if (nasLogFilter === 'warnerr') logs = logs.filter(l => l.level === 'warning' || l.level === 'error' || l.level === 'critical');
+                const sev = logs.filter(l => l.level !== 'info').length;
+                document.getElementById('nas-alert-count').innerText = r.total ? `— 共 ${r.total.toLocaleString()} 筆${sev ? `，⚠ ${sev} 筆需注意` : '，全部正常'}` : '';
+                list.innerHTML = logs.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">此篩選下無日誌</p>';
+                const icon = { critical: '🚨', error: '❌', warning: '⚠️' };
                 logs.forEach(l => {
                     const cls = colorMap[l.level] || colorMap.info;
+                    const severe = l.level !== 'info';
                     const mod = NAS_LOG_MODULE_LABEL[l.module] || l.module;
                     list.innerHTML += `
                     <div class="flex items-center gap-3 p-2.5 rounded-lg border ${cls}">
-                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-12">${l.level}</span>
+                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-14 ${severe ? '' : 'opacity-60'}">${icon[l.level] || ''}${l.level}</span>
                         <div class="flex-grow min-w-0">
-                            <p class="text-[11px] text-slate-200 truncate" title="${l.content.replace(/"/g, '&quot;')}">${l.content}</p>
+                            <p class="text-[11px] ${severe ? 'font-bold' : ''} text-slate-200 truncate" title="${l.content.replace(/"/g, '&quot;')}">${l.content}</p>
                             <p class="text-[9px] text-slate-500 mono">${mod} · ${l.operator} · ${new Date(l.ts).toLocaleString('zh-TW')}</p>
                         </div>
                     </div>`;
                 });
             } catch (e) { console.error('NAS alerts fetch failed', e); }
+        }
+
+        let nasLogFilter = 'all';
+        function setNasLogFilter(f) {
+            nasLogFilter = f;
+            document.querySelectorAll('.nas-log-tab').forEach(b => {
+                const on = b.dataset.lvl === f;
+                b.className = `nas-log-tab px-2 py-0.5 rounded font-bold ${on ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
+            });
+            fetchNasAlerts();
+        }
+
+        async function fetchNasSleepStats() {
+            const el = document.getElementById('nas-sleep-stats');
+            if (!el) return;
+            try {
+                const r = await (await fetch('/api/nas/sleep-stats')).json();
+                const days = r.days || [];
+                if (!days.length) { el.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">尚無休眠紀錄（機械碟近期可能持續運轉，或日誌不足）</p>'; return; }
+                const bar = pct => {
+                    const c = pct >= 60 ? 'bg-emerald-500' : pct >= 30 ? 'bg-amber-500' : 'bg-red-500';
+                    return `<div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="${c} h-full" style="width:${pct}%"></div></div>`;
+                };
+                el.innerHTML = days.map(d => `
+                    <div class="mb-3 pb-3 border-b border-slate-800/50 last:border-0">
+                        <p class="text-[11px] font-bold text-slate-300 mb-1.5">${d.day} <span class="text-slate-600 font-normal">· 喚醒 ${d.wakes.length} 次</span></p>
+                        <div class="space-y-1.5">
+                        ${d.drives.map(dr => `
+                            <div class="flex items-center gap-2 text-[10px]">
+                                <span class="text-slate-300 font-bold w-14 shrink-0">${dr.name}</span>
+                                <span class="mono text-slate-400 w-32 shrink-0">睡 ${dr.sleepHours}h (${dr.sleepPct}%)</span>
+                                <div class="flex-grow">${bar(dr.sleepPct)}</div>
+                                <span class="mono text-slate-500 w-40 shrink-0 text-right">${dr.sessions}次 · 均${dr.avgMin}分 · 最長${dr.longestMin}分</span>
+                            </div>`).join('')}
+                        </div>
+                        ${d.wakes.length ? `<p class="text-[8px] text-slate-600 mt-1.5 truncate" title="${d.wakes.map(w => w.drive + ' ' + w.time).join(', ')}">喚醒時刻：${d.wakes.slice(0, 12).map(w => w.time).join(' ')}${d.wakes.length > 12 ? ' …' : ''}</p>` : ''}
+                    </div>`).join('');
+            } catch (e) { el.innerHTML = '<p class="text-xs text-red-400 text-center py-4">休眠統計讀取失敗</p>'; }
         }
 
         async function ackAlert(id) {
