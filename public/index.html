@@ -1988,6 +1988,17 @@
     </div>
 </div>
 
+<!-- 硬碟 SMART 詳情彈窗 -->
+<div id="smart-modal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4" onclick="if(event.target===this)closeDiskSmart()">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
+        <div class="flex justify-between items-center px-5 py-4 border-b border-slate-800">
+            <span class="text-sm font-bold text-white" id="smart-title">SMART 詳情</span>
+            <button onclick="closeDiskSmart()" class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+        </div>
+        <div class="p-5 overflow-auto terminal-scroll" id="smart-body"><p class="text-xs text-slate-500 text-center py-8">載入中...</p></div>
+    </div>
+</div>
+
 <!-- Docker 日誌彈窗 (置於頂層，避免被 backdrop-blur 祖先影響 fixed 定位) -->
 <div id="docker-log-modal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4" onclick="if(event.target===this)closeDockerLog()">
     <div class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
@@ -2703,6 +2714,74 @@
         m.classList.add('hidden'); m.classList.remove('flex');
     }
 
+    function closeDiskSmart() {
+        const m = document.getElementById('smart-modal');
+        m.classList.add('hidden'); m.classList.remove('flex');
+    }
+    // 常見 SMART 屬性的白話說明（滑鼠停留可看）
+    const SMART_HINT = {
+        5: '已被重新映射的壞扇區數量，非 0 且持續增加代表碟片開始老化',
+        9: '硬碟累計通電時間',
+        194: '目前碟溫',
+        197: '等待重映射的可疑扇區，非 0 要留意',
+        198: '無法讀取且無法修正的扇區，非 0 通常代表已有壞軌',
+        199: '傳輸線路上的 CRC 錯誤，偏高多半是 SATA 線或接觸問題',
+        1: '底層讀取錯誤率（Seagate 原始值偏大屬正常，看 value/worst 是否高於門檻即可）',
+        241: 'LBA 寫入總量（可推估寫入壽命）',
+        242: 'LBA 讀取總量'
+    };
+    async function showDiskSmart(dev, name) {
+        const m = document.getElementById('smart-modal');
+        m.classList.remove('hidden'); m.classList.add('flex');
+        document.getElementById('smart-title').textContent = `${name} — SMART 詳情`;
+        const body = document.getElementById('smart-body');
+        body.innerHTML = '<p class="text-xs text-slate-500 text-center py-8">讀取中...</p>';
+        if (!dev) { body.innerHTML = '<p class="text-xs text-amber-400 text-center py-8">此硬碟無 dev_name，無法查詢 SMART</p>'; return; }
+        try {
+            const r = await (await fetch('/api/nas/disk-smart?dev=' + encodeURIComponent(dev))).json();
+            if (r.error) throw new Error(r.error);
+            const s = r.smart || {};
+            const rows = (s.report || []);
+            // 整體判定：任何屬性 status 非 1（或 value 已跌破 thresh）就標警告
+            const bad = rows.filter(a => (a.status && a.status !== 1) || (a.thresh > 0 && a.value <= a.thresh));
+            const overall = bad.length ? `⚠ ${bad.length} 項屬性需注意` : '✓ 全部屬性正常';
+            const tempAttr = rows.find(a => a.id === 194);
+            const pohAttr = rows.find(a => a.id === 9);
+            body.innerHTML = `
+                <div class="flex flex-wrap gap-2 mb-4">
+                    <span class="px-3 py-1.5 rounded-lg text-xs font-bold ${bad.length ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}">${overall}</span>
+                    ${tempAttr ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300">目前溫度 ${tempAttr.value}°C</span>` : ''}
+                    ${pohAttr ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300">通電 ${(pohAttr.raw ?? 0).toLocaleString()} 小時</span>` : ''}
+                    ${s.last && s.last.status != null ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-400">上次自我測試狀態碼 ${s.last.status}</span>` : ''}
+                </div>
+                <div class="overflow-x-auto">
+                <table class="w-full text-[10px] mono">
+                    <thead><tr class="text-slate-500 border-b border-slate-800 text-left">
+                        <th class="py-1.5 pr-2">ID</th><th class="pr-2">屬性</th><th class="pr-2 text-right">Value</th><th class="pr-2 text-right">Worst</th><th class="pr-2 text-right">門檻</th><th class="pr-2 text-right">原始值</th><th class="text-center">狀態</th>
+                    </tr></thead>
+                    <tbody>
+                    ${rows.map(a => {
+                        const attrBad = (a.status && a.status !== 1) || (a.thresh > 0 && a.value <= a.thresh);
+                        const hint = SMART_HINT[a.id];
+                        return `<tr class="border-b border-slate-850/60 ${attrBad ? 'bg-red-500/5' : ''}">
+                            <td class="py-1.5 pr-2 text-slate-500">${a.id}</td>
+                            <td class="pr-2 text-slate-300" ${hint ? `title="${hint}"` : ''}>${a.label || a.name}${hint ? ' <span class="text-slate-600">ⓘ</span>' : ''}</td>
+                            <td class="pr-2 text-right text-slate-300">${a.value}</td>
+                            <td class="pr-2 text-right text-slate-500">${a.worst}</td>
+                            <td class="pr-2 text-right text-slate-500">${a.thresh}</td>
+                            <td class="pr-2 text-right text-slate-400">${(a.raw ?? '').toLocaleString?.() ?? a.raw ?? ''}</td>
+                            <td class="text-center">${attrBad ? '<span class="text-red-400">⚠</span>' : '<span class="text-emerald-500">✓</span>'}</td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody>
+                </table>
+                </div>
+                <p class="text-[9px] text-slate-600 mt-3 leading-relaxed">Value/Worst 是硬碟廠商正規化後的健康分數（越高越好），跌到「門檻」以下才算異常；原始值(Raw)是實際計數。滑鼠停在有 ⓘ 的屬性上可看白話解釋。資料即時取自 NAS 的 UGOS SMART。</p>`;
+        } catch (e) {
+            body.innerHTML = `<p class="text-xs text-red-400 text-center py-8">讀取 SMART 失敗：${e.message}</p>`;
+        }
+    }
+
     async function fetchBlockHistory() {
         try {
             const res = await fetch('/api/block-history');
@@ -3324,26 +3403,36 @@
             const diskList = document.getElementById('nas-disk-list');
             diskList.innerHTML = disks.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無硬碟資料</p>';
             disks.forEach(d => {
-                const name = nFind(d, ['name', 'dev_name', 'model']) || 'Disk';
+                const name = nFind(d, ['name', 'label']) || 'Disk';
                 const dModel = nFind(d, ['model']) || '';
+                const dev = nFind(d, ['dev_name']) || '';
                 const temp = asNum(nFind(d, ['temperature', 'temp']));
                 const health = nFind(d, ['status', 'health', 'health_status']) || 'Unknown';
-                const slot = nFind(d, ['slot', 'slot_number', 'position']);
                 const good = String(health).toLowerCase().includes('good') || String(health).toLowerCase() === 'normal';
+                const sizeGb = asNum(nFind(d, ['size_gb']));
+                const sizeStr = sizeGb ? (sizeGb >= 1000 ? (sizeGb / 1000).toFixed(1) + ' TB' : sizeGb + ' GB') : '';
+                const poh = asNum(nFind(d, ['power_on_hours']));
+                const isSsd = /ssd|nvme|m\.2/i.test(dModel + ' ' + name);
+                const tColor = temp == null ? '#64748b' : temp >= 55 ? '#ef4444' : temp >= 48 ? '#f59e0b' : '#10b981';
+                // 線條 SVG 硬碟圖示 (SSD/HDD 兩款)
+                const icon = isSsd
+                    ? '<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="7" y1="10" x2="7" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>'
+                    : '<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.4"/><line x1="17.5" y1="6.5" x2="13.7" y2="10.3"/></svg>';
                 diskList.innerHTML += `
-                    <div class="flex items-center justify-between p-3 bg-slate-900/40 rounded-xl border border-slate-800/50">
-                        <div class="flex items-center gap-3">
-                            <div class="w-8 h-8 rounded-lg bg-slate-800/80 border border-slate-700/50 flex items-center justify-center text-[9px] font-black text-slate-400 mono">${slot != null ? 'D' + slot : 'HD'}</div>
-                            <div>
-                                <p class="text-xs font-bold text-slate-200">${name}</p>
-                                <p class="text-[9px] text-slate-500 mono">${dModel}</p>
+                    <button onclick="showDiskSmart('${dev}','${name.replace(/'/g, '')}')" class="w-full text-left flex items-center justify-between p-3 bg-slate-900/40 rounded-xl border border-slate-800/50 hover:border-blue-500/40 hover:bg-slate-900/70 transition group">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${good ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}">${icon}</div>
+                            <div class="min-w-0">
+                                <p class="text-xs font-bold text-slate-200 truncate">${name} <span class="text-slate-600 font-normal">${sizeStr}</span></p>
+                                <p class="text-[9px] text-slate-500 mono truncate">${dModel}${poh != null ? ' · 通電 ' + poh.toLocaleString() + ' 小時' : ''}</p>
                             </div>
                         </div>
-                        <div class="text-right">
-                            <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${health}</span>
-                            <p class="text-[9px] text-slate-400 mono mt-0.5">${temp != null ? '🌡 ' + temp + '°C' : ''}</p>
+                        <div class="text-right shrink-0 ml-2">
+                            <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${good ? '健康' : health}</span>
+                            <p class="text-[10px] mono mt-0.5" style="color:${tColor}">${temp != null ? temp + '°C' : ''}</p>
+                            <p class="text-[8px] text-slate-600 group-hover:text-blue-400 transition mt-0.5">點擊看 SMART ›</p>
                         </div>
-                    </div>`;
+                    </button>`;
             });
 
             // 儲存區

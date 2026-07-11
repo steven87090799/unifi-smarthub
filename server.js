@@ -1249,6 +1249,20 @@ app.get('/api/nas/disks', async (req, res) => {
     }
 });
 
+// 16-1. 單顆硬碟 SMART 詳情 (UGOS 端點需要 disk=/dev/<dev_name>)
+app.get('/api/nas/disk-smart', async (req, res) => {
+    if (!nasConfigured()) return res.status(503).json({ error: 'nas_not_configured' });
+    const dev = req.query.dev; // 前端傳 dev_name，例如 sdb / nvme0n1
+    if (!dev) return res.status(400).json({ error: 'missing dev' });
+    try {
+        const diskPath = dev.startsWith('/dev/') ? dev : `/dev/${dev}`;
+        const data = await nasGet('/ugreen/v1/storage/disk/smart/info', { disk: diskPath });
+        res.json({ smart: data, source: 'nas_api' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 17. NAS 邏輯儲存區清單 (回應包裝於 data.result)
 app.get('/api/nas/volumes', async (req, res) => {
     if (!nasConfigured()) return res.json({ volumes: [], source: 'not_configured' });
