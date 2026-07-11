@@ -1203,6 +1203,18 @@
                         </div>
                     </div>
 
+                    <!-- 溫度異常事件自動偵測 -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex justify-between items-center mb-1">
+                            <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">🔥 溫度異常事件（自動偵測）</h3>
+                            <span class="text-[9px] text-slate-600">門檻：<span id="ucg-spike-threshold">75</span>°C（於通知推播設定調整）</span>
+                        </div>
+                        <p class="text-[9px] text-slate-500 mb-3">從歷史紀錄自動找出超過門檻的區段，含開始/結束時間、持續多久、最高溫</p>
+                        <div id="ucg-spike-list" class="space-y-2">
+                            <p class="text-xs text-slate-500 text-center py-4">分析中...</p>
+                        </div>
+                    </div>
+
                 </section>
 
                 <!-- ==================== 頁面：客戶端 ==================== -->
@@ -3865,6 +3877,7 @@
             initNasHeroChart();
             initUpsHeroChart();
             fetchUcgHist();
+            fetchUcgSpikes();
             initWorldMap();
             fetchSecuritySettings();
             fetchHardware();
@@ -3906,6 +3919,7 @@
         const POLL_JOBS = {
             hardware: { fn: () => fetchHardware(), def: 8, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
             ucgHist: { fn: () => fetchUcgHist(), def: 30, label: 'UCG 歷史紀錄圖', desc: '多久重新整理一次 UCG 歷史紀錄圖表 (依所選範圍)。' },
+            ucgSpikes: { fn: () => fetchUcgSpikes(), def: 120, label: 'UCG 溫度異常事件分析', desc: '多久重新掃描一次近 7 天溫度歷史，找出超過門檻的異常區段。' },
             switches: { fn: () => fetchSwitchMatrix(), def: 10, label: '全網路裝置埠對照', desc: '多久向 UniFi 控制器抓一次所有交換器/AP 的每個實體埠狀態與接入裝置 → 更新「全網路裝置埠對照」卡。' },
             clients: { fn: () => fetchClients(), def: 15, label: '客戶端清單', desc: '多久抓一次連線設備清單 → 更新客戶端表格、Top 5 流量排行、以及總覽的「線上設備數」KPI。' },
             threats: { fn: () => fetchThreats(), def: 7, label: '威脅偵測 (IPS/IDS)', desc: '多久抓一次 IPS/IDS 攔截警報 → 更新資安戰情室、世界地圖、威脅事件表、每小時圖與「最近威脅」橫幅。' },
@@ -6592,6 +6606,35 @@
             const rows = ['time,cpuTemp,cpuUsage,memUsagePct', ...ucgHistRaw.map(p => `${p.t},${p.cpuTemp},${p.cpuUsage},${p.memUsagePct}`)];
             const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ucg-history.csv'; a.click();
+        }
+        async function fetchUcgSpikes() {
+            const el = document.getElementById('ucg-spike-list'); if (!el) return;
+            try {
+                const [settingsRes, histRes] = await Promise.all([
+                    fetch('/api/notifications/settings'), fetch('/api/hardware/history?hours=168')
+                ]);
+                const threshold = (await settingsRes.json()).ucgTempAlert ?? 75;
+                document.getElementById('ucg-spike-threshold').textContent = threshold;
+                const pts = (await histRes.json()).data || [];
+                const events = [];
+                let open = null;
+                pts.forEach(p => {
+                    const hot = p.cpuTemp != null && p.cpuTemp >= threshold;
+                    if (hot && !open) open = { start: p.t, max: p.cpuTemp };
+                    else if (hot && open) open.max = Math.max(open.max, p.cpuTemp);
+                    else if (!hot && open) { open.end = p.t; events.push(open); open = null; }
+                });
+                if (open) { open.end = pts[pts.length - 1].t; open.ongoing = true; events.push(open); }
+                events.reverse();
+                el.innerHTML = events.length ? events.slice(0, 20).map(e => {
+                    const durMin = Math.round((new Date(e.end) - new Date(e.start)) / 60000);
+                    return `<div class="flex items-center justify-between p-2.5 bg-red-500/5 border border-red-500/20 rounded-lg text-[11px]">
+                        <span class="text-slate-300">${new Date(e.start).toLocaleString('zh-TW')} → ${e.ongoing ? '<span class="text-red-400 font-bold">進行中</span>' : new Date(e.end).toLocaleTimeString('zh-TW')}</span>
+                        <span class="text-slate-500 mono">持續 ${durMin} 分</span>
+                        <span class="text-red-400 font-bold mono">最高 ${e.max}°C</span>
+                    </div>`;
+                }).join('') : '<p class="text-xs text-emerald-400 text-center py-4">✅ 近 7 天沒有超過門檻的溫度事件</p>';
+            } catch (e) { el.innerHTML = '<p class="text-xs text-red-400 text-center py-4">分析失敗</p>'; }
         }
 
         function initUpsCharts() {
