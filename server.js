@@ -239,6 +239,7 @@ app.get('/api/hardware', (req, res) => {
                         emmcUsagePct, emmcStr, uptime, interfaces,
                         dataSource: 'real'
                     });
+                    sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct });
                 } catch (e) {
                     res.status(500).json({ error: 'Hardware Output Parse Failed: ' + e.message });
                 }
@@ -1432,6 +1433,26 @@ app.get('/api/nas/ups-usb', async (req, res) => {
     }
 });
 
+/* ===================== UCG 歷史自建取樣器 =====================
+   跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時，順手記一筆 (節流 30 秒)，
+   不需要額外開 SSH 連線。*/
+const UCG_HISTORY_FILE = path.join(DATA_DIR, 'ucg-history.json');
+const UCG_HISTORY_LIMIT = 8000; // 30 秒間隔 ≈ 2.7 天
+let ucgHistory = (() => { try { return JSON.parse(fs.readFileSync(UCG_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+let lastUcgSampleTs = 0;
+function sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct }) {
+    if (Date.now() - lastUcgSampleTs < 30000) return;
+    lastUcgSampleTs = Date.now();
+    ucgHistory.push({ t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores });
+    if (ucgHistory.length > UCG_HISTORY_LIMIT) ucgHistory = ucgHistory.slice(-UCG_HISTORY_LIMIT);
+    try { fs.writeFileSync(UCG_HISTORY_FILE, JSON.stringify(ucgHistory)); } catch { }
+}
+app.get('/api/hardware/history', (req, res) => {
+    const hours = parseFloat(req.query.hours || '24');
+    const cutoff = Date.now() - hours * 3600000;
+    res.json({ data: ucgHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
+});
+
 /* ===================== NAS 歷史自建取樣器 =====================
    UGOS 沒有提供歷史 API (只有即時快照 get_all)，這裡自己定期取樣 get_all + volume/list 並持久化，
    讓「系統負載 / 網路流量 / 散熱 / 儲存趨勢」四張圖有真實歷史可畫，不需要另外部署 NAS Monitor (系統 B)。 */
@@ -1607,7 +1628,7 @@ app.get('/api/nas/traffic-summary', (req, res) => nasMonProxy(res, '/api/traffic
 
 // 23. 流量歷史 — 優先系統 B；否則用自建 NAS 取樣歷史
 app.get('/api/nas/traffic-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const hours = parseFloat(req.query.hours || '24');
     if (nasMonConfigured()) return nasMonProxy(res, '/api/traffic/history', { hours }, { data: [] });
     const data = nasHistorySince(hours).map(p => ({ t: p.t, upload_mbps: p.up_mbps, download_mbps: p.down_mbps }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
@@ -1615,7 +1636,7 @@ app.get('/api/nas/traffic-history', (req, res) => {
 
 // 24. 系統歷史 (CPU / 記憶體 / 溫度)
 app.get('/api/nas/system-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const hours = parseFloat(req.query.hours || '24');
     if (nasMonConfigured()) return nasMonProxy(res, '/api/system/history', { hours }, { data: [] });
     const data = nasHistorySince(hours).map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
@@ -1623,7 +1644,7 @@ app.get('/api/nas/system-history', (req, res) => {
 
 // 25. 溫度歷史 (各硬碟溫度；此機型 API 無風扇轉速)
 app.get('/api/nas/temperature-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const hours = parseFloat(req.query.hours || '24');
     if (nasMonConfigured()) return nasMonProxy(res, '/api/temperature/history', { hours }, { data: [] });
     const pts = nasHistorySince(hours);
     // 收集所有出現過的硬碟名稱，供前端動態畫線
@@ -1634,7 +1655,7 @@ app.get('/api/nas/temperature-history', (req, res) => {
 
 // 26. 儲存容量歷史
 app.get('/api/nas/storage-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '720', 10);
+    const hours = parseFloat(req.query.hours || '720');
     if (nasMonConfigured()) return nasMonProxy(res, '/api/storage/history', { hours }, { data: [] });
     const data = nasHistorySince(hours).filter(p => p.used_gb != null).map(p => ({ t: p.t, used_gb: p.used_gb, total_gb: p.total_gb }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
@@ -2273,7 +2294,7 @@ app.get('/api/ups/status', async (req, res) => {
 });
 
 app.get('/api/ups/history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const hours = parseFloat(req.query.hours || '24');
     const cutoff = Date.now() - hours * 3600000;
     res.json({ history: upsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
 });

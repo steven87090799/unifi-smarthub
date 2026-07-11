@@ -1166,6 +1166,43 @@
 
                     </div>
 
+                    <!-- UCG 歷史紀錄 (可調範圍) -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="text-sm font-bold text-white tracking-wider">📈 UCG-Ultra 歷史紀錄</h3>
+                            <span class="text-[10px] text-slate-500 mono" id="ucg-rangelbl">近 2 小時</span>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">CPU 溫度</p>
+                                <p class="text-[10px] text-slate-500 mono">最低 <span id="ucg-h-temp-min">--</span> / 平均 <span id="ucg-h-temp-avg">--</span> / 最高 <span id="ucg-h-temp-max">--</span></p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">CPU 使用率</p>
+                                <p class="text-[10px] text-slate-500 mono">最低 <span id="ucg-h-cpu-min">--</span> / 平均 <span id="ucg-h-cpu-avg">--</span> / 最高 <span id="ucg-h-cpu-max">--</span></p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">記憶體佔用</p>
+                                <p class="text-[10px] text-slate-500 mono">最低 <span id="ucg-h-mem-min">--</span> / 平均 <span id="ucg-h-mem-avg">--</span> / 最高 <span id="ucg-h-mem-max">--</span></p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">已記錄</p>
+                                <p class="mono leading-none mt-1"><span class="text-2xl font-black text-slate-300" id="ucg-h-cnt">0</span><span class="text-xs text-slate-500"> 點</span></p>
+                            </div>
+                        </div>
+                        <div class="h-64 relative mb-4"><canvas id="ucgHistChart"></canvas></div>
+                        <div class="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-800/60 text-xs">
+                            <span class="text-slate-500">範圍：</span>
+                            <button onclick="setUcgHistWin(10, this)" class="ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95">近10分</button>
+                            <button onclick="setUcgHistWin(30, this)" class="ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95">近30分</button>
+                            <button onclick="setUcgHistWin(120, this)" class="ucg-hist-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold active:scale-95">近2時</button>
+                            <button onclick="setUcgHistWin(360, this)" class="ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95">近6時</button>
+                            <button onclick="setUcgHistWin(1440, this)" class="ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95">近24時</button>
+                            <button onclick="setUcgHistWin(10080, this)" class="ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95">近7天</button>
+                            <button onclick="downloadUcgHistCsv()" class="ml-auto px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 rounded-lg transition active:scale-95">⬇ 下載 CSV</button>
+                        </div>
+                    </div>
+
                 </section>
 
                 <!-- ==================== 頁面：客戶端 ==================== -->
@@ -1787,6 +1824,18 @@
                         <p id="nas-charts-note"
                             class="hidden text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
                             📈 這四張歷史圖由本站自行每分鐘取樣 NAS 即時數據累積而成（UGOS 本身不提供歷史 API）。剛啟動時資料點還不足，圖表會在數分鐘後逐漸長出曲線，掛著越久越完整。</p>
+
+                        <!-- 系統/流量/溫度共用範圍選擇 (儲存趨勢圖固定 30 天不受影響) -->
+                        <div class="flex flex-wrap items-center gap-2 bg-slate-950/40 border border-slate-800/50 rounded-xl px-3 py-2.5">
+                            <span class="text-[10px] text-slate-500">系統/流量/溫度範圍：</span>
+                            <button onclick="setNasHistWin(10, this)" class="nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]">近10分</button>
+                            <button onclick="setNasHistWin(30, this)" class="nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]">近30分</button>
+                            <button onclick="setNasHistWin(60, this)" class="nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]">近1時</button>
+                            <button onclick="setNasHistWin(360, this)" class="nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]">近6時</button>
+                            <button onclick="setNasHistWin(1440, this)" class="nas-hist-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold active:scale-95 text-[10px]">近24時</button>
+                            <button onclick="setNasHistWin(10080, this)" class="nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]">近7天</button>
+                            <span class="ml-auto text-[10px] text-slate-500 mono" id="nas-hist-rangelbl">近 24 小時</span>
+                        </div>
 
                         <!-- 系統歷史 & 流量歷史 -->
                         <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -3279,6 +3328,12 @@
                             </div>
                             <div
                                 class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px]">
+                                <button onclick="setUpsRange(1/6, this)"
+                                    class="ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">10
+                                    分</button>
+                                <button onclick="setUpsRange(0.5, this)"
+                                    class="ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">30
+                                    分</button>
                                 <button onclick="setUpsRange(1, this)"
                                     class="ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">1
                                     時</button>
@@ -3635,7 +3690,7 @@
             document.getElementById('page-title').innerText = PAGE_META[page][0];
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
             toggleSidebar(false);
-            requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart].forEach(c => c && c.resize()); });
+            requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart].forEach(c => c && c.resize()); });
             window.scrollTo({ top: 0 });
         }
 
@@ -3655,6 +3710,8 @@
             initHourlyCharts();
             initNasCharts();
             initUpsCharts();
+            initUcgHistChart();
+            fetchUcgHist();
             initWorldMap();
             fetchSecuritySettings();
             fetchHardware();
@@ -3695,6 +3752,7 @@
         /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
         const POLL_JOBS = {
             hardware: { fn: () => fetchHardware(), def: 8, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
+            ucgHist: { fn: () => fetchUcgHist(), def: 30, label: 'UCG 歷史紀錄圖', desc: '多久重新整理一次 UCG 歷史紀錄圖表 (依所選範圍)。' },
             switches: { fn: () => fetchSwitchMatrix(), def: 10, label: '全網路裝置埠對照', desc: '多久向 UniFi 控制器抓一次所有交換器/AP 的每個實體埠狀態與接入裝置 → 更新「全網路裝置埠對照」卡。' },
             clients: { fn: () => fetchClients(), def: 15, label: '客戶端清單', desc: '多久抓一次連線設備清單 → 更新客戶端表格、Top 5 流量排行、以及總覽的「線上設備數」KPI。' },
             threats: { fn: () => fetchThreats(), def: 7, label: '威脅偵測 (IPS/IDS)', desc: '多久抓一次 IPS/IDS 攔截警報 → 更新資安戰情室、世界地圖、威脅事件表、每小時圖與「最近威脅」橫幅。' },
@@ -5045,18 +5103,29 @@
             } catch (e) { console.error('NAS advanced fetch failed', e); }
         }
 
+        let nasHistWinMin = 1440; // 系統/流量/溫度三張圖共用的範圍 (分鐘)；儲存趨勢圖固定看 30 天
+        function setNasHistWin(minutes, btn) {
+            nasHistWinMin = minutes;
+            document.querySelectorAll('.nas-hist-win-btn').forEach(b => b.className = 'nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]');
+            if (btn) btn.className = 'nas-hist-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold active:scale-95 text-[10px]';
+            fetchNasCharts();
+        }
         async function fetchNasCharts() {
-            const fmtH = arr => arr.map(p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }));
+            const fmtH = arr => arr.map(p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: nasHistWinMin <= 30 ? '2-digit' : undefined }));
             const fmtD = arr => arr.map(p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }));
+            const hrs = nasHistWinMin / 60;
+            const rangeLbl = document.getElementById('nas-hist-rangelbl');
+            if (rangeLbl) rangeLbl.textContent = nasHistWinMin >= 60 ? `近 ${nasHistWinMin / 60} 小時` : `近 ${nasHistWinMin} 分`;
             try {
-                const sys = (await (await fetch('/api/nas/system-history?hours=24')).json()).data || [];
+                const sys = (await (await fetch(`/api/nas/system-history?hours=${hrs}`)).json()).data || [];
                 nasSystemChart.data.labels = fmtH(sys);
                 nasSystemChart.data.datasets[0].data = sys.map(p => p.cpu);
                 nasSystemChart.data.datasets[1].data = sys.map(p => p.memory);
                 nasSystemChart.data.datasets[2].data = sys.map(p => p.temperature);
                 nasSystemChart.update('none');
+                document.getElementById('nas-sys-cnt') && (document.getElementById('nas-sys-cnt').textContent = sys.length + ' 點');
 
-                const tr = (await (await fetch('/api/nas/traffic-history?hours=24')).json()).data || [];
+                const tr = (await (await fetch(`/api/nas/traffic-history?hours=${hrs}`)).json()).data || [];
                 nasTrafficChart.data.labels = fmtH(tr);
                 nasTrafficChart.data.datasets[0].data = tr.map(p => p.download_mbps);
                 nasTrafficChart.data.datasets[1].data = tr.map(p => p.upload_mbps);
@@ -5067,7 +5136,7 @@
                 nasStorageChart.data.datasets[0].data = st.map(p => p.used_gb);
                 nasStorageChart.update('none');
 
-                const tpRes = await (await fetch('/api/nas/temperature-history?hours=24')).json();
+                const tpRes = await (await fetch(`/api/nas/temperature-history?hours=${hrs}`)).json();
                 const tp = tpRes.data || [];
                 const diskNames = tpRes.diskNames || [];
                 nasTempChart.data.labels = fmtH(tp);
@@ -6286,6 +6355,71 @@
         }
 
         /* ==================== UPS 電源監控 ==================== */
+        /* ==================== UCG 歷史紀錄圖 ==================== */
+        let ucgHistChart = null, ucgHistWinMin = 120, ucgHistRaw = [];
+        function initUcgHistChart() {
+            ucgHistChart = new Chart(document.getElementById('ucgHistChart'), {
+                type: 'line',
+                data: {
+                    labels: [], datasets: [
+                        { label: 'CPU 溫度 (°C)', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)', fill: true, tension: 0.25, pointRadius: 0, yAxisID: 'yTemp' },
+                        { label: 'CPU 使用率 (%)', data: [], borderColor: '#f59e0b', fill: false, tension: 0.25, pointRadius: 0, yAxisID: 'yPct' },
+                        { label: '記憶體 (%)', data: [], borderColor: '#a855f7', fill: false, tension: 0.25, pointRadius: 0, yAxisID: 'yPct' }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } } },
+                    scales: {
+                        x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } },
+                        yTemp: { position: 'left', ticks: { color: '#3b82f6', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } },
+                        yPct: { position: 'right', min: 0, max: 100, ticks: { color: '#94a3b8', font: { size: 8 }, callback: v => v + '%' }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+        async function fetchUcgHist() {
+            try {
+                const hours = ucgHistWinMin > 0 ? ucgHistWinMin / 60 : 720;
+                const r = await (await fetch(`/api/hardware/history?hours=${hours}`)).json();
+                ucgHistRaw = r.data || [];
+                renderUcgHistChart();
+            } catch (e) { console.error('UCG history fetch failed', e); }
+        }
+        function renderUcgHistChart() {
+            if (!ucgHistChart) return;
+            const pts = ucgHistRaw;
+            const labels = pts.map(p => new Date(p.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            ucgHistChart.data.labels = labels;
+            ucgHistChart.data.datasets[0].data = pts.map(p => p.cpuTemp);
+            ucgHistChart.data.datasets[1].data = pts.map(p => p.cpuUsage);
+            ucgHistChart.data.datasets[2].data = pts.map(p => p.memUsagePct);
+            ucgHistChart.update('none');
+            const rangeText = ucgHistWinMin > 0 ? (ucgHistWinMin >= 60 ? `近 ${ucgHistWinMin / 60} 小時` : `近 ${ucgHistWinMin} 分`) : '全部記錄';
+            const lbl = document.getElementById('ucg-rangelbl'); if (lbl) lbl.textContent = rangeText;
+            document.getElementById('ucg-h-cnt').textContent = pts.length;
+            const stat = (key, elPrefix) => {
+                const vals = pts.map(p => p[key]).filter(v => v != null);
+                const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+                if (!vals.length) { set(`${elPrefix}-min`, '--'); set(`${elPrefix}-avg`, '--'); set(`${elPrefix}-max`, '--'); return; }
+                set(`${elPrefix}-min`, Math.min(...vals));
+                set(`${elPrefix}-avg`, (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1));
+                set(`${elPrefix}-max`, Math.max(...vals));
+            };
+            stat('cpuTemp', 'ucg-h-temp'); stat('cpuUsage', 'ucg-h-cpu'); stat('memUsagePct', 'ucg-h-mem');
+        }
+        function setUcgHistWin(minutes, btn) {
+            ucgHistWinMin = minutes;
+            document.querySelectorAll('.ucg-hist-win-btn').forEach(b => b.className = 'ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95');
+            if (btn) btn.className = 'ucg-hist-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold active:scale-95';
+            fetchUcgHist();
+        }
+        function downloadUcgHistCsv() {
+            const rows = ['time,cpuTemp,cpuUsage,memUsagePct', ...ucgHistRaw.map(p => `${p.t},${p.cpuTemp},${p.cpuUsage},${p.memUsagePct}`)];
+            const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ucg-history.csv'; a.click();
+        }
+
         function initUpsCharts() {
             const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } } } };
             const x = { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } };
