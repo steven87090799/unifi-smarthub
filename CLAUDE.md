@@ -1,5 +1,45 @@
 # SmartHub — 架構文件 (CLAUDE.md)
 
+## ⚡ 快速摘要（先讀這裡，再決定是否需要讀其他檔案）
+
+這是一個 **Node.js + Express 後端 + 單頁前端** 的家用網路管理面板。
+
+| 角色 | 檔案 | 大小 |
+|---|---|---|
+| **正式後端** | `server.js` | ~111 KB |
+| **模擬後端** | `server-mock.js` | ~37 KB |
+| **前端 SPA** | `public/index.html` | **376 KB（極大）** |
+| **架構文件** | 本檔 `CLAUDE.md` | ~21 KB |
+
+## 📋 檔案閱讀指引（節省 Token 原則）
+
+> **請依任務性質決定是否讀取各檔案，不要預設一次讀全部。**
+
+### ✅ 預設不需要讀的檔案
+- `public/index.html` — 376 KB 的巨型 SPA，**除非任務明確涉及前端 UI/JS/CSS 修改，否則不要讀取**
+- `data/*.json` — 純歷史資料，幾乎不需要 AI 閱讀
+- `package-lock.json` — npm lockfile，不需閱讀
+
+### 📖 何時才需要讀 `public/index.html`
+只有在以下情況才讀取：
+- 修改前端 UI 佈局、樣式、動畫
+- 新增或修改前端 JavaScript 功能（API 呼叫、圖表、互動）
+- 調整 HTML 結構、新增頁面分頁
+- 修復前端特定的 bug
+
+**純後端任務**（修改 API 端點、修 server.js 邏輯、調整排程、除錯後端錯誤）→ **不需讀取 index.html**，僅讀 `server.js` 即可。
+
+### 📖 其他檔案參考指引
+- 需要了解 UniFi API 規格 → 讀 `unifi-network-api.md`
+- 需要了解 NAS API 規格 → 讀 `ugreen-nas-api.md`
+- 需要了解 WiiM 規格 → 讀 `wiim_spec.md` 或 `wiim-amp-api.md`
+- 需要了解 UPS → 讀 `cyberpower-ups-api.md`
+- 完整技術規格 → 讀 `spec.md`
+
+---
+
+
+
 客製化 UniFi × UGREEN NAS 雙系統管理面板。採「前後端分離」架構:前端 (public/index.html) 只呼叫本專案後端,`X-API-Key`、控制器帳密與 NAS 帳密僅存於後端,符合 `../unifi-network-api.md` §4.1 的安全要求。
 
 ## 專案結構
