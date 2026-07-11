@@ -81,7 +81,7 @@ async function getLocalSession() {
             username: process.env.UNIFI_USERNAME,
             password: process.env.UNIFI_PASSWORD
         });
-        
+
         const cookies = response.headers['set-cookie'];
         if (cookies) {
             unifiCsrfToken = response.headers['x-csrf-token'] || unifiCsrfToken;
@@ -165,7 +165,7 @@ app.get('/api/hardware', (req, res) => {
             }
             let output = '';
             stream.on('data', (chunk) => { output += chunk; })
-                  .stderr.on('data', () => {});
+                .stderr.on('data', () => { });
             stream.on('close', () => {
                 sysLog('Hardware', '遙測指令組執行完成，關閉 SSH 連線。');
                 conn.end();
@@ -270,7 +270,7 @@ app.get('/api/clients', async (req, res) => {
         sysLog('UniFi API', '獲取活躍客戶端清單...');
         const cookie = await getLocalSession();
         const response = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
-        
+
         const clients = response.data.data.map(c => ({
             mac: c.mac,
             name: c.name || c.hostname || 'Unknown Device',
@@ -365,7 +365,7 @@ app.get('/api/threats', async (req, res) => {
     try {
         const cookie = await getLocalSession();
         const response = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
-        
+
         // 過濾出與 IPS 相關的警告並擴充結構
         const threats = response.data.data.filter(isIpsAlarm).map(t => {
             // 嘗試解析威脅種類
@@ -763,7 +763,7 @@ setInterval(autoDefenseSweep, 30 * 1000);
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: false };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true };
 function loadNotifSettings() {
     try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
 }
@@ -964,18 +964,16 @@ async function notificationWatcher() {
             }
         } catch { }
     }
-    // NAS 系統日誌 (只推播 warning/error 級別；本站監控帳號的登入事件一律略過)
+    // NAS 系統日誌 — 推播 UGOS 日誌中心所有事件（與前端 NAS 頁「系統日誌與警報」區塊同步）
     if (s.triggerNasLog && nasConfigured()) {
         try {
             const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 50, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
-            const selfUser = process.env.NAS_USER;
             for (const l of (data.log_list || [])) {
                 if (notifiedNasLogIds.has(l.log_id)) continue;
                 notifiedNasLogIds.add(l.log_id);
                 if (!notifBootstrapped) continue;               // 首輪只登記既有事件
-                if (l.level === 'info') continue;               // info 級別不推播
-                if (l.module === 'login' && l.operator === selfUser) continue;
-                await notify(`💾 NAS 日誌 [${l.level}]`, `[${l.module}] ${l.content}`);
+                const emoji = { critical: '🚨', error: '❌', warning: '⚠️' }[l.level] || '📋';
+                await notify(`${emoji} NAS 日誌 [${l.level}]`, `[${l.module}] ${l.content}`);
             }
             if (notifiedNasLogIds.size > 2000) { // 防無限成長
                 const keep = [...notifiedNasLogIds].slice(-1000);
@@ -1174,7 +1172,7 @@ async function getNasToken() {
         }
         const token = deepFind(loginRes.data, ['token', 'access_token']);
         if (!token) throw new Error('NAS login did not return a token');
-        
+
         nasToken = token;
         nasTokenExpiry = now + 12 * 60 * 60 * 1000; // Token 官方效期 24H，保守 12H 換發
         sysLog('NAS Auth', 'NAS 登入成功，快取 JWT Token (12小時)。');

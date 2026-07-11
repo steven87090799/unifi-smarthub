@@ -77,7 +77,7 @@
 - **安全評分**:`securityScoreDetail(threats)` 回傳 `{score,count,high,medium,low,boosted,penalty}`;`updateSecurityAnalytics` 同時把扣分明細寫進總覽評分環下方(`ov-score-explain`)與資安頁說明卡(`sec-score-explain`),讓 0–100 分數有可解釋依據。分數只看近 24 小時,威脅停止後自動回升。
 - **NAS**:CPU/RAM/網路/UPS 四卡 + 硬碟健康 + 儲存區容量條 + Raw JSON 除錯區。
 - **工具**:測速(待機→轉圈動畫→結果儀表盤)+ PoE 斷電重啟。
-- **通知推播**:推播設定(啟用開關、管道 Discord/Telegram/通用 Webhook、觸發條件、測試按鈕)+ 近期推播紀錄。後端 `notificationWatcher`(間隔可調)偵測新 `ips:alert` 與 NAS 嚴重警報,去重後透過 `notify()` 推播;首輪僅記錄既有事件避免啟動時洗版。機密欄位在 GET 遮罩、POST 留空不覆寫。
+- **通知推播**:推播設定(啟用開關、管道 Discord/Telegram/通用 Webhook、觸發條件、測試按鈕)+ 近期推播紀錄。後端 `notificationWatcher`(間隔可調)偵測新 `ips:alert`、NAS 嚴重警報(NAS Monitor)、**NAS 系統日誌全量推播**(UGOS 日誌中心所有事件,僅排除本站登入;`triggerNasLog` 預設開啟)等,去重後透過 `notify()` 推播;首輪僅記錄既有事件避免啟動時洗版。機密欄位在 GET 遮罩、POST 留空不覆寫。
 - **設定**:外觀主題(深/淺,存 localStorage,右上角快速切換)、定期報表(每日/每週 + 時間 + 立即預覽)、前端輪詢間隔(12 項,存 localStorage,`POLL_JOBS` + `applyPolling()`)、伺服器端取樣間隔(存 `app-settings.json`)。
 - **前端輪詢**:全部經 `POLL_JOBS` 表 + `applyPolling()` 統一管理(取代原本寫死的 setInterval);間隔存 localStorage `pollConfig`,可於設定頁即時調整。
 - **主題**:`html.light` class + `<style>` 內的淺色覆寫規則(針對常用 slate 類別 `!important` 覆寫)。強調色(藍/紅/綠)保留。
