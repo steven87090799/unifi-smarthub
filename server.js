@@ -763,7 +763,7 @@ setInterval(autoDefenseSweep, 30 * 1000);
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false };
 function loadNotifSettings() {
     try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
 }
@@ -838,6 +838,9 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts, triggerWiimTemp: s.triggerWiimTemp !== false,
         triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
         triggerNewClient: !!s.triggerNewClient, triggerWiimOffline: !!s.triggerWiimOffline, triggerBlockAction: s.triggerBlockAction !== false,
+        triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
+        triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
+        triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75, triggerWanDown: !!s.triggerWanDown,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -852,7 +855,8 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     saveNotifSettings(s);
@@ -937,8 +941,51 @@ async function notificationWatcher() {
         }
         wiimWasOnline = ok;
     }
+    // NAS 硬碟溫度 / 儲存空間門檻 (30 分鐘冷卻)
+    if ((s.triggerNasDiskTemp || s.triggerNasSpace) && nasConfigured()) {
+        try {
+            if (s.triggerNasDiskTemp && Date.now() - lastNasDiskTempTs > 30 * 60 * 1000) {
+                const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
+                const disks = deepFind({ d: data }, ['result', 'list', 'disks']) || [];
+                const hot = disks.filter(d => d.temperature != null && d.temperature >= (s.nasDiskTempAlert ?? 50));
+                if (hot.length) {
+                    lastNasDiskTempTs = Date.now();
+                    await notify('🌡️ NAS 硬碟溫度警報', hot.map(d => `${d.label || d.name} ${d.temperature}°C (門檻 ${s.nasDiskTempAlert ?? 50}°C)`).join('\n'));
+                }
+            }
+            if (s.triggerNasSpace && Date.now() - lastNasSpaceTs > 6 * 60 * 60 * 1000) {
+                const data = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
+                const vols = deepFind({ d: data }, ['result', 'list', 'volumes']) || [];
+                const full = vols.filter(v => v.total && (v.used / v.total * 100) >= (s.nasSpaceAlert ?? 85));
+                if (full.length) {
+                    lastNasSpaceTs = Date.now();
+                    await notify('💾 NAS 儲存空間警報', full.map(v => `${v.label || v.name} 已用 ${Math.round(v.used / v.total * 100)}% (門檻 ${s.nasSpaceAlert ?? 85}%)`).join('\n'));
+                }
+            }
+        } catch { }
+    }
+    // UCG CPU 溫度 / WAN 斷線 (透過本機 /api/hardware，僅在開啟時才發起 SSH)
+    if ((s.triggerUcgTemp || s.triggerWanDown) && !isPlaceholder(process.env.SSH_PASSWORD)) {
+        try {
+            const hw = (await axios.get(`http://127.0.0.1:${process.env.PORT || 3000}/api/hardware`, { timeout: 15000 })).data;
+            if (s.triggerUcgTemp && hw.cpuTemp != null && hw.cpuTemp >= (s.ucgTempAlert ?? 75)
+                && Date.now() - lastUcgTempTs > 30 * 60 * 1000) {
+                lastUcgTempTs = Date.now();
+                await notify('🔥 UCG-Ultra 溫度警報', `CPU ${hw.cpuTemp}°C (門檻 ${s.ucgTempAlert ?? 75}°C)`);
+            }
+            if (s.triggerWanDown) {
+                const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
+                const wanUp = wan ? wan.status === 'connected' : null;
+                if (wanUp !== null && wanWasUp !== null && wanUp !== wanWasUp && notifBootstrapped) {
+                    await notify(wanUp ? '🌐 WAN 已恢復連線' : '🚨 WAN 斷線！', wanUp ? '對外網路恢復正常' : '閘道器對外連線中斷，請檢查數據機/ISP');
+                }
+                if (wanUp !== null) wanWasUp = wanUp;
+            }
+        } catch { }
+    }
     notifBootstrapped = true;
 }
+let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastUcgTempTs = 0, wanWasUp = null;
 const knownClientMacs = new Set();
 let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0;
@@ -1156,9 +1203,28 @@ app.get('/api/nas/overview', async (req, res) => {
     try {
         const info = await nasGet('/ugreen/v1/sysinfo/machine/common');
         // 遙測 (taskmgr) 需管理員權限；一般帳號拿不到就只給機型資訊，不整卡報錯
-        let stats = null, statsError = null;
-        try { stats = await nasGet('/ugreen/v1/taskmgr/stat/get_all'); } catch (e) { statsError = e.message; }
-        res.json({ info, stats, statsError, source: 'nas_api' });
+        let statsRaw = null, statsError = null;
+        try { statsRaw = await nasGet('/ugreen/v1/taskmgr/stat/get_all'); } catch (e) { statsError = e.message; }
+        // UGOS 1.17 實機格式：cpu/mem/net 都包在 series[] 裡，這裡攤平成前端好讀的形狀
+        let stats = statsRaw;
+        try {
+            if (statsRaw && statsRaw.cpu && Array.isArray(statsRaw.cpu.series)) {
+                const c = statsRaw.cpu.series[0] || {};
+                const m = (statsRaw.mem && statsRaw.mem.series && statsRaw.mem.series[0]) || {};
+                const ms = (statsRaw.mem && statsRaw.mem.structure) || {};
+                const netOv = ((statsRaw.net && statsRaw.net.series) || []).find(n => n.name === 'overview') || {};
+                stats = {
+                    cpu: { usage: c.used_percent ?? null, temperature: c.temp ?? null },
+                    memory: {
+                        usage: m.used_percent != null ? +(+m.used_percent).toFixed(1) : null,
+                        total_mb: ms.total ? Math.round(ms.total / 1048576) : null,
+                        used_mb: ms.used ? Math.round(ms.used / 1048576) : null
+                    },
+                    network: { upload_bps: (netOv.send_rate ?? 0) * 8, download_bps: (netOv.recv_rate ?? 0) * 8 }
+                };
+            }
+        } catch { }
+        res.json({ info, stats, statsRaw, statsError, source: 'nas_api' });
     } catch (error) {
         res.json({ info: null, stats: null, source: 'error', error: error.message });
     }
@@ -1169,7 +1235,14 @@ app.get('/api/nas/disks', async (req, res) => {
     if (!nasConfigured()) return res.json({ disks: [], source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
-        const disks = deepFind({ d: data }, ['result', 'list', 'disks']) || (Array.isArray(data) ? data : []);
+        let disks = deepFind({ d: data }, ['result', 'list', 'disks']) || (Array.isArray(data) ? data : []);
+        // UGOS 1.17 實機：status 為數字 (1=健康)、size 為 bytes、顯示名稱在 label (硬碟1...)
+        disks = disks.map(d => ({
+            ...d,
+            name: d.label || d.name,
+            status: d.status === 1 ? 'good' : (typeof d.status === 'number' ? `abnormal(${d.status})` : d.status),
+            size_gb: d.size ? Math.round(d.size / 1e9) : d.size_gb
+        }));
         res.json({ disks, source: 'nas_api' });
     } catch (error) {
         res.json({ disks: [], source: 'error', error: error.message });
@@ -1181,7 +1254,15 @@ app.get('/api/nas/volumes', async (req, res) => {
     if (!nasConfigured()) return res.json({ volumes: [], source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
-        const volumes = deepFind({ d: data }, ['result', 'list', 'volumes']) || (Array.isArray(data) ? data : []);
+        let volumes = deepFind({ d: data }, ['result', 'list', 'volumes']) || (Array.isArray(data) ? data : []);
+        // UGOS 1.17 實機：total/used 為 bytes、health 0 = 正常、顯示名稱在 label (儲存空間1...)
+        volumes = volumes.map(v => ({
+            ...v,
+            name: v.label || v.name,
+            used_gb: v.used != null ? Math.round(v.used / 1073741824) : v.used_gb,
+            total_gb: v.total != null ? Math.round(v.total / 1073741824) : v.total_gb,
+            status: (v.health === 0 || v.status === 0) ? 'normal' : `warning(${v.health ?? v.status})`
+        }));
         res.json({ volumes, source: 'nas_api' });
     } catch (error) {
         res.json({ volumes: [], source: 'error', error: error.message });

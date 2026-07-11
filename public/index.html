@@ -700,7 +700,7 @@
                         <div class="z-10 flex justify-between items-center text-[11px] text-slate-500 font-bold uppercase mb-3">
                             <span>主動安全偵測即時日誌</span><span class="text-red-500 animate-pulse">● LIVE</span>
                         </div>
-                        <div class="z-10 flex flex-col border border-slate-800/80 rounded-lg overflow-hidden bg-slate-950 flex-grow min-h-[400px]">
+                        <div class="z-10 flex flex-col border border-slate-800/80 rounded-lg overflow-hidden bg-slate-950 h-[360px]">
                             <div class="bg-slate-900 px-3 py-1.5 flex items-center justify-between border-b border-slate-850">
                                 <span class="text-[9px] text-slate-400 font-mono">suricata_alert.log</span>
                                 <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
@@ -716,7 +716,7 @@
                             <span class="text-[10px] uppercase font-bold text-slate-400 tracking-wider block mb-1">Suricata 威脅特徵分佈</span>
                             <p class="text-[9px] text-slate-500 mb-2">威脅類別百分比統計圖</p>
                         </div>
-                        <div class="h-64 relative flex items-center justify-center flex-grow">
+                        <div class="h-[300px] relative flex items-center justify-center">
                             <canvas id="threatPieChart"></canvas>
                         </div>
                         <div class="text-[8px] text-slate-500 mt-2 text-center">圖表自動每 7 秒與 UCG 事件同步更新一次</div>
@@ -1202,6 +1202,21 @@
                             </label>
                             <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                 <input type="checkbox" id="notif-trig-block" class="accent-blue-500 w-4 h-4"> 設備封鎖 / 解封動作 (含自動防禦)
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-nasdisk" class="accent-blue-500 w-4 h-4"> NAS 硬碟溫度超過
+                                <input type="number" id="notif-nasdisk-temp" min="30" max="70" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> °C
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-nasspace" class="accent-blue-500 w-4 h-4"> NAS 儲存空間使用率超過
+                                <input type="number" id="notif-nasspace-pct" min="50" max="99" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-ucgtemp" class="accent-blue-500 w-4 h-4"> UCG CPU 溫度超過
+                                <input type="number" id="notif-ucg-temp" min="50" max="95" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> °C (經 SSH)
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-wandown" class="accent-blue-500 w-4 h-4"> WAN 對外斷線 / 恢復 (經 SSH)
                             </label>
                         </div>
                     </div>
@@ -2273,7 +2288,11 @@
         document.getElementById('toast-text').innerText = msg;
         t.className = `fixed bottom-6 right-6 px-4 py-2.5 bg-slate-900 border ${isError ? 'border-red-900/60 text-red-200' : 'border-blue-900/60 text-blue-200'} text-xs rounded-xl shadow-2xl transition-all duration-300 z-[60] transform translate-y-0 opacity-100`;
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => t.classList.add('translate-y-2', 'opacity-0', 'pointer-events-none'), Math.max(1, toastSec) * 1000);
+        toastTimer = setTimeout(() => {
+            // 必須先移除顯示用 class：Tailwind CDN 生成順序可能讓 opacity-100 蓋過 opacity-0，同時掛兩個會導致永遠不消失
+            t.classList.remove('translate-y-0', 'opacity-100');
+            t.classList.add('translate-y-2', 'opacity-0', 'pointer-events-none');
+        }, Math.max(1, toastSec) * 1000);
     }
 
     /* ==================== 圖表初始化 ==================== */
@@ -2784,7 +2803,7 @@
                 }
             });
             const container = document.getElementById('cloud-sites-content');
-            container.innerHTML = sites.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無可用站點</p>';
+            container.innerHTML = sites.length ? '' : (result.source === 'not_configured' ? '<div class="text-center py-6 px-4"><p class="text-xs text-amber-400 font-bold mb-1.5">尚未設定 Site Manager API Key</p><p class="text-[10px] text-slate-500 leading-relaxed">這是選用的官方雲端功能。至 <span class="text-slate-300">unifi.ui.com → API</span> 申請 API Key，貼到本站「設定 → 設備連線設定 → UniFi API Key」即可啟用雲端站點/託管設備/ISP 品質/SD-WAN 資訊。不設定不影響本地功能。</p></div>' : '<p class="text-xs text-slate-500 text-center py-4">無可用站點</p>');
             sites.forEach(site => {
                 const desc = site.meta ? site.meta.desc : site.name;
                 const totalDev = site.statistics && site.statistics.counts ? site.statistics.counts.totalDevice : 0;
@@ -2810,7 +2829,7 @@
             if (!res.ok) throw new Error();
             const devices = (await res.json()).data || [];
             const container = document.getElementById('cloud-devices-content');
-            container.innerHTML = devices.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無託管設備</p>';
+            container.innerHTML = devices.length ? '' : '<p class="text-[10px] text-amber-400/80 text-center py-4">未設定 Site Manager API Key — 於 設定 → 設備連線設定 填入後啟用</p>';
             devices.forEach(dev => {
                 const isOnline = dev.status === 'online';
                 container.innerHTML += `
@@ -2834,7 +2853,7 @@
             if (!res.ok) throw new Error();
             const hosts = (await res.json()).data || [];
             const container = document.getElementById('cloud-hosts-content');
-            container.innerHTML = hosts.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無可用控制主機</p>';
+            container.innerHTML = hosts.length ? '' : '<p class="text-[10px] text-amber-400/80 text-center py-4">未設定 Site Manager API Key — 於 設定 → 設備連線設定 填入後啟用</p>';
             hosts.forEach(host => {
                 const name = host.reportedState ? host.reportedState.name : 'Unknown Host';
                 const state = host.reportedState ? host.reportedState.state : 'offline';
@@ -2860,7 +2879,7 @@
             if (!res.ok) throw new Error();
             const configs = (await res.json()).data || [];
             const container = document.getElementById('cloud-sdwan-content');
-            container.innerHTML = configs.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無可用 SD-WAN VPN</p>';
+            container.innerHTML = configs.length ? '' : '<p class="text-[10px] text-amber-400/80 text-center py-4">未設定 Site Manager API Key — 於 設定 → 設備連線設定 填入後啟用</p>';
             configs.forEach(cfg => {
                 container.innerHTML += `
                     <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
@@ -3664,6 +3683,14 @@
             setCk('notif-trig-newclient', !!s.triggerNewClient);
             setCk('notif-trig-wiim-offline', !!s.triggerWiimOffline);
             setCk('notif-trig-block', s.triggerBlockAction !== false);
+            setCk('notif-trig-nasdisk', !!s.triggerNasDiskTemp);
+            setCk('notif-trig-nasspace', !!s.triggerNasSpace);
+            setCk('notif-trig-ucgtemp', !!s.triggerUcgTemp);
+            setCk('notif-trig-wandown', !!s.triggerWanDown);
+            const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
+            setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
+            setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
+            setV('notif-ucg-temp', s.ucgTempAlert ?? 75);
             document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
             document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
             setNotifChannel(s.channel || 'discord');
@@ -3682,7 +3709,14 @@
             triggerUpsLowBatt: document.getElementById('notif-trig-ups-lowbatt')?.checked ?? true,
             triggerNewClient: document.getElementById('notif-trig-newclient')?.checked ?? false,
             triggerWiimOffline: document.getElementById('notif-trig-wiim-offline')?.checked ?? false,
-            triggerBlockAction: document.getElementById('notif-trig-block')?.checked ?? true
+            triggerBlockAction: document.getElementById('notif-trig-block')?.checked ?? true,
+            triggerNasDiskTemp: document.getElementById('notif-trig-nasdisk')?.checked ?? false,
+            triggerNasSpace: document.getElementById('notif-trig-nasspace')?.checked ?? false,
+            triggerUcgTemp: document.getElementById('notif-trig-ucgtemp')?.checked ?? false,
+            triggerWanDown: document.getElementById('notif-trig-wandown')?.checked ?? false,
+            nasDiskTempAlert: parseInt(document.getElementById('notif-nasdisk-temp')?.value, 10) || 50,
+            nasSpaceAlert: parseInt(document.getElementById('notif-nasspace-pct')?.value, 10) || 85,
+            ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75
         };
         const wh = document.getElementById('notif-webhook').value.trim();
         const tk = document.getElementById('notif-token').value.trim();
