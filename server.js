@@ -1261,7 +1261,9 @@ app.get('/api/nas/disks', async (req, res) => {
             ...d,
             name: d.label || d.name,
             status: d.status === 1 ? 'good' : (typeof d.status === 'number' ? `abnormal(${d.status})` : d.status),
-            size_gb: d.size ? Math.round(d.size / 1e9) : d.size_gb
+            size_gb: d.size ? Math.round(d.size / 1e9) : d.size_gb,
+            // 休眠/運轉狀態：is_standby 或 activate===false 皆視為休眠中
+            sleeping: d.is_standby === true || d.activate === false
         }));
         res.json({ disks, source: 'nas_api' });
     } catch (error) {
@@ -1366,9 +1368,11 @@ async function sampleNasHistory() {
         const cpu = (raw.cpu.series && raw.cpu.series[0]) || {};
         const mem = (raw.mem && raw.mem.series && raw.mem.series[0]) || {};
         const netOv = ((raw.net && raw.net.series) || []).find(n => n.name === 'overview') || {};
+        // 只在硬碟「運轉中(activate)」時記錄溫度；休眠中的碟記為 null (斷點) —
+        // 這樣歷史圖能忠實顯示休眠區段，也證明我們不會為了測溫而喚醒硬碟。
         const diskTemps = {};
         ((raw.disk && raw.disk.series) || []).filter(d => d.name !== 'overview').forEach(d => {
-            if (d.temperature != null) diskTemps[d.label || d.name] = d.temperature;
+            diskTemps[d.label || d.name] = (d.activate && d.temperature != null) ? d.temperature : null;
         });
         // 容量：另外讀 volume/list 加總 (get_all 的 used_percent 常為 0)
         let volUsedGb = null, volTotalGb = null;
@@ -2016,15 +2020,25 @@ async function readPmset() {
     };
 }
 
+let upsLastReason = '';
 async function readUpsLive() {
-    const order = UPS_SOURCE() === 'auto' ? ['nut', 'pwrstat', 'pmset'] : [UPS_SOURCE()];
+    // 指定來源優先嘗試；即使指定的來源失敗，仍回退到其他來源 (避免選錯來源就整個抓不到)
+    const chosen = UPS_SOURCE();
+    const order = chosen === 'auto' ? ['nut', 'pwrstat', 'pmset'] : [chosen, ...['nut', 'pwrstat', 'pmset'].filter(s => s !== chosen)];
+    const tried = [];
     for (const src of order) {
         const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset }[src];
         if (!fn) continue;
         const r = await fn();
-        if (r) { sysLog('UPS', `讀取成功 via ${src}: ${r.status} 輸入${r.inputV}V 電池${r.battery}%`); return r; }
-        sysLog('UPS', `來源 ${src} 不可用，嘗試下一個`, false);
+        if (r) {
+            if (src !== chosen && chosen !== 'auto') sysLog('UPS', `指定來源 ${chosen} 無法使用，已自動改用 ${src}`, true);
+            sysLog('UPS', `讀取成功 via ${src}: ${r.status} 輸入${r.inputV}V 電池${r.battery}%`);
+            upsLastReason = ''; return { ...r, actualSource: src };
+        }
+        tried.push(src);
     }
+    upsLastReason = `所有來源皆無法讀取 (已嘗試: ${tried.join(', ')})。pwrstat 需安裝 CyberPower PowerPanel；NUT 需安裝並設定 upsc；pmset 為 macOS 內建`;
+    sysLog('UPS', upsLastReason, true);
     return null;
 }
 
@@ -2075,7 +2089,7 @@ app.get('/api/ups/status', async (req, res) => {
     const live = await readUpsLive();
     if (live) upsLastLive = { ...live, ts: Date.now() };
     res.json(live ? { ...live, sampleSec: appSettings.upsSampleSec || 30 }
-        : { source: 'unreachable', lastKnown: upsLastLive, sampleSec: appSettings.upsSampleSec || 30 });
+        : { source: 'unreachable', reason: upsLastReason, lastKnown: upsLastLive, sampleSec: appSettings.upsSampleSec || 30 });
 });
 
 app.get('/api/ups/history', (req, res) => {

@@ -461,7 +461,7 @@
             </div>
 
             <!-- UCG 硬體詳情（真實數據） -->
-            <div id="hw-detail" data-drag class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div id="hw-detail" data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md transition-all duration-300" id="card-hardware">
                     <div class="flex justify-between items-center mb-4">
                         <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UCG-Ultra 處理器 & 核心溫度</h3>
@@ -517,13 +517,6 @@
                     </div>
                 </div>
 
-                <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl flex flex-col backdrop-blur-md">
-                    <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">UCG-Ultra 實體網埠連線矩陣（真實速率）</h3>
-                    <p class="text-[9px] text-slate-500 mb-3">閘道器機身背後的每一個 RJ45/SFP 孔位（WAN + LAN），不是網路上的其他設備</p>
-                    <div class="space-y-3 overflow-y-auto terminal-scroll max-h-[340px]" id="interface-list">
-                        <p class="text-xs text-slate-500 text-center py-4">網埠資料載入中...</p>
-                    </div>
-                </div>
             </div>
 
             <!-- 全網路裝置埠對照（UCG + 所有 UniFi 交換器/AP，含每個埠接了什麼裝置） -->
@@ -2547,6 +2540,7 @@
                 document.getElementById('emmc-bar').style.width = data.emmcUsagePct + '%';
             }
 
+            // WAN 狀態 KPI（網埠明細已整合到下方的「全網路裝置埠對照」卡）
             if (data.interfaces) {
                 const wan = data.interfaces.find(i => i.name.startsWith('WAN'));
                 if (wan) {
@@ -2555,25 +2549,6 @@
                     document.getElementById('kpi-wan').className = `text-2xl font-black mt-2 ${up ? 'text-emerald-400' : 'text-red-400'}`;
                     document.getElementById('kpi-wan-dot').className = `w-2 h-2 rounded-full ${up ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`;
                 }
-                const matrixDiv = document.getElementById('interface-list');
-                matrixDiv.innerHTML = data.interfaces.map(iface => {
-                    const isConn = iface.status === 'connected';
-                    const badgeColor = isConn ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-800 text-slate-500 border-slate-700/30';
-                    return `
-                        <div class="flex items-center justify-between p-2.5 bg-slate-950/40 rounded-xl border border-slate-850 hover:bg-slate-950/80 transition">
-                            <div class="flex items-center gap-2">
-                                <div class="w-2 h-2 rounded-full ${isConn ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}"></div>
-                                <div>
-                                    <p class="text-xs font-bold text-slate-200">${iface.name}</p>
-                                    <p class="text-[9px] text-slate-500 mono">${iface.speed}</p>
-                                </div>
-                            </div>
-                            <div class="text-right">
-                                <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase tracking-wider ${badgeColor}">${isConn ? '已連線' : '無連線'}</span>
-                                ${isConn ? `<p class="text-[9px] text-slate-400 font-mono mt-0.5">⬇️ ${iface.rxRate} | ⬆️ ${iface.txRate}</p>` : ''}
-                            </div>
-                        </div>`;
-                }).join('');
             }
 
             tempChartData.shift(); tempChartData.push(data.cpuTemp || 0);
@@ -3419,7 +3394,12 @@
                 const sizeStr = sizeGb ? (sizeGb >= 1000 ? (sizeGb / 1000).toFixed(1) + ' TB' : sizeGb + ' GB') : '';
                 const poh = asNum(nFind(d, ['power_on_hours']));
                 const isSsd = /ssd|nvme|m\.2/i.test(dModel + ' ' + name);
+                const sleeping = d.sleeping === true;
                 const tColor = temp == null ? '#64748b' : temp >= 55 ? '#ef4444' : temp >= 48 ? '#f59e0b' : '#10b981';
+                // 休眠/運轉徽章
+                const stateBadge = sleeping
+                    ? '<span class="px-1.5 py-0.5 rounded text-[8px] border font-bold bg-slate-700/40 text-slate-400 border-slate-600/40">💤 休眠中</span>'
+                    : '<span class="px-1.5 py-0.5 rounded text-[8px] border font-bold bg-blue-500/10 text-blue-400 border-blue-500/20">● 運轉中</span>';
                 // 線條 SVG 硬碟圖示 (SSD/HDD 兩款)
                 const icon = isSsd
                     ? '<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="7" y1="10" x2="7" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>'
@@ -3431,11 +3411,12 @@
                             <div class="min-w-0">
                                 <p class="text-xs font-bold text-slate-200 truncate">${name} <span class="text-slate-600 font-normal">${sizeStr}</span></p>
                                 <p class="text-[9px] text-slate-500 mono truncate">${dModel}${poh != null ? ' · 通電 ' + poh.toLocaleString() + ' 小時' : ''}</p>
+                                <div class="mt-1">${stateBadge}</div>
                             </div>
                         </div>
                         <div class="text-right shrink-0 ml-2">
                             <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${good ? '健康' : health}</span>
-                            <p class="text-[10px] mono mt-0.5" style="color:${tColor}">${temp != null ? temp + '°C' : ''}</p>
+                            <p class="text-[10px] mono mt-0.5" style="color:${tColor}">${sleeping ? '<span class="text-slate-500">休眠</span>' : (temp != null ? temp + '°C' : '')}</p>
                             <p class="text-[8px] text-slate-600 group-hover:text-blue-400 transition mt-0.5">點擊看 SMART ›</p>
                         </div>
                     </button>`;
