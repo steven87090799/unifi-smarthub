@@ -298,6 +298,30 @@
             content: none;
         }
 
+        /* 「＋總覽」按鈕 (編輯模式時注入各區塊右上角) */
+        .pin-add-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            z-index: 30;
+            padding: 2px 8px;
+            font-size: 10px;
+            font-weight: 700;
+            color: #fff;
+            background: #2563eb;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, .4);
+            cursor: pointer;
+        }
+
+        .pin-add-btn:hover {
+            background: #3b82f6;
+        }
+
+        #ov-pinned:empty {
+            display: none;
+        }
+
         .drag-ghost {
             opacity: .3;
         }
@@ -724,6 +748,8 @@
 
                 <!-- ==================== 頁面：總覽 ==================== -->
                 <section id="page-overview" class="space-y-6">
+                    <!-- 從其他分頁釘選到總覽的區塊 (即時鏡像) -->
+                    <div id="ov-pinned" class="space-y-4"></div>
                     <!-- 4 張 KPI 卡 -->
                     <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
                         <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5"
@@ -3452,10 +3478,90 @@
             layoutBindDrag(document.querySelector('aside nav'));
             document.getElementById('layout-edit-btn').classList.toggle('text-blue-400', layoutEditing);
             document.getElementById('layout-edit-btn').classList.toggle('border-blue-500', layoutEditing);
-            if (layoutEditing) showToast('🧩 版面編輯中：拖曳卡片或左側導航項目調整順序，可切換分頁逐頁調整，再按一次 🧩 完成');
+            refreshPinButtons();
+            if (layoutEditing) showToast('🧩 版面編輯中：拖曳排序；其他分頁的區塊右上角有「＋總覽」可複製到總覽頁，再按一次 🧩 完成');
             else { layoutSave(); showToast('✅ 版面已儲存 (此瀏覽器)'); }
         }
         function resetLayout() { localStorage.removeItem('layoutOrder.v1'); showToast('版面已重置，重新載入中...'); setTimeout(() => location.reload(), 600); }
+
+        /* ========== 釘選區塊到總覽 (跨分頁即時鏡像複製) ========== */
+        // 原理：不搬移原區塊(避免破壞原頁與 id-based 更新)，而是在總覽放一份「鏡像」。
+        // 鏡像每 2 秒把來源區塊的 innerHTML 複製過來並清除內部 id (避免重複 id 干擾 getElementById)，
+        // canvas 圖表則以 drawImage 同步點陣，達到「兩個一模一樣且都即時」的效果。
+        function loadPinned() { try { return JSON.parse(localStorage.getItem('pinnedBlocks.v1')) || []; } catch { return []; } }
+        function savePinned(arr) { localStorage.setItem('pinnedBlocks.v1', JSON.stringify(arr)); }
+        function pageTitleOfBid(bid) {
+            const src = document.querySelector(`[data-bid="${bid}"]`);
+            const sec = src && src.closest('main > section');
+            const nav = sec && document.querySelector(`aside nav [data-page="${sec.id.replace('page-', '')}"]`);
+            return nav ? (nav.textContent || '').trim().replace(/\s+/g, ' ') : '';
+        }
+        function pinBlock(bid) {
+            const arr = loadPinned();
+            if (arr.includes(bid)) { showToast('這個區塊已在總覽'); return; }
+            arr.push(bid); savePinned(arr); renderPinned();
+            showToast('✅ 已加到總覽（總覽頁頂端）');
+        }
+        function unpinBlock(bid) { savePinned(loadPinned().filter(b => b !== bid)); renderPinned(); }
+        function renderPinned() {
+            const wrap = document.getElementById('ov-pinned'); if (!wrap) return;
+            const arr = loadPinned();
+            wrap.innerHTML = '';
+            arr.forEach(bid => {
+                const src = document.querySelector(`[data-bid="${bid}"]`);
+                if (!src) return; // 來源不存在(改版) → 略過
+                const holder = document.createElement('div');
+                holder.className = 'relative rounded-2xl';
+                holder.dataset.mirrorOf = bid;
+                const badge = document.createElement('div');
+                badge.className = 'flex items-center justify-between mb-1 px-1';
+                const t = pageTitleOfBid(bid);
+                badge.innerHTML = `<span class="text-[9px] text-blue-400/80 font-bold uppercase tracking-wider">📌 釘選自 ${t || '其他分頁'}</span>`;
+                const rm = document.createElement('button');
+                rm.className = 'text-[9px] text-slate-500 hover:text-red-400 font-bold';
+                rm.textContent = '✕ 移除';
+                rm.onclick = () => unpinBlock(bid);
+                badge.appendChild(rm);
+                const mirror = document.createElement('div');
+                mirror.className = 'pinned-mirror';
+                holder.appendChild(badge); holder.appendChild(mirror);
+                wrap.appendChild(holder);
+            });
+            syncPinned();
+        }
+        function syncPinned() {
+            document.querySelectorAll('#ov-pinned [data-mirror-of]').forEach(holder => {
+                const src = document.querySelector(`[data-bid="${holder.dataset.mirrorOf}"]`);
+                const mirror = holder.querySelector('.pinned-mirror');
+                if (!src || !mirror) return;
+                mirror.innerHTML = src.innerHTML;
+                // 清除鏡像內部 id，避免與來源重複 (id-based 更新只會命中來源)
+                mirror.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
+                // 移除鏡像內的 + / 拖曳殘留按鈕
+                mirror.querySelectorAll('.pin-add-btn').forEach(e => e.remove());
+                // 圖表 canvas：把來源點陣畫到鏡像 canvas
+                const sc = src.querySelectorAll('canvas'), mc = mirror.querySelectorAll('canvas');
+                sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch { } });
+            });
+        }
+        setInterval(syncPinned, 2000);
+
+        // 編輯模式時，為各分頁(除總覽外)的每個區塊注入「+ 加到總覽」按鈕
+        function refreshPinButtons() {
+            document.querySelectorAll('.pin-add-btn').forEach(b => b.remove());
+            if (!layoutEditing) return;
+            layoutTagAll();
+            document.querySelectorAll('main > section:not(#page-overview) [data-bid]').forEach(el => {
+                if (el.closest('#ov-pinned')) return;
+                if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+                const btn = document.createElement('button');
+                btn.className = 'pin-add-btn';
+                btn.title = '加到總覽';
+                btn.textContent = '＋總覽';
+                btn.onclick = e => { e.stopPropagation(); e.preventDefault(); pinBlock(el.dataset.bid); };
+                el.appendChild(btn);
+            });
+        }
         // 編輯模式時攔截主內容區點擊，避免拖曳時誤觸卡片跳頁
         document.addEventListener('click', e => {
             if (layoutEditing && e.target.closest('main > section')) { e.stopPropagation(); e.preventDefault(); }
@@ -3521,6 +3627,7 @@
         window.onload = () => {
             layoutTagAll();
             layoutApplySaved();
+            renderPinned();
             initChart();
             initThreatPieChart();
             initTrendChart();
