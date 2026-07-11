@@ -764,7 +764,7 @@ setInterval(autoDefenseSweep, 30 * 1000);
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true, triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false };
 function loadNotifSettings() {
     try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
 }
@@ -842,6 +842,7 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
         triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75, triggerWanDown: !!s.triggerWanDown, triggerNasLog: !!s.triggerNasLog,
+        triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -856,8 +857,8 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown', 'triggerNasLog'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
-    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'upsLoadAlert', 'upsVoltDeviationPct'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     saveNotifSettings(s);
@@ -2276,7 +2277,31 @@ async function sampleUps() {
     upsEvents = upsEvents.slice(0, 200);
     try { fs.writeFileSync(UPS_EVENTS_FILE, JSON.stringify(upsEvents)); } catch { }
     upsWasOnBattery = live.onBattery;
+
+    // 負載過高 (30 分鐘冷卻)
+    const ns2 = loadNotifSettings();
+    if (ns2.enabled && ns2.triggerUpsHighLoad && live.loadPct != null && live.loadPct >= (ns2.upsLoadAlert ?? 80)) {
+        if (Date.now() - lastUpsHighLoadTs > 30 * 60 * 1000) {
+            lastUpsHighLoadTs = Date.now();
+            await notify('⚠️ UPS 負載過高', `目前負載 ${live.loadPct}% (門檻 ${ns2.upsLoadAlert ?? 80}%)，逼近滿載`);
+        }
+    }
+    // 輸出電壓異常 (30 分鐘冷卻；輸出電壓長時間偏離 110V/220V 標準值可能是 UPS 硬體問題)
+    if (ns2.enabled && ns2.triggerUpsVoltAbnormal && live.outputV != null) {
+        const nominal = live.outputV > 180 ? 220 : 110;
+        const dev = Math.abs(live.outputV - nominal) / nominal * 100;
+        if (dev >= (ns2.upsVoltDeviationPct ?? 10) && Date.now() - lastUpsVoltAbnormalTs > 30 * 60 * 1000) {
+            lastUpsVoltAbnormalTs = Date.now();
+            await notify('⚡ UPS 輸出電壓異常', `輸出 ${live.outputV}V，偏離標準值 ${nominal}V 達 ${dev.toFixed(1)}%`);
+        }
+    }
+    // 來源切換 (例如 PowerPanel Business 斷線改回 pmset)：只要跟上次不同就通知一次
+    if (ns2.enabled && ns2.triggerUpsSourceChange && lastUpsSource && live.actualSource && live.actualSource !== lastUpsSource) {
+        await notify('🔀 UPS 資料來源切換', `從 ${lastUpsSource.toUpperCase()} 切換為 ${live.actualSource.toUpperCase()}`);
+    }
+    if (live.actualSource) lastUpsSource = live.actualSource;
 }
+let lastUpsHighLoadTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null;
 // UPS 取樣「不做閒置降頻」：斷電/電壓紀錄是核心需求，無人看網頁也要持續記錄 (本地指令，成本低)
 let upsLowBattNotified = false;
 let lastUpsSampleTs = 0;

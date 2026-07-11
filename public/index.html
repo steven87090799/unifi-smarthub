@@ -1461,6 +1461,10 @@
                         </div>
 
                         <!-- 多維度分析：Top 來源 IP / 目標設備 / 連接埠 -->
+                        <div class="flex items-center justify-between px-1">
+                            <p class="text-[9px] text-slate-500">📊 這三欄統計 UniFi 儲存的<b>全部</b>攔截記錄，不是近 24 小時；久久不變是正常的（沒有新的攻擊來源/設備/埠出現）<span id="sec-stats-since"></span></p>
+                            <button onclick="resetSecStats()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 rounded-lg text-[10px] font-bold transition active:scale-95 shrink-0">🔄 歸零重新統計</button>
+                        </div>
                         <div data-drag class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                             <div class="bg-slate-950/80 p-5 rounded-xl border border-slate-800/60">
                                 <span
@@ -2243,6 +2247,24 @@
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-naslog" class="accent-blue-500 w-4 h-4">
                                         NAS 系統日誌事件 (所有級別)
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-upsload" class="accent-blue-500 w-4 h-4">
+                                        UPS 負載超過
+                                        <input type="number" id="notif-ups-load" min="50" max="99"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-upsvolt" class="accent-blue-500 w-4 h-4">
+                                        UPS 輸出電壓偏離標準值超過
+                                        <input type="number" id="notif-ups-volt" min="3" max="30"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-upssrc" class="accent-blue-500 w-4 h-4">
+                                        UPS 資料來源切換 (例如 PowerPanel 斷線改回 pmset)
                                     </label>
                                 </div>
                             </div>
@@ -3345,14 +3367,14 @@
                         <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md">
                                 <div class="flex justify-between items-center mb-4">
-                                    <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UPS 電池電量 & 輸出電壓</h3>
+                                    <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UPS 輸出電壓 & 電池電量</h3>
                                     <span class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UPS 取樣">REAL DATA</span>
                                 </div>
                                 <div class="flex justify-between items-end mb-4">
                                     <div>
                                         <div class="flex items-baseline gap-1">
-                                            <span class="text-5xl font-black text-blue-500 tracking-tight mono" id="ups-hero-batt">--</span>
-                                            <span class="text-lg font-bold text-slate-500">%</span>
+                                            <span class="text-5xl font-black text-amber-400 tracking-tight mono" id="ups-hero-outv">--</span>
+                                            <span class="text-lg font-bold text-slate-500">V</span>
                                         </div>
                                         <p class="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
                                             <span class="inline-block w-2 h-2 rounded-full bg-blue-500" id="ups-hero-dot"></span>
@@ -3360,8 +3382,8 @@
                                         </p>
                                     </div>
                                     <div class="text-right">
-                                        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">輸出電壓</p>
-                                        <p class="text-2xl font-black text-slate-200 mono" id="ups-hero-outv">--V</p>
+                                        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">電池電量</p>
+                                        <p class="text-2xl font-black text-slate-200 mono" id="ups-hero-batt">--%</p>
                                     </div>
                                 </div>
                                 <div class="h-32"><canvas id="upsHeroChart"></canvas></div>
@@ -3476,6 +3498,16 @@
                                 <button onclick="downloadUpsCsv()"
                                     class="px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition border-l border-slate-800 ml-1">⬇
                                     CSV</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 mb-4 text-[11px]">
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">市電輸入</p>
+                                <p class="text-slate-400 mono">最低 <span id="ups-v-inv-min" class="text-slate-200">--</span> / 平均 <span id="ups-v-inv-avg" class="text-slate-200">--</span> / 最高 <span id="ups-v-inv-max" class="text-slate-200">--</span></p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">UPS 輸出</p>
+                                <p class="text-slate-400 mono">最低 <span id="ups-v-outv-min" class="text-slate-200">--</span> / 平均 <span id="ups-v-outv-avg" class="text-slate-200">--</span> / 最高 <span id="ups-v-outv-max" class="text-slate-200">--</span></p>
                             </div>
                         </div>
                         <div class="h-64"><canvas id="upsVoltChart"></canvas></div>
@@ -3735,6 +3767,8 @@
                 const mirror = holder.querySelector('.pinned-mirror');
                 if (!src || !mirror) return;
                 mirror.innerHTML = src.innerHTML;
+                // 保留來源元素自己的 class (例如 grid grid-cols-2)，否則鏡像只復製到子元素、外層排版跟版面比例會跑掉
+                mirror.className = `pinned-mirror ${src.className}`;
                 // 清除鏡像內部 id，避免與來源重複 (id-based 更新只會命中來源)
                 mirror.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
                 // 移除鏡像內的 + / 拖曳殘留按鈕
@@ -4150,8 +4184,10 @@
 
         function updateWorldMap() {
             if (!mapProjection || !worldFeatures) return;
+            const sinceTs = parseInt(localStorage.getItem('secStatsResetTs') || '0', 10);
+            const mapThreats = sinceTs ? allThreats.filter(t => new Date(t.datetime).getTime() >= sinceTs) : allThreats;
             const counts = {}, coords = {};
-            allThreats.forEach(t => {
+            mapThreats.forEach(t => {
                 const c = t.src_country || 'Unknown';
                 if (c === 'Unknown') return;
                 counts[c] = (counts[c] || 0) + 1;
@@ -4786,6 +4822,11 @@
             return { score, count: recent.length, high, medium, low, boosted, penalty: Math.round(penalty) };
         }
         function computeSecurityScore(threats) { return securityScoreDetail(threats).score; }
+        function resetSecStats() {
+            localStorage.setItem('secStatsResetTs', Date.now());
+            showToast('✅ 已歸零：Top 統計與地圖只看之後的新事件');
+            updateSecurityAnalytics(allThreats); updateWorldMap();
+        }
 
         function gradeFor(score) {
             if (score >= 90) return { label: '優良 (A)', color: '#10b981' };
@@ -4853,9 +4894,13 @@
             const gradeEl2 = document.getElementById('sec-kpi-grade');
             if (gradeEl2) { gradeEl2.innerText = grade.label; gradeEl2.style.color = grade.color; }
 
-            // 多維度 Top 分析
+            // 多維度 Top 分析 (可用「歸零重新統計」排除舊事件，預設看全部)
+            const sinceTs = parseInt(localStorage.getItem('secStatsResetTs') || '0', 10);
+            const sinceLbl = document.getElementById('sec-stats-since');
+            if (sinceLbl) sinceLbl.textContent = sinceTs ? ` · 統計自 ${new Date(sinceTs).toLocaleString('zh-TW')}` : '';
+            const statsThreats = sinceTs ? threats.filter(t => new Date(t.datetime).getTime() >= sinceTs) : threats;
             const bySrc = {}, byTarget = {}, byPort = {};
-            threats.forEach(t => {
+            statsThreats.forEach(t => {
                 if (t.src_ip) bySrc[`${t.src_ip} (${t.src_country})`] = (bySrc[`${t.src_ip} (${t.src_country})`] || 0) + 1;
                 if (t.target_device) byTarget[t.target_device] = (byTarget[t.target_device] || 0) + 1;
                 if (t.port) byPort[t.port] = (byPort[t.port] || 0) + 1;
@@ -5622,10 +5667,15 @@
                 setCk('notif-trig-ucgtemp', !!s.triggerUcgTemp);
                 setCk('notif-trig-wandown', !!s.triggerWanDown);
                 setCk('notif-trig-naslog', !!s.triggerNasLog);
+                setCk('notif-trig-upsload', !!s.triggerUpsHighLoad);
+                setCk('notif-trig-upsvolt', !!s.triggerUpsVoltAbnormal);
+                setCk('notif-trig-upssrc', !!s.triggerUpsSourceChange);
                 const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
                 setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
                 setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
                 setV('notif-ucg-temp', s.ucgTempAlert ?? 75);
+                setV('notif-ups-load', s.upsLoadAlert ?? 80);
+                setV('notif-ups-volt', s.upsVoltDeviationPct ?? 10);
                 document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
                 document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
                 setNotifChannel(s.channel || 'discord');
@@ -5650,9 +5700,14 @@
                 triggerUcgTemp: document.getElementById('notif-trig-ucgtemp')?.checked ?? false,
                 triggerWanDown: document.getElementById('notif-trig-wandown')?.checked ?? false,
                 triggerNasLog: document.getElementById('notif-trig-naslog')?.checked ?? false,
+                triggerUpsHighLoad: document.getElementById('notif-trig-upsload')?.checked ?? false,
+                triggerUpsVoltAbnormal: document.getElementById('notif-trig-upsvolt')?.checked ?? false,
+                triggerUpsSourceChange: document.getElementById('notif-trig-upssrc')?.checked ?? false,
                 nasDiskTempAlert: parseInt(document.getElementById('notif-nasdisk-temp')?.value, 10) || 50,
                 nasSpaceAlert: parseInt(document.getElementById('notif-nasspace-pct')?.value, 10) || 85,
-                ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75
+                ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75,
+                upsLoadAlert: parseInt(document.getElementById('notif-ups-load')?.value, 10) || 80,
+                upsVoltDeviationPct: parseInt(document.getElementById('notif-ups-volt')?.value, 10) || 10
             };
             const wh = document.getElementById('notif-webhook').value.trim();
             const tk = document.getElementById('notif-token').value.trim();
@@ -6688,11 +6743,11 @@
                     st.textContent = s.onBattery ? '🔋 電池供電' : '🟢 市電正常';
                     st.className = `text-lg font-black mono mt-1.5 ${s.onBattery ? 'text-red-400' : 'text-emerald-400'}`;
                     const sl = document.getElementById('ups-samplelbl'); if (sl) sl.textContent = s.sampleSec;
-                    // UPS 熱區卡 (仿 UCG 風格)
-                    const heroBatt = document.getElementById('ups-hero-batt');
-                    if (heroBatt) {
-                        heroBatt.textContent = s.battery ?? '--';
-                        document.getElementById('ups-hero-outv').textContent = (s.outputV ?? '--') + 'V';
+                    // UPS 熱區卡 (仿 UCG 風格；輸出電壓為主要大數字，電池電量為次要)
+                    const heroOutv = document.getElementById('ups-hero-outv');
+                    if (heroOutv) {
+                        heroOutv.textContent = s.outputV ?? '--';
+                        document.getElementById('ups-hero-batt').textContent = (s.battery ?? '--') + '%';
                         document.getElementById('ups-hero-status').textContent = s.onBattery ? '🔋 電池供電' : '🟢 市電正常';
                         document.getElementById('ups-hero-dot').style.background = s.onBattery ? '#ef4444' : '#3b82f6';
                         document.getElementById('ups-hero-load-str').textContent = (s.loadPct ?? '--') + '%';
@@ -6717,6 +6772,15 @@
                 upsVoltChart.data.datasets[0].data = h.map(p => p.inV);
                 upsVoltChart.data.datasets[1].data = h.map(p => p.outV);
                 upsVoltChart.update('none');
+                const vstat = (key, prefix) => {
+                    const vals = h.map(p => p[key]).filter(v => v != null && v > 0);
+                    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+                    if (!vals.length) { set(`${prefix}-min`, '--'); set(`${prefix}-avg`, '--'); set(`${prefix}-max`, '--'); return; }
+                    set(`${prefix}-min`, Math.min(...vals) + 'V');
+                    set(`${prefix}-avg`, (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) + 'V');
+                    set(`${prefix}-max`, Math.max(...vals) + 'V');
+                };
+                vstat('inV', 'ups-v-inv'); vstat('outV', 'ups-v-outv');
                 upsLoadChart.data.labels = h.map(fmt);
                 upsLoadChart.data.datasets[0].data = h.map(p => p.batt);
                 upsLoadChart.data.datasets[1].data = h.map(p => p.load);
