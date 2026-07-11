@@ -763,7 +763,7 @@ setInterval(autoDefenseSweep, 30 * 1000);
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: false };
 function loadNotifSettings() {
     try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
 }
@@ -840,7 +840,7 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerNewClient: !!s.triggerNewClient, triggerWiimOffline: !!s.triggerWiimOffline, triggerBlockAction: s.triggerBlockAction !== false,
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
-        triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75, triggerWanDown: !!s.triggerWanDown,
+        triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75, triggerWanDown: !!s.triggerWanDown, triggerNasLog: !!s.triggerNasLog,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -855,7 +855,7 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown', 'triggerNasLog'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
     ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
@@ -964,6 +964,25 @@ async function notificationWatcher() {
             }
         } catch { }
     }
+    // NAS 系統日誌 (只推播 warning/error 級別；本站監控帳號的登入事件一律略過)
+    if (s.triggerNasLog && nasConfigured()) {
+        try {
+            const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 50, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
+            const selfUser = process.env.NAS_USER;
+            for (const l of (data.log_list || [])) {
+                if (notifiedNasLogIds.has(l.log_id)) continue;
+                notifiedNasLogIds.add(l.log_id);
+                if (!notifBootstrapped) continue;               // 首輪只登記既有事件
+                if (l.level === 'info') continue;               // info 級別不推播
+                if (l.module === 'login' && l.operator === selfUser) continue;
+                await notify(`💾 NAS 日誌 [${l.level}]`, `[${l.module}] ${l.content}`);
+            }
+            if (notifiedNasLogIds.size > 2000) { // 防無限成長
+                const keep = [...notifiedNasLogIds].slice(-1000);
+                notifiedNasLogIds.clear(); keep.forEach(x => notifiedNasLogIds.add(x));
+            }
+        } catch { }
+    }
     // UCG CPU 溫度 / WAN 斷線 (透過本機 /api/hardware，僅在開啟時才發起 SSH)
     if ((s.triggerUcgTemp || s.triggerWanDown) && !isPlaceholder(process.env.SSH_PASSWORD)) {
         try {
@@ -987,6 +1006,7 @@ async function notificationWatcher() {
 }
 let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastUcgTempTs = 0, wanWasUp = null;
 const knownClientMacs = new Set();
+const notifiedNasLogIds = new Set();
 let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0;
 
@@ -1260,6 +1280,31 @@ app.get('/api/nas/disk-smart', async (req, res) => {
         res.json({ smart: data, source: 'nas_api' });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+// 16-2. UGOS 日誌中心 (login/storage/snapshot 等系統事件)
+app.get('/api/nas/logs', async (req, res) => {
+    if (!nasConfigured()) return res.json({ logs: [], total: 0, source: 'not_configured' });
+    try {
+        const page = parseInt(req.query.page || '0', 10);
+        const size = Math.min(parseInt(req.query.size || '50', 10), 200);
+        const data = await nasGet('/ugreen/v1/log/query', {
+            visualizer: false, page, size, order: 'down', log_type: 0,
+            from_time: '', to_time: '', order_param: '', log_id: ''
+        });
+        let logs = (data.log_list || []).map(l => ({
+            id: l.log_id, level: l.level, module: l.module, operator: l.operator,
+            content: l.content, ts: l.create_time * 1000
+        }));
+        // hideSelf=1：過濾本站監控帳號的例行登入 (避免 log 被自己洗版)
+        if (req.query.hideSelf === '1') {
+            const selfUser = process.env.NAS_USER;
+            logs = logs.filter(l => !(l.module === 'login' && l.operator === selfUser && /logged in successfully/.test(l.content)));
+        }
+        res.json({ logs, total: data.total ?? logs.length, source: 'nas_api' });
+    } catch (error) {
+        res.status(500).json({ logs: [], error: error.message });
     }
 });
 

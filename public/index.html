@@ -1047,9 +1047,12 @@
 
                 <!-- 警報事件 -->
                 <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
-                    <h4 class="text-xs font-bold text-slate-400 mb-4 tracking-wider uppercase">系統警報事件 <span class="text-slate-600 normal-case" id="nas-alert-count"></span></h4>
-                    <div class="space-y-2" id="nas-alert-list">
-                        <p class="text-xs text-slate-500 text-center py-4">警報讀取中...</p>
+                    <div class="flex justify-between items-center mb-4">
+                        <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase">NAS 系統日誌與警報 <span class="text-slate-600 normal-case" id="nas-alert-count"></span></h4>
+                        <label class="flex items-center gap-1.5 text-[10px] text-slate-500 cursor-pointer"><input type="checkbox" id="nas-log-hideself" class="accent-blue-500 w-3 h-3" checked onchange="fetchNasAlerts()"> 隱藏本站監控登入</label>
+                    </div>
+                    <div class="space-y-2 max-h-[420px] overflow-y-auto terminal-scroll" id="nas-alert-list">
+                        <p class="text-xs text-slate-500 text-center py-4">日誌讀取中...</p>
                     </div>
                 </div>
 
@@ -1219,6 +1222,9 @@
                             </label>
                             <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                 <input type="checkbox" id="notif-trig-wandown" class="accent-blue-500 w-4 h-4"> WAN 對外斷線 / 恢復 (經 SSH)
+                            </label>
+                            <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                <input type="checkbox" id="notif-trig-naslog" class="accent-blue-500 w-4 h-4"> NAS 系統日誌事件 (僅警告/嚴重級別，排除本站登入)
                             </label>
                         </div>
                     </div>
@@ -3625,24 +3631,47 @@
         document.getElementById('docker-log-modal').classList.remove('flex');
     }
 
+    const NAS_LOG_MODULE_LABEL = { login: '登入', storage_manager: '儲存管理', snapshot: '快照', system: '系統', network: '網路', file_manager: '檔案管理', app_center: '應用中心', usb: 'USB', backup: '備份' };
     async function fetchNasAlerts() {
+        const list = document.getElementById('nas-alert-list');
+        const colorMap = { critical: 'text-red-400 border-red-500/30 bg-red-500/5', error: 'text-red-400 border-red-500/30 bg-red-500/5', warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
         try {
+            // 優先：選配的 NAS Monitor 警報 (可確認/清除)
             const events = (await (await fetch('/api/nas/alerts')).json()).events || [];
-            const unack = events.filter(e => !e.acknowledged).length;
-            document.getElementById('nas-alert-count').innerText = events.length ? `— ${unack} 則待確認 / 共 ${events.length} 則` : '';
-            const list = document.getElementById('nas-alert-list');
-            const colorMap = { critical: 'text-red-400 border-red-500/30 bg-red-500/5', warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5', info: 'text-blue-400 border-blue-500/30 bg-blue-500/5' };
-            list.innerHTML = events.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">目前無警報事件</p>';
-            events.forEach(a => {
-                const cls = colorMap[a.level] || colorMap.info;
+            if (events.length) {
+                const unack = events.filter(e => !e.acknowledged).length;
+                document.getElementById('nas-alert-count').innerText = `— ${unack} 則待確認 / 共 ${events.length} 則`;
+                list.innerHTML = '';
+                events.forEach(a => {
+                    const cls = colorMap[a.level] || colorMap.info;
+                    list.innerHTML += `
+                        <div class="flex items-center gap-3 p-3 rounded-lg border ${cls} ${a.acknowledged ? 'opacity-50' : ''}">
+                            <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-16">${a.level}</span>
+                            <div class="flex-grow min-w-0">
+                                <p class="text-[11px] text-slate-200 truncate">${a.message}</p>
+                                <p class="text-[9px] text-slate-500 mono">${a.metric} · ${new Date(a.datetime).toLocaleString('zh-TW')}</p>
+                            </div>
+                            ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button onclick="ackAlert('${a.id}')" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded shrink-0">確認</button>`}
+                        </div>`;
+                });
+                return;
+            }
+            // 回退：UGOS 內建日誌中心 (真實系統事件)
+            const hideSelf = document.getElementById('nas-log-hideself')?.checked !== false;
+            const r = await (await fetch('/api/nas/logs?size=60' + (hideSelf ? '&hideSelf=1' : ''))).json();
+            const logs = r.logs || [];
+            document.getElementById('nas-alert-count').innerText = r.total ? `— 來自 UGOS 日誌中心，共 ${r.total.toLocaleString()} 筆` : '';
+            list.innerHTML = logs.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無日誌</p>';
+            logs.forEach(l => {
+                const cls = colorMap[l.level] || colorMap.info;
+                const mod = NAS_LOG_MODULE_LABEL[l.module] || l.module;
                 list.innerHTML += `
-                    <div class="flex items-center gap-3 p-3 rounded-lg border ${cls} ${a.acknowledged ? 'opacity-50' : ''}">
-                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-16">${a.level}</span>
+                    <div class="flex items-center gap-3 p-2.5 rounded-lg border ${cls}">
+                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-12">${l.level}</span>
                         <div class="flex-grow min-w-0">
-                            <p class="text-[11px] text-slate-200 truncate">${a.message}</p>
-                            <p class="text-[9px] text-slate-500 mono">${a.metric} · ${new Date(a.datetime).toLocaleString('zh-TW')}</p>
+                            <p class="text-[11px] text-slate-200 truncate" title="${l.content.replace(/"/g, '&quot;')}">${l.content}</p>
+                            <p class="text-[9px] text-slate-500 mono">${mod} · ${l.operator} · ${new Date(l.ts).toLocaleString('zh-TW')}</p>
                         </div>
-                        ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button onclick="ackAlert('${a.id}')" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded shrink-0">確認</button>`}
                     </div>`;
             });
         } catch (e) { console.error('NAS alerts fetch failed', e); }
@@ -3779,6 +3808,7 @@
             setCk('notif-trig-nasspace', !!s.triggerNasSpace);
             setCk('notif-trig-ucgtemp', !!s.triggerUcgTemp);
             setCk('notif-trig-wandown', !!s.triggerWanDown);
+            setCk('notif-trig-naslog', !!s.triggerNasLog);
             const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
             setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
             setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
@@ -3806,6 +3836,7 @@
             triggerNasSpace: document.getElementById('notif-trig-nasspace')?.checked ?? false,
             triggerUcgTemp: document.getElementById('notif-trig-ucgtemp')?.checked ?? false,
             triggerWanDown: document.getElementById('notif-trig-wandown')?.checked ?? false,
+            triggerNasLog: document.getElementById('notif-trig-naslog')?.checked ?? false,
             nasDiskTempAlert: parseInt(document.getElementById('notif-nasdisk-temp')?.value, 10) || 50,
             nasSpaceAlert: parseInt(document.getElementById('notif-nasspace-pct')?.value, 10) || 85,
             ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75
