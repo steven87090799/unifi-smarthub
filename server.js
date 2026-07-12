@@ -316,7 +316,9 @@ app.get('/api/clients', async (req, res) => {
 
         const clients = response.data.data.map(c => ({
             mac: c.mac,
-            name: c.name || c.hostname || 'Unknown Device',
+            name: clientAliases[(c.mac || '').toLowerCase()] || c.name || c.hostname || 'Unknown Device',
+            aliased: !!clientAliases[(c.mac || '').toLowerCase()],
+            original_name: c.name || c.hostname || '',
             ip: c.ip || 'DHCP Pending',
             is_wifi: !c.is_wired,
             wifi_signal: c.is_wired ? null : c.rssi,
@@ -535,6 +537,22 @@ function appendBlockHistory(entry) {
     history.unshift(entry);
     fs.writeFileSync(HISTORY_FILE, JSON.stringify(history.slice(0, HISTORY_LIMIT), null, 2));
 }
+
+/* ===================== 客戶端自訂名稱 (別名) =====================
+   UniFi 未命名的設備會顯示 Unknown，這裡讓使用者在面板上直接取名，
+   存 data/client-aliases.json ({mac: name})，套用於客戶端清單/Top5/報表等所有顯示。 */
+const CLIENT_ALIAS_FILE = path.join(DATA_DIR, 'client-aliases.json');
+let clientAliases = (() => { try { return JSON.parse(fs.readFileSync(CLIENT_ALIAS_FILE, 'utf8')); } catch { return {}; } })();
+app.get('/api/client-aliases', (req, res) => res.json({ aliases: clientAliases }));
+app.post('/api/client-aliases', (req, res) => {
+    const { mac, name } = req.body || {};
+    if (!mac || !/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac)) return res.status(400).json({ error: 'invalid mac' });
+    const trimmed = (name || '').trim().slice(0, 40);
+    if (trimmed) clientAliases[mac.toLowerCase()] = trimmed;
+    else delete clientAliases[mac.toLowerCase()];
+    try { fs.writeFileSync(CLIENT_ALIAS_FILE, JSON.stringify(clientAliases, null, 2)); } catch { }
+    res.json({ ok: true, aliases: clientAliases });
+});
 
 // 6. 客戶端限速/阻斷控制
 app.put('/api/device/restrict', async (req, res) => {
