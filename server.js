@@ -2486,6 +2486,33 @@ app.get('/api/ups/csv', (req, res) => {
     res.send(csv);
 });
 
+/* ===================== 重大事件警報 (前端頂部閃爍橫幅) =====================
+   只放「需要立刻知道」的狀態，全部由記憶體現況計算，零上游呼叫。
+   id 含事件起始時間，前端點擊關閉後記住 id；同一事件不再彈出，新事件會重新出現。 */
+app.get('/api/alerts/critical', (req, res) => {
+    const alerts = [];
+    // UPS 斷電進行中
+    if (upsEvents[0] && !upsEvents[0].end) {
+        alerts.push({ id: 'ups-outage-' + upsEvents[0].start, level: 'critical', msg: `⚡ UPS 斷電中！市電中斷 (電池 ${upsLastLive?.battery ?? '?'}%，可撐約 ${upsLastLive?.runtimeSec ? Math.round(upsLastLive.runtimeSec / 60) + ' 分' : '--'})` });
+    }
+    // UPS 電池低 (斷電中或充電異常皆適用)
+    if (upsLastLive && upsLastLive.battery != null && upsLastLive.battery <= 20) {
+        alerts.push({ id: 'ups-lowbatt-' + (upsEvents[0]?.start || 'now'), level: 'critical', msg: `🪫 UPS 電池僅剩 ${upsLastLive.battery}%，請儘快處理` });
+    }
+    // UPS 完全失聯 (連續取樣失敗)
+    if (upsLastReason && !upsLastLive) {
+        alerts.push({ id: 'ups-unreachable', level: 'warning', msg: '🔌 UPS 無法讀取 (所有來源失聯)' });
+    }
+    // WAN 斷線 (取自最近一次硬體快取)
+    const hw = hwCache && hwCache.data;
+    if (hw) {
+        const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
+        if (wan && wan.status !== 'connected') alerts.push({ id: 'wan-down', level: 'critical', msg: '🚨 WAN 對外連線中斷！請檢查數據機/ISP' });
+        if (hw.cpuTemp != null && hw.cpuTemp >= 85) alerts.push({ id: 'ucg-hot', level: 'warning', msg: `🔥 UCG CPU ${hw.cpuTemp}°C 嚴重過熱` });
+    }
+    res.json({ alerts });
+});
+
 // 健康檢查端點 (供 Docker healthcheck / 反向代理使用)
 app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
 

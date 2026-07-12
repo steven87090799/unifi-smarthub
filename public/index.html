@@ -578,6 +578,12 @@
         html.light pre.text-emerald-400 {
             color: #047857 !important;
         }
+        /* 重大警報橫幅：紅底強烈閃爍 */
+        @keyframes critBlink {
+            0%, 100% { background: rgba(220, 38, 38, 0.95); color: #fff; box-shadow: 0 0 18px rgba(239, 68, 68, 0.9); }
+            50% { background: rgba(127, 29, 29, 0.6); color: #fecaca; box-shadow: 0 0 4px rgba(239, 68, 68, 0.3); }
+        }
+        .crit-blink { animation: critBlink 0.9s ease-in-out infinite; border: 1px solid rgba(248, 113, 113, 0.8); }
     </style>
 </head>
 
@@ -731,6 +737,12 @@
                     <p class="text-[10px] text-slate-500" id="page-subtitle">全系統健康狀態一覽</p>
                 </div>
                 <div class="ml-auto flex items-center gap-2">
+                    <!-- 重大事件警報橫幅：只在 UPS 斷電/WAN 斷線等嚴重事件時出現，強烈閃爍，點擊關閉 -->
+                    <button id="crit-alert-banner" onclick="dismissCritAlerts()" title="點擊關閉此警報"
+                        class="hidden items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider crit-blink cursor-pointer max-w-[50vw]">
+                        <span id="crit-alert-text" class="truncate"></span>
+                        <span class="text-[9px] opacity-70 shrink-0">✕</span>
+                    </button>
                     <span
                         class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-[10px] font-bold mono uppercase tracking-wider hidden sm:inline"
                         id="cloud-status-badge">SITE MANAGER: ONLINE</span>
@@ -4002,6 +4014,7 @@
 
         /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
         const POLL_JOBS = {
+            critAlerts: { fn: () => fetchCritAlerts(), def: 10, label: '重大事件警報', desc: '多久檢查一次重大事件 (UPS 斷電/WAN 斷線等)，觸發頂部紅色閃爍橫幅。' },
             hardware: { fn: () => fetchHardware(), def: 8, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
             ucgHist: { fn: () => fetchUcgHist(), def: 30, label: 'UCG 歷史紀錄圖', desc: '多久重新整理一次 UCG 歷史紀錄圖表 (依所選範圍)。' },
             ucgSpikes: { fn: () => fetchUcgSpikes(), def: 120, label: 'UCG 溫度異常事件分析', desc: '多久重新掃描一次近 7 天溫度歷史，找出超過門檻的異常區段。' },
@@ -5849,6 +5862,35 @@
                 set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
                 set('report-hour2', s.reportHour2 ?? 20); toggleReportHour2();
             } catch (e) { console.error('app settings fetch failed', e); }
+        }
+        /* ==================== 重大事件警報橫幅 ==================== */
+        let critDismissed = new Set(JSON.parse(localStorage.getItem('critDismissed') || '[]'));
+        let critActiveIds = [];
+        async function fetchCritAlerts() {
+            try {
+                const d = await (await fetch('/api/alerts/critical')).json();
+                const alerts = (d.alerts || []).filter(a => !critDismissed.has(a.id));
+                critActiveIds = alerts.map(a => a.id);
+                const banner = document.getElementById('crit-alert-banner'), txt = document.getElementById('crit-alert-text');
+                if (!banner) return;
+                if (alerts.length) {
+                    txt.textContent = alerts.length > 1 ? `${alerts[0].msg}　(+${alerts.length - 1} 則警報)` : alerts[0].msg;
+                    banner.classList.remove('hidden'); banner.classList.add('flex');
+                } else {
+                    banner.classList.add('hidden'); banner.classList.remove('flex');
+                }
+                // 已解除的事件從記憶名單移除，讓同類新事件 (新 id) 能再次彈出
+                const liveIds = new Set((d.alerts || []).map(a => a.id));
+                let changed = false;
+                critDismissed.forEach(id => { if (!liveIds.has(id)) { critDismissed.delete(id); changed = true; } });
+                if (changed) localStorage.setItem('critDismissed', JSON.stringify([...critDismissed]));
+            } catch { }
+        }
+        function dismissCritAlerts() {
+            critActiveIds.forEach(id => critDismissed.add(id));
+            localStorage.setItem('critDismissed', JSON.stringify([...critDismissed]));
+            const banner = document.getElementById('crit-alert-banner');
+            banner.classList.add('hidden'); banner.classList.remove('flex');
         }
         function toggleReportHour2() {
             const f = document.getElementById('report-freq')?.value;
