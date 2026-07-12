@@ -1782,6 +1782,7 @@
                                     <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UGREEN NAS 處理器 & 溫度</h3>
                                     <span class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UGOS get_all API">REAL DATA</span>
                                 </div>
+                                <div class="absolute bottom-3 right-4 text-[10px] text-slate-500 mono flex items-center gap-1" id="nas-hero-fan" title="風扇轉速"></div>
                                 <div class="flex justify-between items-end mb-4">
                                     <div>
                                         <div class="flex items-baseline gap-1">
@@ -1871,12 +1872,6 @@
                                         id="nas-ups-batt">--</span><span class="text-sm text-slate-500">%</span></p>
                                 <p class="text-[9px] text-slate-500 mt-1" id="nas-ups-info">偵測中...</p>
                             </div>
-                            <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5" id="nas-fan-card">
-                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">風扇轉速</p>
-                                <div class="mt-2 space-y-1" id="nas-fan-list">
-                                    <p class="text-xs text-slate-500">讀取中...</p>
-                                </div>
-                            </div>
                         </div>
 
                         <!-- 進階 KPI (系統 B) -->
@@ -1945,7 +1940,7 @@
                         <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                                 <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">系統負載歷史 (CPU /
-                                    記憶體 / 溫度)</h4>
+                                    記憶體 / 溫度 / 風扇)</h4>
                                 <div class="h-52"><canvas id="nasSystemChart"></canvas></div>
                             </div>
                             <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
@@ -1975,7 +1970,7 @@
                                 <div class="h-52"><canvas id="nasStorageChart"></canvas></div>
                             </div>
                             <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
-                                <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">各硬碟溫度 / 風扇轉速歷史
+                                <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">各硬碟溫度歷史 (°C)
                                 </h4>
                                 <div class="h-52"><canvas id="nasTempChart"></canvas></div>
                             </div>
@@ -5351,15 +5346,14 @@
                 const staticBy = {}; (nasDiskStatic || []).forEach(d => { staticBy[d.name] = d; });
                 const disks = lite.map(l => ({ ...(staticBy[l.name] || {}), name: l.name, temperature: l.temperature, sleeping: l.sleeping, status: (staticBy[l.name] || {}).status || 'good' }));
 
-                // 風扇轉速 (取自 get_all 的 overview.cpu_fan/device_fan，藏得很深，前端只顯示乾淨結果)
+                // 風扇轉速 (取自 get_all 的 overview.cpu_fan/device_fan，藏得很深)：
+                // 小小顯示在處理器溫度卡右下角即可，不需要獨立一整張 KPI 卡
                 const fans = ov.fans || [];
-                const fanCard = document.getElementById('nas-fan-card'), fanList = document.getElementById('nas-fan-list');
-                if (fanList) {
-                    fanList.innerHTML = fans.length ? fans.map(f => `
-                        <p class="text-sm font-black mono ${f.status === 'normal' ? 'text-emerald-400' : 'text-red-400'} flex items-center justify-between">
-                            <span class="text-[10px] text-slate-500 font-normal">${f.name}</span>
-                            <span>${f.rpm != null ? f.rpm.toLocaleString() : '--'} <span class="text-[10px] text-slate-500 font-normal">RPM</span></span>
-                        </p>`).join('') : '<p class="text-xs text-slate-500">此機型無風扇資訊</p>';
+                const fanHero = document.getElementById('nas-hero-fan');
+                if (fanHero) {
+                    fanHero.innerHTML = fans.length
+                        ? fans.map(f => `<span class="${f.status === 'normal' ? '' : 'text-red-400'}">🌀 ${f.rpm != null ? f.rpm.toLocaleString() : '--'} RPM</span>`).join('　')
+                        : '';
                 }
 
                 // 狀態徽章與側邊欄：區分「未設定」(沒填帳密) 與「離線」(填了但連不上，例如 NAS 關機/重開中)
@@ -5568,9 +5562,10 @@
                     labels: [], datasets: [
                         { label: 'CPU %', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)', fill: true, tension: 0.3, pointRadius: 0 },
                         { label: '記憶體 %', data: [], borderColor: '#8b5cf6', fill: false, tension: 0.3, pointRadius: 0 },
-                        { label: '溫度 °C', data: [], borderColor: '#f59e0b', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 0 }
+                        { label: '溫度 °C', data: [], borderColor: '#f59e0b', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 0 },
+                        { label: '風扇 RPM', data: [], borderColor: '#94a3b8', borderDash: [2, 2], fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yFan', spanGaps: true }
                     ]
-                }, options: lineOpts()
+                }, options: lineOpts({ yFan: { position: 'right', ticks: { color: '#94a3b8', font: { size: 8 }, callback: v => v + ' RPM' }, grid: { display: false } } })
             });
             nasTrafficChart = new Chart(document.getElementById('nasTrafficChart'), {
                 type: 'line', data: {
@@ -5593,8 +5588,7 @@
                     plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 8 } } } },
                     scales: {
                         x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 8 }, grid: { display: false } },
-                        y: { position: 'left', ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } },
-                        yFan: { position: 'right', ticks: { color: '#94a3b8', font: { size: 8 }, callback: v => v + ' RPM' }, grid: { display: false } }
+                        y: { ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } }
                     }
                 }
             });
@@ -5641,6 +5635,7 @@
                 nasSystemChart.data.datasets[0].data = sys.map(p => p.cpu);
                 nasSystemChart.data.datasets[1].data = sys.map(p => p.memory);
                 nasSystemChart.data.datasets[2].data = sys.map(p => p.temperature);
+                nasSystemChart.data.datasets[3].data = sys.map(p => p.fan_rpm);
                 nasSystemChart.update('none');
                 document.getElementById('nas-sys-cnt') && (document.getElementById('nas-sys-cnt').textContent = sys.length + ' 點');
 
@@ -5664,13 +5659,6 @@
                     data: tp.map(p => (p.disks || {})[name] ?? null),
                     borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
                 }));
-                // 風扇轉速疊圖 (獨立右側 Y 軸，單位 RPM 跟溫度 °C 差太多量級不能共軸)
-                if (tp.some(p => p.fan_rpm != null)) {
-                    nasTempChart.data.datasets.push({
-                        label: '風扇 RPM', data: tp.map(p => p.fan_rpm ?? null), yAxisID: 'yFan',
-                        borderColor: '#94a3b8', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
-                    });
-                }
                 nasTempChart.update('none');
 
                 // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
