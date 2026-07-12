@@ -675,6 +675,12 @@
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>UPS 電源
                 </button>
+                <button data-page="homelab" onclick="navigate('homelab')"
+                    class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>DNS & 小主機
+                </button>
                 <p class="nav-group">系統 System</p>
                 <button data-page="tools" onclick="navigate('tools')"
                     class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
@@ -2031,6 +2037,108 @@
                 </section>
 
                 <!-- ==================== 頁面：工具 ==================== -->
+                <!-- ==================== 頁面：DNS & 小主機 ==================== -->
+                <section id="page-homelab" class="space-y-6 hidden">
+                    <!-- AdGuard Home -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                                    AdGuard Home DNS 防護 <span class="text-[10px] text-slate-500 font-normal mono" id="adg-version"></span>
+                                </h3>
+                                <p class="text-[9px] text-slate-500 mt-0.5" id="adg-sub">全網 DNS 廣告與追蹤攔截統計</p>
+                            </div>
+                            <button id="adg-toggle" onclick="toggleAdgProtection()"
+                                class="px-4 py-1.5 rounded-full text-[10px] font-bold border transition hidden">--</button>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5" data-drag data-drag-key="adg-kpis">
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">DNS 查詢</p>
+                                <p class="text-xl font-black mono text-white mt-1" id="adg-queries">--</p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">已攔截</p>
+                                <p class="text-xl font-black mono text-red-400 mt-1" id="adg-blocked">--</p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">攔截率</p>
+                                <p class="text-xl font-black mono text-amber-400 mt-1" id="adg-ratio">--</p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">平均處理</p>
+                                <p class="text-xl font-black mono text-blue-400 mt-1" id="adg-avgtime">--</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5" data-drag data-drag-key="adg-tops">
+                            <div>
+                                <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">被攔截網域 Top 10</h4>
+                                <div class="space-y-1" id="adg-top-blocked"><p class="text-xs text-slate-500">載入中...</p></div>
+                            </div>
+                            <div>
+                                <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">查詢客戶端 Top 10</h4>
+                                <div class="space-y-1" id="adg-top-clients"><p class="text-xs text-slate-500">載入中...</p></div>
+                            </div>
+                        </div>
+                        <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">即時查詢日誌 (最近 30 筆)</h4>
+                        <div class="space-y-1 max-h-[300px] overflow-y-auto terminal-scroll" id="adg-querylog">
+                            <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                        </div>
+                    </div>
+
+                    <!-- Linux 小主機 -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                                    Linux 小主機監控 <span class="text-[10px] text-slate-500 font-normal mono" id="lnx-hostname"></span>
+                                </h3>
+                                <p class="text-[9px] text-slate-500 mt-0.5">SSH 真實數據 — Home Assistant 主機 (192.168.0.37)</p>
+                            </div>
+                            <span id="lnx-status" class="px-3 py-1 rounded-full text-[9px] font-bold bg-slate-800 text-slate-400">連線中...</span>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5" data-drag data-drag-key="lnx-kpis">
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">CPU</p>
+                                <p class="text-xl font-black mono text-white mt-1"><span id="lnx-cpu">--</span>%</p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">溫度</p>
+                                <p class="text-xl font-black mono mt-1" id="lnx-temp-wrap"><span id="lnx-temp">--</span>°C</p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">記憶體</p>
+                                <p class="text-xl font-black mono text-white mt-1"><span id="lnx-mem">--</span>%</p>
+                                <p class="text-[8px] text-slate-500 mono" id="lnx-mem-str"></p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">磁碟</p>
+                                <p class="text-xl font-black mono text-white mt-1"><span id="lnx-disk">--</span>%</p>
+                                <p class="text-[8px] text-slate-500 mono" id="lnx-disk-str"></p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">負載 (1m)</p>
+                                <p class="text-xl font-black mono text-white mt-1" id="lnx-load">--</p>
+                            </div>
+                            <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">運行時間</p>
+                                <p class="text-sm font-black mono text-white mt-2" id="lnx-uptime">--</p>
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-center mb-3">
+                            <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">CPU / 溫度 / 記憶體歷史</h4>
+                            <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px]">
+                                <button onclick="setLnxRange(1, this)" class="lnx-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">1 時</button>
+                                <button onclick="setLnxRange(6, this)" class="lnx-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">6 時</button>
+                                <button onclick="setLnxRange(24, this)" class="lnx-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition">24 時</button>
+                                <button onclick="setLnxRange(168, this)" class="lnx-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">7 天</button>
+                            </div>
+                        </div>
+                        <div class="h-56"><canvas id="lnxChart"></canvas></div>
+                    </div>
+                </section>
+
                 <section id="page-tools" class="space-y-6 hidden">
                     <!-- 測速儀表盤 -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
@@ -3941,6 +4049,7 @@
             nas: ['NAS 儲存', 'UGREEN UGOS Pro 儲存與硬體監控'],
             wiim: ['WiiM 音響', 'WiiM Amp 音訊串流與硬體監控'],
             ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (NUT)'],
+            homelab: ['DNS & 小主機', 'AdGuard Home DNS 防護統計 + Linux 小主機 SSH 監控'],
             tools: ['工具 Tools', '網速測試與 PoE 管理'],
             notify: ['通知推播', '威脅與 NAS 警報自動推播到 Discord / Telegram / Webhook'],
             settings: ['設定 Settings', '調整所有輪詢間隔、主題、定期報表']
@@ -4011,6 +4120,8 @@
             fetchAppSettings();
             fetchConnections();
             fetchUps();
+            fetchAdguard(); fetchAdgLog();
+            fetchLinux(); fetchLnxChart();
             fetchWiimDeviceInfo();
             initWiimPage();
             initWiimSrcDrag();
@@ -4025,6 +4136,8 @@
 
         /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
         const POLL_JOBS = {
+            adguard: { fn: () => { fetchAdguard(); fetchAdgLog(); }, def: 30, label: 'AdGuard DNS 統計', desc: '多久更新一次 AdGuard Home 的攔截統計與查詢日誌。' },
+            linuxMon: { fn: () => { fetchLinux(); fetchLnxChart(); }, def: 30, label: 'Linux 小主機監控', desc: '多久 SSH 抓一次小主機的 CPU/溫度/記憶體/磁碟並更新歷史圖。' },
             critAlerts: { fn: () => fetchCritAlerts(), def: 10, label: '重大事件警報', desc: '多久檢查一次重大事件 (UPS 斷電/WAN 斷線等)，觸發頂部紅色閃爍橫幅。' },
             hardware: { fn: () => fetchHardware(), def: 8, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
             ucgHist: { fn: () => fetchUcgHist(), def: 30, label: 'UCG 歷史紀錄圖', desc: '多久重新整理一次 UCG 歷史紀錄圖表 (依所選範圍)。' },
@@ -6973,6 +7086,118 @@
                         <span class="text-slate-500 mono shrink-0">${e.ts}</span>
                     </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
             } catch (e) { list.innerHTML = '<p class="text-xs text-red-400 text-center py-4">讀取失敗</p>'; }
+        }
+
+        /* ==================== AdGuard Home ==================== */
+        let adgProtectionOn = null;
+        async function fetchAdguard() {
+            try {
+                const d = await (await fetch('/api/adguard/overview')).json();
+                if (d.source !== 'adguard') return;
+                const st = d.stats || {}, sts = d.status || {};
+                document.getElementById('adg-version').textContent = sts.version || '';
+                document.getElementById('adg-queries').textContent = (st.num_dns_queries ?? 0).toLocaleString();
+                document.getElementById('adg-blocked').textContent = (st.num_blocked_filtering ?? 0).toLocaleString();
+                document.getElementById('adg-ratio').textContent = st.num_dns_queries ? (st.num_blocked_filtering / st.num_dns_queries * 100).toFixed(1) + '%' : '--';
+                document.getElementById('adg-avgtime').textContent = st.avg_processing_time != null ? (st.avg_processing_time * 1000).toFixed(1) + ' ms' : '--';
+                adgProtectionOn = !!sts.protection_enabled;
+                const btn = document.getElementById('adg-toggle');
+                btn.classList.remove('hidden');
+                btn.textContent = adgProtectionOn ? '🟢 保護中 (點擊暫停)' : '⏸ 已暫停 (點擊恢復)';
+                btn.className = `px-4 py-1.5 rounded-full text-[10px] font-bold border transition ${adgProtectionOn ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30 animate-pulse'}`;
+                const bar = (n, max, name, val, color) => `
+                    <div class="flex items-center gap-2 text-[11px]">
+                        <span class="w-40 truncate text-slate-300" title="${name}">${name}</span>
+                        <div class="flex-grow bg-slate-950 h-1.5 rounded-full overflow-hidden"><div class="${color} h-full rounded-full" style="width:${Math.max(val / max * 100, 2)}%"></div></div>
+                        <span class="mono text-slate-500 w-12 text-right">${val.toLocaleString()}</span>
+                    </div>`;
+                const tb = st.top_blocked_domains || [];
+                const maxB = tb.length ? Object.values(tb[0])[0] : 1;
+                document.getElementById('adg-top-blocked').innerHTML = tb.slice(0, 10).map(o => { const [k, v] = Object.entries(o)[0]; return bar(0, maxB, k, v, 'bg-red-500'); }).join('') || '<p class="text-xs text-slate-500">無資料</p>';
+                const tc = st.top_clients || [];
+                const maxC = tc.length ? Object.values(tc[0])[0] : 1;
+                const aliasName = ip => { const c = allClients.find(x => x.ip === ip); return c ? `${c.name} (${ip})` : ip; };
+                document.getElementById('adg-top-clients').innerHTML = tc.slice(0, 10).map(o => { const [k, v] = Object.entries(o)[0]; return bar(0, maxC, aliasName(k), v, 'bg-blue-500'); }).join('') || '<p class="text-xs text-slate-500">無資料</p>';
+            } catch (e) { dbg('AdGuard', '讀取失敗', e); }
+        }
+        async function fetchAdgLog() {
+            try {
+                const d = await (await fetch('/api/adguard/querylog?limit=30')).json();
+                if (d.source !== 'adguard') return;
+                document.getElementById('adg-querylog').innerHTML = (d.entries || []).map(e => `
+                    <div class="flex items-center gap-3 p-1.5 rounded-lg text-[10px] ${e.blocked ? 'bg-red-500/5 border border-red-500/15' : 'bg-slate-950/30'}">
+                        <span class="mono text-slate-500 shrink-0">${new Date(e.time).toLocaleTimeString('zh-TW', { hour12: false })}</span>
+                        <span class="shrink-0 font-bold ${e.blocked ? 'text-red-400' : 'text-emerald-500'}">${e.blocked ? '攔截' : '放行'}</span>
+                        <span class="flex-grow truncate mono text-slate-300" title="${e.domain}">${e.domain}</span>
+                        <span class="mono text-slate-600 shrink-0">${e.client}</span>
+                    </div>`).join('') || '<p class="text-xs text-slate-500 text-center py-4">無資料</p>';
+            } catch { }
+        }
+        async function toggleAdgProtection() {
+            if (adgProtectionOn === null) return;
+            if (adgProtectionOn && !confirm('確定要暫停 AdGuard 全網 DNS 防護？\n暫停期間廣告與追蹤將不被攔截。')) return;
+            try {
+                await fetch('/api/adguard/protection', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !adgProtectionOn }) });
+                showToast(adgProtectionOn ? 'AdGuard 保護已暫停' : 'AdGuard 保護已恢復');
+                fetchAdguard();
+            } catch { showToast('操作失敗', true); }
+        }
+
+        /* ==================== Linux 小主機 ==================== */
+        let lnxChart = null, lnxRangeHours = 24;
+        async function fetchLinux() {
+            try {
+                const d = await (await fetch('/api/linux/stats')).json();
+                const badge = document.getElementById('lnx-status');
+                if (d.source !== 'ssh') {
+                    badge.textContent = d.source === 'not_configured' ? '未設定' : '連線失敗';
+                    badge.className = 'px-3 py-1 rounded-full text-[9px] font-bold bg-red-500/10 text-red-400 border border-red-500/25';
+                    return;
+                }
+                badge.textContent = '● 連線正常';
+                badge.className = 'px-3 py-1 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
+                document.getElementById('lnx-hostname').textContent = d.hostname || '';
+                document.getElementById('lnx-cpu').textContent = d.cpuUsage ?? '--';
+                document.getElementById('lnx-temp').textContent = d.cpuTemp ?? '--';
+                document.getElementById('lnx-temp-wrap').style.color = tempColor(d.cpuTemp);
+                document.getElementById('lnx-mem').textContent = d.memUsagePct ?? '--';
+                document.getElementById('lnx-mem-str').textContent = d.memStr || '';
+                document.getElementById('lnx-disk').textContent = d.diskUsagePct ?? '--';
+                document.getElementById('lnx-disk-str').textContent = d.diskStr || '';
+                document.getElementById('lnx-load').textContent = d.load ? d.load[0].toFixed(2) : '--';
+                document.getElementById('lnx-uptime').textContent = d.uptime || '--';
+            } catch { }
+        }
+        async function fetchLnxChart() {
+            try {
+                const d = await (await fetch(`/api/linux/history?hours=${lnxRangeHours}`)).json();
+                const pts = d.data || [];
+                const fmt = p => lnxRangeHours > 24
+                    ? new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) + ' ' + new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })
+                    : new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+                if (!lnxChart) {
+                    lnxChart = new Chart(document.getElementById('lnxChart'), {
+                        type: 'line',
+                        data: { labels: [], datasets: [
+                            { label: 'CPU %', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,.08)', fill: true, borderWidth: 1.5, pointRadius: 0, tension: .3 },
+                            { label: '溫度 °C', data: [], borderColor: '#f59e0b', borderWidth: 1.5, pointRadius: 0, tension: .3 },
+                            { label: '記憶體 %', data: [], borderColor: '#8b5cf6', borderWidth: 1.5, pointRadius: 0, tension: .3 }
+                        ] },
+                        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } } } }, scales: { x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } }, y: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } } } }
+                    });
+                }
+                lnxChart.data.labels = pts.map(fmt);
+                lnxChart.data.datasets[0].data = pts.map(p => p.cpu);
+                lnxChart.data.datasets[1].data = pts.map(p => p.temp);
+                lnxChart.data.datasets[2].data = pts.map(p => p.mem);
+                lnxChart.update('none');
+            } catch { }
+        }
+        function setLnxRange(hours, btn) {
+            lnxRangeHours = hours;
+            document.querySelectorAll('.lnx-range-btn').forEach(b => b.className = 'lnx-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition');
+            btn.className = 'lnx-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition';
+            fetchLnxChart();
         }
 
         function setWiimChartWin(minutes, btn) {

@@ -1755,7 +1755,9 @@ const CONN_FIELDS = [
     { key: 'NAS_MONITOR_URL' }, { key: 'NAS_MONITOR_API_KEY', secret: true },
     { key: 'WIIM_IP' },
     { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
-    { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true }
+    { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
+    { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' }, { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
+    { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true }
 ];
 
 // 更新 .env 檔：既有 KEY= 行 (含註解掉的) 就地取代，否則附加到檔尾
@@ -2502,6 +2504,139 @@ app.get('/api/ups/csv', (req, res) => {
     let csv = 'time,input_v,output_v,battery_pct,load_pct,runtime_sec,on_battery\n';
     for (const h of upsHistory) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
     res.send(csv);
+});
+
+/* ===================== AdGuard Home DNS 防護 (REST API, Basic Auth) ===================== */
+const adgConfigured = () => !!(process.env.ADGUARD_HOST && process.env.ADGUARD_USER && !isPlaceholder(process.env.ADGUARD_PASSWORD));
+async function adgReq(pathName, method = 'get', data) {
+    const base = `http://${process.env.ADGUARD_HOST}:${process.env.ADGUARD_PORT || 80}`;
+    const r = await axios({ url: base + pathName, method, data, timeout: 8000, auth: { username: process.env.ADGUARD_USER, password: process.env.ADGUARD_PASSWORD } });
+    return r.data;
+}
+// 總覽：狀態 + 統計 (查詢數/攔截數/Top 網域/Top 客戶端)
+app.get('/api/adguard/overview', async (req, res) => {
+    if (!adgConfigured()) return res.json({ source: 'not_configured' });
+    try {
+        const [status, stats] = await Promise.all([adgReq('/control/status'), adgReq('/control/stats')]);
+        res.json({ status, stats, source: 'adguard' });
+    } catch (e) { res.json({ source: 'error', error: e.message }); }
+});
+// 即時查詢日誌 (簡化欄位)
+app.get('/api/adguard/querylog', async (req, res) => {
+    if (!adgConfigured()) return res.json({ entries: [], source: 'not_configured' });
+    try {
+        const d = await adgReq(`/control/querylog?limit=${Math.min(parseInt(req.query.limit || '30', 10), 100)}`);
+        const entries = (d.data || []).map(e => ({
+            time: e.time,
+            domain: e.question && e.question.name,
+            type: e.question && e.question.type,
+            client: e.client,
+            blocked: !!(e.reason && /Filtered/i.test(e.reason) && e.reason !== 'NotFilteredNotFound' && e.reason !== 'NotFilteredWhiteList'),
+            reason: e.reason,
+            elapsedMs: e.elapsedMs ? parseFloat(e.elapsedMs).toFixed(1) : null
+        }));
+        res.json({ entries, source: 'adguard' });
+    } catch (e) { res.json({ entries: [], source: 'error', error: e.message }); }
+});
+// 保護開關
+app.post('/api/adguard/protection', async (req, res) => {
+    if (!adgConfigured()) return res.status(503).json({ error: 'not_configured' });
+    try {
+        await adgReq('/control/protection', 'post', { enabled: !!req.body.enabled });
+        res.json({ ok: true, enabled: !!req.body.enabled });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ===================== Linux 小主機監控 (SSH，比照 UCG 模式) ===================== */
+const linuxConfigured = () => !!(process.env.LINUX_HOST && process.env.LINUX_SSH_USER && !isPlaceholder(process.env.LINUX_SSH_PASSWORD));
+const LINUX_CMD = [
+    'hostname', 'cat /proc/uptime', 'free -m', 'df -m /', 'cat /proc/loadavg',
+    'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null',
+    'cat /proc/stat', 'sleep 1; cat /proc/stat'
+].join('; echo __S__; ');
+let linuxCache = null, linuxInflight = null;
+function fetchLinuxSSH() {
+    return new Promise((resolve, reject) => {
+        const conn = new Client();
+        conn.on('ready', () => {
+            conn.exec(LINUX_CMD, (err, stream) => {
+                if (err) { conn.end(); return reject(new Error('SSH exec failed')); }
+                let out = '';
+                stream.on('data', c => out += c).stderr.on('data', () => { });
+                stream.on('close', () => {
+                    conn.end();
+                    try {
+                        const sec = out.split('__S__');
+                        const hostname = sec[0].trim();
+                        const upSec = parseFloat(sec[1]);
+                        const fm = sec[2].match(/Mem:\s+(\d+)\s+(\d+)/);
+                        const memTotal = fm ? +fm[1] : 0, memUsed = fm ? +fm[2] : 0;
+                        const dm = sec[3].match(/(\d+)\s+(\d+)\s+\d+\s+(\d+)%/);
+                        const load = sec[4].trim().split(/\s+/).slice(0, 3).map(Number);
+                        const temps = sec[5].trim().split('\n').map(t => parseInt(t, 10) / 1000).filter(t => t > 0 && t < 150);
+                        const s1 = parseProcStat(sec[6]), s2 = parseProcStat(sec[7]);
+                        let cpuUsage = 0;
+                        if (s1.cpu && s2.cpu) {
+                            const dT = s2.cpu.total - s1.cpu.total, dI = s2.cpu.idle - s1.cpu.idle;
+                            cpuUsage = dT > 0 ? Math.round((1 - dI / dT) * 100) : 0;
+                        }
+                        resolve({
+                            hostname, cpuUsage,
+                            cpuTemp: temps.length ? Math.round(Math.max(...temps)) : null,
+                            memUsagePct: memTotal ? Math.round(memUsed / memTotal * 100) : 0,
+                            memStr: `${(memUsed / 1024).toFixed(2)} / ${(memTotal / 1024).toFixed(2)} GB`,
+                            diskUsagePct: dm ? +dm[3] : null,
+                            diskStr: dm ? `${(+dm[2] / 1024).toFixed(1)} / ${(+dm[1] / 1024).toFixed(1)} GB` : '--',
+                            load,
+                            uptime: isNaN(upSec) ? '--' : `up ${Math.floor(upSec / 86400)}d ${Math.floor((upSec % 86400) / 3600)}h`,
+                            dataSource: 'real'
+                        });
+                    } catch (e) { reject(new Error('parse failed: ' + e.message)); }
+                });
+            });
+        }).on('error', e => reject(e))
+            .connect({
+                host: process.env.LINUX_HOST,
+                port: parseInt(process.env.LINUX_SSH_PORT || '22', 10),
+                username: process.env.LINUX_SSH_USER,
+                password: process.env.LINUX_SSH_PASSWORD,
+                readyTimeout: 8000
+            });
+    });
+}
+async function getLinuxCached() {
+    if (linuxCache && Date.now() - linuxCache.ts < 10000) return linuxCache.data;
+    if (!linuxInflight) linuxInflight = fetchLinuxSSH().finally(() => { linuxInflight = null; });
+    const data = await linuxInflight;
+    linuxCache = { ts: Date.now(), data };
+    return data;
+}
+app.get('/api/linux/stats', async (req, res) => {
+    if (!linuxConfigured()) return res.json({ source: 'not_configured' });
+    try { res.json({ ...(await getLinuxCached()), source: 'ssh' }); }
+    catch (e) { res.json({ source: 'error', error: e.message }); }
+});
+// 歷史取樣 (自適應：活躍 60s / 閒置 10min)，與其他歷史相同的節流落盤
+const LINUX_HISTORY_FILE = path.join(DATA_DIR, 'linux-history.json');
+let linuxHistory = (() => { try { return JSON.parse(fs.readFileSync(LINUX_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+const linuxFlush = registerFlushable(LINUX_HISTORY_FILE, () => linuxHistory);
+let lastLinuxSampleTs = 0;
+setInterval(async () => {
+    if (!linuxConfigured()) return;
+    const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const gap = (active ? 60 : 600) * 1000;
+    if (Date.now() - lastLinuxSampleTs < gap) return;
+    lastLinuxSampleTs = Date.now();
+    try {
+        const d = await getLinuxCached();
+        linuxHistory.push({ t: new Date().toISOString(), cpu: d.cpuUsage, temp: d.cpuTemp, mem: d.memUsagePct, load: d.load && d.load[0] });
+        pruneHistory(linuxHistory);
+        linuxFlush.markDirty();
+    } catch { }
+}, 5000);
+app.get('/api/linux/history', (req, res) => {
+    const hours = parseFloat(req.query.hours || '24');
+    res.json({ data: sliceSince(linuxHistory, Date.now() - hours * 3600000) });
 });
 
 /* ===================== 重大事件警報 (前端頂部閃爍橫幅) =====================
