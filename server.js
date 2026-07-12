@@ -505,6 +505,7 @@ const APP_DEFAULTS = {
     reportEnabled: false,   // 定期報表
     reportFreq: 'daily',    // daily | weekly
     reportHour: 8,          // 每日幾點發送 (0-23)
+    reportHour2: 20,        // 「每日兩次」的第二次發送時間 (0-23)
     upsSampleSec: 30,       // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
     wiimCpuAlert: 70,       // WiiM CPU 溫度警示門檻 (°C，圖上門檻線 + 超標推播)
     wiimBoardAlert: 60,     // WiiM 主機板溫度警示門檻 (°C)
@@ -797,13 +798,26 @@ let notifLog = [];
 function pushNotifLog(e) { notifLog.unshift(e); notifLog = notifLog.slice(0, 50); }
 
 // 實際送出 (依 channel 走不同格式)。回傳 {ok} 或 {ok:false,error}
+// 長文分段：依平台上限沿換行切塊 (Discord 2000 / Telegram 4096)，避免詳細報表被整則拒收
+function chunkText(text, max) {
+    if (text.length <= max) return [text];
+    const chunks = [];
+    let cur = '';
+    for (const line of text.split('\n')) {
+        if (cur && cur.length + line.length + 1 > max) { chunks.push(cur); cur = ''; }
+        cur = cur ? cur + '\n' + line : line;
+    }
+    if (cur) chunks.push(cur);
+    return chunks;
+}
 async function dispatchNotification(title, body, settings) {
     const s = settings || loadNotifSettings();
     const text = `${title}\n${body}`;
     if (s.channel === 'telegram') {
         if (!s.botToken || !s.chatId) throw new Error('Telegram 未設定 botToken / chatId');
         try {
-            await axios.post(`https://api.telegram.org/bot${s.botToken}/sendMessage`, { chat_id: s.chatId, text }, { timeout: 8000 });
+            for (const part of chunkText(text, 4000))
+                await axios.post(`https://api.telegram.org/bot${s.botToken}/sendMessage`, { chat_id: s.chatId, text: part }, { timeout: 8000 });
         } catch (e) {
             const st = e.response && e.response.status;
             const desc = e.response && e.response.data && e.response.data.description;
@@ -813,7 +827,8 @@ async function dispatchNotification(title, body, settings) {
         }
     } else if (s.channel === 'discord') {
         if (!s.webhookUrl) throw new Error('Discord Webhook URL 未設定');
-        await axios.post(s.webhookUrl, { content: text }, { timeout: 8000 });
+        for (const part of chunkText(text, 1900))
+            await axios.post(s.webhookUrl, { content: part }, { timeout: 8000 });
     } else {
         if (!s.webhookUrl) throw new Error('Webhook URL 未設定');
         await axios.post(s.webhookUrl, { title, body, text, ts: new Date().toISOString() }, { timeout: 8000 });
@@ -1698,11 +1713,11 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert', 'toastSec', 'historyFlushMin', 'historyKeepDays'].forEach(k => {
+    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'reportHour2', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert', 'toastSec', 'historyFlushMin', 'historyKeepDays'].forEach(k => {
         if (typeof b[k] === 'number' && b[k] >= 0) appSettings[k] = b[k];
     });
     if (typeof b.reportEnabled === 'boolean') appSettings.reportEnabled = b.reportEnabled;
-    if (b.reportFreq === 'daily' || b.reportFreq === 'weekly') appSettings.reportFreq = b.reportFreq;
+    if (['daily', 'twice', 'every6h', 'weekly'].includes(b.reportFreq)) appSettings.reportFreq = b.reportFreq;
     saveAppSettings();
     scheduleServerJobs();   // 立即套用新的伺服器端間隔
     res.json({ ok: true, settings: appSettings });
@@ -1784,6 +1799,7 @@ async function buildReport() {
     const L = [];
     const dayAgo = Date.now() - 86400000;
     const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+    const fmtDur = sec => sec >= 3600 ? `${Math.floor(sec / 3600)}h${Math.round(sec % 3600 / 60)}m` : sec >= 60 ? `${Math.round(sec / 60)} 分` : `${sec} 秒`;
     L.push(`🗓️ SmartHub 系統報表 · ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`);
 
     // ── 資安 / 網路 ──
@@ -1798,15 +1814,39 @@ async function buildReport() {
             threats.forEach(t => { const m = /SCAN/.test(t.msg) ? '掃描' : /EXPLOIT/.test(t.msg) ? '漏洞攻擊' : /MALWARE|Trojan/i.test(t.msg) ? '惡意程式' : /DOS/.test(t.msg) ? 'DoS' : '其他'; cat[m] = (cat[m] || 0) + 1; });
             L.push(`  類別：${Object.entries(cat).map(([k, v]) => `${k} ${v}`).join('、')}`);
             const srcs = {};
-            threats.forEach(t => { const ip = t.src_ip || '?'; srcs[ip] = (srcs[ip] || 0) + 1; });
-            const top = Object.entries(srcs).sort((a, b) => b[1] - a[1]).slice(0, 3);
-            L.push(`  主要來源：${top.map(([ip, n]) => `${ip}(${n})`).join('、')}`);
+            threats.forEach(t => { const geo = t.srcipGeo || {}; const ip = t.src_ip || '?'; srcs[ip] = srcs[ip] || { n: 0, c: geo.country_name || '' }; srcs[ip].n++; });
+            const top = Object.entries(srcs).sort((a, b) => b[1].n - a[1].n).slice(0, 3);
+            L.push(`  主要來源：${top.map(([ip, v]) => `${ip}${v.c ? `(${v.c})` : ''} ×${v.n}`).join('、')}`);
         }
+        // 封鎖動作 (本面板 24h)
+        const blocks = loadBlockHistory().filter(b => Date.parse(b.datetime) >= dayAgo);
+        if (blocks.length) {
+            const auto = blocks.filter(b => b.source === 'auto').length;
+            L.push(`• 24H 封鎖動作：${blocks.length} 次${auto ? ` (自動防禦 ${auto} 次)` : ''}`);
+        }
+        // 客戶端
         const sta = (await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } })).data.data || [];
         const wired = sta.filter(c => c.is_wired).length;
-        L.push(`• 線上客戶端：${sta.length} 台 (有線 ${wired} / 無線 ${sta.length - wired})`);
+        const blocked = sta.filter(c => c.blocked).length;
+        L.push(`• 線上客戶端：${sta.length} 台 (有線 ${wired} / 無線 ${sta.length - wired}${blocked ? ` / 封鎖中 ${blocked}` : ''})`);
         const totalRx = sta.reduce((a, c) => a + (c.rx_bytes || 0), 0), totalTx = sta.reduce((a, c) => a + (c.tx_bytes || 0), 0);
         L.push(`• 客戶端累計流量：↓${(totalRx / 1073741824).toFixed(1)} GB / ↑${(totalTx / 1073741824).toFixed(1)} GB`);
+        // Top 5 流量
+        const top5 = [...sta].sort((a, b) => ((b.rx_bytes || 0) + (b.tx_bytes || 0)) - ((a.rx_bytes || 0) + (a.tx_bytes || 0))).slice(0, 5);
+        if (top5.length) {
+            L.push('• Top 5 流量：');
+            top5.forEach((c, i) => L.push(`  ${i + 1}. ${c.name || c.hostname || c.mac}：${(((c.rx_bytes || 0) + (c.tx_bytes || 0)) / 1073741824).toFixed(2)} GB`));
+        }
+        // WiFi
+        try {
+            const wl = (await unifiClient.get('/proxy/network/api/s/default/rest/wlanconf', { headers: { 'Cookie': cookie } })).data.data || [];
+            L.push(`• WiFi 網路：${wl.filter(w => w.enabled).length}/${wl.length} 個啟用`);
+        } catch { }
+        // 最近一次測速
+        try {
+            const www = ((await unifiClient.get('/proxy/network/api/s/default/stat/health', { headers: { 'Cookie': cookie } })).data.data || []).find(x => x.subsystem === 'www') || {};
+            if (www.xput_down) L.push(`• 最近測速：↓${www.xput_down} / ↑${www.xput_up} Mbps，ping ${www.speedtest_ping} ms${www.speedtest_lastrun ? ` (${new Date(www.speedtest_lastrun * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })})` : ''}`);
+        } catch { }
     } catch { L.push('• 本地控制器未連線'); }
     const trends = loadTrends().filter(p => (Date.parse(p.t)) >= dayAgo);
     const lat = trends.map(p => p.latency).filter(v => v != null);
@@ -1819,25 +1859,43 @@ async function buildReport() {
         try {
             const hw = await getHardwareCached();
             L.push('\n━━ 🖥️ UCG-Ultra 閘道器 ━━');
-            L.push(`• CPU：${hw.cpuUsage ?? '--'}% / ${hw.cpuTemp ?? '--'}°C　記憶體：${hw.memUsagePct ?? '--'}%`);
+            L.push(`• CPU：${hw.cpuUsage ?? '--'}% / ${hw.cpuTemp ?? '--'}°C　記憶體：${hw.memUsagePct ?? '--'}% (${hw.memStr || ''})`);
+            if (hw.cores && hw.cores.length) L.push(`• 各核心：${hw.cores.map((c, i) => `C${i} ${c}%`).join(' · ')}`);
+            L.push(`• 系統碟 (eMMC)：${hw.emmcUsagePct ?? '--'}% (${hw.emmcStr || ''})`);
             if (hw.uptime) L.push(`• 運行時間：${hw.uptime}`);
             const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
-            if (wan) L.push(`• WAN(${wan.speed})：${wan.status === 'connected' ? '正常' : '離線'} ↓${wan.rxRate} ↑${wan.txRate}`);
-        } catch { }
+            if (wan) L.push(`• WAN(${wan.speed})：${wan.status === 'connected' ? '正常' : '⚠ 離線'} ↓${wan.rxRate} ↑${wan.txRate}`);
+            // 24H 溫度統計 (自建歷史)
+            const ucg24 = sliceSince(ucgHistory, dayAgo);
+            const temps = ucg24.map(p => p.cpuTemp).filter(v => v != null);
+            if (temps.length) L.push(`• 24H CPU 溫度：平均 ${avg(temps).toFixed(1)}°C / 最高 ${Math.max(...temps)}°C / 最低 ${Math.min(...temps)}°C`);
+        } catch { L.push('\n━━ 🖥️ UCG-Ultra ━━\n• SSH 讀取失敗'); }
     }
 
     // ── NAS ──
     if (nasConfigured()) {
         try {
             L.push('\n━━ 💾 UGREEN NAS ━━');
+            // 即時 CPU/RAM/溫度
+            try {
+                const raw = await nasGet('/ugreen/v1/taskmgr/stat/get_all');
+                const c = (raw.cpu && raw.cpu.series && raw.cpu.series[0]) || {};
+                const m = (raw.mem && raw.mem.series && raw.mem.series[0]) || {};
+                if (c.used_percent != null) L.push(`• CPU：${Math.round(c.used_percent)}% / ${c.temp ?? '--'}°C　記憶體：${m.used_percent != null ? (+m.used_percent).toFixed(1) : '--'}%`);
+                // 各硬碟溫度/休眠 (日誌判定)
+                const sleepMap = await getDiskSleepFromLogs();
+                const dparts = ((raw.disk && raw.disk.series) || []).filter(d => d.name !== 'overview').map(d => {
+                    const name = d.label || d.name;
+                    return sleepMap[name] ? `${name} 💤休眠` : `${name} ${d.temperature ?? '--'}°C`;
+                });
+                if (dparts.length) L.push(`• 硬碟：${dparts.join('、')}`);
+            } catch { }
+            // 健康 + 容量
             const disks = (await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 }).catch(() => null));
             let dl = disks ? (deepFind({ d: disks }, ['result', 'list', 'disks']) || []) : [];
             if (dl.length) {
-                const temps = dl.filter(d => d.activate && d.temperature).map(d => d.temperature);
                 const bad = dl.filter(d => d.status !== 1);
-                L.push(`• 硬碟：${dl.length} 顆，${bad.length ? `⚠ ${bad.length} 顆異常` : '全部健康'}${temps.length ? `，溫度 ${Math.min(...temps)}–${Math.max(...temps)}°C` : ''}`);
-                const sleeping = dl.filter(d => d.is_standby || d.activate === false).length;
-                if (sleeping) L.push(`  ${sleeping} 顆休眠中`);
+                L.push(`• 硬碟健康：${dl.length} 顆，${bad.length ? `⚠ ${bad.length} 顆異常 (${bad.map(d => d.label || d.name).join('、')})` : '全部健康'}`);
             }
             const vdata = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 }).catch(() => null);
             const vols = vdata ? (deepFind({ d: vdata }, ['result', 'list', 'volumes']) || []) : [];
@@ -1845,6 +1903,20 @@ async function buildReport() {
                 const pct = Math.round(v.used / v.total * 100);
                 L.push(`• ${v.label || v.name}：${(v.used / 1073741824 / 1024).toFixed(2)}/${(v.total / 1073741824 / 1024).toFixed(2)} TB (${pct}%)${pct >= 85 ? ' ⚠' : ''}`);
             });
+            // 24H 系統負載統計 (自建歷史)
+            const nas24 = nasHistorySince(24);
+            const ncpu = nas24.map(p => p.cpu).filter(v => v != null);
+            if (ncpu.length) L.push(`• 24H CPU：平均 ${avg(ncpu).toFixed(1)}% / 峰值 ${Math.max(...ncpu)}%`);
+            const nup = nas24.map(p => p.up_mbps).filter(v => v != null), ndown = nas24.map(p => p.down_mbps).filter(v => v != null);
+            if (nup.length) L.push(`• 24H 網路：↓平均 ${avg(ndown).toFixed(1)} / 峰值 ${Math.max(...ndown).toFixed(0)} Mbps　↑平均 ${avg(nup).toFixed(1)} / 峰值 ${Math.max(...nup).toFixed(0)} Mbps`);
+            // UGOS 日誌 24H 警告/錯誤
+            try {
+                const logs = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 200, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
+                const recent = (logs.log_list || []).filter(l => l.create_time * 1000 >= dayAgo);
+                const warns = recent.filter(l => ['warning', 'error', 'critical'].includes(l.level));
+                L.push(`• 24H 系統日誌：${recent.length} 筆${warns.length ? `，⚠ 警告/錯誤 ${warns.length} 筆` : '，無警告'}`);
+                warns.slice(0, 3).forEach(l => L.push(`  [${l.level}] ${l.content.slice(0, 60)}`));
+            } catch { }
         } catch { L.push('• NAS 讀取失敗 (可能需管理員權限)'); }
     }
 
@@ -1853,22 +1925,42 @@ async function buildReport() {
         const ups = await readUpsLive();
         if (ups) {
             L.push('\n━━ 🔋 UPS ━━');
-            L.push(`• ${ups.model || 'UPS'}：${ups.onBattery ? '⚡ 電池供電中' : '🟢 市電正常'}，電池 ${ups.battery ?? '--'}%${ups.inputV ? `，輸入 ${ups.inputV}V` : ''}`);
+            L.push(`• ${ups.model || 'UPS'} (來源 ${(ups.actualSource || '').toUpperCase()})：${ups.onBattery ? '⚡ 電池供電中' : '🟢 市電正常'}`);
+            L.push(`• 電池 ${ups.battery ?? '--'}%　負載 ${ups.loadPct ?? '--'}%　可撐 ${ups.runtimeSec ? Math.round(ups.runtimeSec / 60) + ' 分' : '--'}`);
+            L.push(`• 電壓：輸入 ${ups.inputV ?? '--'}V / 輸出 ${ups.outputV ?? '--'}V`);
+            // 24H 電壓/負載統計
+            const ups24 = sliceSince(upsHistory, dayAgo);
+            const inv = ups24.map(p => p.inV).filter(v => v != null && v > 0);
+            if (inv.length) L.push(`• 24H 輸入電壓：平均 ${avg(inv).toFixed(1)}V / 最高 ${Math.max(...inv)}V / 最低 ${Math.min(...inv)}V`);
+            const loads = ups24.map(p => p.load).filter(v => v != null);
+            if (loads.length) L.push(`• 24H 負載：平均 ${avg(loads).toFixed(1)}% / 峰值 ${Math.max(...loads)}%`);
+            // 斷電事件明細
             const outages = upsEvents.filter(e => Date.parse(e.start) >= dayAgo);
-            if (outages.length) L.push(`• 24H 斷電事件：${outages.length} 次`);
+            if (outages.length) {
+                L.push(`• 24H 斷電事件：${outages.length} 次`);
+                outages.slice(0, 3).forEach(e => L.push(`  ${new Date(e.start).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Taipei' })} ${e.end ? `持續 ${fmtDur(e.durationSec)}，最低電池 ${e.minBattery ?? '?'}%` : '⚡ 進行中'}`));
+            } else L.push('• 24H 斷電事件：無');
         }
     } catch { }
 
     // ── WiiM ──
-    const wiim24h = wiimHistory.filter(h => (h.ts * 1000) >= dayAgo);
+    const wiim24h = sliceSince(wiimHistory, dayAgo, p => p.ts * 1000);
     if (wiim24h.length) {
         const cpus = wiim24h.map(h => h.cpu).filter(v => v !== null);
         const boards = wiim24h.map(h => h.board).filter(v => v !== null);
         if (cpus.length && boards.length) {
             L.push('\n━━ 🔊 WiiM Amp ━━');
             L.push(`• 24H 均溫：CPU ${avg(cpus).toFixed(1)}°C (最高 ${Math.max(...cpus).toFixed(1)}) / 主板 ${avg(boards).toFixed(1)}°C (最高 ${Math.max(...boards).toFixed(1)})`);
+            try {
+                const st = JSON.parse(await wiimGet('getPlayerStatus') || '{}');
+                if (st.status) L.push(`• 目前狀態：${st.status === 'play' ? '▶️ 播放中' : st.status === 'pause' ? '⏸ 暫停' : '⏹ 停止'}，音量 ${st.vol ?? '--'}%`);
+            } catch { }
         }
     }
+
+    // ── 面板本身 ──
+    L.push('\n━━ ⚙️ 面板 ━━');
+    L.push(`• 面板運行：${fmtDur(Math.round(process.uptime()))}　記憶體 ${(process.memoryUsage().rss / 1048576).toFixed(0)} MB`);
     return L.join('\n') || '（無可彙整的資料）';
 }
 
@@ -1876,15 +1968,20 @@ let lastReportKey = '';
 async function reportScheduler() {
     if (!appSettings.reportEnabled) return;
     const now = new Date();
-    if (now.getHours() !== appSettings.reportHour || now.getMinutes() !== 0) return;
-    const key = appSettings.reportFreq === 'weekly'
-        ? `${now.getFullYear()}-W${Math.floor(now.getDate() / 7)}-${now.getDay()}`
-        : now.toISOString().slice(0, 10);
-    if (appSettings.reportFreq === 'weekly' && now.getDay() !== 1) return; // 週報只在週一
+    if (now.getMinutes() !== 0) return;
+    const h = now.getHours(), f = appSettings.reportFreq;
+    let fire = false;
+    if (f === 'weekly') fire = now.getDay() === 1 && h === appSettings.reportHour;          // 每週一
+    else if (f === 'twice') fire = h === appSettings.reportHour || h === (appSettings.reportHour2 ?? 20);
+    else if (f === 'every6h') fire = h % 6 === ((appSettings.reportHour ?? 8) % 6);          // 每 6 小時
+    else fire = h === appSettings.reportHour;                                                // daily
+    if (!fire) return;
+    const key = now.toISOString().slice(0, 13); // 精確到「小時」去重，每個觸發時段最多發一次
     if (key === lastReportKey) return;
     lastReportKey = key;
     const body = await buildReport();
-    await notify(`📊 SmartHub ${appSettings.reportFreq === 'weekly' ? '每週' : '每日'}報表`, body);
+    const freqLabel = { weekly: '每週', twice: '每日兩次', every6h: '每 6 小時' }[f] || '每日';
+    await notify(`📊 SmartHub ${freqLabel}報表`, body);
 }
 setInterval(reportScheduler, 60 * 1000);
 

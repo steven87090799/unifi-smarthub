@@ -2489,9 +2489,11 @@
                             <div>
                                 <label
                                     class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">頻率</label>
-                                <select id="report-freq"
+                                <select id="report-freq" onchange="toggleReportHour2()"
                                     class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
                                     <option value="daily">每日</option>
+                                    <option value="twice">每日兩次</option>
+                                    <option value="every6h">每 6 小時</option>
                                     <option value="weekly">每週（週一）</option>
                                 </select>
                             </div>
@@ -2500,6 +2502,13 @@
                                     class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">發送時間
                                     (時)</label>
                                 <input type="number" id="report-hour" min="0" max="23"
+                                    class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                            </div>
+                            <div id="report-hour2-wrap" class="hidden">
+                                <label
+                                    class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">第二次時間
+                                    (時)</label>
+                                <input type="number" id="report-hour2" min="0" max="23"
                                     class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
                             </div>
                             <button onclick="runReportNow()"
@@ -5838,7 +5847,12 @@
                 set('srv-historyKeepDays', s.historyKeepDays ?? 30);
                 const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
                 set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
+                set('report-hour2', s.reportHour2 ?? 20); toggleReportHour2();
             } catch (e) { console.error('app settings fetch failed', e); }
+        }
+        function toggleReportHour2() {
+            const f = document.getElementById('report-freq')?.value;
+            document.getElementById('report-hour2-wrap')?.classList.toggle('hidden', f !== 'twice');
         }
         async function saveServerSettings() {
             const num = id => parseInt(document.getElementById(id).value, 10);
@@ -5852,7 +5866,8 @@
                 historyKeepDays: num('srv-historyKeepDays'),
                 reportEnabled: document.getElementById('report-enabled').checked,
                 reportFreq: document.getElementById('report-freq').value,
-                reportHour: num('report-hour')
+                reportHour: num('report-hour'),
+                reportHour2: num('report-hour2')
             };
             try {
                 const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
