@@ -967,7 +967,7 @@
                                                 id="ov-wiim-board-bar" style="width:0%"></div>
                                         </div>
                                     </div>
-                                    <div class="text-[10px] text-slate-400 truncate">🎵 <span id="ov-wiim-track"
+                                    <div class="text-[10px] text-slate-400 truncate flex items-center gap-1"><svg class="w-3 h-3 inline -mt-0.5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span id="ov-wiim-track"
                                             class="text-slate-300">--</span></div>
                                 </div>
                             </div>
@@ -2853,7 +2853,7 @@
                         <div class="relative flex flex-col md:flex-row gap-6 items-center z-10">
                             <!-- 專輯封面 -->
                             <div class="w-28 h-28 rounded-xl shrink-0 flex items-center justify-center text-5xl bg-slate-850 text-slate-500 border border-slate-700 shadow-md font-mono"
-                                id="wiim-art">♪</div>
+                                id="wiim-art"><svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
 
                             <!-- 曲目資訊與進度條 -->
                             <div class="flex-grow min-w-0 w-full space-y-4">
@@ -2882,14 +2882,14 @@
                                 <div class="flex flex-wrap items-center gap-4 pt-1">
                                     <div class="flex items-center gap-2">
                                         <button onclick="wiimCmd('setPlayerCmd:prev')"
-                                            class="p-3 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 rounded-full text-xs transition active:scale-95">⏮</button>
+                                            class="p-3 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 rounded-full transition active:scale-95 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><rect x="5" y="4" width="2" height="16"/></svg></button>
                                         <button onclick="wiimCmd('setPlayerCmd:onepause')"
                                             class="p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-full text-sm font-bold shadow-lg shadow-blue-500/20 transition active:scale-95"
-                                            id="wiim-play-btn">▶</button>
+                                            id="wiim-play-btn" class="p-4 bg-blue-600 hover:bg-blue-500 text-white rounded-full font-bold shadow-lg shadow-blue-500/20 transition active:scale-95 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
                                         <button onclick="wiimCmd('setPlayerCmd:next')"
-                                            class="p-3 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 rounded-full text-xs transition active:scale-95">⏭</button>
+                                            class="p-3 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 rounded-full transition active:scale-95 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><rect x="17" y="4" width="2" height="16"/></svg></button>
                                         <button onclick="wiimCmd('setPlayerCmd:stop')"
-                                            class="p-3 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 rounded-full text-xs transition active:scale-95">⏹</button>
+                                            class="p-3 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 rounded-full transition active:scale-95 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
                                     </div>
 
                                     <!-- 音量與靜音 -->
@@ -2922,14 +2922,11 @@
                                         <button onclick="wiimCmd('setPlayerCmd:loopmode:0')"
                                             class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">順序</button>
                                         <button onclick="wiimCmd('setPlayerCmd:loopmode:-1')"
-                                            class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔁
-                                            循環</button>
+                                            class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition inline-flex items-center gap-1"><svg class="w-3.5 h-3.5 inline -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>循環</button>
                                         <button onclick="wiimCmd('setPlayerCmd:loopmode:1')"
-                                            class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔂
-                                            單曲</button>
+                                            class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition inline-flex items-center gap-1"><svg class="w-3.5 h-3.5 inline -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/><path d="M11 10h1v4"/></svg>單曲</button>
                                         <button onclick="wiimCmd('setPlayerCmd:loopmode:2')"
-                                            class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition">🔀
-                                            隨機</button>
+                                            class="px-2 py-1 bg-slate-800/80 border border-slate-700/60 rounded-lg text-[10px] text-slate-300 hover:bg-slate-700 transition inline-flex items-center gap-1"><svg class="w-3.5 h-3.5 inline -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.8-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.4c1.3 0 2.5.6 3.3 1.7l.7 1"/><path d="m18 14 4 4-4 4"/><path d="M8.3 16.3c.8-1.1 2-1.7 3.3-1.7H22"/></svg>隨機</button>
                                     </div>
                                 </div>
 
@@ -3002,7 +2999,7 @@
                             <div
                                 class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                                 <div class="flex justify-between items-center mb-6">
-                                    <h3 class="text-sm font-bold text-white tracking-wider">🌡️ WiiM 溫度監控</h3>
+                                    <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></svg> WiiM 溫度監控</h3>
                                     <span class="text-[10px] text-slate-500 mono" id="wiim-rangelbl">近 2 小時</span>
                                 </div>
 
@@ -3123,7 +3120,7 @@
                                         class="ml-auto px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/60 rounded-lg transition active:scale-95">⬇
                                         下載 CSV</button>
                                     <button onclick="wiimClearHistory()"
-                                        class="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/30 border border-red-900/40 text-red-400 rounded-lg transition active:scale-95">🗑
+                                        class="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/30 border border-red-900/40 text-red-400 rounded-lg transition active:scale-95"><svg class="w-3.5 h-3.5 inline -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                                         清空記錄</button>
                                 </div>
 
@@ -3144,7 +3141,7 @@
                             <!-- 溫度日誌表格 -->
                             <div
                                 class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                                <h3 class="text-sm font-bold text-white tracking-wider mb-4">📜 歷史溫度日誌</h3>
+                                <h3 class="text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/></svg> 歷史溫度日誌</h3>
                                 <div
                                     class="overflow-x-auto max-h-[300px] terminal-scroll border border-slate-800 rounded-xl">
                                     <table class="w-full text-xs text-left text-slate-300">
@@ -3500,7 +3497,7 @@
                             <!-- 遙控器與週邊狀態 (獨立區塊，平衡左右欄高度) -->
                             <div
                                 class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                                <h3 class="text-sm font-bold text-white tracking-wider mb-4">🎮 語音遙控器與週邊配件</h3>
+                                <h3 class="text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg> 語音遙控器與週邊配件</h3>
                                 <div class="grid grid-cols-2 gap-4">
                                     <div
                                         class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
@@ -3512,7 +3509,7 @@
                                                     id="wiim-remote-bat">--</span><span class="text-xs text-slate-500">
                                                     %</span></p>
                                         </div>
-                                        <div class="text-2xl" id="wiim-remote-bat-icon">🔋</div>
+                                        <div id="wiim-remote-bat-icon"><svg class="w-6 h-6 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="18" height="10" rx="2"/><line x1="23" y1="11" x2="23" y2="13"/></svg></div>
                                     </div>
                                     <div
                                         class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
@@ -3524,7 +3521,7 @@
                                                     id="wiim-remote-sig">--</span><span class="text-xs text-slate-500">
                                                     dBm</span></p>
                                         </div>
-                                        <div class="text-2xl">📶</div>
+                                        <div><svg class="w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg></div>
                                     </div>
                                 </div>
                                 <div
@@ -3540,7 +3537,7 @@
                             <div
                                 class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                                 <div class="flex justify-between items-center mb-4">
-                                    <h3 class="text-sm font-bold text-white tracking-wider">📋 設備與網路資訊</h3>
+                                    <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> 設備與網路資訊</h3>
                                     <button onclick="fetchWiimDeviceInfo()"
                                         class="text-[10px] text-blue-400 hover:text-blue-300 font-bold">↻ 重新讀取</button>
                                 </div>
@@ -4080,7 +4077,7 @@
                     responsive: true, maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
-                        legend: { display: true, labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } },
+                        legend: { display: true, labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 9 } } },
                         tooltip: {
                             callbacks: {
                                 label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}${ctx.dataset.yAxisID === 'yBatt' ? '%' : 'V'}`
@@ -4336,7 +4333,7 @@
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 10, weight: 'bold' } } } },
+                    plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1', boxWidth: 20, boxHeight: 2, font: { size: 10, weight: 'bold' } } } },
                     cutout: '65%'
                 }
             });
@@ -4355,7 +4352,7 @@
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } } } },
+                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 10 } } } },
                     scales: {
                         x: { ticks: { color: '#64748b', maxTicksLimit: 10, font: { size: 9 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
                         yCount: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
@@ -4368,7 +4365,7 @@
         function initHourlyCharts() {
             const baseOpts = (stacked) => ({
                 responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: stacked, labels: { color: '#94a3b8', boxWidth: 10, font: { size: 8 } } } },
+                plugins: { legend: { display: stacked, labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 8 } } } },
                 scales: {
                     x: { stacked, ticks: { color: '#64748b', font: { size: 8 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }, grid: { display: false } },
                     y: { stacked, beginAtZero: true, ticks: { color: '#64748b', font: { size: 8 }, precision: 0 }, grid: { color: 'rgba(30,41,59,0.4)' } }
@@ -5552,7 +5549,7 @@
         function initNasCharts() {
             const lineOpts = (extra = {}) => ({
                 responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } } },
+                plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 9 } } } },
                 scales: Object.assign({
                     x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 8 }, grid: { display: false } },
                     y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } }
@@ -5586,7 +5583,7 @@
             nasTempChart = new Chart(document.getElementById('nasTempChart'), {
                 type: 'line', data: { labels: [], datasets: [] }, options: {
                     responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 8 } } } },
+                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 8 } } } },
                     scales: {
                         x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 8 }, grid: { display: false } },
                         y: { ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } }
@@ -6420,7 +6417,9 @@
                         : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
                     document.getElementById('wiim-vol').value = wiimPlayerState.vol;
                     document.getElementById('wiim-volval').textContent = wiimPlayerState.vol;
-                    document.getElementById('wiim-play-btn').textContent = wiimPlayerState.status === 'play' ? '⏸' : '▶';
+                    document.getElementById('wiim-play-btn').innerHTML = wiimPlayerState.status === 'play'
+                        ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>'
+                        : '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
                     document.getElementById('wiim-play-btn').classList.toggle('play-pulsing', wiimPlayerState.status === 'play');
                     // 總覽 WiiM 卡：播放狀態/音量
                     const setOv = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -6458,7 +6457,7 @@
                         bgEl.style.backgroundImage = `url('${artUrl}')`;
                     } else {
                         artEl.style.backgroundImage = 'none';
-                        artEl.textContent = '♪';
+                        artEl.innerHTML = '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
                         bgEl.style.backgroundImage = 'none';
                     }
                 }
@@ -7000,7 +6999,7 @@
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
-                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } } },
+                    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 9 } } } },
                     scales: {
                         x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } },
                         yTemp: { position: 'left', ticks: { color: '#3b82f6', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } },
@@ -7081,7 +7080,7 @@
         }
 
         function initUpsCharts() {
-            const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } } } };
+            const base = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 9 } } } } };
             const x = { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } };
             upsVoltChart = new Chart(document.getElementById('upsVoltChart'), {
                 type: 'line', data: {
@@ -7337,7 +7336,7 @@
                             { label: '溫度 °C', data: [], borderColor: '#f59e0b', borderWidth: 1.5, pointRadius: 0, tension: .3 },
                             { label: '記憶體 %', data: [], borderColor: '#8b5cf6', borderWidth: 1.5, pointRadius: 0, tension: .3 }
                         ] },
-                        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } } } }, scales: { x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } }, y: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } } } }
+                        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 10 } } } }, scales: { x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } }, y: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } } } }
                     });
                 }
                 lnxChart.data.labels = pts.map(fmt);

@@ -507,7 +507,7 @@ const APP_DEFAULTS = {
     watcherSec: 20,         // 通知監看器間隔
     toastSec: 10,           // 右下角通知泡泡顯示秒數
     autoDefenseSec: 30,     // 自動防禦掃描間隔
-    reportEnabled: false,   // 定期報表
+    reportEnabled: true,    // 定期報表 (預設開啟；實際發送仍需通知頁啟用推播+設定管道)
     reportFreq: 'daily',    // daily | weekly
     reportHour: 8,          // 每日幾點發送 (0-23)
     reportHour2: 20,        // 「每日兩次」的第二次發送時間 (0-23)
