@@ -3545,6 +3545,18 @@
                         </div>
                     </div>
 
+                    <!-- PowerPanel Business 原生事件日誌 -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md" id="ppb-events-card">
+                        <div class="flex justify-between items-center mb-1">
+                            <h3 class="text-sm font-bold text-white tracking-wider">📋 UPS 原生事件日誌 (PowerPanel Business)</h3>
+                            <span class="text-[9px] text-slate-500" id="ppb-events-count"></span>
+                        </div>
+                        <p class="text-[9px] text-slate-500 mb-3">直接來自 UPS 自己記錄的事件（斷電/復電/電池自檢/通訊中斷），比本站的斷電事件表更完整</p>
+                        <div class="space-y-1.5 max-h-[320px] overflow-y-auto terminal-scroll" id="ppb-events-list">
+                            <p class="text-xs text-slate-500 text-center py-4">讀取中...</p>
+                        </div>
+                    </div>
+
                     <!-- 接入指南 (未接上時顯示) -->
                     <div class="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-6" id="ups-setup-guide">
                         <h3 class="text-sm font-bold text-blue-300 tracking-wider mb-3">🔌 如何接上真實 CyberPower UPS？(NUT
@@ -3814,7 +3826,7 @@
         let nasSystemChart = null, nasTrafficChart = null, nasStorageChart = null, nasTempChart = null;
         let nasDiskMeta = {};
         let nasHeroChart = null, nasHeroTempData = Array(12).fill(0), nasHeroUsageData = Array(12).fill(0);
-        let upsHeroChart = null, upsHeroBattData = Array(12).fill(0), upsHeroVoltData = Array(12).fill(0);
+        let upsHeroChart = null, upsHeroBattData = Array(12).fill(0), upsHeroVoltData = Array(12).fill(0), upsHeroLabels = Array(12).fill('');
         function initNasHeroChart() {
             const c = document.getElementById('nasHeroChart'); if (!c) return;
             nasHeroChart = new Chart(c, {
@@ -3835,16 +3847,25 @@
         function initUpsHeroChart() {
             const c = document.getElementById('upsHeroChart'); if (!c) return;
             upsHeroChart = new Chart(c, {
-                type: 'line', data: { labels: Array(12).fill(''), datasets: [
-                    { label: '電池 %', data: upsHeroBattData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, yAxisID: 'yBatt', tension: 0.3, pointRadius: 0 },
-                    { label: '輸出電壓', data: upsHeroVoltData, borderColor: '#f59e0b', borderDash: [3, 3], fill: false, yAxisID: 'yVolt', tension: 0.3, pointRadius: 0 }
+                type: 'line', data: { labels: upsHeroLabels, datasets: [
+                    { label: '電池電量 (%)', data: upsHeroBattData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.05)', fill: true, yAxisID: 'yBatt', tension: 0.3, pointRadius: 0 },
+                    { label: '輸出電壓 (V)', data: upsHeroVoltData, borderColor: '#f59e0b', borderDash: [3, 3], fill: false, yAxisID: 'yVolt', tension: 0.3, pointRadius: 0 }
                 ] },
                 options: {
-                    responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, labels: { color: '#94a3b8', boxWidth: 10, font: { size: 9 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}${ctx.dataset.yAxisID === 'yBatt' ? '%' : 'V'}`
+                            }
+                        }
+                    },
                     scales: {
                         x: { display: false },
-                        yBatt: { position: 'left', min: 0, max: 100, ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
-                        yVolt: { position: 'right', ticks: { display: false }, grid: { display: false } }
+                        yBatt: { position: 'left', min: 0, max: 100, ticks: { color: '#3b82f6', font: { size: 8 }, callback: v => v + '%' }, grid: { color: 'rgba(30,41,59,0.4)' } },
+                        yVolt: { position: 'right', ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + 'V' }, grid: { display: false } }
                     }
                 }
             });
@@ -3912,6 +3933,7 @@
             initUpsHeroChart();
             fetchUcgHist();
             fetchUcgSpikes();
+            fetchPpbEvents();
             initWorldMap();
             fetchSecuritySettings();
             fetchHardware();
@@ -3969,6 +3991,7 @@
             wiimSystem: { fn: () => fetchWiimSystem(), def: 10, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
             wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
             ups: { fn: () => fetchUps(), def: 15, label: 'UPS 電源狀態', desc: '多久刷新一次 UPS 即時電壓/電池/負載與電壓歷史圖、斷電事件表。後端取樣寫檔頻率另由「伺服器端」的 UPS 取樣間隔控制。' },
+            ppbEvents: { fn: () => fetchPpbEvents(), def: 60, label: 'UPS 原生事件日誌 (PPB)', desc: '多久重新讀取一次 PowerPanel Business 記錄的原生事件日誌。' },
             heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '心跳 (維持後端高頻取樣)', desc: '⭐ 關鍵橋樑：多久送一次心跳告訴後端「有人正在看」。只要心跳持續，後端就用「有人瀏覽」的高頻率取樣歷史；分頁關閉或切背景就停止，後端隨即降為閒置頻率。' }
         };
         let pollTimers = {};
@@ -6757,6 +6780,7 @@
                         document.getElementById('ups-hero-src').textContent = s.source.toUpperCase();
                         upsHeroBattData.shift(); upsHeroBattData.push(s.battery || 0);
                         upsHeroVoltData.shift(); upsHeroVoltData.push(s.outputV || 0);
+                        upsHeroLabels.shift(); upsHeroLabels.push(new Date().toLocaleTimeString());
                         if (upsHeroChart) upsHeroChart.update('none');
                     }
                 }
@@ -6808,6 +6832,26 @@
             fetchUps();
         }
         function downloadUpsCsv() { window.location.href = '/api/ups/csv'; }
+
+        async function fetchPpbEvents() {
+            const card = document.getElementById('ppb-events-card'), list = document.getElementById('ppb-events-list');
+            if (!list) return;
+            try {
+                const r = await (await fetch('/api/ups/ppb-events')).json();
+                if (r.error) { card.classList.add('hidden'); return; } // 沒設定 PPB 帳密時直接隱藏整卡，不留錯誤訊息干擾
+                card.classList.remove('hidden');
+                const events = r.events || [];
+                document.getElementById('ppb-events-count').textContent = events.length ? `共 ${events.length} 筆` : '';
+                const cls = { error: 'text-red-400 border-red-500/20 bg-red-500/5', ok: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5', test: 'text-blue-400 border-blue-500/20 bg-blue-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
+                const icon = { error: '🚨', ok: '✅', test: '🔧', info: 'ℹ️' };
+                list.innerHTML = events.length ? events.map(e => `
+                    <div class="flex items-center gap-3 p-2 rounded-lg border text-[11px] ${cls[e.level] || cls.info}">
+                        <span class="shrink-0">${icon[e.level] || icon.info}</span>
+                        <span class="flex-grow text-slate-300">${e.desc}</span>
+                        <span class="text-slate-500 mono shrink-0">${e.ts}</span>
+                    </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
+            } catch (e) { list.innerHTML = '<p class="text-xs text-red-400 text-center py-4">讀取失敗</p>'; }
+        }
 
         function setWiimChartWin(minutes, btn) {
             const btns = document.querySelectorAll('.wiim-win-btn');

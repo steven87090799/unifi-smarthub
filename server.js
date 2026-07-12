@@ -2201,6 +2201,31 @@ async function readPpb() {
     } catch { return null; }
 }
 
+// 通用 PowerPanel Business API GET (自動登入/token 失效重試一次)
+async function ppbGet(path) {
+    if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) throw new Error('ppb_not_configured');
+    const port = await ppbDiscoverPort();
+    if (!port) throw new Error('PowerPanel Business 服務未偵測到 (port 3052)');
+    if (!ppbToken) await ppbLogin();
+    const opts = { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true };
+    let resp = await axios.get(`https://127.0.0.1:${port}${path}`, opts);
+    if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://127.0.0.1:${port}${path}`, { ...opts, headers: { Authorization: ppbToken } }); }
+    if (resp.status !== 200) throw new Error(`PPB API ${resp.status}`);
+    return resp.data;
+}
+app.get('/api/ups/ppb-events', async (req, res) => {
+    try {
+        const raw = await ppbGet('/local/rest/v1/eventlogs/report');
+        const events = (Array.isArray(raw) ? raw : []).map(e => ({
+            id: e.id, ts: e.logTime24H, desc: e.description,
+            level: /failure|lost|fault/i.test(e.description) ? 'error' : /test/i.test(e.description) ? 'test' : /resumed|restored/i.test(e.description) ? 'ok' : 'info'
+        }));
+        res.json({ events, source: 'ppb' });
+    } catch (error) {
+        res.status(500).json({ events: [], error: error.message });
+    }
+});
+
 // --- 來源 3: pmset (macOS 原生，資訊有限) ---
 async function readPmset() {
     const out = await execCmd('pmset -g ps 2>/dev/null');
