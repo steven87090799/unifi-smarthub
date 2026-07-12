@@ -2336,5 +2336,82 @@ app.get('/api/ups/csv', (req, res) => {
 // 健康檢查端點 (供 Docker healthcheck / 反向代理使用)
 app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
 
+/* ===================== 啟動連線自我診斷 =====================
+   開機時逐一測試每個設備連線並輸出 ✅/❌ + 具體原因與修復提示，
+   專為 Docker/NAS 部署除錯設計 (docker logs 直接看得到哪台設備為什麼連不上)。 */
+const IS_DOCKER = fs.existsSync('/.dockerenv') || process.env.DOCKER === '1';
+function connHint(err, host) {
+    const msg = (err && err.message) || String(err);
+    if (/ECONNREFUSED/i.test(msg)) return `連線被拒 (${host})：主機有回應但該埠無服務 — 檢查埠號與目標服務是否啟動。原始錯誤: ${msg}`;
+    if (/EHOSTUNREACH|ENETUNREACH/i.test(msg)) return `無法到達主機 (${host})：IP/網段錯誤，或容器網路不可達內網 (檢查 docker network / VLAN)。原始錯誤: ${msg}`;
+    if (/ENOTFOUND|EAI_AGAIN/i.test(msg)) return `DNS 解析失敗 (${host})：主機名稱錯誤或容器 DNS 未設定。原始錯誤: ${msg}`;
+    if (/ETIMEDOUT|timed? ?out/i.test(msg)) return `連線逾時 (${host})：IP 錯誤、防火牆阻擋、或跨 VLAN 不通。原始錯誤: ${msg}`;
+    if (/authentication|401|403|password|login/i.test(msg)) return `認證失敗 (${host})：帳號或密碼錯誤。原始錯誤: ${msg}`;
+    if (/certificate|self.?signed/i.test(msg)) return `憑證問題 (${host})：${msg}`;
+    return `${msg} (${host})`;
+}
+function warnIfLocalhost(name, host) {
+    if (IS_DOCKER && /^(127\.|localhost$)/.test(host || ''))
+        sysLog('Diag', `⚠️ ${name}=${host}：容器內的 localhost/127.0.0.1 是容器自己，連不到宿主機或其他設備 — 請改成實際 IP`, true);
+}
+async function startupDiagnostics() {
+    sysLog('Diag', `━━ 啟動連線診斷開始 (${IS_DOCKER ? '🐳 Docker 容器' : '💻 主機'} 環境, TZ=${process.env.TZ || '(未設定，UTC)'}) ━━`);
+    if (IS_DOCKER && !process.env.TZ) sysLog('Diag', '⚠️ 未設定 TZ 環境變數：報表排程與日誌時間將是 UTC (差 8 小時)，請在 compose 加 TZ=Asia/Taipei', true);
+
+    // 1. UCG SSH
+    if (!isPlaceholder(process.env.SSH_PASSWORD) && process.env.UCG_IP) {
+        try { const hw = await getHardwareCached(); sysLog('Diag', `✅ UCG SSH (${process.env.UCG_IP}:${process.env.SSH_PORT || 22})：CPU ${hw.cpuTemp}°C，正常`); }
+        catch (e) { sysLog('Diag', `❌ UCG SSH：${connHint(new Error((e && e.body && (e.body.details || e.body.error)) || (e && e.message) || String(e)), process.env.UCG_IP)}`, true); }
+    } else sysLog('Diag', '⏭️ UCG SSH：未設定 (SSH_PASSWORD/UCG_IP)，略過');
+
+    // 2. UniFi 本地控制器
+    if (!isPlaceholder(process.env.UNIFI_USERNAME) && !isPlaceholder(process.env.UNIFI_PASSWORD)) {
+        warnIfLocalhost('UNIFI_CONTROLLER_URL', (process.env.UNIFI_CONTROLLER_URL || '').replace(/^https?:\/\//, '').split(/[:/]/)[0]);
+        try { await getLocalSession(); sysLog('Diag', `✅ UniFi 控制器 (${process.env.UNIFI_CONTROLLER_URL})：登入成功`); }
+        catch (e) { sysLog('Diag', `❌ UniFi 控制器：${connHint(e, process.env.UNIFI_CONTROLLER_URL)}`, true); }
+    } else sysLog('Diag', '⏭️ UniFi 控制器：未設定帳密，略過');
+
+    // 3. Site Manager 雲端
+    if (process.env.UNIFI_API_KEY && !process.env.UNIFI_API_KEY.includes('your_unifi')) {
+        try { await unifiCloudClient.get('/hosts'); sysLog('Diag', '✅ Site Manager 雲端 API：正常'); }
+        catch (e) { sysLog('Diag', `❌ Site Manager 雲端：${e.response ? `HTTP ${e.response.status} (${e.response.status === 401 ? 'API Key 無效' : e.response.status === 429 ? '被限流' : '見狀態碼'})` : connHint(e, 'api.ui.com')}`, true); }
+    } else sysLog('Diag', '⏭️ Site Manager：未設定 UNIFI_API_KEY，略過');
+
+    // 4. UGREEN NAS
+    if (nasConfigured()) {
+        warnIfLocalhost('NAS_HOST', process.env.NAS_HOST);
+        try { await getNasToken(); sysLog('Diag', `✅ UGREEN NAS (${NAS_BASE})：登入成功`); }
+        catch (e) { sysLog('Diag', `❌ UGREEN NAS：${connHint(e, process.env.NAS_HOST)}${/1004|1008/.test(e.message || '') ? '' : '。若是密碼正確仍失敗，確認 NAS_SCHEME/NAS_PORT (預設 https:9443)'}`, true); }
+    } else sysLog('Diag', '⏭️ UGREEN NAS：未設定，略過');
+
+    // 5. NAS Monitor (系統 B)
+    if (nasMonConfigured()) {
+        warnIfLocalhost('NAS_MONITOR_URL', (NASMON_URL || '').replace(/^https?:\/\//, '').split(/[:/]/)[0]);
+        try { await nasMonGet('/api/downtime', { days: 1 }); sysLog('Diag', `✅ NAS Monitor (${NASMON_URL})：正常`); }
+        catch (e) { sysLog('Diag', `❌ NAS Monitor：${e.response ? `HTTP ${e.response.status}${e.response.status === 401 ? ' (API Key 錯誤)' : ''}` : connHint(e, NASMON_URL)}`, true); }
+    } else sysLog('Diag', '⏭️ NAS Monitor：未設定，略過');
+
+    // 6. WiiM
+    warnIfLocalhost('WIIM_IP', wiimIP);
+    const wiimOk = await wiimGet('getStatusEx');
+    if (wiimOk) sysLog('Diag', `✅ WiiM Amp (${wiimIP})：正常`);
+    else sysLog('Diag', `❌ WiiM Amp (${wiimIP})：HTTPS/HTTP 皆無回應 — 檢查 IP 是否正確、裝置是否開機、容器可否達該網段 (新韌體須帶 User-Agent，已內建)`, true);
+
+    // 7. UPS
+    warnIfLocalhost('NUT_HOST', NUT_HOST());
+    warnIfLocalhost('PPB_HOST', PPB_HOST());
+    const ups = await readUpsLive();
+    if (ups) sysLog('Diag', `✅ UPS：來源 ${ups.actualSource.toUpperCase()}，${ups.status}，電池 ${ups.battery ?? '--'}%`);
+    else {
+        sysLog('Diag', `❌ UPS：${upsLastReason}`, true);
+        if (IS_DOCKER) sysLog('Diag', '   Docker 環境 UPS 檢查清單：(1) UPS_SOURCE=nut + NUT_HOST=<跑 NUT server 的主機 IP>，容器已內建 upsc；(2) 或 PPB_HOST=<跑 PowerPanel Business 的機器 IP>+PPB_USER/PPB_PASSWORD；(3) pwrstat/pmset 在容器內不可用', true);
+    }
+    sysLog('Diag', '━━ 啟動連線診斷完成 ━━');
+}
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Production Server listening on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Production Server listening on port ${PORT}`);
+    // 延遲數秒再診斷，避開啟動瞬間的排程尖峰
+    setTimeout(() => startupDiagnostics().catch(e => sysLog('Diag', `診斷流程異常: ${e.message}`, true)), 3000);
+});
