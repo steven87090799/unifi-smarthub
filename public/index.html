@@ -2086,9 +2086,19 @@
                                 <div class="space-y-1" id="adg-top-clients"><p class="text-xs text-slate-500">載入中...</p></div>
                             </div>
                         </div>
-                        <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">即時查詢日誌 (最近 30 筆)</h4>
-                        <div class="space-y-1 max-h-[300px] overflow-y-auto terminal-scroll" id="adg-querylog">
-                            <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5" data-drag data-drag-key="adg-logs">
+                            <div>
+                                <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">即時查詢日誌 (最近 100 筆)</h4>
+                                <div class="space-y-1 max-h-[420px] overflow-y-auto terminal-scroll" id="adg-querylog">
+                                    <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                                </div>
+                            </div>
+                            <div>
+                                <h4 class="text-[10px] font-bold text-red-400/80 uppercase tracking-wider mb-2">攔截記錄 (最近 100 筆封鎖)</h4>
+                                <div class="space-y-1 max-h-[420px] overflow-y-auto terminal-scroll" id="adg-blockedlog">
+                                    <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -7131,17 +7141,23 @@
                 document.getElementById('adg-top-clients').innerHTML = tc.slice(0, 10).map(o => { const [k, v] = Object.entries(o)[0]; return bar(0, maxC, aliasName(k), v, 'bg-blue-500'); }).join('') || '<p class="text-xs text-slate-500">無資料</p>';
             } catch (e) { dbg('AdGuard', '讀取失敗', e); }
         }
-        async function fetchAdgLog() {
-            try {
-                const d = await (await fetch('/api/adguard/querylog?limit=30')).json();
-                if (d.source !== 'adguard') return;
-                document.getElementById('adg-querylog').innerHTML = (d.entries || []).map(e => `
+        function renderAdgLogRows(entries) {
+            return (entries || []).map(e => `
                     <div class="flex items-center gap-3 p-1.5 rounded-lg text-[10px] ${e.blocked ? 'bg-red-500/5 border border-red-500/15' : 'bg-slate-950/30'}">
                         <span class="mono text-slate-500 shrink-0">${new Date(e.time).toLocaleTimeString('zh-TW', { hour12: false })}</span>
                         <span class="shrink-0 font-bold ${e.blocked ? 'text-red-400' : 'text-emerald-500'}">${e.blocked ? '攔截' : '放行'}</span>
                         <span class="flex-grow truncate mono text-slate-300" title="${e.domain}">${e.domain}</span>
                         <span class="mono text-slate-600 shrink-0">${e.client}</span>
                     </div>`).join('') || '<p class="text-xs text-slate-500 text-center py-4">無資料</p>';
+        }
+        async function fetchAdgLog() {
+            try {
+                const [all, blocked] = await Promise.all([
+                    (await fetch('/api/adguard/querylog?limit=100')).json(),
+                    (await fetch('/api/adguard/querylog?limit=100&filtered=1')).json()
+                ]);
+                if (all.source === 'adguard') document.getElementById('adg-querylog').innerHTML = renderAdgLogRows(all.entries);
+                if (blocked.source === 'adguard') document.getElementById('adg-blockedlog').innerHTML = renderAdgLogRows((blocked.entries || []).map(e => ({ ...e, blocked: true })));
             } catch { }
         }
         async function toggleAdgProtection() {
