@@ -5,7 +5,6 @@ delete process.env.http_proxy;
 delete process.env.https_proxy;
 
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
 const { Client } = require('ssh2');
 const path = require('path');
@@ -25,8 +24,19 @@ function sysLog(module, message, isError = false) {
 }
 
 const app = express();
-app.use(cors());
+// 前端與後端同源 (由本伺服器託管)，不需要 CORS；移除全開 cors() 以避免跨站請求濫用
 app.use(express.json());
+
+// 可選的整站 Basic Auth：設定 PANEL_PASSWORD 環境變數即啟用 (帳號任意)。/healthz 不擋，供容器健康檢查
+app.use((req, res, next) => {
+    const pw = process.env.PANEL_PASSWORD;
+    if (!pw || req.path === '/healthz') return next();
+    const hdr = req.headers.authorization || '';
+    const decoded = hdr.startsWith('Basic ') ? Buffer.from(hdr.slice(6), 'base64').toString('utf8') : '';
+    if (decoded.split(':').slice(1).join(':') === pw) return next();
+    res.set('WWW-Authenticate', 'Basic realm="SmartHub"');
+    res.status(401).send('Authentication required');
+});
 
 // Debug 中介層：記錄所有 API 請求 (設 DEBUG_HTTP=0 可關閉)
 app.use((req, res, next) => {
@@ -64,7 +74,8 @@ const isPlaceholder = v => !v || /your_/i.test(v);
 // list/alarm 的 IPS 紀錄 key 依韌體版本不同 (ips:alert / EVT_IPS_IpsAlert)，統一用 isIpsAlarm 判斷
 const isIpsAlarm = a => a && (a.key === 'ips:alert' || /^EVT_IPS/i.test(a.key || '') || /^IPS Alert/i.test(a.msg || ''));
 
-// 本地 API 登入 Session 管理
+// 本地 API 登入 Session 管理 (併發去重：Cookie 過期瞬間多請求同時進來只登入一次)
+let unifiLoginInflight = null;
 async function getLocalSession() {
     if (isPlaceholder(process.env.UNIFI_USERNAME) || isPlaceholder(process.env.UNIFI_PASSWORD)) {
         throw new Error('unifi_not_configured (UNIFI_USERNAME/PASSWORD 尚未填寫，略過連線)');
@@ -74,7 +85,12 @@ async function getLocalSession() {
         sysLog('UniFi Auth', '使用快取的本地控制器 Session Cookie。');
         return localCookie;
     }
-
+    if (unifiLoginInflight) return unifiLoginInflight;
+    unifiLoginInflight = doUnifiLogin().finally(() => { unifiLoginInflight = null; });
+    return unifiLoginInflight;
+}
+async function doUnifiLogin() {
+    const now = Date.now();
     try {
         sysLog('UniFi Auth', '發起全新的本地控制器登入請求...');
         const response = await unifiClient.post('/api/auth/login', {
@@ -148,11 +164,12 @@ function parseIpLinks(txt) {
     return m;
 }
 
-app.get('/api/hardware', (req, res) => {
-    // 帳密未填時不發起 SSH：反覆的 SSH 連線嘗試會被 UniFi IPS 判定為 SSH 掃描 (ET SCAN 2003068)
-    if (isPlaceholder(process.env.SSH_PASSWORD) || !process.env.UCG_IP) {
-        return res.status(503).json({ error: 'ssh_not_configured', hint: '請在 .env 填寫 SSH_PASSWORD 後重啟' });
-    }
+// SSH 遙測含 sleep 1 且每次開新連線，加上 5 秒快取 + in-flight 去重：
+// 前端輪詢與 notificationWatcher 同時打進來時只開一條 SSH，其餘共用同一結果
+let hwCache = null;      // { ts, data }
+let hwInflight = null;
+function fetchHardwareSSH() {
+    return new Promise((resolve, reject) => {
     sysLog('Hardware', `發起 SSH 連線至 UCG-Ultra (${process.env.UCG_IP}:${process.env.SSH_PORT || 22})...`);
     const conn = new Client();
     conn.on('ready', () => {
@@ -161,7 +178,7 @@ app.get('/api/hardware', (req, res) => {
             if (err) {
                 sysLog('Hardware', `SSH 指令執行失敗: ${err.message}`, true);
                 conn.end();
-                return res.status(500).json({ error: 'SSH Command Execution Failed' });
+                return reject({ status: 500, body: { error: 'SSH Command Execution Failed' } });
             }
             let output = '';
             stream.on('data', (chunk) => { output += chunk; })
@@ -233,25 +250,28 @@ app.get('/api/hardware', (req, res) => {
                             };
                         });
 
-                    res.json({
+                    const data = {
                         cpuTemp, cpuUsage, cores, memUsagePct,
                         memStr: `${(memUsed / 1024).toFixed(2)} GB / ${(memTotal / 1024).toFixed(2)} GB`,
                         emmcUsagePct, emmcStr, uptime, interfaces,
                         dataSource: 'real'
-                    });
+                    };
+                    resolve(data);
                     sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct });
                 } catch (e) {
-                    res.status(500).json({ error: 'Hardware Output Parse Failed: ' + e.message });
+                    reject({ status: 500, body: { error: 'Hardware Output Parse Failed: ' + e.message } });
                 }
             });
         });
     }).on('error', (err) => {
         const authFail = /authentication methods failed/i.test(err.message || '');
-        res.status(500).json({
-            error: 'SSH Connection Failed',
-            details: authFail
-                ? 'SSH 密碼被 UCG 拒絕。注意：SSH 密碼是獨立的，不是 UniFi 登入密碼 — 請到 UniFi 主控台 → Console Settings → Advanced → SSH，在那裡「設定 SSH 專用密碼」後填入本頁'
-                : err.message
+        reject({
+            status: 500, body: {
+                error: 'SSH Connection Failed',
+                details: authFail
+                    ? 'SSH 密碼被 UCG 拒絕。注意：SSH 密碼是獨立的，不是 UniFi 登入密碼 — 請到 UniFi 主控台 → Console Settings → Advanced → SSH，在那裡「設定 SSH 專用密碼」後填入本頁'
+                    : err.message
+            }
         });
     }).on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
         // UniFi OS 的 sshd 只開放 keyboard-interactive，不接受純 password 認證
@@ -263,6 +283,28 @@ app.get('/api/hardware', (req, res) => {
         password: process.env.SSH_PASSWORD,
         tryKeyboard: true
     });
+    });
+}
+
+// 行程內共用入口 (route / notificationWatcher / buildReport 皆走這裡，不再自打 HTTP)
+async function getHardwareCached() {
+    if (hwCache && Date.now() - hwCache.ts < 5000) return hwCache.data;
+    if (!hwInflight) hwInflight = fetchHardwareSSH().finally(() => { hwInflight = null; });
+    const data = await hwInflight;
+    hwCache = { ts: Date.now(), data };
+    return data;
+}
+
+app.get('/api/hardware', async (req, res) => {
+    // 帳密未填時不發起 SSH：反覆的 SSH 連線嘗試會被 UniFi IPS 判定為 SSH 掃描 (ET SCAN 2003068)
+    if (isPlaceholder(process.env.SSH_PASSWORD) || !process.env.UCG_IP) {
+        return res.status(503).json({ error: 'ssh_not_configured', hint: '請在 .env 填寫 SSH_PASSWORD 後重啟' });
+    }
+    try {
+        res.json(await getHardwareCached());
+    } catch (e) {
+        res.status((e && e.status) || 500).json((e && e.body) || { error: String((e && e.message) || e) });
+    }
 });
 
 // 2. 獲取活躍客戶端
@@ -404,6 +446,42 @@ const fs = require('fs');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { }
 
+/* ===================== 歷史資料節流落盤 =====================
+   歷史陣列 (trend/ucg/nas/ups) 平時只更新記憶體、標記 dirty，最多每 5 分鐘寫檔一次；
+   先前每筆取樣都同步重寫整份大 JSON (UPS 20000 筆 ≈ 2MB / 30秒)，會卡 event loop
+   並對 NAS 硬碟造成持續寫入 (SSD 磨損、HDD 無法休眠)。
+   SIGTERM/SIGINT 時強制全部落盤；最壞情況 (直接斷電) 損失 ≤5 分鐘記憶體資料。 */
+const _flushables = [];
+function registerFlushable(file, getData) {
+    const f = { file, getData, dirty: false, lastWrite: 0 };
+    _flushables.push(f);
+    return {
+        markDirty(force = false) {
+            f.dirty = true;
+            if (force || Date.now() - f.lastWrite >= 5 * 60 * 1000) flushOne(f);
+        }
+    };
+}
+function flushOne(f) {
+    if (!f.dirty) return;
+    try {
+        fs.writeFileSync(f.file, JSON.stringify(f.getData()));
+        f.dirty = false; f.lastWrite = Date.now();
+    } catch (e) { sysLog('Persist', `${path.basename(f.file)} 寫入失敗: ${e.message}`, true); }
+}
+function flushAllHistories() { _flushables.forEach(flushOne); }
+// 保底：每分鐘掃一次，dirty 超過 5 分鐘未寫就落盤 (取樣器停擺時資料不會一直懸在記憶體)
+setInterval(() => _flushables.forEach(f => { if (f.dirty && Date.now() - f.lastWrite >= 5 * 60 * 1000) flushOne(f); }), 60 * 1000);
+process.on('SIGTERM', () => { sysLog('Persist', '收到 SIGTERM，強制落盤所有歷史資料'); flushAllHistories(); process.exit(0); });
+process.on('SIGINT', () => { flushAllHistories(); process.exit(0); });
+
+// 歷史查詢通用：資料按時間遞增，從尾端往前掃到 cutoff 即停，避免整個陣列逐筆 new Date()
+function sliceSince(arr, cutoffMs, getT = p => p.t) {
+    let i = arr.length;
+    while (i > 0 && new Date(getT(arr[i - 1])).getTime() >= cutoffMs) i--;
+    return arr.slice(i);
+}
+
 /* ===================== 應用程式設定 (可於「設定」頁調整所有伺服器端輪詢間隔) ===================== */
 const APP_SETTINGS_FILE = path.join(DATA_DIR, 'app-settings.json');
 const APP_DEFAULTS = {
@@ -527,95 +605,6 @@ app.get('/api/speedtest/status', async (req, res) => {
     }
 });
 
-// 生產環境備用雲端數據回退快取 (當未配置 API Key 或連線失敗時使用)
-const mockSitesFallback = [
-    {
-        siteId: "default-site-id",
-        hostId: "default-host-id",
-        meta: {
-            desc: "Taipei HQ Office",
-            gatewayMac: "70:a7:41:97:83:ed",
-            name: "default",
-            timezone: "Asia/Taipei"
-        },
-        statistics: {
-            counts: {
-                totalDevice: 6,
-                offlineDevice: 0,
-                wiredClient: 28,
-                wifiClient: 45
-            },
-            ispInfo: {
-                name: "Chunghwa Telecom (中華電信)",
-                organization: "Data Communication Business Group"
-            },
-            percentages: {
-                wanUptime: 99.98
-            }
-        },
-        permission: "admin",
-        isOwner: true
-    }
-];
-
-const mockDevicesFallback = [
-    {
-        id: "F4E2C6C23F13",
-        mac: "F4E2C6C23F13",
-        name: "HQ-Gateway-UCG",
-        model: "UCG-Ultra",
-        shortname: "UCGULTRA",
-        ip: "192.168.1.1",
-        status: "online",
-        version: "4.1.13",
-        productLine: "network"
-    },
-    {
-        id: "F4E2C6C23F14",
-        mac: "F4E2C6C23F14",
-        name: "Core-Switch-USW-24",
-        model: "USW-24-PoE",
-        shortname: "USW24POE",
-        ip: "192.168.1.2",
-        status: "online",
-        version: "7.0.50",
-        productLine: "network"
-    }
-];
-
-const mockIspMetricsFallback = {
-    latency: 12.4,
-    packetLoss: 0.00,
-    downloadSpeedMbps: 294.5,
-    uploadSpeedMbps: 98.2,
-    ispName: "Chunghwa Telecom (中華電信)",
-    ipAddress: "220.130.137.169"
-};
-const mockHostsFallback = [
-    {
-        id: "default-host-id",
-        hardwareId: "e5bf13cd-98a7-5a96-9463-0d65d78cd3a4",
-        type: "ucore",
-        ipAddress: "220.130.137.169",
-        owner: true,
-        isBlocked: false,
-        registrationTime: "2024-04-16T02:52:54.193Z",
-        reportedState: {
-            name: "HQ-Gateway-UCG",
-            version: "4.1.13",
-            state: "connected"
-        }
-    }
-];
-
-const mockSdwanFallback = [
-    {
-        id: "9304163b-680d-4de8-a7a0-7617e328911d",
-        name: "Taipei-to-Hsinchu VPN",
-        type: "sdwan-hbsp"
-    }
-];
-
 // 9. 獲取雲端站點清單 (對接 UniFi 官方 Site Manager v1.0)
 app.get('/api/cloud/sites', async (req, res) => {
     try {
@@ -704,10 +693,15 @@ app.get('/api/cloud/sdwan', async (req, res) => {
 // 自動防禦 (預設關閉)：偵測到內網設備遭 Malware/Trojan/Botnet/C2 感染事件時，自動 block-sta 斷網隔離。
 // 僅隔離「內網受感染設備」(規格 §4.2)，不會改動主控台 IDS/IPS 偵測設定。
 const SEC_FILE = path.join(DATA_DIR, 'security-settings.json');
+// 記憶體快取：啟動時讀一次，之後讀取零 I/O，寫入時同步更新
+let secSettingsCache = null;
 function loadSecSettings() {
-    try { return { autoDefense: false, ...JSON.parse(fs.readFileSync(SEC_FILE, 'utf8')) }; } catch { return { autoDefense: false }; }
+    if (secSettingsCache) return secSettingsCache;
+    try { secSettingsCache = { autoDefense: false, ...JSON.parse(fs.readFileSync(SEC_FILE, 'utf8')) }; } catch { secSettingsCache = { autoDefense: false }; }
+    return secSettingsCache;
 }
 function saveSecSettings(s) {
+    secSettingsCache = s;
     try { fs.writeFileSync(SEC_FILE, JSON.stringify(s, null, 2)); } catch { }
 }
 
@@ -759,16 +753,32 @@ async function autoDefenseSweep() {
         sysLog('AutoDefense', `防禦掃描出錯: ${err.message}，下輪重試。`, true);
     }
 }
-setInterval(autoDefenseSweep, 30 * 1000);
+// 掃描排程統一由 scheduleServerJobs() 管理 (間隔可於設定頁調整)；先前這裡多排了一個固定 30s 的
+// setInterval 導致每輪實際掃描兩遍，已移除。
+
+// 去重 Set 通用上限：超過 max 時保留最新一半，避免長期運行無限成長
+function capSet(set, max = 2000) {
+    if (set.size <= max) return;
+    const keep = [...set].slice(-Math.floor(max / 2));
+    set.clear();
+    keep.forEach(x => set.add(x));
+}
 
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
 const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true, triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false };
+// 記憶體快取：watcher 每輪呼叫多次，不需要每次讀檔
+let notifSettingsCache = null;
 function loadNotifSettings() {
-    try { return { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { return { ...NOTIF_DEFAULTS }; }
+    if (notifSettingsCache) return notifSettingsCache;
+    try { notifSettingsCache = { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { notifSettingsCache = { ...NOTIF_DEFAULTS }; }
+    return notifSettingsCache;
 }
-function saveNotifSettings(s) { try { fs.writeFileSync(NOTIF_FILE, JSON.stringify(s, null, 2)); } catch { } }
+function saveNotifSettings(s) {
+    notifSettingsCache = s;
+    try { fs.writeFileSync(NOTIF_FILE, JSON.stringify(s, null, 2)); } catch { }
+}
 
 let notifLog = [];
 function pushNotifLog(e) { notifLog.unshift(e); notifLog = notifLog.slice(0, 50); }
@@ -977,16 +987,12 @@ async function notificationWatcher() {
                 const emoji = { critical: '🚨', error: '❌', warning: '⚠️' }[l.level] || '📋';
                 await notify(`${emoji} NAS 日誌 [${l.level}]`, `[${l.module}] ${l.content}`);
             }
-            if (notifiedNasLogIds.size > 2000) { // 防無限成長
-                const keep = [...notifiedNasLogIds].slice(-1000);
-                notifiedNasLogIds.clear(); keep.forEach(x => notifiedNasLogIds.add(x));
-            }
         } catch { }
     }
     // UCG CPU 溫度 / WAN 斷線 (透過本機 /api/hardware，僅在開啟時才發起 SSH)
     if ((s.triggerUcgTemp || s.triggerWanDown) && !isPlaceholder(process.env.SSH_PASSWORD)) {
         try {
-            const hw = (await axios.get(`http://127.0.0.1:${process.env.PORT || 3000}/api/hardware`, { timeout: 15000 })).data;
+            const hw = await getHardwareCached();
             if (s.triggerUcgTemp && hw.cpuTemp != null && hw.cpuTemp >= (s.ucgTempAlert ?? 75)
                 && Date.now() - lastUcgTempTs > 30 * 60 * 1000) {
                 lastUcgTempTs = Date.now();
@@ -1002,6 +1008,8 @@ async function notificationWatcher() {
             }
         } catch { }
     }
+    // 去重 Set 上限維護 (防長期運行無限成長；iOS 隨機 MAC 會讓 knownClientMacs 持續累積)
+    capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000);
     notifBootstrapped = true;
 }
 let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastUcgTempTs = 0, wanWasUp = null;
@@ -1030,9 +1038,10 @@ let lastSampleTs = 0;                    // 上一次取樣時間戳
 let lastSchedulerState = null;           // 前端最後一狀態 (活躍/閒置)
 function markClientActivity() { lastClientActivity = Date.now(); }
 
-function loadTrends() {
-    try { return JSON.parse(fs.readFileSync(TREND_FILE, 'utf8')); } catch { return []; }
-}
+// 啟動時載入一次，之後常駐記憶體 (先前每次取樣/查詢都整檔讀取+解析)
+let trendHistory = (() => { try { return JSON.parse(fs.readFileSync(TREND_FILE, 'utf8')); } catch { return []; } })();
+const trendFlush = registerFlushable(TREND_FILE, () => trendHistory);
+function loadTrends() { return trendHistory; }
 
 async function sampleTrends() {
     const point = { t: new Date().toISOString(), clients: null, threats24h: null, latency: null };
@@ -1052,9 +1061,9 @@ async function sampleTrends() {
         }
     } catch { }
     if (point.clients === null && point.threats24h === null && point.latency === null) return;
-    const trends = loadTrends();
-    trends.push(point);
-    try { fs.writeFileSync(TREND_FILE, JSON.stringify(trends.slice(-TREND_LIMIT))); } catch { }
+    trendHistory.push(point);
+    if (trendHistory.length > TREND_LIMIT) trendHistory = trendHistory.slice(-TREND_LIMIT);
+    trendFlush.markDirty();
 }
 
 // 排程器：每秒檢查一次，依活躍/閒置狀態與設定的間隔決定是否該取樣
@@ -1083,7 +1092,7 @@ app.get('/api/history', (req, res) => {
     markClientActivity();
     const hours = parseInt(req.query.hours || '24', 10);
     const cutoff = Date.now() - hours * 3600000;
-    res.json({ history: loadTrends().filter(p => new Date(p.t).getTime() >= cutoff) });
+    res.json({ history: sliceSince(trendHistory, cutoff) });
 });
 
 // 輕量心跳端點：前端開著頁面時定時呼叫，維持「活躍」狀態 (不觸發任何上游 API)
@@ -1204,25 +1213,6 @@ async function nasGet(pathName, params = {}, _retried = false) {
     }
     return r.data && r.data.data !== undefined ? r.data.data : r.data;
 }
-
-// NAS 展示用回退資料 (未設定 NAS_HOST/NAS_USER/NAS_PASSWORD 或連線失敗時)
-const mockNasOverview = {
-    info: { model: 'UGREEN DXP4800 Plus', firmware_version: 'UGOS Pro 1.4.0.2333', cpu_model: 'Intel N100 (4C/4T)', device_name: 'UGREEN-NAS-HQ' },
-    stats: {
-        cpu: { usage: 11, temperature: 43 },
-        memory: { usage: 38, total_mb: 8192, used_mb: 3112 },
-        network: { upload_bps: 2621440, download_bps: 10485760 }
-    }
-};
-const mockNasDisks = [
-    { slot: 1, name: 'WD Red Plus 4TB', model: 'WD40EFPX', temperature: 38, status: 'Good', size_gb: 4000 },
-    { slot: 2, name: 'WD Red Plus 4TB', model: 'WD40EFPX', temperature: 39, status: 'Good', size_gb: 4000 },
-    { slot: 3, name: 'Seagate IronWolf 8TB', model: 'ST8000VN004', temperature: 41, status: 'Good', size_gb: 8000 }
-];
-const mockNasVolumes = [
-    { name: '存儲空間 1', fs: 'Btrfs', raid: 'RAID 5', total_gb: 7451, used_gb: 3120, status: 'normal' }
-];
-const mockNasUps = { present: true, model: 'APC Back-UPS 700VA', battery_percent: 100, runtime_min: 42, status: 'online' };
 
 // 15. NAS 總覽 (硬體資訊 + 即時遙測 taskmgr/stat/get_all)
 app.get('/api/nas/overview', async (req, res) => {
@@ -1440,18 +1430,19 @@ app.get('/api/nas/ups-usb', async (req, res) => {
 const UCG_HISTORY_FILE = path.join(DATA_DIR, 'ucg-history.json');
 const UCG_HISTORY_LIMIT = 8000; // 30 秒間隔 ≈ 2.7 天
 let ucgHistory = (() => { try { return JSON.parse(fs.readFileSync(UCG_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+const ucgFlush = registerFlushable(UCG_HISTORY_FILE, () => ucgHistory);
 let lastUcgSampleTs = 0;
 function sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct }) {
     if (Date.now() - lastUcgSampleTs < 30000) return;
     lastUcgSampleTs = Date.now();
     ucgHistory.push({ t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores });
     if (ucgHistory.length > UCG_HISTORY_LIMIT) ucgHistory = ucgHistory.slice(-UCG_HISTORY_LIMIT);
-    try { fs.writeFileSync(UCG_HISTORY_FILE, JSON.stringify(ucgHistory)); } catch { }
+    ucgFlush.markDirty();
 }
 app.get('/api/hardware/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     const cutoff = Date.now() - hours * 3600000;
-    res.json({ data: ucgHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
+    res.json({ data: sliceSince(ucgHistory, cutoff) });
 });
 
 /* ===================== NAS 歷史自建取樣器 =====================
@@ -1460,6 +1451,7 @@ app.get('/api/hardware/history', (req, res) => {
 const NAS_HISTORY_FILE = path.join(DATA_DIR, 'nas-history.json');
 const NAS_HISTORY_LIMIT = 6000;   // 60 秒間隔 ≈ 4 天
 let nasHistory = (() => { try { return JSON.parse(fs.readFileSync(NAS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+const nasFlush = registerFlushable(NAS_HISTORY_FILE, () => nasHistory);
 let lastNasSampleTs = 0;
 
 async function sampleNasHistory() {
@@ -1497,7 +1489,7 @@ async function sampleNasHistory() {
             used_gb: volUsedGb, total_gb: volTotalGb
         });
         if (nasHistory.length > NAS_HISTORY_LIMIT) nasHistory = nasHistory.slice(-NAS_HISTORY_LIMIT);
-        try { fs.writeFileSync(NAS_HISTORY_FILE, JSON.stringify(nasHistory)); } catch { }
+        nasFlush.markDirty();
     } catch (e) { sysLog('NAS History', `取樣失敗: ${e.message}`, false); }
 }
 // 自適應：有人看網頁時每 60 秒、閒置時每 10 分鐘 (歷史圖不需要太密)
@@ -1508,8 +1500,7 @@ setInterval(() => {
 }, 5000);
 
 function nasHistorySince(hours) {
-    const cutoff = Date.now() - hours * 3600000;
-    return nasHistory.filter(p => new Date(p.t).getTime() >= cutoff);
+    return sliceSince(nasHistory, Date.now() - hours * 3600000);
 }
 
 /* ===================== NAS Monitor 擴充 REST API (系統 B / nas-monitor-interface) ===================== */
@@ -1531,47 +1522,6 @@ function buildNasMonClient() {
 let { url: NASMON_URL, client: nasMonClient } = buildNasMonClient();
 function nasMonConfigured() { return !!NASMON_URL; }
 async function nasMonGet(p, params) { const r = await nasMonClient.get(p, { params }); return r.data; }
-
-// ---- 系統 B 展示用假資料產生器 ----
-function synthSeries(hours, stepMin, gen) {
-    const arr = [], now = Date.now(), step = stepMin * 60000, n = Math.floor(hours * 60 / stepMin);
-    for (let i = n; i >= 0; i--) arr.push(gen(new Date(now - i * step), i));
-    return arr;
-}
-const mockDockerContainers = [
-    { id: 'a1b2c3d4e5f6', name: 'jellyfin', image: 'jellyfin/jellyfin:latest', state: 'running', status: 'Up 3 days', cpu_percent: 4.2, mem_usage_mb: 512, mem_limit_mb: 2048 },
-    { id: 'b2c3d4e5f6a1', name: 'qbittorrent', image: 'linuxserver/qbittorrent', state: 'running', status: 'Up 3 days', cpu_percent: 1.1, mem_usage_mb: 210, mem_limit_mb: 1024 },
-    { id: 'c3d4e5f6a1b2', name: 'homeassistant', image: 'homeassistant/home-assistant', state: 'running', status: 'Up 5 days', cpu_percent: 2.8, mem_usage_mb: 380, mem_limit_mb: 1024 },
-    { id: 'd4e5f6a1b2c3', name: 'nginx-proxy-manager', image: 'jc21/nginx-proxy-manager', state: 'running', status: 'Up 5 days', cpu_percent: 0.3, mem_usage_mb: 96, mem_limit_mb: 512 },
-    { id: 'e5f6a1b2c3d4', name: 'immich-server', image: 'ghcr.io/immich-app/immich', state: 'exited', status: 'Exited (0) 2 hours ago', cpu_percent: 0, mem_usage_mb: 0, mem_limit_mb: 2048 }
-];
-const mockAlertEvents = [
-    { id: 'al-1', datetime: new Date(Date.now() - 3600000).toISOString(), metric: 'disk_temperature', level: 'warning', message: 'Seagate IronWolf 8TB 溫度達 48°C (閾值 45°C)', acknowledged: false },
-    { id: 'al-2', datetime: new Date(Date.now() - 6 * 3600000).toISOString(), metric: 'cpu_usage', level: 'info', message: 'CPU 使用率短暫達 82% (備份任務)', acknowledged: true },
-    { id: 'al-3', datetime: new Date(Date.now() - 26 * 3600000).toISOString(), metric: 'volume_usage', level: 'critical', message: '存儲空間 1 使用率超過 85%', acknowledged: false }
-];
-function mockTrafficHistory(hours) {
-    return synthSeries(hours, 30, (d) => {
-        const f = Math.sin((d.getHours() - 6) / 24 * Math.PI * 2) * 0.5 + 0.5;
-        return { t: d.toISOString(), upload_mbps: +(2 + f * 12 + Math.random() * 3).toFixed(1), download_mbps: +(5 + f * 40 + Math.random() * 8).toFixed(1) };
-    });
-}
-function mockSystemHistory(hours) {
-    return synthSeries(hours, 30, (d) => {
-        const f = Math.sin((d.getHours() - 6) / 24 * Math.PI * 2) * 0.5 + 0.5;
-        return { t: d.toISOString(), cpu: Math.round(8 + f * 30 + Math.random() * 6), memory: Math.round(34 + f * 10 + Math.random() * 4), temperature: Math.round(40 + f * 6 + Math.random() * 2) };
-    });
-}
-function mockTemperatureHistory(hours) {
-    return synthSeries(hours, 30, (d) => {
-        const f = Math.sin((d.getHours() - 6) / 24 * Math.PI * 2) * 0.5 + 0.5;
-        return { t: d.toISOString(), fan_rpm: Math.round(900 + f * 500), disk1: Math.round(36 + f * 4), disk2: Math.round(37 + f * 4), disk3: Math.round(39 + f * 5) };
-    });
-}
-function mockStorageHistory(hours) {
-    const base = 3120, n = Math.floor(hours / 24);
-    return synthSeries(hours, 720, (d, i) => ({ t: d.toISOString(), used_gb: Math.round(base - (i) * 6 + Math.random() * 4), total_gb: 7451 }));
-}
 
 // 通用代理：優先呼叫系統 B，失敗或未設定時回退 fallback
 async function nasMonProxy(res, path, params, fallback) {
@@ -1724,7 +1674,8 @@ const CONN_FIELDS = [
     { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
     { key: 'NAS_MONITOR_URL' }, { key: 'NAS_MONITOR_API_KEY', secret: true },
     { key: 'WIIM_IP' },
-    { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' }
+    { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
+    { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true }
 ];
 
 // 更新 .env 檔：既有 KEY= 行 (含註解掉的) 就地取代，否則附加到檔尾
@@ -1748,6 +1699,7 @@ function rebuildClients() {
     wiimIP = process.env.WIIM_IP || wiimIP;
     localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
     nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
+    ppbToken = null; ppbHttpsPort = null; // 重置 PPB session (PPB_HOST/PORT 可能已變更)
     Object.keys(wiimCache).forEach(k => delete wiimCache[k]);
     sysLog('Connections', '連線設定已更新，所有客戶端已熱重建');
 }
@@ -1821,7 +1773,7 @@ async function buildReport() {
     // ── UCG 硬體 ──
     if (!isPlaceholder(process.env.SSH_PASSWORD)) {
         try {
-            const hw = (await axios.get(`http://127.0.0.1:${process.env.PORT || 3000}/api/hardware`, { timeout: 15000 })).data;
+            const hw = await getHardwareCached();
             L.push('\n━━ 🖥️ UCG-Ultra 閘道器 ━━');
             L.push(`• CPU：${hw.cpuUsage ?? '--'}% / ${hw.cpuTemp ?? '--'}°C　記憶體：${hw.memUsagePct ?? '--'}%`);
             if (hw.uptime) L.push(`• 運行時間：${hw.uptime}`);
@@ -2053,6 +2005,13 @@ const wiimArtCache = {};
 app.get('/api/wiim/art', async (req, res) => {
     const u = req.query.u || '';
     if (!/^https?:\/\//i.test(u)) return res.status(400).end();
+    // SSRF 防護：僅允許抓 WiiM 裝置本身，或非內網的公開 CDN；
+    // 禁止以此代理探測其他內網位址 (10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x)
+    try {
+        const host = new URL(u).hostname;
+        const isPrivate = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || host === 'localhost';
+        if (isPrivate && host !== wiimIP) return res.status(403).end();
+    } catch { return res.status(400).end(); }
     // AirPlay 的封面 URI 固定不變、內容隨曲目更換 → 以前端傳來的曲名 (v) 作為快取版本鍵
     const key = u + '|' + (req.query.v || '');
     const hit = wiimArtCache[key];
@@ -2111,12 +2070,19 @@ const UPS_HISTORY_LIMIT = 20000; // 30 秒間隔 ≈ 7 天
 
 let upsHistory = (() => { try { return JSON.parse(fs.readFileSync(UPS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 let upsEvents = (() => { try { return JSON.parse(fs.readFileSync(UPS_EVENTS_FILE, 'utf8')); } catch { return []; } })();
+const upsHistFlush = registerFlushable(UPS_HISTORY_FILE, () => upsHistory);
+const upsEventsFlush = registerFlushable(UPS_EVENTS_FILE, () => upsEvents);
 let upsLastLive = null;     // 最近一次成功讀取 (含 source)
-let upsWasOnBattery = false;
+// 重啟接續：若最新事件尚未結束 (重啟前正在斷電)，視為仍在電池供電，
+// 下次取樣時若市電已恢復會正常補上結束時間，不會再開一筆重複事件
+let upsWasOnBattery = !!(upsEvents[0] && !upsEvents[0].end);
 
 function execCmd(cmd, timeoutMs = 5000) {
     return new Promise(resolve => exec(cmd, { timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout)));
 }
+
+// parseFloat(x) || null 會把合法的 0 (電池 0%、負載 0%) 誤判為 null，改用 finite 檢查
+function numOrNull(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
 // --- 來源 1: NUT (upsc key: value 格式) ---
 async function readNut() {
@@ -2129,11 +2095,11 @@ async function readNut() {
         source: 'nut', model: kv['device.model'] || kv['ups.model'] || 'UPS',
         status: kv['ups.status'],
         onBattery: /\bOB\b/.test(kv['ups.status']),
-        inputV: parseFloat(kv['input.voltage']) || null,
-        outputV: parseFloat(kv['output.voltage']) || null,
-        battery: parseFloat(kv['battery.charge']) || null,
-        runtimeSec: parseFloat(kv['battery.runtime']) || null,
-        loadPct: parseFloat(kv['ups.load']) || null,
+        inputV: numOrNull(kv['input.voltage']),
+        outputV: numOrNull(kv['output.voltage']),
+        battery: numOrNull(kv['battery.charge']),
+        runtimeSec: numOrNull(kv['battery.runtime']),
+        loadPct: numOrNull(kv['ups.load']),
         raw: kv
     };
 }
@@ -2148,21 +2114,25 @@ async function readPwrstat() {
         source: 'pwrstat', model: grab(/Model Name\.+\s*(.+)/) || 'CyberPower UPS',
         status: state,
         onBattery: /Utility Failure|Battery Power/i.test(state),
-        inputV: parseFloat(grab(/Utility Voltage\.+\s*([\d.]+)/)) || null,
-        outputV: parseFloat(grab(/Output Voltage\.+\s*([\d.]+)/)) || null,
-        battery: parseFloat(grab(/Battery Capacity\.+\s*([\d.]+)/)) || null,
-        runtimeSec: (parseFloat(grab(/Remaining Runtime\.+\s*([\d.]+)/)) || 0) * 60 || null,
-        loadPct: parseFloat(grab(/Load\.+\s*([\d.]+)/)) || null
+        inputV: numOrNull(grab(/Utility Voltage\.+\s*([\d.]+)/)),
+        outputV: numOrNull(grab(/Output Voltage\.+\s*([\d.]+)/)),
+        battery: numOrNull(grab(/Battery Capacity\.+\s*([\d.]+)/)),
+        runtimeSec: (() => { const m = numOrNull(grab(/Remaining Runtime\.+\s*([\d.]+)/)); return m != null ? m * 60 : null; })(),
+        loadPct: numOrNull(grab(/Load\.+\s*([\d.]+)/))
     };
 }
 
-// --- 來源 4: CyberPower PowerPanel Business 本機 REST API (無 pwrstat CLI 時用這個) ---
+// --- 來源 4: CyberPower PowerPanel Business REST API (無 pwrstat CLI 時用這個) ---
+// PPB 主機/埠可用環境變數指定：部署到 Docker/NAS 後 127.0.0.1 是容器自己，
+// 必須以 PPB_HOST 指向實際跑 PowerPanel Business 的機器 IP
+const PPB_HOST = () => process.env.PPB_HOST || '127.0.0.1';
+const PPB_HTTP_PORT = () => process.env.PPB_PORT || '3052';
 let ppbToken = null, ppbHttpsPort = null;
 async function ppbDiscoverPort() {
     if (ppbHttpsPort) return ppbHttpsPort;
-    const r = await axios.get('http://127.0.0.1:3052/local/', { maxRedirects: 0, validateStatus: () => true, timeout: 5000 });
+    const r = await axios.get(`http://${PPB_HOST()}:${PPB_HTTP_PORT()}/local/`, { maxRedirects: 0, validateStatus: () => true, timeout: 5000 });
     const loc = r.headers.location || '';
-    const m = loc.match(/^https:\/\/127\.0\.0\.1:(\d+)/);
+    const m = loc.match(/^https:\/\/[^:/]+:(\d+)/);
     if (m) ppbHttpsPort = m[1];
     return ppbHttpsPort;
 }
@@ -2175,16 +2145,15 @@ async function ppbLogin() {
     if (r.status !== 200) return null;
     ppbToken = r.data; return ppbToken;
 }
-const PPB_HOST = () => '127.0.0.1';
 async function readPpb() {
     if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) return null;
     try {
         const port = await ppbDiscoverPort();
         if (!port) return null;
         if (!ppbToken) await ppbLogin();
-        let resp = await axios.get(`https://127.0.0.1:${port}/local/rest/v1/ups/status`,
-            { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true });
-        if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://127.0.0.1:${port}/local/rest/v1/ups/status`, { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true }); }
+        const opts = { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true };
+        let resp = await axios.get(`https://${PPB_HOST()}:${port}/local/rest/v1/ups/status`, opts);
+        if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://${PPB_HOST()}:${port}/local/rest/v1/ups/status`, { ...opts, headers: { Authorization: ppbToken } }); }
         if (resp.status !== 200) return null;
         const d = resp.data;
         const numV = s => { const m = (s || '').toString().match(/[\d.]+/); return m ? parseFloat(m[0]) : null; };
@@ -2198,18 +2167,22 @@ async function readPpb() {
             runtimeSec: d.battery?.remainingRunTimeInSecs ?? null,
             loadPct: numV(d.output?.loads?.[0])
         };
-    } catch { return null; }
+    } catch {
+        // PPB 服務重啟後 HTTPS 埠可能改變，清掉快取讓下次重新探索
+        ppbHttpsPort = null; ppbToken = null;
+        return null;
+    }
 }
 
 // 通用 PowerPanel Business API GET (自動登入/token 失效重試一次)
 async function ppbGet(path) {
     if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) throw new Error('ppb_not_configured');
     const port = await ppbDiscoverPort();
-    if (!port) throw new Error('PowerPanel Business 服務未偵測到 (port 3052)');
+    if (!port) throw new Error(`PowerPanel Business 服務未偵測到 (${PPB_HOST()}:${PPB_HTTP_PORT()})`);
     if (!ppbToken) await ppbLogin();
     const opts = { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true };
-    let resp = await axios.get(`https://127.0.0.1:${port}${path}`, opts);
-    if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://127.0.0.1:${port}${path}`, { ...opts, headers: { Authorization: ppbToken } }); }
+    let resp = await axios.get(`https://${PPB_HOST()}:${port}${path}`, opts);
+    if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://${PPB_HOST()}:${port}${path}`, { ...opts, headers: { Authorization: ppbToken } }); }
     if (resp.status !== 200) throw new Error(`PPB API ${resp.status}`);
     return resp.data;
 }
@@ -2276,7 +2249,8 @@ async function sampleUps() {
     upsLastLive = { ...live, ts: Date.now() };
     upsHistory.push({ t: new Date().toISOString(), inV: live.inputV, outV: live.outputV, batt: live.battery, load: live.loadPct, rt: live.runtimeSec, ob: live.onBattery ? 1 : 0 });
     if (upsHistory.length > UPS_HISTORY_LIMIT) upsHistory = upsHistory.slice(-UPS_HISTORY_LIMIT);
-    try { fs.writeFileSync(UPS_HISTORY_FILE, JSON.stringify(upsHistory)); } catch (e) { sysLog('UPS', `歷史寫入失敗: ${e.message}`, true); }
+    // 平時節流落盤；電池供電中每筆都強制寫檔 (斷電期間隨時可能失電，不能等節流)
+    upsHistFlush.markDirty(live.onBattery);
 
     // 斷電事件：市電斷 → 開新事件；恢復 → 補上結束時間與時長
     if (live.onBattery && !upsWasOnBattery) {
@@ -2300,7 +2274,7 @@ async function sampleUps() {
         }
     }
     upsEvents = upsEvents.slice(0, 200);
-    try { fs.writeFileSync(UPS_EVENTS_FILE, JSON.stringify(upsEvents)); } catch { }
+    upsEventsFlush.markDirty(true); // 事件檔很小 (≤200 筆) 且是核心紀錄，一律立即寫檔
     upsWasOnBattery = live.onBattery;
 
     // 負載過高 (30 分鐘冷卻)
@@ -2346,7 +2320,7 @@ app.get('/api/ups/status', async (req, res) => {
 app.get('/api/ups/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     const cutoff = Date.now() - hours * 3600000;
-    res.json({ history: upsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
+    res.json({ history: sliceSince(upsHistory, cutoff) });
 });
 
 app.get('/api/ups/events', (req, res) => res.json({ events: upsEvents }));

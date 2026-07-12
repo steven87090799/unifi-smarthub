@@ -178,7 +178,7 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 10 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 10s / `wiimPlayback` 5s)。遙控器欄位以 key 名稱模糊匹配。
 
 ### G. CyberPower UPS(NUT 優先多來源,對照 `cyberpower-ups-api.md`)
-`UPS_SOURCE=auto` 依序嘗試:**NUT**(`upsc <NUT_UPS_NAME>@<NUT_HOST>`)→ **pwrstat**(`pwrstat -status`)→ **pmset**(`pmset -g ps`,僅容量)。以 `child_process.exec` 呼叫本地指令,無需雲端。
+`UPS_SOURCE=auto` 依序嘗試:**PPB**(PowerPanel Business REST API,`PPB_HOST`/`PPB_PORT`/`PPB_USER`/`PPB_PASSWORD`,Docker 部署時 PPB_HOST 必須指向實際主機 IP 而非 127.0.0.1)→ **NUT**(`upsc <NUT_UPS_NAME>@<NUT_HOST>`,容器內需 `apk add nut`,Dockerfile 已含)→ **pwrstat**(`pwrstat -status`)→ **pmset**(`pmset -g ps`,僅容量)。以 `child_process.exec` 呼叫本地指令,無需雲端。
 
 | 本專案端點 | 說明 |
 | :--- | :--- |
@@ -219,6 +219,11 @@ UPS 取樣(`appSettings.upsSampleSec` 預設 30s)**不做閒置降頻**——斷
 - 遙控器/週邊卡從左欄移至右欄(設定卡下方)平衡版面;`/api/wiim/status` 回退時補 `source` 標記;圖表範圍標籤與相對時間文案修正。
 
 ## 開發注意事項
+- **歷史資料節流落盤**:trend/ucg/nas/ups 歷史陣列常駐記憶體,`registerFlushable`+`markDirty()` 最多每 5 分鐘寫檔一次(UPS 電池供電中強制每筆寫);SIGTERM/SIGINT 強制全落盤。新增歷史型資料請沿用此機制,勿在取樣路徑直接 `fs.writeFileSync` 大檔。
+- **認證**:設 `PANEL_PASSWORD` 環境變數即啟用整站 Basic Auth(/healthz 除外);已移除 `cors()`(前後端同源不需要)。
+- **時區**:報表排程 (`reportHour`) 用本地時間,Docker 部署必須設 `TZ=Asia/Taipei`(compose 已含,Dockerfile 已裝 tzdata)。
+- **`.env` 持久化**:compose 以 bind mount 掛 `./.env:/app/.env`,網頁「連線設定」的修改才能跨容器重建保留。
+- `/api/hardware` 有 5 秒快取 + in-flight 去重(`getHardwareCached()`),watcher/報表直接呼叫該函式,不再自打 HTTP。
 - `unifiClient` 使用 `rejectUnauthorized: false` 忽略自簽憑證 — 僅限內網使用。
 - 所有雲端端點錯誤時回退 mock 資料並回 200(`source: 'fallback_on_error'`),前端不會看到 5xx;除錯時檢查回應中的 `source` 與 `error` 欄位。
 - Site Manager 遠端速率限制:EA 每分鐘 100 次(§1),輪詢頻率設計時需考量。
