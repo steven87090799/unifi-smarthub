@@ -1722,7 +1722,7 @@ app.get('/api/nas/traffic-history', (req, res) => {
 app.get('/api/nas/system-history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     if (nasMonConfigured()) return nasMonProxy(res, '/api/system/history', { hours }, { data: [] });
-    const data = nasHistorySince(hours).map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature }));
+    const data = nasHistorySince(hours).map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature, fan_rpm: p.fan_rpm ?? null }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
