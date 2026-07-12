@@ -2525,7 +2525,8 @@ app.get('/api/adguard/overview', async (req, res) => {
 app.get('/api/adguard/querylog', async (req, res) => {
     if (!adgConfigured()) return res.json({ entries: [], source: 'not_configured' });
     try {
-        const d = await adgReq(`/control/querylog?limit=${Math.min(parseInt(req.query.limit || '30', 10), 100)}`);
+        const filtered = req.query.filtered === '1' ? '&response_status=filtered' : '';
+        const d = await adgReq(`/control/querylog?limit=${Math.min(parseInt(req.query.limit || '100', 10), 200)}${filtered}`);
         const entries = (d.data || []).map(e => ({
             time: e.time,
             domain: e.question && e.question.name,
