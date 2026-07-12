@@ -451,6 +451,28 @@ const fs = require('fs');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { }
 
+/* ===================== 單一實例鎖 =====================
+   防止同一份 DATA_DIR 被多個 server.js 同時使用：每個實例都有自己的推播監看器，
+   多開會導致同一事件重複推播 N 次 (實際發生過：4 個測試殘留實例 + 正式 = 同則警報×5)。
+   鎖檔記 PID；持鎖程序已死 (stale) 則接管。設 ALLOW_MULTI_INSTANCE=1 可跳過 (測試用)。 */
+const LOCK_FILE = path.join(DATA_DIR, '.instance.lock');
+if (process.env.ALLOW_MULTI_INSTANCE !== '1') {
+    try {
+        const oldPid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10);
+        if (oldPid && oldPid !== process.pid) {
+            let alive = false;
+            try { process.kill(oldPid, 0); alive = true; } catch { }
+            if (alive) {
+                console.error(`[實例鎖] 偵測到另一個 SmartHub 實例正在運行 (PID ${oldPid})，同一份資料目錄多開會造成重複推播與資料互相覆寫。`);
+                console.error('[實例鎖] 若確定要多開 (例如測試)，請改用不同 DATA_DIR 或設 ALLOW_MULTI_INSTANCE=1。本實例結束。');
+                process.exit(1);
+            }
+        }
+    } catch { /* 鎖檔不存在 = 正常首啟 */ }
+    try { fs.writeFileSync(LOCK_FILE, String(process.pid)); } catch { }
+    process.on('exit', () => { try { if (parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10) === process.pid) fs.unlinkSync(LOCK_FILE); } catch { } });
+}
+
 /* ===================== 歷史資料節流落盤 =====================
    歷史陣列 (trend/ucg/nas/ups/wiim) 平時只更新記憶體、標記 dirty，最多每
    historyFlushMin 分鐘 (設定頁可調，預設 30) 寫檔一次；避免每筆取樣同步重寫
