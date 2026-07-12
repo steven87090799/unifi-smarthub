@@ -2407,6 +2407,32 @@
                                         <input type="checkbox" id="notif-trig-upssrc" class="accent-blue-500 w-4 h-4">
                                         UPS 資料來源切換 (例如 PowerPanel 斷線改回 pmset)
                                     </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-adgprot" class="accent-blue-500 w-4 h-4">
+                                        AdGuard 保護暫停 / 恢復
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-adgoff" class="accent-blue-500 w-4 h-4">
+                                        AdGuard 失聯
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-lnxtemp" class="accent-blue-500 w-4 h-4">
+                                        小主機 CPU 溫度超過
+                                        <input type="number" id="notif-lnx-temp" min="40" max="95"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            onclick="event.preventDefault()"> °C
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-lnxoff" class="accent-blue-500 w-4 h-4">
+                                        小主機 SSH 離線 / 恢復
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-lnxdisk" class="accent-blue-500 w-4 h-4">
+                                        小主機磁碟超過
+                                        <input type="number" id="notif-lnx-disk" min="50" max="99"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            onclick="event.preventDefault()"> %
+                                    </label>
                                 </div>
                             </div>
 
@@ -5892,12 +5918,19 @@
                 setCk('notif-trig-upsload', !!s.triggerUpsHighLoad);
                 setCk('notif-trig-upsvolt', !!s.triggerUpsVoltAbnormal);
                 setCk('notif-trig-upssrc', !!s.triggerUpsSourceChange);
+                setCk('notif-trig-adgprot', s.triggerAdgProtection !== false);
+                setCk('notif-trig-adgoff', !!s.triggerAdgOffline);
+                setCk('notif-trig-lnxtemp', s.triggerLinuxTemp !== false);
+                setCk('notif-trig-lnxoff', !!s.triggerLinuxOffline);
+                setCk('notif-trig-lnxdisk', !!s.triggerLinuxDisk);
                 const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
                 setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
                 setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
                 setV('notif-ucg-temp', s.ucgTempAlert ?? 75);
                 setV('notif-ups-load', s.upsLoadAlert ?? 80);
                 setV('notif-ups-volt', s.upsVoltDeviationPct ?? 10);
+                setV('notif-lnx-temp', s.linuxTempAlert ?? 70);
+                setV('notif-lnx-disk', s.linuxDiskAlert ?? 90);
                 document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
                 document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
                 setNotifChannel(s.channel || 'discord');
@@ -5929,7 +5962,14 @@
                 nasSpaceAlert: parseInt(document.getElementById('notif-nasspace-pct')?.value, 10) || 85,
                 ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75,
                 upsLoadAlert: parseInt(document.getElementById('notif-ups-load')?.value, 10) || 80,
-                upsVoltDeviationPct: parseInt(document.getElementById('notif-ups-volt')?.value, 10) || 10
+                upsVoltDeviationPct: parseInt(document.getElementById('notif-ups-volt')?.value, 10) || 10,
+                triggerAdgProtection: document.getElementById('notif-trig-adgprot')?.checked ?? true,
+                triggerAdgOffline: document.getElementById('notif-trig-adgoff')?.checked ?? false,
+                triggerLinuxTemp: document.getElementById('notif-trig-lnxtemp')?.checked ?? true,
+                triggerLinuxOffline: document.getElementById('notif-trig-lnxoff')?.checked ?? false,
+                triggerLinuxDisk: document.getElementById('notif-trig-lnxdisk')?.checked ?? false,
+                linuxTempAlert: parseInt(document.getElementById('notif-lnx-temp')?.value, 10) || 70,
+                linuxDiskAlert: parseInt(document.getElementById('notif-lnx-disk')?.value, 10) || 90
             };
             const wh = document.getElementById('notif-webhook').value.trim();
             const tk = document.getElementById('notif-token').value.trim();
@@ -6094,20 +6134,19 @@
             } catch (e) { dbg('Conn', '載入失敗', e); }
         }
 
-        // 以各裝置的側邊欄/徽章即時狀態彙整
-        function renderConnStatus() {
+        // 由後端記憶體現況直接彙整 (原本從側邊欄 DOM 推斷，時常不準)
+        async function renderConnStatus() {
             const list = document.getElementById('conn-status-list');
             if (!list) return;
-            const dot = ok => `<span class="w-2 h-2 rounded-full inline-block ${ok === true ? 'bg-emerald-500' : ok === false ? 'bg-red-500' : 'bg-slate-600'}"></span>`;
-            const ucgOk = document.getElementById('side-ucg-dot')?.className.includes('emerald');
-            const nasState = document.getElementById('side-nas-state')?.textContent;
-            const wiimState = document.getElementById('side-wiim-state')?.textContent;
-            const upsBadge = document.getElementById('ups-source-badge')?.textContent || '';
-            list.innerHTML = `
-            <div class="flex items-center gap-2">${dot(ucgOk)}<span class="text-slate-400">UCG-Ultra (SSH)</span><span class="ml-auto mono text-slate-300">${ucgOk ? '已連線' : '未連線'}</span></div>
-            <div class="flex items-center gap-2">${dot(nasState === 'online')}<span class="text-slate-400">UGREEN NAS</span><span class="ml-auto mono text-slate-300">${nasState || '--'}</span></div>
-            <div class="flex items-center gap-2">${dot(wiimState === 'online')}<span class="text-slate-400">WiiM Amp</span><span class="ml-auto mono text-slate-300">${wiimState || '--'}</span></div>
-            <div class="flex items-center gap-2">${dot(!upsBadge.includes('未連接') && !upsBadge.includes('偵測中'))}<span class="text-slate-400">CyberPower UPS</span><span class="ml-auto mono text-slate-300 text-[9px]">${upsBadge || '--'}</span></div>`;
+            try {
+                const d = await (await fetch('/api/connections/status')).json();
+                const dot = ok => `<span class="w-2 h-2 rounded-full inline-block shrink-0 ${ok === true ? 'bg-emerald-500' : ok === false ? 'bg-red-500' : 'bg-slate-600'}"></span>`;
+                list.innerHTML = (d.devices || []).map(v => {
+                    const ok = v.configured ? v.ok : undefined;
+                    const state = !v.configured ? '未設定' : v.ok === true ? '已連線' : v.ok === false ? '未連線' : '已設定';
+                    return `<div class="flex items-center gap-2">${dot(ok)}<span class="text-slate-400">${v.name}</span><span class="ml-auto mono ${v.configured && v.ok === false ? 'text-red-400' : 'text-slate-300'} text-[10px]">${state}${v.configured && v.detail ? ' · ' + v.detail : ''}</span></div>`;
+                }).join('');
+            } catch { list.innerHTML = '<p class="text-red-400 text-xs">狀態讀取失敗</p>'; }
         }
 
         async function saveConnections() {

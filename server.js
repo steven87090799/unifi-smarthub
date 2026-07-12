@@ -802,7 +802,7 @@ function capSet(set, max = 2000) {
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true, triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false };
+const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true, triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerAdgProtection: true, triggerAdgOffline: false, triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90 };
 // 記憶體快取：watcher 每輪呼叫多次，不需要每次讀檔
 let notifSettingsCache = null;
 function loadNotifSettings() {
@@ -902,6 +902,9 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
         triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75, triggerWanDown: !!s.triggerWanDown, triggerNasLog: !!s.triggerNasLog,
         triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange,
+        triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline,
+        triggerLinuxTemp: s.triggerLinuxTemp !== false, linuxTempAlert: s.linuxTempAlert ?? 70,
+        triggerLinuxOffline: !!s.triggerLinuxOffline, triggerLinuxDisk: !!s.triggerLinuxDisk, linuxDiskAlert: s.linuxDiskAlert ?? 90,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -916,8 +919,8 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
-    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'upsLoadAlert', 'upsVoltDeviationPct'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'upsLoadAlert', 'upsVoltDeviationPct', 'linuxTempAlert', 'linuxDiskAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     saveNotifSettings(s);
@@ -1057,6 +1060,37 @@ async function notificationWatcher() {
             }
         } catch { }
     }
+    // AdGuard：保護被暫停 / 失聯 (轉態通知)
+    if ((s.triggerAdgProtection !== false || s.triggerAdgOffline) && adgConfigured()) {
+        let on = null;
+        try { on = !!(await adgReq('/control/status')).protection_enabled; } catch { on = null; }
+        if (s.triggerAdgOffline && on === null && adgWasOn !== null && notifBootstrapped) {
+            await notify('🛡️ AdGuard 失聯', 'AdGuard Home 無回應，DNS 防護狀態未知');
+        }
+        if (s.triggerAdgProtection !== false && on !== null && adgWasOn !== null && on !== adgWasOn && notifBootstrapped) {
+            await notify(on ? '🛡️ AdGuard 保護已恢復' : '⚠️ AdGuard 保護已暫停', on ? 'DNS 廣告攔截恢復運作' : '全網 DNS 廣告攔截目前停用中');
+        }
+        if (on !== null) adgWasOn = on;
+    }
+    // Linux 小主機：過熱 / 磁碟滿 (30 分鐘冷卻)、離線/恢復 (轉態)
+    if ((s.triggerLinuxTemp !== false || s.triggerLinuxOffline || s.triggerLinuxDisk) && linuxConfigured()) {
+        let d = null;
+        try { d = await getLinuxCached(); } catch { d = null; }
+        if (s.triggerLinuxOffline && lnxWasOnline !== null && (!!d) !== lnxWasOnline && notifBootstrapped) {
+            await notify(d ? '🖥️ 小主機已恢復連線' : '🖥️ 小主機失去連線', `${process.env.LINUX_HOST} (SSH)`);
+        }
+        lnxWasOnline = !!d;
+        if (d && s.triggerLinuxTemp !== false && d.cpuTemp != null && d.cpuTemp >= (s.linuxTempAlert ?? 70)
+            && Date.now() - lastLinuxTempTs > 30 * 60 * 1000) {
+            lastLinuxTempTs = Date.now();
+            await notify('🔥 小主機溫度警報', `${d.hostname} CPU ${d.cpuTemp}°C (門檻 ${s.linuxTempAlert ?? 70}°C)`);
+        }
+        if (d && s.triggerLinuxDisk && d.diskUsagePct != null && d.diskUsagePct >= (s.linuxDiskAlert ?? 90)
+            && Date.now() - lastLinuxDiskTs > 6 * 60 * 60 * 1000) {
+            lastLinuxDiskTs = Date.now();
+            await notify('💾 小主機磁碟空間警報', `${d.hostname} 系統碟已用 ${d.diskUsagePct}% (門檻 ${s.linuxDiskAlert ?? 90}%)`);
+        }
+    }
     // 去重 Set 上限維護 (防長期運行無限成長；iOS 隨機 MAC 會讓 knownClientMacs 持續累積)
     capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000);
     notifBootstrapped = true;
@@ -1066,6 +1100,7 @@ const knownClientMacs = new Set();
 const notifiedNasLogIds = new Set();
 let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0;
+let adgWasOn = null, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0;
 
 /* ===================== 伺服器端排程 (間隔可於設定頁調整，變更後即時重排) ===================== */
 let jobTimers = {};
@@ -1966,6 +2001,32 @@ async function buildReport() {
         }
     } catch { }
 
+    // ── AdGuard DNS ──
+    if (adgConfigured()) {
+        try {
+            const [ast, asts] = await Promise.all([adgReq('/control/status'), adgReq('/control/stats')]);
+            L.push('\n━━ 🛡️ AdGuard DNS 防護 ━━');
+            L.push(`• 保護狀態：${ast.protection_enabled ? '🟢 啟用中' : '⚠️ 已暫停'}`);
+            L.push(`• DNS 查詢：${(asts.num_dns_queries ?? 0).toLocaleString()} 次，攔截 ${(asts.num_blocked_filtering ?? 0).toLocaleString()} 次 (${asts.num_dns_queries ? (asts.num_blocked_filtering / asts.num_dns_queries * 100).toFixed(1) : 0}%)`);
+            const tb = (asts.top_blocked_domains || []).slice(0, 3).map(o => { const [k, v] = Object.entries(o)[0]; return `${k}(${v})`; });
+            if (tb.length) L.push(`• 被攔截最多：${tb.join('、')}`);
+        } catch { L.push('\n━━ 🛡️ AdGuard ━━\n• 無法連線'); }
+    }
+
+    // ── Linux 小主機 ──
+    if (linuxConfigured()) {
+        try {
+            const d = await getLinuxCached();
+            L.push(`\n━━ 🖥️ Linux 小主機 (${d.hostname}) ━━`);
+            L.push(`• CPU：${d.cpuUsage}% / ${d.cpuTemp ?? '--'}°C　記憶體：${d.memUsagePct}% (${d.memStr})`);
+            L.push(`• 磁碟：${d.diskUsagePct}% (${d.diskStr})　負載 ${d.load ? d.load.join(' / ') : '--'}`);
+            L.push(`• 運行時間：${d.uptime}`);
+            const lnx24 = sliceSince(linuxHistory, dayAgo);
+            const lt = lnx24.map(p => p.temp).filter(v => v != null);
+            if (lt.length) L.push(`• 24H 溫度：平均 ${avg(lt).toFixed(1)}°C / 最高 ${Math.max(...lt)}°C`);
+        } catch { L.push('\n━━ 🖥️ Linux 小主機 ━━\n• SSH 無法連線'); }
+    }
+
     // ── WiiM ──
     const wiim24h = sliceSince(wiimHistory, dayAgo, p => p.ts * 1000);
     if (wiim24h.length) {
@@ -2508,9 +2569,11 @@ app.get('/api/ups/csv', (req, res) => {
 
 /* ===================== AdGuard Home DNS 防護 (REST API, Basic Auth) ===================== */
 const adgConfigured = () => !!(process.env.ADGUARD_HOST && process.env.ADGUARD_USER && !isPlaceholder(process.env.ADGUARD_PASSWORD));
+let adgLastOkTs = 0;
 async function adgReq(pathName, method = 'get', data) {
     const base = `http://${process.env.ADGUARD_HOST}:${process.env.ADGUARD_PORT || 80}`;
     const r = await axios({ url: base + pathName, method, data, timeout: 8000, auth: { username: process.env.ADGUARD_USER, password: process.env.ADGUARD_PASSWORD } });
+    adgLastOkTs = Date.now();
     return r.data;
 }
 // 總覽：狀態 + 統計 (查詢數/攔截數/Top 網域/Top 客戶端)
@@ -2638,6 +2701,26 @@ setInterval(async () => {
 app.get('/api/linux/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     res.json({ data: sliceSince(linuxHistory, Date.now() - hours * 3600000) });
+});
+
+/* ===================== 連線狀態一覽 (設定頁 📡 面板) =====================
+   原本前端從側邊欄徽章 DOM 推斷，時常不準；改由後端記憶體現況直接彙整。 */
+app.get('/api/connections/status', async (req, res) => {
+    const fresh = (ts, sec) => ts && (Date.now() - ts) < sec * 1000;
+    const wiimHit = wiimCache['getStatusEx'];
+    res.json({
+        devices: [
+            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: fresh(hwCache && hwCache.ts, 120), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
+            { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
+            { name: 'Site Manager 雲端', configured: !!process.env.UNIFI_API_KEY && !process.env.UNIFI_API_KEY.includes('your_unifi'), ok: null, detail: 'API Key 已設定' },
+            { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
+            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? '已設定' : '' },
+            { name: 'WiiM Amp', configured: true, ok: fresh(wiimHit && wiimHit.timestamp, 120), detail: wiimHit ? '有回應' : '無快取' },
+            { name: 'CyberPower UPS', configured: true, ok: !!upsLastLive && fresh(upsLastLive.ts, 180), detail: upsLastLive ? `${(upsLastLive.actualSource || '').toUpperCase()} · 電池 ${upsLastLive.battery ?? '--'}%` : (upsLastReason ? '所有來源失聯' : '尚無資料') },
+            { name: 'AdGuard Home', configured: adgConfigured(), ok: fresh(adgLastOkTs, 180), detail: adgLastOkTs ? '有回應' : '尚無資料' },
+            { name: 'Linux 小主機', configured: linuxConfigured(), ok: fresh(linuxCache && linuxCache.ts, 180), detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
+        ]
+    });
 });
 
 /* ===================== 重大事件警報 (前端頂部閃爍橫幅) =====================
