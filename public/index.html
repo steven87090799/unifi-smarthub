@@ -2622,6 +2622,26 @@
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">歷史資料落盤間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">溫度/電壓等歷史紀錄先累積在<span
+                                        class="text-slate-300">記憶體</span>，每隔此時間才寫入硬碟一次（減少硬碟讀寫、讓 NAS
+                                    硬碟能休眠）。關機時會強制寫入；直接斷電最多損失此區間的資料。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-historyFlushMin"
+                                        min="1" max="1440"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">分鐘</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">歷史資料保存天數</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">趨勢 / UCG / NAS / UPS / WiiM
+                                    所有歷史紀錄統一保存幾天，超過自動汰舊。<span
+                                        class="text-slate-300">曲線圖可選的最長範圍受此限制</span>（例如要看 30 天圖就至少設 30）。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-historyKeepDays"
+                                        min="1" max="365"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">天</span></div>
+                            </div>
                         </div>
                         <button onclick="saveServerSettings()"
                             class="py-2.5 px-6 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition">儲存伺服器設定</button>
@@ -5814,6 +5834,8 @@
                 set('srv-autoDefenseSec', s.autoDefenseSec);
                 set('srv-upsSampleSec', s.upsSampleSec ?? 30);
                 set('srv-toastSec', s.toastSec ?? 10); toastSec = s.toastSec ?? 10;
+                set('srv-historyFlushMin', s.historyFlushMin ?? 30);
+                set('srv-historyKeepDays', s.historyKeepDays ?? 30);
                 const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
                 set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
             } catch (e) { console.error('app settings fetch failed', e); }
@@ -5826,6 +5848,8 @@
                 autoDefenseSec: num('srv-autoDefenseSec'),
                 upsSampleSec: num('srv-upsSampleSec'),
                 toastSec: num('srv-toastSec'),
+                historyFlushMin: num('srv-historyFlushMin'),
+                historyKeepDays: num('srv-historyKeepDays'),
                 reportEnabled: document.getElementById('report-enabled').checked,
                 reportFreq: document.getElementById('report-freq').value,
                 reportHour: num('report-hour')

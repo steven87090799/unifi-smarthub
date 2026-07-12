@@ -447,18 +447,19 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { }
 
 /* ===================== 歷史資料節流落盤 =====================
-   歷史陣列 (trend/ucg/nas/ups) 平時只更新記憶體、標記 dirty，最多每 5 分鐘寫檔一次；
-   先前每筆取樣都同步重寫整份大 JSON (UPS 20000 筆 ≈ 2MB / 30秒)，會卡 event loop
-   並對 NAS 硬碟造成持續寫入 (SSD 磨損、HDD 無法休眠)。
-   SIGTERM/SIGINT 時強制全部落盤；最壞情況 (直接斷電) 損失 ≤5 分鐘記憶體資料。 */
+   歷史陣列 (trend/ucg/nas/ups/wiim) 平時只更新記憶體、標記 dirty，最多每
+   historyFlushMin 分鐘 (設定頁可調，預設 30) 寫檔一次；避免每筆取樣同步重寫
+   大 JSON 卡 event loop、NAS 硬碟無法休眠。
+   SIGTERM/SIGINT 時強制全部落盤；最壞情況 (直接斷電) 損失 ≤ historyFlushMin 分鐘。 */
 const _flushables = [];
+const flushGapMs = () => Math.max(appSettings.historyFlushMin ?? 30, 1) * 60 * 1000;
 function registerFlushable(file, getData) {
     const f = { file, getData, dirty: false, lastWrite: 0 };
     _flushables.push(f);
     return {
         markDirty(force = false) {
             f.dirty = true;
-            if (force || Date.now() - f.lastWrite >= 5 * 60 * 1000) flushOne(f);
+            if (force || Date.now() - f.lastWrite >= flushGapMs()) flushOne(f);
         }
     };
 }
@@ -470,8 +471,8 @@ function flushOne(f) {
     } catch (e) { sysLog('Persist', `${path.basename(f.file)} 寫入失敗: ${e.message}`, true); }
 }
 function flushAllHistories() { _flushables.forEach(flushOne); }
-// 保底：每分鐘掃一次，dirty 超過 5 分鐘未寫就落盤 (取樣器停擺時資料不會一直懸在記憶體)
-setInterval(() => _flushables.forEach(f => { if (f.dirty && Date.now() - f.lastWrite >= 5 * 60 * 1000) flushOne(f); }), 60 * 1000);
+// 保底：每分鐘掃一次，dirty 超過落盤間隔未寫就落盤 (取樣器停擺時資料不會一直懸在記憶體)
+setInterval(() => _flushables.forEach(f => { if (f.dirty && Date.now() - f.lastWrite >= flushGapMs()) flushOne(f); }), 60 * 1000);
 process.on('SIGTERM', () => { sysLog('Persist', '收到 SIGTERM，強制落盤所有歷史資料'); flushAllHistories(); process.exit(0); });
 process.on('SIGINT', () => { flushAllHistories(); process.exit(0); });
 
@@ -480,6 +481,16 @@ function sliceSince(arr, cutoffMs, getT = p => p.t) {
     let i = arr.length;
     while (i > 0 && new Date(getT(arr[i - 1])).getTime() >= cutoffMs) i--;
     return arr.slice(i);
+}
+
+/* 歷史保存改「按時間汰舊」(設定頁可調 historyKeepDays，預設 30 天)：
+   原本各系列用固定筆數上限，取樣頻率一改保存天數就跑掉；改成直接依時間裁切，
+   另設絕對筆數上限作為記憶體保險。呼叫於每次 push 之後 (穩態下每次只 shift 掉 0~1 筆)。 */
+const HISTORY_HARD_CAP = 100000;
+function pruneHistory(arr, getMs = p => Date.parse(p.t)) {
+    const cutoff = Date.now() - Math.max(appSettings.historyKeepDays ?? 30, 1) * 86400000;
+    while (arr.length && getMs(arr[0]) < cutoff) arr.shift();
+    if (arr.length > HISTORY_HARD_CAP) arr.splice(0, arr.length - HISTORY_HARD_CAP);
 }
 
 /* ===================== 應用程式設定 (可於「設定」頁調整所有伺服器端輪詢間隔) ===================== */
@@ -496,7 +507,9 @@ const APP_DEFAULTS = {
     reportHour: 8,          // 每日幾點發送 (0-23)
     upsSampleSec: 30,       // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
     wiimCpuAlert: 70,       // WiiM CPU 溫度警示門檻 (°C，圖上門檻線 + 超標推播)
-    wiimBoardAlert: 60      // WiiM 主機板溫度警示門檻 (°C)
+    wiimBoardAlert: 60,     // WiiM 主機板溫度警示門檻 (°C)
+    historyFlushMin: 30,    // 歷史資料落盤間隔 (分鐘)：記憶體累積多久寫一次硬碟
+    historyKeepDays: 30     // 歷史資料保存天數 (trend/UCG/NAS/UPS/WiiM 統一)
 };
 let appSettings = (() => { try { return { ...APP_DEFAULTS, ...JSON.parse(fs.readFileSync(APP_SETTINGS_FILE, 'utf8')) }; } catch { return { ...APP_DEFAULTS }; } })();
 function saveAppSettings() { try { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); } catch { } }
@@ -1031,7 +1044,7 @@ function scheduleServerJobs() {
 // 記錄一筆：客戶端數、24h 威脅數、ISP 延遲。保留上限 9999 筆，持久化於 trend-history.json。
 // 取樣頻率隨「是否有人正在看網頁」自動切換 (間隔取自 appSettings，可於設定頁調整)。
 const TREND_FILE = path.join(DATA_DIR, 'trend-history.json');
-const TREND_LIMIT = 9999;
+// 保存長度統一由 pruneHistory (historyKeepDays 設定) 控制
 
 let lastClientActivity = 0;              // 前端最後一次活動時間戳
 let lastSampleTs = 0;                    // 上一次取樣時間戳
@@ -1062,7 +1075,7 @@ async function sampleTrends() {
     } catch { }
     if (point.clients === null && point.threats24h === null && point.latency === null) return;
     trendHistory.push(point);
-    if (trendHistory.length > TREND_LIMIT) trendHistory = trendHistory.slice(-TREND_LIMIT);
+    pruneHistory(trendHistory);
     trendFlush.markDirty();
 }
 
@@ -1457,7 +1470,6 @@ app.get('/api/nas/ups-usb', async (req, res) => {
    跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時，順手記一筆 (節流 30 秒)，
    不需要額外開 SSH 連線。*/
 const UCG_HISTORY_FILE = path.join(DATA_DIR, 'ucg-history.json');
-const UCG_HISTORY_LIMIT = 20000; // 30 秒間隔 ≈ 7 天 (與 UPS/趨勢統一保存約一週)
 let ucgHistory = (() => { try { return JSON.parse(fs.readFileSync(UCG_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 const ucgFlush = registerFlushable(UCG_HISTORY_FILE, () => ucgHistory);
 let lastUcgSampleTs = 0;
@@ -1465,7 +1477,7 @@ function sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct }) {
     if (Date.now() - lastUcgSampleTs < 30000) return;
     lastUcgSampleTs = Date.now();
     ucgHistory.push({ t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores });
-    if (ucgHistory.length > UCG_HISTORY_LIMIT) ucgHistory = ucgHistory.slice(-UCG_HISTORY_LIMIT);
+    pruneHistory(ucgHistory);
     ucgFlush.markDirty();
 }
 app.get('/api/hardware/history', (req, res) => {
@@ -1478,7 +1490,6 @@ app.get('/api/hardware/history', (req, res) => {
    UGOS 沒有提供歷史 API (只有即時快照 get_all)，這裡自己定期取樣 get_all + volume/list 並持久化，
    讓「系統負載 / 網路流量 / 散熱 / 儲存趨勢」四張圖有真實歷史可畫，不需要另外部署 NAS Monitor (系統 B)。 */
 const NAS_HISTORY_FILE = path.join(DATA_DIR, 'nas-history.json');
-const NAS_HISTORY_LIMIT = 10000;  // 60 秒間隔 ≈ 7 天 (與 UPS/趨勢統一保存約一週)
 let nasHistory = (() => { try { return JSON.parse(fs.readFileSync(NAS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 const nasFlush = registerFlushable(NAS_HISTORY_FILE, () => nasHistory);
 let lastNasSampleTs = 0;
@@ -1521,7 +1532,7 @@ async function sampleNasHistory() {
             disks: diskTemps,
             used_gb: volUsedGb, total_gb: volTotalGb
         });
-        if (nasHistory.length > NAS_HISTORY_LIMIT) nasHistory = nasHistory.slice(-NAS_HISTORY_LIMIT);
+        pruneHistory(nasHistory);
         nasFlush.markDirty();
     } catch (e) { sysLog('NAS History', `取樣失敗: ${e.message}`, false); }
 }
@@ -1687,7 +1698,7 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert', 'toastSec'].forEach(k => {
+    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert', 'toastSec', 'historyFlushMin', 'historyKeepDays'].forEach(k => {
         if (typeof b[k] === 'number' && b[k] >= 0) appSettings[k] = b[k];
     });
     if (typeof b.reportEnabled === 'boolean') appSettings.reportEnabled = b.reportEnabled;
@@ -1913,7 +1924,6 @@ self.addEventListener('fetch',e=>{
 let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
 // 溫度歷史持久化 (先前只存記憶體，重啟即遺失)；與其他歷史相同的節流落盤機制
 const WIIM_HISTORY_FILE = path.join(DATA_DIR, 'wiim-history.json');
-const WIIM_HISTORY_LIMIT = 20000; // 活躍 10s / 閒置 30min 混合取樣 ≈ 數天到數週
 let wiimHistory = (() => { try { return JSON.parse(fs.readFileSync(WIIM_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 const wiimFlush = registerFlushable(WIIM_HISTORY_FILE, () => wiimHistory);
 
@@ -1978,7 +1988,7 @@ async function pollWiimTemp() {
     if (isNaN(cpu) && isNaN(board)) { sysLog('WiiM Poll', 'getStatusEx 回應中無溫度欄位，跳過本次取樣', true); return; }
     const ts = Math.floor(Date.now() / 1000);
     wiimHistory.push({ ts, cpu: isNaN(cpu) ? null : cpu, board: isNaN(board) ? null : board });
-    if (wiimHistory.length > WIIM_HISTORY_LIMIT) wiimHistory = wiimHistory.slice(-WIIM_HISTORY_LIMIT);
+    pruneHistory(wiimHistory, p => p.ts * 1000);
     wiimFlush.markDirty();
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
@@ -2105,7 +2115,6 @@ const NUT_UPS_NAME = () => process.env.NUT_UPS_NAME || 'cyberpower';
 const PWRSTAT_PATH = () => process.env.PWRSTAT_PATH || 'pwrstat';
 const UPS_HISTORY_FILE = path.join(DATA_DIR, 'ups-history.json');
 const UPS_EVENTS_FILE = path.join(DATA_DIR, 'ups-events.json');
-const UPS_HISTORY_LIMIT = 20000; // 30 秒間隔 ≈ 7 天
 
 let upsHistory = (() => { try { return JSON.parse(fs.readFileSync(UPS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 let upsEvents = (() => { try { return JSON.parse(fs.readFileSync(UPS_EVENTS_FILE, 'utf8')); } catch { return []; } })();
@@ -2287,7 +2296,7 @@ async function sampleUps() {
     if (!live) { sysLog('UPS', '所有來源皆不可用，跳過本次取樣', true); upsLastLive = null; return; }
     upsLastLive = { ...live, ts: Date.now() };
     upsHistory.push({ t: new Date().toISOString(), inV: live.inputV, outV: live.outputV, batt: live.battery, load: live.loadPct, rt: live.runtimeSec, ob: live.onBattery ? 1 : 0 });
-    if (upsHistory.length > UPS_HISTORY_LIMIT) upsHistory = upsHistory.slice(-UPS_HISTORY_LIMIT);
+    pruneHistory(upsHistory);
     // 平時節流落盤；電池供電中每筆都強制寫檔 (斷電期間隨時可能失電，不能等節流)
     upsHistFlush.markDirty(live.onBattery);
 
