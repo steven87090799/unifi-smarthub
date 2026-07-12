@@ -1,0 +1,28 @@
+# Dependencies and lockfiles
+node_modules/
+package-lock.json
+
+# Secrets and local machine settings
+.env
+.env.*
+!.env.example
+
+# Runtime data and history snapshots
+data/
+
+# Very large files: read only when the task needs them
+public/index.html
+server-mock.js
+ppb-i18n-zh.json
+unifi-network-api.md
+ugreen-nas-api.md
+wiim_spec.md
+wiim-amp-api.md
+cyberpower-ups-api.md
+ROADMAP.md
+SQLITE-MIGRATION.md
+
+# Git/system noise
+.git/
+.DS_Store
+*.log

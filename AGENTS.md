@@ -6,19 +6,25 @@
 
 | 角色 | 檔案 | 大小 |
 |---|---|---|
-| **正式後端** | `server.js` | ~111 KB |
+| **正式後端** | `server.js` | ~162 KB |
 | **模擬後端** | `server-mock.js` | ~37 KB |
-| **前端 SPA** | `public/index.html` | **376 KB（極大）** |
-| **架構文件** | 本檔 `AGENTS.md` | ~21 KB |
+| **前端 SPA** | `public/index.html` | **533 KB（極大）** |
+| **架構文件** | 本檔 `AGENTS.md` | ~24 KB |
+| **低 Token 入口** | `CONTEXT.md` | 先讀這個決定後續讀檔 |
+| **後端索引** | `SERVER-MAP.md` | 後端任務先讀 |
+| **前端索引** | `FRONTEND-MAP.md` | 前端任務先讀 |
 
 ## 📋 檔案閱讀指引（節省 Token 原則）
 
 > **請依任務性質決定是否讀取各檔案，不要預設一次讀全部。**
 
+低成本讀檔順序：先讀 `CONTEXT.md` → 後端讀 `SERVER-MAP.md`、前端讀 `FRONTEND-MAP.md` → 再用 `rg`/`sed` 精準讀 `server.js` 或 `public/index.html` 片段。
+
 ### ✅ 預設不需要讀的檔案
-- `public/index.html` — 376 KB 的巨型 SPA，**除非任務明確涉及前端 UI/JS/CSS 修改，否則不要讀取**
+- `public/index.html` — 533 KB 的巨型 SPA，**除非任務明確涉及前端 UI/JS/CSS 修改，否則不要讀取**
 - `data/*.json` — 純歷史資料，幾乎不需要 AI 閱讀
 - `package-lock.json` — npm lockfile，不需閱讀
+- `.env` / `.env.*` — 含機密；debug 時先讀 `.env.example`，必要時只精準檢查特定欄位
 
 ### 📖 何時才需要讀 `public/index.html`
 只有在以下情況才讀取：
