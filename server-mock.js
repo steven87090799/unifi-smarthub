@@ -572,7 +572,17 @@ app.post('/api/settings', (req, res) => {
 });
 
 app.post('/api/reports/run', (req, res) => {
-    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`].join('\n');
+    const cpus = mockWiimHistory.map(h => h.cpu).filter(v => v !== null);
+    const boards = mockWiimHistory.map(h => h.board).filter(v => v !== null);
+    let wiimLine = '';
+    if (cpus.length && boards.length) {
+        const maxCpu = Math.max(...cpus).toFixed(1);
+        const avgCpu = (cpus.reduce((a, b) => a + b, 0) / cpus.length).toFixed(1);
+        const maxBoard = Math.max(...boards).toFixed(1);
+        const avgBoard = (boards.reduce((a, b) => a + b, 0) / boards.length).toFixed(1);
+        wiimLine = `\n🔊 WiiM Amp 狀態：24H 均溫 CPU ${avgCpu}°C (最高 ${maxCpu}°C) / 主板 ${avgBoard}°C (最高 ${maxBoard}°C)`;
+    }
+    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`].join('\n') + wiimLine;
     if (mockNotif.enabled) pushMockNotif({ ts: new Date().toISOString(), title: '📊 SmartHub 報表 (手動觸發)', body, channel: mockNotif.channel, ok: true });
     res.json({ report: body, delivery: mockNotif.enabled ? { ok: true } : { skipped: 'disabled' } });
 });
@@ -588,6 +598,154 @@ const C='smarthub-v1';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.pathname.startsWith('/api/')||u.pathname==='/healthz')return;e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));});`));
+
+// --- WiiM Amp Mock Endpoints & Background Polling ---
+let mockWiimHistory = [];
+
+function pollMockWiimTemp() {
+    const cpu = parseFloat((45 + Math.random() * 8).toFixed(1));
+    const board = parseFloat((38 + Math.random() * 5).toFixed(1));
+    const ts = Math.floor(Date.now() / 1000);
+    mockWiimHistory.push({ ts, cpu, board });
+    if (mockWiimHistory.length > 5000) mockWiimHistory.shift();
+}
+pollMockWiimTemp();
+setInterval(pollMockWiimTemp, 10000);
+
+app.get('/api/wiim/history', (req, res) => {
+    res.json({
+        interval: 10,
+        cpu_alert: 70,
+        board_alert: 60,
+        data: mockWiimHistory
+    });
+});
+
+app.get('/api/wiim/status', (req, res) => {
+    const type = req.query.type || 'all';
+    const out = {};
+    if (type === 'all' || type === 'play') {
+        out.player = {
+            type: 0, ch: 0, mode: 10, status: "play", vol: 35, mute: 0, eq: 0,
+            curpos: 45000 + Math.floor(Math.random() * 1000), totlen: 240000
+        };
+        out.meta = {
+            metaData: {
+                title: "Mock WiiM Streaming Track",
+                artist: "WiiM Amp Renderer",
+                album: "SmartHub Album",
+                albumArtURI: "",
+                sampleRate: 44100, bitDepth: 16
+            }
+        };
+    }
+    if (type === 'all' || type === 'status') {
+        out.status = {
+            DeviceName: "WiiM Amp Testbed",
+            firmware: "4.8.618254",
+            hardware: "WiiM Amp",
+            temperature_cpu: 48.5,
+            temperature_tmp102: 40.2,
+            bt_remote_bat: "85",
+            bt_remote_rssi: "-65",
+            bt_remote_mac: "00:E0:4C:12:34:56",
+            bt_remote_status: "connected"
+        };
+    }
+    res.json({
+        ...out,
+        ip: "192.168.0.170"
+    });
+});
+
+app.get('/api/wiim/cmd', (req, res) => {
+    const cmd = req.query.command || '';
+    // 查詢型指令回擬真 JSON，其餘回 OK
+    const canned = {
+        getStatusEx: { DeviceName: 'WiiM Amp Testbed', firmware: '4.8.618254', hardware: 'AmlogicA113', project: 'WiiM_Amp', PCB_version: '2', MAC: '00:22:6C:AA:BB:CC', uuid: 'FF31F09E-MOCK', netstat: 2, date: '2026:07:10', time: '09:30:00' },
+        getStaticIpInfo: { wlanStaticIpEnable: 0, wlanStaticIp: '', wlanGateWay: '192.168.0.1', wlanDnsServer: '8.8.8.8' },
+        EQGetStat: { EQStat: 'On' },
+        EQGetList: ['Flat', 'Rock', 'Jazz', 'Classical', 'Vocal', 'Bass Booster'],
+        getPresetInfo: { preset_num: 3, preset_list: [{ number: 1, name: 'KISS Radio' }, { number: 2, name: 'Jazz24' }, { number: 3, name: '晚安歌單' }] },
+        getShutdown: 0,
+        getbtpairstatus: { result: 3 },
+        'Squeezelite:getState': { state: 'stopped', discover_list: [] },
+        wlanGetConnectState: 'OK'
+    };
+    const hit = Object.keys(canned).find(k => cmd.startsWith(k));
+    res.json({ result: hit ? (typeof canned[hit] === 'string' ? canned[hit] : JSON.stringify(canned[hit])) : 'OK' });
+});
+
+app.get('/api/wiim/clear', (req, res) => {
+    mockWiimHistory = [];
+    res.json({ ok: true });
+});
+
+app.get('/api/wiim/csv', (req, res) => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=wiim_temp_log.csv');
+    let csv = 'timestamp,iso_time,cpu_c,board_tmp102_c\n';
+    for (const h of mockWiimHistory) {
+        const iso = new Date(h.ts * 1000).toISOString();
+        csv += `${h.ts},${iso},${h.cpu !== null && h.cpu !== undefined ? h.cpu : ''},${h.board !== null && h.board !== undefined ? h.board : ''}\n`;
+    }
+    res.send(csv);
+});
+
+/* ===== CyberPower UPS 模擬端點 ===== */
+const mockUpsHistory = (() => {
+    const pts = [], now = Date.now();
+    for (let i = 2880; i >= 0; i--) { // 24h @30s
+        const t = now - i * 30000;
+        const isOutage = i <= 1210 && i >= 1180; // 模擬一段 15 分鐘的斷電
+        pts.push({
+            t: new Date(t).toISOString(),
+            inV: isOutage ? 0 : +(110 + Math.sin(t / 3.6e6) * 2.5 + Math.random()).toFixed(1),
+            outV: +(110 + Math.random() * 0.8).toFixed(1),
+            batt: isOutage ? Math.max(62, 100 - Math.round((1210 - i) * 1.2)) : 100,
+            load: Math.round(18 + Math.random() * 8),
+            rt: isOutage ? 1500 : 2520,
+            ob: isOutage ? 1 : 0
+        });
+    }
+    return pts;
+})();
+const mockUpsEvents = [
+    { start: new Date(Date.now() - 1210 * 30000).toISOString(), end: new Date(Date.now() - 1180 * 30000).toISOString(), durationSec: 900, minBattery: 62, startVoltage: 108.9 },
+    { start: new Date(Date.now() - 5 * 86400000).toISOString(), end: new Date(Date.now() - 5 * 86400000 + 120000).toISOString(), durationSec: 120, minBattery: 95, startVoltage: 109.4 }
+];
+app.get('/api/ups/status', (req, res) => res.json({
+    source: 'nut', model: 'CyberPower CP1500PFCLCDa', status: 'OL',
+    onBattery: false, inputV: +(110 + Math.random() * 2).toFixed(1), outputV: 110.2,
+    battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 30
+}));
+app.get('/api/ups/history', (req, res) => {
+    const hours = parseInt(req.query.hours || '24', 10);
+    const cutoff = Date.now() - hours * 3600000;
+    res.json({ history: mockUpsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
+});
+app.get('/api/ups/events', (req, res) => res.json({ events: mockUpsEvents }));
+app.get('/api/ups/csv', (req, res) => {
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');
+    let csv = 'time,input_v,output_v,battery_pct,load_pct,runtime_sec,on_battery\n';
+    for (const h of mockUpsHistory) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
+    res.send(csv);
+});
+
+/* ===== 連線設定 (模擬) ===== */
+let mockConn = { UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4', UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo', NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '', NAS_MONITOR_URL: '', WIIM_IP: '192.168.0.170', UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '' };
+let mockConnSecrets = { SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false, NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false };
+app.get('/api/connections', (req, res) => res.json({ fields: mockConn, secretsSet: mockConnSecrets }));
+app.post('/api/connections', (req, res) => {
+    let n = 0;
+    for (const [k, v] of Object.entries(req.body || {})) {
+        if (typeof v !== 'string' || !v.trim()) continue;
+        if (k in mockConnSecrets) mockConnSecrets[k] = true; else if (k in mockConn) mockConn[k] = v.trim();
+        n++;
+    }
+    res.json({ ok: true, changed: n });
+});
 
 app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
 

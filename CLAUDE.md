@@ -1,5 +1,45 @@
 # SmartHub — 架構文件 (CLAUDE.md)
 
+## ⚡ 快速摘要（先讀這裡，再決定是否需要讀其他檔案）
+
+這是一個 **Node.js + Express 後端 + 單頁前端** 的家用網路管理面板。
+
+| 角色 | 檔案 | 大小 |
+|---|---|---|
+| **正式後端** | `server.js` | ~111 KB |
+| **模擬後端** | `server-mock.js` | ~37 KB |
+| **前端 SPA** | `public/index.html` | **376 KB（極大）** |
+| **架構文件** | 本檔 `CLAUDE.md` | ~21 KB |
+
+## 📋 檔案閱讀指引（節省 Token 原則）
+
+> **請依任務性質決定是否讀取各檔案，不要預設一次讀全部。**
+
+### ✅ 預設不需要讀的檔案
+- `public/index.html` — 376 KB 的巨型 SPA，**除非任務明確涉及前端 UI/JS/CSS 修改，否則不要讀取**
+- `data/*.json` — 純歷史資料，幾乎不需要 AI 閱讀
+- `package-lock.json` — npm lockfile，不需閱讀
+
+### 📖 何時才需要讀 `public/index.html`
+只有在以下情況才讀取：
+- 修改前端 UI 佈局、樣式、動畫
+- 新增或修改前端 JavaScript 功能（API 呼叫、圖表、互動）
+- 調整 HTML 結構、新增頁面分頁
+- 修復前端特定的 bug
+
+**純後端任務**（修改 API 端點、修 server.js 邏輯、調整排程、除錯後端錯誤）→ **不需讀取 index.html**，僅讀 `server.js` 即可。
+
+### 📖 其他檔案參考指引
+- 需要了解 UniFi API 規格 → 讀 `unifi-network-api.md`
+- 需要了解 NAS API 規格 → 讀 `ugreen-nas-api.md`
+- 需要了解 WiiM 規格 → 讀 `wiim_spec.md` 或 `wiim-amp-api.md`
+- 需要了解 UPS → 讀 `cyberpower-ups-api.md`
+- 完整技術規格 → 讀 `spec.md`
+
+---
+
+
+
 客製化 UniFi × UGREEN NAS 雙系統管理面板。採「前後端分離」架構:前端 (public/index.html) 只呼叫本專案後端,`X-API-Key`、控制器帳密與 NAS 帳密僅存於後端,符合 `../unifi-network-api.md` §4.1 的安全要求。
 
 ## 專案結構
@@ -12,6 +52,8 @@
 | `../unifi-network-api.md` | UniFi API 規格參考文件 (v10.3.58 / Site Manager v1.0.0) |
 | `../ugreen-nas-api.md` | UGREEN UGOS Pro NAS API 規格參考文件(逆向工程) |
 | `README.md` | 使用者導向的部署文件(所需資料、Docker 步驟、記憶體、歷史資料持久化、疑難排解) |
+| `spec.md` | AI/開發者導向的高密度技術規格(完整目錄樹、模組邊界、資料流、全量 API 端點) |
+| `wiim_spec.md` | WiiM Amp 整合專用規格(User-Agent 繞過、指令映射、欄位定義) |
 | `Dockerfile` / `docker-compose.yml` | 容器部署:node:20-alpine + tini + 非 root + healthcheck;compose 含具名 volume、mem_limit 256m |
 
 啟動:`npm start`(需 `.env`)或 `node server-mock.js`(免環境設定)或 `docker compose up -d --build`。
@@ -24,7 +66,10 @@
 
 ## 前端版面 (public/index.html)
 
-- **側邊欄 + 分頁**:總覽 / 客戶端 / 資安 / WiFi / 雲端站點 / NAS / 工具;行動版為漢堡選單。
+- **側邊欄 + 分頁**(分群導航):總覽 →「網路監控」客戶端/資安/WiFi/雲端 →「設備」NAS/WiiM/UPS →「系統」工具/通知推播/設定;行動版為漢堡選單。左下角三行設備狀態(UCG/NAS/WiiM)。
+- **液態玻璃 UI**:`body::before/::after` 兩顆極光光暈緩慢漂移;`main .rounded-2xl` 統一升級玻璃材質(漸層半透明+blur(20px) saturate+上緣高光+雙陰影),內層 `.rounded-xl` 薄玻璃;aside/header 玻璃化;深淺主題皆有對應覆寫。**新卡片只要用 rounded-2xl/rounded-xl 即自動獲得玻璃效果**。
+- **Debug**:後端 `sysLog(module,msg,isError)` 統一格式 + HTTP 中介層記錄所有 /api 請求(`DEBUG_HTTP=0` 關閉);前端 `dbg(module,...)`(`localStorage.debug='0'` 關閉)。
+- **版面編輯(巢狀拖曳)**:右上 🧩 進入編輯。可排序容器 = `main > section` 頂層(藍虛線+⠿標籤)+ 任何標記 **`data-drag`** 的內部容器(綠虛線;全站 21 處:資安/NAS/雲端大卡內容、各雙欄 grid、KPI 迷你卡列、WiiM 左右欄、總覽體檢列等)。排序存 localStorage `layoutOrder.v1`(容器 key = section id 或 `data-drag-key`),集合不符自動忽略。拖曳 handler 有 `stopPropagation` 防巢狀連動;grid 內橫向卡片以 X 軸判斷插入點。**新增區塊時**:放進 data-drag 容器即自動可拖;新容器加 `data-drag` 屬性即可。跨容器移動不支援(避免破壞欄位佈局)。
 - **總覽**:4 張 KPI 卡(WAN、線上設備、24H 威脅、雙設備溫度 UCG/NAS)+ **雙設備即時體檢面板**(UCG 與 NAS 並排,各顯示 CPU 溫度大字 + CPU/記憶體條 + 關鍵指標與連線徽章,點擊可下鑽)+ 資安戰情速覽 + 歷史趨勢圖 + UCG 硬體詳情。體檢面板的 UCG 欄由 `fetchHardware`/`fetchClients` 填(`ov-ucg-*`),NAS 欄由 `fetchNas` 填(`ov-nas-*`);溫度配色用 `tempColor()`/`tempLabel()`(涼爽<55/正常<65/偏高<75/過熱≥75)。目的:兩台設備重點不用切頁即可一次看清。
 - **客戶端**:管理表格 + Top 5 流量排行榜 + 封鎖歷史時間軸。
 - **總覽 → 資安戰情速覽**:安全評分環(0-100 + 等級)、24H 每小時威脅柱狀圖、最新攔截事件流,點「進入完整戰情室」跳資安頁。
@@ -32,7 +77,7 @@
 - **安全評分**:`securityScoreDetail(threats)` 回傳 `{score,count,high,medium,low,boosted,penalty}`;`updateSecurityAnalytics` 同時把扣分明細寫進總覽評分環下方(`ov-score-explain`)與資安頁說明卡(`sec-score-explain`),讓 0–100 分數有可解釋依據。分數只看近 24 小時,威脅停止後自動回升。
 - **NAS**:CPU/RAM/網路/UPS 四卡 + 硬碟健康 + 儲存區容量條 + Raw JSON 除錯區。
 - **工具**:測速(待機→轉圈動畫→結果儀表盤)+ PoE 斷電重啟。
-- **通知推播**:推播設定(啟用開關、管道 Discord/Telegram/通用 Webhook、觸發條件、測試按鈕)+ 近期推播紀錄。後端 `notificationWatcher`(間隔可調)偵測新 `ips:alert` 與 NAS 嚴重警報,去重後透過 `notify()` 推播;首輪僅記錄既有事件避免啟動時洗版。機密欄位在 GET 遮罩、POST 留空不覆寫。
+- **通知推播**:推播設定(啟用開關、管道 Discord/Telegram/通用 Webhook、觸發條件、測試按鈕)+ 近期推播紀錄。後端 `notificationWatcher`(間隔可調)偵測新 `ips:alert`、NAS 嚴重警報(NAS Monitor)、**NAS 系統日誌全量推播**(UGOS 日誌中心所有事件,僅排除本站登入;`triggerNasLog` 預設開啟)等,去重後透過 `notify()` 推播;首輪僅記錄既有事件避免啟動時洗版。機密欄位在 GET 遮罩、POST 留空不覆寫。
 - **設定**:外觀主題(深/淺,存 localStorage,右上角快速切換)、定期報表(每日/每週 + 時間 + 立即預覽)、前端輪詢間隔(12 項,存 localStorage,`POLL_JOBS` + `applyPolling()`)、伺服器端取樣間隔(存 `app-settings.json`)。
 - **前端輪詢**:全部經 `POLL_JOBS` 表 + `applyPolling()` 統一管理(取代原本寫死的 setInterval);間隔存 localStorage `pollConfig`,可於設定頁即時調整。
 - **主題**:`html.light` class + `<style>` 內的淺色覆寫規則(針對常用 slate 類別 `!important` 覆寫)。強調色(藍/紅/綠)保留。
@@ -75,6 +120,7 @@
 | `GET /api/notifications/log` | 近期推播紀錄(記憶體,50 筆) |
 | `GET/POST /api/settings` | 讀寫 `app-settings.json`(伺服器端間隔:趨勢取樣/活躍視窗/監看器/自動防禦、報表設定)。POST 後即時 `scheduleServerJobs()` 重排 |
 | `POST /api/reports/run` | 立即彙整並(若啟用)推播報表,回傳報表文字 |
+| `GET/POST /api/connections` | **連線設定網頁化**:讀寫 `.env` 中 `CONN_FIELDS` 白名單欄位(SSH/UniFi/NAS/NAS Monitor/WiiM/UPS)。GET 機密只回 `secretsSet` 布林;POST 留空=不變更,寫入 `.env`(`persistEnvVars`,含註解行取代)後 `rebuildClients()` 熱重建全部 axios client + 重置 session/token/快取,**免重啟生效**。相關宣告皆為 `let` + `build*()` 工廠(unifiClient/unifiCloudClient/nasClient/nasMonClient/wiimIP);UPS 的 `UPS_SOURCE/NUT_HOST/NUT_UPS_NAME/PWRSTAT_PATH` 為呼叫時讀 env 的函式 |
 | `GET /manifest.webmanifest`, `GET /sw.js` | PWA manifest 與 service worker(離線殼層快取,`/api/*` 不快取) |
 
 ### C. 雲端 Site Manager API (`https://api.ui.com/v1`,`X-API-KEY` 標頭)
@@ -87,7 +133,7 @@
 | `GET /api/cloud/isp-metrics` | `GET /v1/isp-metrics/5m?duration=24h` | ✅ 正確 |
 
 ### D. UGREEN NAS(UGOS Pro 原生 API,對照 `../ugreen-nas-api.md` 系統 A)
-認證:`GET /ugreen/v1/verify/rsa_public_key` → 密碼 RSA PKCS1v15 加密 + Base64 → `POST /ugreen/v1/verify/login`(`device_type: 1`)取 token。Token 快取 12 小時,後續請求掛 `?token=` 並帶 `ug-agent: PC/WEB` 標頭。
+認證(UGOS Pro ≥1.17 實機驗證):`POST /ugreen/v1/verify/check?token=` → RSA 公鑰在回應標頭 `x-rsa-token`(base64 PEM;**標籤寫 RSA PUBLIC KEY 但內容是 SPKI**,需剝殼後以 der/spki 解析)→ 密碼 RSA PKCS1v15 加密 → `POST /ugreen/v1/verify/login`(`is_simple:true, keepalive:true, otp:false`)取 `data.token`。舊版 UGOS 的 `GET /verify/rsa_public_key` 作為回退。Token 快取 12 小時,後續請求掛 `?token=` query 參數。**UGOS 錯誤都回 HTTP 200,錯誤碼在 body.code**:1004/1008 = 該 API 僅限管理員帳號(disk/list、taskmgr、UPS 都要管理員;volume/list 一般帳號可讀)。
 
 | 本專案端點 | 上游 UGOS 端點 |
 | :--- | :--- |
@@ -119,6 +165,30 @@
 
 NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker 數)、系統負載歷史圖、流量歷史圖、儲存趨勢圖、散熱歷史圖、Docker 容器管理表(啟停/重啟/日誌彈窗)、警報事件清單。Docker 日誌彈窗置於 `<body>` 頂層(不可放進 `backdrop-blur` 祖先內,否則 `position:fixed` 會以該祖先為定位基準而跑位)。
 
+### F. WiiM Amp 串流音響(LinkPlay HTTP API,詳見 `wiim_spec.md`)
+上游:`https://<WIIM_IP>/httpapi.asp?command=...`(自簽憑證忽略驗證,失敗自動回退 HTTP)。**必帶 `User-Agent: wiim-temp/2.0`** 繞過新韌體的 Direct IP 封鎖。唯讀命令(getPlayerStatus/getMetaInfo/getStatusEx/getPresetInfo/getbtdiscoveryresult)有 2 秒後端快取,連線失敗時回傳舊快取。
+
+| 本專案端點 | 說明 |
+| :--- | :--- |
+| `GET /api/wiim/status?type=play\|status\|all` | 播放狀態+曲目 metadata / 系統資訊(溫度、遙控器電量)。裝置無回應時回退展示資料並標 `source: 'fallback'` |
+| `GET /api/wiim/cmd?command=...` | 通用指令代理(播放控制/EQ/輸入源/藍牙/LED/重啟等) |
+| `GET /api/wiim/history` | 溫度歷史(記憶體,上限 5000 點;**只存真實樣本**,連不上裝置時跳過取樣不偽造) |
+| `GET /api/wiim/clear`, `GET /api/wiim/csv` | 清空 / 匯出溫度記錄 |
+
+溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 10 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 10s / `wiimPlayback` 5s)。遙控器欄位以 key 名稱模糊匹配。
+
+### G. CyberPower UPS(NUT 優先多來源,對照 `cyberpower-ups-api.md`)
+`UPS_SOURCE=auto` 依序嘗試:**PPB**(PowerPanel Business REST API,`PPB_HOST`/`PPB_PORT`/`PPB_USER`/`PPB_PASSWORD`,Docker 部署時 PPB_HOST 必須指向實際主機 IP 而非 127.0.0.1)→ **NUT**(`upsc <NUT_UPS_NAME>@<NUT_HOST>`,容器內需 `apk add nut`,Dockerfile 已含)→ **pwrstat**(`pwrstat -status`)→ **pmset**(`pmset -g ps`,僅容量)。以 `child_process.exec` 呼叫本地指令,無需雲端。
+
+| 本專案端點 | 說明 |
+| :--- | :--- |
+| `GET /api/ups/status` | 即時讀取(來源/型號/輸入輸出電壓/電池/負載/剩餘時間/onBattery);全部失敗回 `source:'unreachable'`+lastKnown |
+| `GET /api/ups/history?hours=` | 電壓/電池/負載歷史(**持久化** `ups-history.json`,上限 20000 點 ≈ 7 天 @30s) |
+| `GET /api/ups/events` | 斷電事件(start/end/durationSec/minBattery,**持久化** `ups-events.json`,市電斷→開事件、恢復→補時長) |
+| `GET /api/ups/csv` | 匯出電壓歷史 |
+
+UPS 取樣(`appSettings.upsSampleSec` 預設 30s)**不做閒置降頻**——斷電/電壓紀錄無人瀏覽也要持續記錄。前端 UPS 頁:6 格 KPI(輸入/輸出電壓/電池/負載/可撐分鐘/狀態)+ 電壓歷史圖(1h/6h/24h/7d + CSV,斷電段輸入歸零)+ 電池負載圖 + 斷電事件表(進行中標紅)+ NUT 接入指南(unreachable 時顯示)。
+
 ## API 使用核對結果(對照 unifi-network-api.md)
 
 ### 符合規格
@@ -141,7 +211,19 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 - 大改版:前端重構為側邊欄 + 7 分頁 SPA;硬體數據移除全部 Math.random 模擬,改為 SSH 兩次取樣的真實差值;新增歷史趨勢取樣器、測速結果輪詢、威脅世界地圖、Top 5 流量排行、UGREEN NAS 整合(共 6 個新後端端點)。
 - 資安強化:總覽頁新增資安戰情速覽(評分環/每小時分佈/事件流);資安頁擴充 KPI 列、每小時堆疊圖、多維度 Top 分析、四重篩選 + CSV 匯出;新增自動防禦聯動(`/api/security/settings` + 後端 `autoDefenseSweep` 每 30s 掃描,偵測 Malware/Trojan/Botnet/C2 感染事件時自動 `block-sta` 隔離受感染內網設備,**預設關閉**,不改動主控台 IDS/IPS 設定,封鎖記於時間軸標記 `auto`)。
 
+### 已修正(2026-07-10,WiiM 整合審查)
+- **server-mock.js PORT 被 WiiM commit 誤改為 3000** → 還原 3005(否則與正式伺服器衝突、launch.json 失效)。
+- **Tailwind `slate-750`/`slate-850` 從未定義**(全專案多處使用但 CDN 版 Tailwind 無此色階,靜默失效)→ head 加 `tailwind.config` 補上(750:#293548、850:#172033)。
+- **WiiM 溫度輪詢固定 10s 永遠執行 + 連不上時偽造隨機溫度寫入歷史** → 改自適應排程 + 只記錄真實樣本。
+- **播放卡無輪詢**(僅初始化與下指令後更新)→ `POLL_JOBS` 新增 `wiimPlayback`(5s)。
+- 遙控器/週邊卡從左欄移至右欄(設定卡下方)平衡版面;`/api/wiim/status` 回退時補 `source` 標記;圖表範圍標籤與相對時間文案修正。
+
 ## 開發注意事項
+- **歷史資料節流落盤**:trend/ucg/nas/ups 歷史陣列常駐記憶體,`registerFlushable`+`markDirty()` 最多每 5 分鐘寫檔一次(UPS 電池供電中強制每筆寫);SIGTERM/SIGINT 強制全落盤。新增歷史型資料請沿用此機制,勿在取樣路徑直接 `fs.writeFileSync` 大檔。
+- **認證**:設 `PANEL_PASSWORD` 環境變數即啟用整站 Basic Auth(/healthz 除外);已移除 `cors()`(前後端同源不需要)。
+- **時區**:報表排程 (`reportHour`) 用本地時間,Docker 部署必須設 `TZ=Asia/Taipei`(compose 已含,Dockerfile 已裝 tzdata)。
+- **`.env` 持久化**:compose 以 bind mount 掛 `./.env:/app/.env`,網頁「連線設定」的修改才能跨容器重建保留。
+- `/api/hardware` 有 5 秒快取 + in-flight 去重(`getHardwareCached()`),watcher/報表直接呼叫該函式,不再自打 HTTP。
 - `unifiClient` 使用 `rejectUnauthorized: false` 忽略自簽憑證 — 僅限內網使用。
 - 所有雲端端點錯誤時回退 mock 資料並回 200(`source: 'fallback_on_error'`),前端不會看到 5xx;除錯時檢查回應中的 `source` 與 `error` 欄位。
 - Site Manager 遠端速率限制:EA 每分鐘 100 次(§1),輪詢頻率設計時需考量。

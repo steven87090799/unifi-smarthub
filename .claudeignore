@@ -1,0 +1,20 @@
+# ── 依賴與鎖定檔 ──────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ── 歷史資料 JSON（純資料，AI 不需閱讀）───────────────────
+data/trend-history.json
+data/nas-history.json
+data/ups-history.json
+data/ups-events.json
+
+# ── 超大前端單檔（376 KB SPA）────────────────────────────
+# 如果你需要 Claude 編輯前端，請暫時刪除這行
+
+
+# ── Git 內部資料 ──────────────────────────────────────────
+.git/
+
+# ── 系統 / IDE 檔案 ────────────────────────────────────────
+.DS_Store
+*.log

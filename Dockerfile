@@ -1,7 +1,9 @@
 FROM node:20-alpine
 
 # tini 作為 PID 1，正確處理訊號與殭屍程序 (SSH 子連線清理)
-RUN apk add --no-cache tini
+# nut：提供 upsc 客戶端，容器內才能讀取 NAS/主機上 NUT server 的 UPS 數據 (UPS_SOURCE=nut)
+# tzdata：時區資料，配合 TZ 環境變數讓報表排程/日誌時間正確 (預設 UTC 會差 8 小時)
+RUN apk add --no-cache tini nut tzdata
 
 WORKDIR /app
 
