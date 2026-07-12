@@ -740,6 +740,7 @@
                     <!-- 重大事件警報橫幅：只在 UPS 斷電/WAN 斷線等嚴重事件時出現，強烈閃爍，點擊關閉 -->
                     <button id="crit-alert-banner" onclick="dismissCritAlerts()" title="點擊關閉此警報"
                         class="hidden items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider crit-blink cursor-pointer max-w-[50vw]">
+                        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01"/></svg>
                         <span id="crit-alert-text" class="truncate"></span>
                         <span class="text-[9px] opacity-70 shrink-0">✕</span>
                     </button>
@@ -3512,7 +3513,7 @@
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                         <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
                             <div>
-                                <h3 class="text-sm font-bold text-white tracking-wider">⚡ 電壓歷史紀錄</h3>
+                                <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg> 電壓歷史紀錄</h3>
                                 <p class="text-[9px] text-slate-500">市電輸入 / UPS 輸出 — 每 <span
                                         id="ups-samplelbl">30</span> 秒取樣，持久化保存(重啟不遺失)，斷電時段輸入電壓歸零</p>
                             </div>
@@ -3558,12 +3559,22 @@
                     <div data-drag class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div
                             class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                            <h3 class="text-sm font-bold text-white tracking-wider mb-4">🔋 電池容量與負載歷史</h3>
+                            <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-4">
+                                <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2.5" y="8" width="15" height="8" rx="2" stroke-linejoin="round"/><path stroke-linecap="round" d="M20.5 10.5v3M6 11v2M9.5 11v2M13 11v2"/></svg> 電池容量與負載歷史</h3>
+                                <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px]">
+                                    <button onclick="setUpsLoadRange(1/6, this)" class="ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">10 分</button>
+                                    <button onclick="setUpsLoadRange(0.5, this)" class="ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">30 分</button>
+                                    <button onclick="setUpsLoadRange(1, this)" class="ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">1 時</button>
+                                    <button onclick="setUpsLoadRange(6, this)" class="ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">6 時</button>
+                                    <button onclick="setUpsLoadRange(24, this)" class="ups-load-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition">24 時</button>
+                                    <button onclick="setUpsLoadRange(168, this)" class="ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">7 天</button>
+                                </div>
+                            </div>
                             <div class="h-52"><canvas id="upsLoadChart"></canvas></div>
                         </div>
                         <div
                             class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                            <h3 class="text-sm font-bold text-white tracking-wider mb-4">🚨 斷電事件記錄 <span
+                            <h3 class="text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-red-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01"/></svg> 斷電事件記錄 <span
                                     class="text-[10px] text-slate-500 font-normal" id="ups-event-count"></span></h3>
                             <div class="overflow-x-auto max-h-[240px] terminal-scroll">
                                 <table class="w-full text-xs text-left">
@@ -3911,7 +3922,7 @@
                 }
             });
         }
-        let upsVoltChart = null, upsLoadChart = null, upsRangeHours = 24;
+        let upsVoltChart = null, upsLoadChart = null, upsRangeHours = 24, upsLoadRangeHours = 24;
         let trendHours = 24;
         let autoDefenseOn = false;
         const THREAT_CATS = ['Web Exploit', 'Brute Force', 'Scanner', 'Malware', 'DoS', 'Manual Block'];
@@ -6886,9 +6897,15 @@
                     set(`${prefix}-max`, Math.max(...vals) + 'V');
                 };
                 vstat('inV', 'ups-v-inv'); vstat('outV', 'ups-v-outv');
-                upsLoadChart.data.labels = h.map(fmt);
-                upsLoadChart.data.datasets[0].data = h.map(p => p.batt);
-                upsLoadChart.data.datasets[1].data = h.map(p => p.load);
+                // 電池/負載圖有自己的時間範圍;與電壓圖相同時共用資料省一次請求
+                const hl = upsLoadRangeHours === upsRangeHours ? h
+                    : ((await (await fetch(`/api/ups/history?hours=${upsLoadRangeHours}`)).json()).history || []);
+                const fmtL = upsLoadRangeHours > 24
+                    ? (p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) + ' ' + new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }))
+                    : (p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }));
+                upsLoadChart.data.labels = hl.map(fmtL);
+                upsLoadChart.data.datasets[0].data = hl.map(p => p.batt);
+                upsLoadChart.data.datasets[1].data = hl.map(p => p.load);
                 upsLoadChart.update('none');
             } catch (e) { dbg('UPS', '歷史讀取失敗', e); }
             try {
@@ -6912,6 +6929,12 @@
             dbg('UPS', '切換範圍', hours + 'h');
             fetchUps();
         }
+        function setUpsLoadRange(hours, btn) {
+            upsLoadRangeHours = hours;
+            document.querySelectorAll('.ups-load-range-btn').forEach(b => b.className = 'ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition');
+            btn.className = 'ups-load-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition';
+            fetchUps();
+        }
         function downloadUpsCsv() { window.location.href = '/api/ups/csv'; }
 
         async function fetchPpbEvents() {
@@ -6924,7 +6947,13 @@
                 const events = r.events || [];
                 document.getElementById('ppb-events-count').textContent = events.length ? `共 ${events.length} 筆` : '';
                 const cls = { error: 'text-red-400 border-red-500/20 bg-red-500/5', ok: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5', test: 'text-blue-400 border-blue-500/20 bg-blue-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
-                const icon = { error: '🚨', ok: '✅', test: '🔧', info: 'ℹ️' };
+                const svgI = (d, c) => `<svg class="w-3.5 h-3.5 ${c}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
+                const icon = {
+                    error: svgI('M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01', 'text-red-400'),
+                    ok: svgI('M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3', 'text-emerald-400'),
+                    test: svgI('M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z', 'text-blue-400'),
+                    info: svgI('M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z', 'text-slate-400')
+                };
                 list.innerHTML = events.length ? events.map(e => `
                     <div class="flex items-center gap-3 p-2 rounded-lg border text-[11px] ${cls[e.level] || cls.info}">
                         <span class="shrink-0">${icon[e.level] || icon.info}</span>
