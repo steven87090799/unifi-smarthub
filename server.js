@@ -1765,6 +1765,69 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
     }
 });
 
+// 31. 警報閾值設定 (系統 B)：面板直接管理各指標的觸發門檻，取代目前「只能看不能改」
+app.get('/api/nas/alerts/config', async (req, res) => {
+    if (!nasMonConfigured()) return res.json({ config: [], source: 'not_configured' });
+    try {
+        const data = await nasMonGet('/api/alerts/config');
+        res.json({ config: Array.isArray(data) ? data : (data.config || data.data || []), source: 'nas_monitor' });
+    } catch (error) {
+        res.json({ config: [], source: 'error', error: error.message });
+    }
+});
+app.post('/api/nas/alerts/config', async (req, res) => {
+    if (!nasMonConfigured()) return res.status(503).json({ error: 'nas_monitor_not_configured' });
+    try {
+        const r = await nasMonClient.post('/api/alerts/config', req.body || {});
+        res.json({ ok: true, data: r.data, source: 'nas_monitor' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+app.delete('/api/nas/alerts/config/:metric', async (req, res) => {
+    if (!nasMonConfigured()) return res.status(503).json({ error: 'nas_monitor_not_configured' });
+    try {
+        await nasMonClient.delete(`/api/alerts/config/${encodeURIComponent(req.params.metric)}`);
+        res.json({ ok: true, source: 'nas_monitor' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/* ===================== 32. NAS Monitor 即時推送 (SSE 中繼) =====================
+   瀏覽器 EventSource 無法帶自訂認證標頭，所以由後端代為連線系統 B 的 /api/stream
+   (帶 API Key)，再原樣轉發給前端。多個分頁共用同一條上游連線 (惰性建立/無人訂閱即斷開)，
+   避免每個分頁各開一條 SSE 消耗 NAS 資源。上游斷線會自動退避重連。 */
+const sseClients = new Set();
+let sseUpstreamReq = null, sseReconnectTimer = null;
+function sseConnectUpstream() {
+    if (!nasMonConfigured() || sseUpstreamReq || sseClients.size === 0) return;
+    const base = NASMON_URL.replace(/\/$/, '');
+    const key = process.env.NAS_MONITOR_API_KEY || '';
+    axios.get(`${base}/api/stream`, {
+        responseType: 'stream', timeout: 0,
+        headers: { Accept: 'text/event-stream', 'X-API-Key': key, Authorization: `Bearer ${key}` }
+    }).then(r => {
+        sysLog('NAS SSE', '已連線上游即時推送串流');
+        sseUpstreamReq = r;
+        r.data.on('data', chunk => { for (const c of sseClients) c.write(chunk); });
+        r.data.on('end', () => { sseUpstreamReq = null; scheduleSseReconnect(); });
+        r.data.on('error', () => { sseUpstreamReq = null; scheduleSseReconnect(); });
+    }).catch(e => { sysLog('NAS SSE', `連線失敗: ${e.message}，10 秒後重試`, true); sseUpstreamReq = null; scheduleSseReconnect(); });
+}
+function scheduleSseReconnect() {
+    if (sseReconnectTimer || sseClients.size === 0) return;
+    sseReconnectTimer = setTimeout(() => { sseReconnectTimer = null; sseConnectUpstream(); }, 10000);
+}
+app.get('/api/nas/stream', (req, res) => {
+    if (!nasMonConfigured()) return res.status(503).json({ error: 'nas_monitor_not_configured' });
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write(':ok\n\n');
+    sseClients.add(res);
+    sseConnectUpstream();
+    req.on('close', () => { sseClients.delete(res); if (sseClients.size === 0 && sseUpstreamReq) { try { sseUpstreamReq.data.destroy(); } catch { } sseUpstreamReq = null; } });
+});
+
 /* ===================== 應用程式設定 API ===================== */
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
@@ -1813,6 +1876,7 @@ function rebuildClients() {
     unifiCloudClient = buildUnifiCloudClient();
     ({ base: NAS_BASE, client: nasClient } = buildNasClient());
     ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
+    if (sseUpstreamReq) { try { sseUpstreamReq.data.destroy(); } catch { } sseUpstreamReq = null; sseConnectUpstream(); } // NAS_MONITOR_URL 可能已變更，重連上游 SSE
     wiimIP = process.env.WIIM_IP || wiimIP;
     localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
     nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
