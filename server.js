@@ -1339,7 +1339,17 @@ app.get('/api/nas/overview', async (req, res) => {
                     return { name, temperature: sleeping ? null : d.temperature, sleeping };
                 });
         } catch { }
-        res.json({ info, stats, disksLite, statsRaw, statsError, source: 'nas_api' });
+        // 風扇轉速：藏在 get_all 的 overview.device_fan / overview.cpu_fan (陣列，每顆風扇 {speed,status})
+        // 這份資料先前誤判為「此機型無風扇轉速」，實測 UGOS 1.17 確實有回傳
+        let fans = [];
+        try {
+            const ov = statsRaw && statsRaw.overview;
+            if (ov) {
+                const label = (arr, prefix) => (arr || []).map((f, i) => ({ name: `${prefix}${arr.length > 1 ? i + 1 : ''}`, rpm: f.speed ?? null, status: f.status === 1 ? 'normal' : (f.status != null ? `abnormal(${f.status})` : 'unknown') }));
+                fans = [...label(ov.cpu_fan, 'CPU 風扇'), ...label(ov.device_fan, '機殼風扇')];
+            }
+        } catch { }
+        res.json({ info, stats, disksLite, fans, statsRaw, statsError, source: 'nas_api' });
     } catch (error) {
         res.json({ info: null, stats: null, source: 'error', error: error.message });
     }
@@ -1593,11 +1603,19 @@ async function sampleNasHistory() {
                 volTotalGb = Math.round(vols.reduce((a, v) => a + (v.total || 0), 0) / 1073741824);
             }
         } catch { }
+        // 風扇轉速 (RPM)：overview.device_fan / cpu_fan，多顆風扇取平均代表一筆歷史值
+        let fanRpm = null;
+        try {
+            const ov = raw.overview;
+            const all = [...(ov?.cpu_fan || []), ...(ov?.device_fan || [])].map(f => f.speed).filter(v => v != null);
+            if (all.length) fanRpm = Math.round(all.reduce((a, b) => a + b, 0) / all.length);
+        } catch { }
         nasHistory.push({
             t: new Date().toISOString(),
             cpu: cpu.used_percent != null ? Math.round(cpu.used_percent) : null,
             memory: mem.used_percent != null ? Math.round(mem.used_percent) : null,
             temperature: cpu.temp ?? null,
+            fan_rpm: fanRpm,
             up_mbps: +(((netOv.send_rate || 0) * 8 / 1e6).toFixed(2)),
             down_mbps: +(((netOv.recv_rate || 0) * 8 / 1e6).toFixed(2)),
             disks: diskTemps,
@@ -1715,7 +1733,7 @@ app.get('/api/nas/temperature-history', (req, res) => {
     const pts = nasHistorySince(hours);
     // 收集所有出現過的硬碟名稱，供前端動態畫線
     const diskNames = [...new Set(pts.flatMap(p => Object.keys(p.disks || {})))];
-    const data = pts.map(p => ({ t: p.t, disks: p.disks || {} }));
+    const data = pts.map(p => ({ t: p.t, disks: p.disks || {}, fan_rpm: p.fan_rpm ?? null }));
     res.json({ data, diskNames, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
