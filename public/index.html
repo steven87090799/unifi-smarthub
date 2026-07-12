@@ -1871,6 +1871,12 @@
                                         id="nas-ups-batt">--</span><span class="text-sm text-slate-500">%</span></p>
                                 <p class="text-[9px] text-slate-500 mt-1" id="nas-ups-info">偵測中...</p>
                             </div>
+                            <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5" id="nas-fan-card">
+                                <p class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">風扇轉速</p>
+                                <div class="mt-2 space-y-1" id="nas-fan-list">
+                                    <p class="text-xs text-slate-500">讀取中...</p>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- 進階 KPI (系統 B) -->
@@ -1969,7 +1975,7 @@
                                 <div class="h-52"><canvas id="nasStorageChart"></canvas></div>
                             </div>
                             <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
-                                <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">各硬碟溫度歷史 (°C)
+                                <h4 class="text-xs font-bold text-slate-400 mb-3 tracking-wider uppercase">各硬碟溫度 / 風扇轉速歷史
                                 </h4>
                                 <div class="h-52"><canvas id="nasTempChart"></canvas></div>
                             </div>
@@ -5345,6 +5351,17 @@
                 const staticBy = {}; (nasDiskStatic || []).forEach(d => { staticBy[d.name] = d; });
                 const disks = lite.map(l => ({ ...(staticBy[l.name] || {}), name: l.name, temperature: l.temperature, sleeping: l.sleeping, status: (staticBy[l.name] || {}).status || 'good' }));
 
+                // 風扇轉速 (取自 get_all 的 overview.cpu_fan/device_fan，藏得很深，前端只顯示乾淨結果)
+                const fans = ov.fans || [];
+                const fanCard = document.getElementById('nas-fan-card'), fanList = document.getElementById('nas-fan-list');
+                if (fanList) {
+                    fanList.innerHTML = fans.length ? fans.map(f => `
+                        <p class="text-sm font-black mono ${f.status === 'normal' ? 'text-emerald-400' : 'text-red-400'} flex items-center justify-between">
+                            <span class="text-[10px] text-slate-500 font-normal">${f.name}</span>
+                            <span>${f.rpm != null ? f.rpm.toLocaleString() : '--'} <span class="text-[10px] text-slate-500 font-normal">RPM</span></span>
+                        </p>`).join('') : '<p class="text-xs text-slate-500">此機型無風扇資訊</p>';
+                }
+
                 // 狀態徽章與側邊欄：區分「未設定」(沒填帳密) 與「離線」(填了但連不上，例如 NAS 關機/重開中)
                 const badge = document.getElementById('nas-status-badge');
                 const isReal = ov.source === 'nas_api';
@@ -5576,7 +5593,8 @@
                     plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 10, font: { size: 8 } } } },
                     scales: {
                         x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 8 }, grid: { display: false } },
-                        y: { ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } }
+                        y: { position: 'left', ticks: { color: '#f59e0b', font: { size: 8 }, callback: v => v + '°C' }, grid: { color: 'rgba(30,41,59,0.4)' } },
+                        yFan: { position: 'right', ticks: { color: '#94a3b8', font: { size: 8 }, callback: v => v + ' RPM' }, grid: { display: false } }
                     }
                 }
             });
@@ -5646,6 +5664,13 @@
                     data: tp.map(p => (p.disks || {})[name] ?? null),
                     borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
                 }));
+                // 風扇轉速疊圖 (獨立右側 Y 軸，單位 RPM 跟溫度 °C 差太多量級不能共軸)
+                if (tp.some(p => p.fan_rpm != null)) {
+                    nasTempChart.data.datasets.push({
+                        label: '風扇 RPM', data: tp.map(p => p.fan_rpm ?? null), yAxisID: 'yFan',
+                        borderColor: '#94a3b8', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
+                    });
+                }
                 nasTempChart.update('none');
 
                 // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
