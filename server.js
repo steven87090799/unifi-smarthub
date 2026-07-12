@@ -2234,11 +2234,16 @@ async function ppbGet(path) {
     if (resp.status !== 200) throw new Error(`PPB API ${resp.status}`);
     return resp.data;
 }
+// PPB API 固定回英文 (Accept-Language 無效)；官方網頁是前端用語系檔翻譯。
+// ppb-i18n-zh.json 即擷取自 PowerPanel Business 網頁的官方 zh 語系檔
+// (assets/i18n/zh.json 的 eventDescription/eventName 全部 332 句)，翻譯結果與官方介面一模一樣。
+const ppbZhMap = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'ppb-i18n-zh.json'), 'utf8')); } catch { return {}; } })();
 app.get('/api/ups/ppb-events', async (req, res) => {
     try {
         const raw = await ppbGet('/local/rest/v1/eventlogs/report');
         const events = (Array.isArray(raw) ? raw : []).map(e => ({
-            id: e.id, ts: e.logTime24H, desc: e.description,
+            id: e.id, ts: e.logTime24H,
+            desc: ppbZhMap[(e.description || '').trim()] || e.description,
             level: /failure|lost|fault/i.test(e.description) ? 'error' : /test/i.test(e.description) ? 'test' : /resumed|restored/i.test(e.description) ? 'ok' : 'info'
         }));
         res.json({ events, source: 'ppb' });
