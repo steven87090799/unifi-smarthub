@@ -2493,22 +2493,22 @@ app.get('/api/alerts/critical', (req, res) => {
     const alerts = [];
     // UPS 斷電進行中
     if (upsEvents[0] && !upsEvents[0].end) {
-        alerts.push({ id: 'ups-outage-' + upsEvents[0].start, level: 'critical', msg: `⚡ UPS 斷電中！市電中斷 (電池 ${upsLastLive?.battery ?? '?'}%，可撐約 ${upsLastLive?.runtimeSec ? Math.round(upsLastLive.runtimeSec / 60) + ' 分' : '--'})` });
+        alerts.push({ id: 'ups-outage-' + upsEvents[0].start, level: 'critical', msg: `UPS 斷電中！市電中斷 (電池 ${upsLastLive?.battery ?? '?'}%，可撐約 ${upsLastLive?.runtimeSec ? Math.round(upsLastLive.runtimeSec / 60) + ' 分' : '--'})` });
     }
     // UPS 電池低 (斷電中或充電異常皆適用)
     if (upsLastLive && upsLastLive.battery != null && upsLastLive.battery <= 20) {
-        alerts.push({ id: 'ups-lowbatt-' + (upsEvents[0]?.start || 'now'), level: 'critical', msg: `🪫 UPS 電池僅剩 ${upsLastLive.battery}%，請儘快處理` });
+        alerts.push({ id: 'ups-lowbatt-' + (upsEvents[0]?.start || 'now'), level: 'critical', msg: `UPS 電池僅剩 ${upsLastLive.battery}%，請儘快處理` });
     }
     // UPS 完全失聯 (連續取樣失敗)
     if (upsLastReason && !upsLastLive) {
-        alerts.push({ id: 'ups-unreachable', level: 'warning', msg: '🔌 UPS 無法讀取 (所有來源失聯)' });
+        alerts.push({ id: 'ups-unreachable', level: 'warning', msg: 'UPS 無法讀取 (所有來源失聯)' });
     }
     // WAN 斷線 (取自最近一次硬體快取)
     const hw = hwCache && hwCache.data;
     if (hw) {
         const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
-        if (wan && wan.status !== 'connected') alerts.push({ id: 'wan-down', level: 'critical', msg: '🚨 WAN 對外連線中斷！請檢查數據機/ISP' });
-        if (hw.cpuTemp != null && hw.cpuTemp >= 85) alerts.push({ id: 'ucg-hot', level: 'warning', msg: `🔥 UCG CPU ${hw.cpuTemp}°C 嚴重過熱` });
+        if (wan && wan.status !== 'connected') alerts.push({ id: 'wan-down', level: 'critical', msg: 'WAN 對外連線中斷！請檢查數據機/ISP' });
+        if (hw.cpuTemp != null && hw.cpuTemp >= 85) alerts.push({ id: 'ucg-hot', level: 'warning', msg: `UCG CPU ${hw.cpuTemp}°C 嚴重過熱` });
     }
     res.json({ alerts });
 });
