@@ -2769,14 +2769,26 @@ app.get('/api/linux/history', (req, res) => {
 
 /* ===================== 連線狀態一覽 (設定頁 📡 面板) =====================
    原本前端從側邊欄徽章 DOM 推斷，時常不準；改由後端記憶體現況直接彙整。 */
+// Site Manager 雲端沒有像其他設備一樣有背景輪詢會順手更新「最後成功時間」，
+// 這裡在查詢狀態面板時「順便」主動測一次 (節流 60 秒，避免洗掉雲端 100 次/分鐘的速率限制)
+let cloudLastCheckTs = 0, cloudLastOk = null;
+async function checkCloudStatus() {
+    if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) return { configured: false, ok: null, detail: '' };
+    if (Date.now() - cloudLastCheckTs < 60000) return { configured: true, ok: cloudLastOk, detail: cloudLastOk === false ? '連線失敗' : (cloudLastOk ? '連線正常' : '檢查中') };
+    cloudLastCheckTs = Date.now();
+    try { await unifiCloudClient.get('/hosts', { timeout: 8000 }); cloudLastOk = true; }
+    catch { cloudLastOk = false; }
+    return { configured: true, ok: cloudLastOk, detail: cloudLastOk ? '連線正常' : '連線失敗 (API Key 無效或被限流)' };
+}
 app.get('/api/connections/status', async (req, res) => {
     const fresh = (ts, sec) => ts && (Date.now() - ts) < sec * 1000;
     const wiimHit = wiimCache['getStatusEx'];
+    const cloud = await checkCloudStatus();
     res.json({
         devices: [
             { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: fresh(hwCache && hwCache.ts, 120), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
-            { name: 'Site Manager 雲端', configured: !!process.env.UNIFI_API_KEY && !process.env.UNIFI_API_KEY.includes('your_unifi'), ok: null, detail: 'API Key 已設定' },
+            { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
             { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? '已設定' : '' },
             { name: 'WiiM Amp', configured: true, ok: fresh(wiimHit && wiimHit.timestamp, 120), detail: wiimHit ? '有回應' : '無快取' },
