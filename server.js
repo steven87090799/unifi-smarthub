@@ -1243,11 +1243,17 @@ app.get('/api/nas/overview', async (req, res) => {
         } catch { }
         // 從 get_all 的 disk series 取出每顆硬碟的即時溫度/運轉狀態 (免喚醒)，供前端硬碟卡使用，
         // 讓前端不必再輪詢會喚醒硬碟的 disk/list。
+        // 休眠判定以 UGOS 日誌為準：get_all 的 activate 實測不可靠 (休眠中仍回 true，前端全部顯示運轉中)
         let disksLite = [];
         try {
+            const sleepMap = await getDiskSleepFromLogs();
             disksLite = ((statsRaw && statsRaw.disk && statsRaw.disk.series) || [])
                 .filter(d => d.name !== 'overview')
-                .map(d => ({ name: d.label || d.name, temperature: d.activate ? d.temperature : null, sleeping: !d.activate }));
+                .map(d => {
+                    const name = d.label || d.name;
+                    const sleeping = sleepMap[name] ?? !d.activate;
+                    return { name, temperature: sleeping ? null : d.temperature, sleeping };
+                });
         } catch { }
         res.json({ info, stats, disksLite, statsRaw, statsError, source: 'nas_api' });
     } catch (error) {
@@ -1255,20 +1261,41 @@ app.get('/api/nas/overview', async (req, res) => {
     }
 });
 
+/* 硬碟目前是否休眠 — 以 UGOS 日誌中心的 sleeping 事件推斷 (每顆碟取最新一筆
+   "Hard Drive N started/stopped sleeping")。get_all 與 disk/list 的 activate/is_standby
+   欄位實測不可靠 (休眠中仍回運轉)，且 disk/list 本身會喚醒硬碟；日誌查詢不會。快取 60 秒。 */
+let diskSleepCache = { ts: 0, map: {} };
+async function getDiskSleepFromLogs() {
+    if (Date.now() - diskSleepCache.ts < 60 * 1000) return diskSleepCache.map;
+    try {
+        const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 200, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
+        const latest = {}; // 硬碟N → { t, sleeping }
+        for (const l of (data.log_list || [])) {
+            const m = (l.content || '').match(/Hard Drive (\d+) (started|stopped) sleeping/i);
+            if (!m) continue;
+            const k = '硬碟' + m[1];
+            if (!latest[k] || l.create_time > latest[k].t) latest[k] = { t: l.create_time, sleeping: m[2].toLowerCase() === 'started' };
+        }
+        diskSleepCache = { ts: Date.now(), map: Object.fromEntries(Object.entries(latest).map(([k, v]) => [k, v.sleeping])) };
+    } catch { diskSleepCache.ts = Date.now(); } // 讀不到日誌就沿用舊快取，避免連續重試
+    return diskSleepCache.map;
+}
+
 // 16. NAS 實體硬碟清單 (含溫度與健康狀態)
 app.get('/api/nas/disks', async (req, res) => {
     if (!nasConfigured()) return res.json({ disks: [], source: 'not_configured' });
     try {
         const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
         let disks = deepFind({ d: data }, ['result', 'list', 'disks']) || (Array.isArray(data) ? data : []);
+        const sleepMap = await getDiskSleepFromLogs();
         // UGOS 1.17 實機：status 為數字 (1=健康)、size 為 bytes、顯示名稱在 label (硬碟1...)
         disks = disks.map(d => ({
             ...d,
             name: d.label || d.name,
             status: d.status === 1 ? 'good' : (typeof d.status === 'number' ? `abnormal(${d.status})` : d.status),
             size_gb: d.size ? Math.round(d.size / 1e9) : d.size_gb,
-            // 休眠/運轉狀態：is_standby 或 activate===false 皆視為休眠中
-            sleeping: d.is_standby === true || d.activate === false
+            // 休眠判定：日誌優先，回退 is_standby / activate
+            sleeping: sleepMap[d.label || d.name] ?? (d.is_standby === true || d.activate === false)
         }));
         res.json({ disks, source: 'nas_api' });
     } catch (error) {
@@ -1339,9 +1366,11 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
             .map(l => ({ t: l.create_time, drive: (l.content.match(/Hard Drive (\d+)/) || [])[1], action: /stopped/i.test(l.content) ? 'wake' : 'sleep' }))
             .filter(e => e.drive).sort((a, b) => a.t - b.t);
         const open = {};   // drive → 開始休眠的 epoch
-        const byDay = {};  // 'YYYY/M/D' → { driveN: { sec, n } }
+        const byDay = {};  // 'YYYY-MM-DD' → { driveN: { sec, n } }
         const wakeEvents = {}; // day → [{drive, t}]
-        const dayKey = ts => new Date(ts * 1000).toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' });
+        // 日期鍵必須零填補 (YYYY-MM-DD)：原本 zh-TW 格式 '2026/7/12' 用字串排序會排在 '2026/7/2' 前面，
+        // 導致統計清單的日期順序錯亂；en-CA locale 恰好輸出 ISO 格式，可直接字串排序
+        const dayKey = ts => new Date(ts * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
         const ensure = (d, drv) => { byDay[d] = byDay[d] || {}; byDay[d][drv] = byDay[d][drv] || { sec: 0, n: 0, longest: 0 }; return byDay[d][drv]; };
         for (const e of sw) {
             if (e.action === 'sleep') open[e.drive] = e.t;
@@ -1428,7 +1457,7 @@ app.get('/api/nas/ups-usb', async (req, res) => {
    跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時，順手記一筆 (節流 30 秒)，
    不需要額外開 SSH 連線。*/
 const UCG_HISTORY_FILE = path.join(DATA_DIR, 'ucg-history.json');
-const UCG_HISTORY_LIMIT = 8000; // 30 秒間隔 ≈ 2.7 天
+const UCG_HISTORY_LIMIT = 20000; // 30 秒間隔 ≈ 7 天 (與 UPS/趨勢統一保存約一週)
 let ucgHistory = (() => { try { return JSON.parse(fs.readFileSync(UCG_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 const ucgFlush = registerFlushable(UCG_HISTORY_FILE, () => ucgHistory);
 let lastUcgSampleTs = 0;
@@ -1449,7 +1478,7 @@ app.get('/api/hardware/history', (req, res) => {
    UGOS 沒有提供歷史 API (只有即時快照 get_all)，這裡自己定期取樣 get_all + volume/list 並持久化，
    讓「系統負載 / 網路流量 / 散熱 / 儲存趨勢」四張圖有真實歷史可畫，不需要另外部署 NAS Monitor (系統 B)。 */
 const NAS_HISTORY_FILE = path.join(DATA_DIR, 'nas-history.json');
-const NAS_HISTORY_LIMIT = 6000;   // 60 秒間隔 ≈ 4 天
+const NAS_HISTORY_LIMIT = 10000;  // 60 秒間隔 ≈ 7 天 (與 UPS/趨勢統一保存約一週)
 let nasHistory = (() => { try { return JSON.parse(fs.readFileSync(NAS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
 const nasFlush = registerFlushable(NAS_HISTORY_FILE, () => nasHistory);
 let lastNasSampleTs = 0;
@@ -1462,11 +1491,15 @@ async function sampleNasHistory() {
         const cpu = (raw.cpu.series && raw.cpu.series[0]) || {};
         const mem = (raw.mem && raw.mem.series && raw.mem.series[0]) || {};
         const netOv = ((raw.net && raw.net.series) || []).find(n => n.name === 'overview') || {};
-        // 只在硬碟「運轉中(activate)」時記錄溫度；休眠中的碟記為 null (斷點) —
+        // 只在硬碟「運轉中」時記錄溫度；休眠中的碟記為 null (斷點) —
         // 這樣歷史圖能忠實顯示休眠區段，也證明我們不會為了測溫而喚醒硬碟。
+        // 休眠判定與硬碟卡一致：以 UGOS 日誌為準 (activate 欄位不可靠)
+        const sleepMap = await getDiskSleepFromLogs();
         const diskTemps = {};
         ((raw.disk && raw.disk.series) || []).filter(d => d.name !== 'overview').forEach(d => {
-            diskTemps[d.label || d.name] = (d.activate && d.temperature != null) ? d.temperature : null;
+            const name = d.label || d.name;
+            const sleeping = sleepMap[name] ?? !d.activate;
+            diskTemps[name] = (!sleeping && d.temperature != null) ? d.temperature : null;
         });
         // 容量：另外讀 volume/list 加總 (get_all 的 used_percent 常為 0)
         let volUsedGb = null, volTotalGb = null;
@@ -1878,7 +1911,11 @@ self.addEventListener('fetch',e=>{
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---
 let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
-let wiimHistory = [];
+// 溫度歷史持久化 (先前只存記憶體，重啟即遺失)；與其他歷史相同的節流落盤機制
+const WIIM_HISTORY_FILE = path.join(DATA_DIR, 'wiim-history.json');
+const WIIM_HISTORY_LIMIT = 20000; // 活躍 10s / 閒置 30min 混合取樣 ≈ 數天到數週
+let wiimHistory = (() => { try { return JSON.parse(fs.readFileSync(WIIM_HISTORY_FILE, 'utf8')); } catch { return []; } })();
+const wiimFlush = registerFlushable(WIIM_HISTORY_FILE, () => wiimHistory);
 
 const wiimCache = {};
 
@@ -1941,7 +1978,8 @@ async function pollWiimTemp() {
     if (isNaN(cpu) && isNaN(board)) { sysLog('WiiM Poll', 'getStatusEx 回應中無溫度欄位，跳過本次取樣', true); return; }
     const ts = Math.floor(Date.now() / 1000);
     wiimHistory.push({ ts, cpu: isNaN(cpu) ? null : cpu, board: isNaN(board) ? null : board });
-    if (wiimHistory.length > 5000) wiimHistory.shift();
+    if (wiimHistory.length > WIIM_HISTORY_LIMIT) wiimHistory = wiimHistory.slice(-WIIM_HISTORY_LIMIT);
+    wiimFlush.markDirty();
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
 // 自適應排程：有人瀏覽時每 10 秒取樣，閒置時降為 trendIdleSec (與趨勢取樣器同一套活躍判定)
@@ -2038,6 +2076,7 @@ app.get('/api/wiim/art', async (req, res) => {
 
 app.get('/api/wiim/clear', (req, res) => {
     wiimHistory = [];
+    wiimFlush.markDirty(true); // 立即落盤，避免重啟後舊資料復活
     res.json({ ok: true });
 });
 
