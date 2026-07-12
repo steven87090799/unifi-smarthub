@@ -419,11 +419,14 @@ app.get('/api/threats', async (req, res) => {
             else if (t.msg.includes("DOS")) category = "DoS";
 
             const geo = t.srcipGeo || {};
+            // 內網來源 (OUTBOUND 警報，例如內網設備對外掃描/可疑流量) 沒有 GeoIP，
+            // 標示為「內網設備」而非 Unknown，避免誤以為資料壞掉
+            const isPrivate = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(t.src_ip || '');
             return {
                 id: t._id,
                 datetime: new Date(t.time || Date.parse(t.datetime)).toISOString(), // 優先用不會有時區歧義的 epoch time 欄位
                 src_ip: t.src_ip,
-                src_country: geo.country_name || t.src_country || 'Unknown',
+                src_country: geo.country_name || t.src_country || (isPrivate ? '內網設備' : 'Unknown'),
                 src_lat: geo.latitude || null,   // 0/未知一律視為無座標
                 src_lon: geo.longitude || null,
                 msg: t.msg,
