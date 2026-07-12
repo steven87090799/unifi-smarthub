@@ -2014,6 +2014,24 @@
                             </div>
                         </div>
 
+                        <!-- 警報閾值設定 (系統 B 選配) -->
+                        <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5 hidden" id="nas-alert-config-card">
+                            <div class="flex justify-between items-center mb-1">
+                                <h4 class="text-xs font-bold text-slate-400 tracking-wider uppercase">警報閾值設定 <span class="text-[9px] text-emerald-500 normal-case" id="nas-sse-dot">● 即時</span></h4>
+                                <span class="text-[9px] text-slate-600">來自 NAS Monitor (系統 B)</span>
+                            </div>
+                            <p class="text-[9px] text-slate-500 mb-3">自訂各項指標超過多少數值就觸發警報事件；即時推送連線正常時新事件會立刻顯示，不需等待輪詢。</p>
+                            <div class="space-y-1.5 mb-3" id="nas-alert-config-list"></div>
+                            <div class="flex flex-wrap items-end gap-2 pt-2 border-t border-slate-800/60">
+                                <div><label class="text-[9px] text-slate-500 block mb-1">指標名稱</label><input id="nac-metric" placeholder="例如 cpu_usage" class="w-32 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 font-mono"></div>
+                                <div><label class="text-[9px] text-slate-500 block mb-1">條件</label>
+                                    <select id="nac-op" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"><option value="above">高於</option><option value="below">低於</option></select>
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 block mb-1">門檻值</label><input id="nac-threshold" type="number" class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200 font-mono"></div>
+                                <button onclick="saveAlertConfig()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold rounded-lg transition">新增/更新</button>
+                            </div>
+                        </div>
+
                         <!-- 警報事件 -->
                         <div class="bg-slate-950/70 border border-slate-800/60 rounded-xl p-5">
                             <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-4">
@@ -4162,6 +4180,8 @@
             fetchNasSleepStats();
             fetchNasDocker();
             fetchNasAlerts();
+            fetchAlertConfig();
+            connectNasSse();
             fetchNotifSettings();
             fetchNotifLog();
             fetchAppSettings();
@@ -5754,6 +5774,60 @@
 
         let nasLogFilter = 'all';
         function setNasLogFilter(f) { nasLogFilter = f; fetchNasAlerts(); }
+
+        /* ==================== NAS Monitor 警報閾值設定 (系統 B 選配) ==================== */
+        async function fetchAlertConfig() {
+            const card = document.getElementById('nas-alert-config-card');
+            try {
+                const d = await (await fetch('/api/nas/alerts/config')).json();
+                if (d.source === 'not_configured') { card.classList.add('hidden'); return; }
+                card.classList.remove('hidden');
+                const rows = d.config || [];
+                document.getElementById('nas-alert-config-list').innerHTML = rows.length ? rows.map(c => `
+                    <div class="flex items-center gap-2 text-[11px] bg-slate-900/40 rounded-lg px-3 py-2">
+                        <span class="font-bold text-slate-200 w-32 truncate mono">${c.metric ?? '--'}</span>
+                        <span class="text-slate-500">${c.condition === 'below' ? '低於' : '高於'}</span>
+                        <span class="text-amber-400 font-bold mono">${c.threshold ?? '--'}</span>
+                        <span class="ml-auto flex items-center gap-2">
+                            ${c.enabled === false ? '<span class="text-slate-600">已停用</span>' : '<span class="text-emerald-500">啟用中</span>'}
+                            <button onclick="deleteAlertConfig('${c.metric}')" class="text-slate-500 hover:text-red-400 transition" title="刪除"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
+                        </span>
+                    </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-2">尚無自訂閾值，全部使用系統預設值</p>';
+            } catch { card.classList.add('hidden'); }
+        }
+        async function saveAlertConfig() {
+            const metric = document.getElementById('nac-metric').value.trim();
+            const threshold = parseFloat(document.getElementById('nac-threshold').value);
+            if (!metric || isNaN(threshold)) return showToast('請填寫指標名稱與門檻值', true);
+            try {
+                const r = await fetch('/api/nas/alerts/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metric, threshold, condition: document.getElementById('nac-op').value, enabled: true }) });
+                if (!r.ok) throw new Error();
+                showToast('警報閾值已儲存');
+                document.getElementById('nac-metric').value = ''; document.getElementById('nac-threshold').value = '';
+                fetchAlertConfig();
+            } catch { showToast('儲存失敗', true); }
+        }
+        async function deleteAlertConfig(metric) {
+            if (!confirm(`刪除「${metric}」的警報閾值設定？`)) return;
+            try {
+                await fetch(`/api/nas/alerts/config/${encodeURIComponent(metric)}`, { method: 'DELETE' });
+                showToast('已刪除');
+                fetchAlertConfig();
+            } catch { showToast('刪除失敗', true); }
+        }
+
+        /* ==================== NAS Monitor 即時推送 (SSE)：連線正常時新警報立即刷新，不需等輪詢 ==================== */
+        let nasSse = null;
+        function connectNasSse() {
+            if (nasSse) return;
+            const dot = document.getElementById('nas-sse-dot');
+            try {
+                nasSse = new EventSource('/api/nas/stream');
+                nasSse.onopen = () => { if (dot) { dot.textContent = '● 即時'; dot.className = 'text-[9px] text-emerald-500 normal-case'; } };
+                nasSse.onerror = () => { if (dot) { dot.textContent = '○ 離線 (輪詢中)'; dot.className = 'text-[9px] text-slate-600 normal-case'; } };
+                nasSse.onmessage = () => { fetchNasAlerts(); }; // 收到任何事件就重新拉一次警報清單 (輪詢仍是保底)
+            } catch { }
+        }
 
         async function fetchNasSleepStats() {
             const el = document.getElementById('nas-sleep-stats');
