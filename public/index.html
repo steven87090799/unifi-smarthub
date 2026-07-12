@@ -675,11 +675,17 @@
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>UPS 電源
                 </button>
-                <button data-page="homelab" onclick="navigate('homelab')"
+                <button data-page="adguard" onclick="navigate('adguard')"
                     class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                    </svg>DNS & 小主機
+                    </svg>AdGuard DNS
+                </button>
+                <button data-page="linuxhost" onclick="navigate('linuxhost')"
+                    class="nav-btn nav-idle w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>Linux 小主機
                 </button>
                 <p class="nav-group">系統 System</p>
                 <button data-page="tools" onclick="navigate('tools')"
@@ -2038,7 +2044,7 @@
 
                 <!-- ==================== 頁面：工具 ==================== -->
                 <!-- ==================== 頁面：DNS & 小主機 ==================== -->
-                <section id="page-homelab" class="space-y-6 hidden">
+                <section id="page-adguard" class="space-y-6 hidden">
                     <!-- AdGuard Home -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                         <div class="flex justify-between items-start mb-4">
@@ -2086,6 +2092,10 @@
                         </div>
                     </div>
 
+                </section>
+
+                <!-- ==================== 頁面：Linux 小主機 ==================== -->
+                <section id="page-linuxhost" class="space-y-6 hidden">
                     <!-- Linux 小主機 -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                         <div class="flex justify-between items-start mb-4">
@@ -4049,7 +4059,8 @@
             nas: ['NAS 儲存', 'UGREEN UGOS Pro 儲存與硬體監控'],
             wiim: ['WiiM 音響', 'WiiM Amp 音訊串流與硬體監控'],
             ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (NUT)'],
-            homelab: ['DNS & 小主機', 'AdGuard Home DNS 防護統計 + Linux 小主機 SSH 監控'],
+            adguard: ['AdGuard DNS', 'AdGuard Home 全網 DNS 廣告與追蹤攔截統計'],
+            linuxhost: ['Linux 小主機', 'Home Assistant 主機 SSH 硬體監控 (真實數據)'],
             tools: ['工具 Tools', '網速測試與 PoE 管理'],
             notify: ['通知推播', '威脅與 NAS 警報自動推播到 Discord / Telegram / Webhook'],
             settings: ['設定 Settings', '調整所有輪詢間隔、主題、定期報表']
