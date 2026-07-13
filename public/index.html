@@ -1336,7 +1336,7 @@
                             <!-- 安全評分環 -->
                             <div
                                 class="lg:col-span-3 flex flex-col items-center justify-center bg-slate-950/60 rounded-xl border border-slate-800/60 p-5">
-                                <div class="relative w-36 h-36 sm:w-40 sm:h-40 shrink-0">
+                                <div class="relative w-44 h-44 sm:w-48 sm:h-48 shrink-0">
                                     <svg viewBox="0 0 110 110" class="w-full h-full -rotate-90">
                                         <circle cx="55" cy="55" r="45" fill="none" stroke="#1e293b" stroke-width="9" />
                                         <circle cx="55" cy="55" r="45" fill="none" stroke="#10b981" stroke-width="9"
@@ -1344,13 +1344,12 @@
                                             style="transition: stroke-dashoffset 1s ease, stroke .5s;"
                                             id="sec-score-ring" />
                                     </svg>
-                                    <div class="absolute inset-0 flex flex-col items-center justify-center px-2">
-                                        <span class="text-4xl leading-none font-black mono text-slate-100" id="sec-score">--</span>
-                                        <span class="mt-1 text-[8px] leading-none text-slate-500 uppercase font-bold tracking-[0.13em] whitespace-nowrap">Security
-                                            Score</span>
+                                    <div class="absolute inset-0 flex items-center justify-center px-3">
+                                        <span class="text-5xl leading-none font-black mono text-slate-100" id="sec-score">--</span>
                                     </div>
                                 </div>
-                                <p class="text-[10px] font-bold mt-3" id="sec-score-grade">評估中...</p>
+                                <p class="mt-2 text-[9px] leading-none text-slate-500 uppercase font-bold tracking-[0.18em] whitespace-nowrap">Security Score</p>
+                                <p class="text-[10px] font-bold mt-2" id="sec-score-grade">評估中...</p>
                                 <p class="text-[9px] text-slate-500 mt-1.5 text-center leading-relaxed"
                                     id="ov-score-explain">評分依據計算中…</p>
                                 <p class="text-[9px] text-slate-500 mt-1 flex items-center gap-1.5"><span
@@ -4600,6 +4599,38 @@
             });
         }
 
+        // 這層不是假資料：只把已取得的 dataset 用遮罩由左至右揭露。
+        // 讓一次真實更新在約 1.2 秒內有明確的「曲線被畫出來」感，而不增加 API 或 DB 頻率。
+        const chartRevealPlugin = {
+            id: 'chartReveal',
+            beforeDatasetsDraw(chart) {
+                const reveal = chart.$uiReveal;
+                if (!reveal || !chart.chartArea) return;
+                const elapsed = Math.min(1, (performance.now() - reveal.startedAt) / reveal.duration);
+                const progress = 1 - Math.pow(1 - elapsed, 3);
+                const { left, right, top, bottom } = chart.chartArea;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.beginPath();
+                if (chart.config.type === 'bar') {
+                    const revealTop = bottom - (bottom - top) * progress;
+                    ctx.rect(left - 2, revealTop - 2, right - left + 4, bottom - revealTop + 4);
+                } else {
+                    const revealRight = left + (right - left) * progress;
+                    ctx.rect(left - 2, top - 2, revealRight - left + 4, bottom - top + 4);
+                }
+                ctx.clip();
+                reveal.clipped = true;
+            },
+            afterDatasetsDraw(chart) {
+                const reveal = chart.$uiReveal;
+                if (reveal?.clipped) {
+                    chart.ctx.restore();
+                    reveal.clipped = false;
+                }
+            }
+        };
+
         const smartChartUxPlugin = {
             id: 'smartChartUx',
             beforeInit(chart) {
@@ -4670,7 +4701,7 @@
         Chart.defaults.plugins.legend.labels.pointStyle = 'line';
         Chart.defaults.plugins.legend.labels.padding = 14;
         if (Chart.defaults.scales?.linear?.ticks) Chart.defaults.scales.linear.ticks.callback = value => compactNumber(value);
-        Chart.register(smartChartUxPlugin);
+        Chart.register(chartRevealPlugin, smartChartUxPlugin);
 
         // 歷史圖只在首次顯示、切換範圍或重新進入頁面時播放進場動畫。
         // 背景輪詢仍使用無動畫更新，避免畫面反覆跳動與不必要的繪製負擔。
@@ -4680,6 +4711,26 @@
 
         function requestChartReplay(...charts) {
             charts.filter(Boolean).forEach(chart => { chart.$uiReplayNext = true; });
+        }
+
+        function playChartReveal(chart) {
+            if (!chart || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+            const host = chart.canvas.parentElement;
+            chart.$uiReveal = { startedAt: performance.now(), duration: 1200, clipped: false };
+            host?.classList.add('chart-reveal-active');
+            const paint = () => {
+                const reveal = chart.$uiReveal;
+                if (!reveal) return;
+                chart.draw();
+                if (performance.now() - reveal.startedAt < reveal.duration) {
+                    requestAnimationFrame(paint);
+                } else {
+                    chart.$uiReveal = null;
+                    host?.classList.remove('chart-reveal-active');
+                    chart.draw();
+                }
+            };
+            requestAnimationFrame(paint);
         }
 
         function updateChartWithEntrance(chart) {
@@ -4694,27 +4745,20 @@
 
             chart.$uiReplayNext = false;
             chart.$uiEntrancePlayed = true;
-            chart.options.animation = {
-                duration: 720,
-                easing: 'easeOutQuart',
-                delay(context) {
-                    if (context.type !== 'data' || context.dataIndex == null) return 0;
-                    const pointCount = Math.max(context.chart.data.labels?.length || 1, 1);
-                    return Math.min((context.dataIndex / pointCount) * 380, 380);
-                }
-            };
+            chart.options.animation = { duration: 420, easing: 'easeOutQuart' };
             // 動態 dataset（例如 NAS 硬碟清單）要先建立對應 controller，
             // 否則 Chart.js 在 reset 階段可能遇到尚未初始化的 meta。
             chart.update('none');
             chart.reset();
             chart.update();
+            playChartReveal(chart);
         }
 
         function replayPageChartEntrances(page) {
             const pageCharts = {
                 overview: [trendChart, ovHourlyChart],
                 security: [secHourlyChart],
-                ucg: [ucgHistChart],
+                ucg: [hwChart, ucgHistChart],
                 nas: [nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart],
                 wiim: [wiimChart],
                 ups: [upsVoltChart, upsLoadChart],
@@ -5382,7 +5426,7 @@
                 tempChartData.shift(); tempChartData.push(data.cpuTemp || 0);
                 usageChartData.shift(); usageChartData.push(data.cpuUsage || 0);
                 chartLabels.shift(); chartLabels.push(new Date().toLocaleTimeString());
-                hwChart.update();
+                updateChartWithEntrance(hwChart);
             } catch (e) {
                 document.getElementById('side-ucg-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
                 const ucgBadge = document.getElementById('ov-ucg-badge');
