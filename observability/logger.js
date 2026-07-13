@@ -63,7 +63,7 @@ function maskSensitive(value, options = {}, seen = new WeakSet()) {
 }
 
 function normalizeLevel(level) {
-    const normalized = String(level || 'INFO').toUpperCase();
+    const normalized = String(level || 'WARNING').toUpperCase();
     return Object.hasOwn(LEVELS, normalized) ? normalized : 'INFO';
 }
 
