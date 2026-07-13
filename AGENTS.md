@@ -68,7 +68,7 @@
 
 統計/歷史資料以 SQLite `smarthub.db` 存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`)，設定類資料仍為 JSON。一般遙測先放記憶體 queue，預設每 10 分鐘或達 1,000 筆 / 1 MiB 時以單一 transaction 批次寫入；查詢會合併未落盤資料。UPS 事件、封鎖、報表與 NAS 日誌手機推播仍立即處理。首次啟動會將舊 history/event JSON 匯入並改名為 `.migrated.bak` 保留。`GET /health` 為 Docker liveness、`GET /health/ready` 檢查 SQLite/worker、`GET /api/system/status` 提供完整診斷。
 
-**取樣為裝置感知的自適應頻率**:UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁登記的全部前端資訊統一每 3 秒更新；後端的 trend／UCG／NAS／WiiM／Linux 歷史取樣也在對應 scope 活躍時每 3 秒執行。前端每 5 秒以 `GET /api/heartbeat?scope=...` 續約，切頁會立即撤銷上一頁 scope，分頁進背景也主動釋放；若心跳中斷，伺服器短租約仍會自動到期並回到原本低頻。總覽只使用原本各項預設輪詢，避免同時高頻查詢全部設備；UPS 後端斷電取樣獨立，不受瀏覽狀態影響。
+**取樣為裝置感知的自適應頻率**:總覽或 UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁登記的全部前端資訊統一每 3 秒更新；總覽會同時啟用 trend／UCG／NAS／WiiM scope，後端對應歷史取樣也每 3 秒執行。前端每 5 秒以 `GET /api/heartbeat?scope=...` 續約，切頁會立即撤銷上一頁 scope，分頁進背景也主動釋放；若心跳中斷，伺服器短租約仍會自動到期並回到原本低頻。UPS 後端斷電取樣獨立，不受瀏覽狀態影響。
 
 ## 前端版面 (public/index.html)
 

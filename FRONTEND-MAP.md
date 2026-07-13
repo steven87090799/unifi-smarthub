@@ -39,8 +39,9 @@
 | 行號約略 | 名稱 | 用途 |
 |---:|---|---|
 | 4364 | `renderPinned()` | 總覽釘選區；非總覽或背景分頁停止同步 |
-| 4913 | `POLL_JOBS` | 全站前端輪詢設定（含 System Diagnostics） |
-| 4942 | `applyPolling()` | 套用輪詢 interval |
+| 4913 | `POLL_JOBS` | 全站前端輪詢設定（含 System Diagnostics）；總覽與設備頁可見時套用 3 秒有效間隔 |
+| 4942 | `applyPolling()` | 套用輪詢 interval，避免同一工作重疊執行 |
+| 5000 | `initOverviewFlipNumbers()` | 總覽大型數字變更時播放向上翻頁動畫 |
 | 5021 | `initChart()` | UCG 即時硬體圖 |
 | 5164 | `initTrendChart()` | 趨勢圖；短暫來源缺值可跨點連續呈現 |
 | 5219 | `fetchTrends()` | 趨勢資料 + 降採樣；略過不完整合併樣本並顯示資料品質提示 |
