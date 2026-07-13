@@ -1543,9 +1543,22 @@ function scheduleServerJobs() {
 let lastSampleTs = 0;                    // 上一次取樣時間戳
 let lastSchedulerState = null;           // 前端最後一狀態 (活躍/閒置)
 const deviceActivity = createActivityLease({ maxLeaseMs: 180000 });
-function markClientActivity(scopes = 'trend') {
+function requestPromptSampling(scopes) {
+    // This deliberately only clears scheduler guards. Existing interval loops and
+    // runSerialJob still control I/O and prevent concurrent duplicate sampling.
+    if (scopes.includes('trend')) lastSampleTs = 0;
+    if (scopes.includes('nas')) lastNasSampleTs = 0;
+    if (scopes.includes('wiim')) lastWiimPollTs = 0;
+    if (scopes.includes('linux')) lastLinuxSampleTs = 0;
+}
+function markClientActivity(scopes = 'trend', { focus = false } = {}) {
     const requestedMs = (appSettings.activeWindowSec || 30) * 1000;
-    return deviceActivity.mark(scopes, requestedMs);
+    const activity = deviceActivity.mark(scopes, requestedMs);
+    // A page focus gets one prompt sample. A lease which had already expired
+    // receives the same treatment, while normal heartbeat renewals do not.
+    const promptScopes = focus ? activity.accepted : activity.activated;
+    if (promptScopes.length) requestPromptSampling(promptScopes);
+    return { ...activity, promptScopes };
 }
 function isDeviceSamplingActive(scope) { return deviceActivity.isActive(scope); }
 
@@ -1626,8 +1639,8 @@ app.get('/api/history', (req, res) => {
 
 // 輕量心跳端點：只為目前顯示的裝置續短租約；沒有續約最晚 3 分鐘自動回到低頻。
 app.get('/api/heartbeat', (req, res) => {
-    const activity = markClientActivity(req.query.scope || '');
-    res.json({ ok: true, activeScopes: deviceActivity.activeScopes(), expiresAt: activity.expiresAt });
+    const activity = markClientActivity(req.query.scope || '', { focus: req.query.focus === '1' });
+    res.json({ ok: true, activeScopes: deviceActivity.activeScopes(), expiresAt: activity.expiresAt, promptScopes: activity.promptScopes });
 });
 
 /* ===================== UGREEN NAS (UGOS Pro 原生 API) ===================== */

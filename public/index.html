@@ -4982,7 +4982,7 @@
             toggleSidebar(false);
             if (page === 'overview') syncPinned();
             applyPolling(true);
-            sendHeartbeat();
+            sendHeartbeat(true);
             requestAnimationFrame(() => {
                 [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
                 replayPageChartEntrances(page);
@@ -5054,7 +5054,7 @@
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
             renderPollConfig();
             checkLastSpeedtest();
-            sendHeartbeat();
+            sendHeartbeat(true);
             applyPolling();
         };
 
@@ -5113,17 +5113,19 @@
         }
         function savePollConfig(cfg) { localStorage.setItem('pollConfig', JSON.stringify(cfg)); persistUiPreference('pollConfig', cfg); applyPolling(); }
 
-        // 心跳：僅在分頁可見時發送。頁面關閉或切到背景後停止，後端會切回閒置取樣。
-        async function sendHeartbeat() {
+        // 心跳：僅在分頁可見時發送。切頁/回到前景只要求一次即時取樣；
+        // 後續每 5 秒續租不會反覆重設取樣計時器。
+        async function sendHeartbeat(focus = false) {
             if (document.hidden) return;
             const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
             if (!scopes.length) return;
-            try { await fetch('/api/heartbeat?scope=' + encodeURIComponent(scopes.join(','))); } catch (e) { /* 靜默 */ }
+            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + (focus ? '&focus=1' : '');
+            try { await fetch('/api/heartbeat' + query); } catch (e) { /* 靜默 */ }
         }
         // 分頁重新可見時立即補一次心跳，讓高頻取樣馬上恢復
         document.addEventListener('visibilitychange', () => {
             applyPolling();
-            if (!document.hidden) sendHeartbeat();
+            if (!document.hidden) sendHeartbeat(true);
         });
 
         // 共用小圖示 (線條 SVG，取代 emoji)
