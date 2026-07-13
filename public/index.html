@@ -4306,6 +4306,7 @@
             layoutContainers().forEach(c => saved[layoutKeyOf(c)] = [...c.children].map(el => el.dataset.bid));
             saved.__nav = [...document.querySelector('aside nav').children].map(el => el.dataset.bid);
             localStorage.setItem('layoutOrder.v1', JSON.stringify(saved));
+            persistUiPreference('layoutOrder.v1', saved);
             dbg('Layout', '排序已儲存');
         }
 
@@ -4347,7 +4348,7 @@
         // 鏡像每 2 秒把來源區塊的 innerHTML 複製過來並清除內部 id (避免重複 id 干擾 getElementById)，
         // canvas 圖表則以 drawImage 同步點陣，達到「兩個一模一樣且都即時」的效果。
         function loadPinned() { try { return JSON.parse(localStorage.getItem('pinnedBlocks.v1')) || []; } catch { return []; } }
-        function savePinned(arr) { localStorage.setItem('pinnedBlocks.v1', JSON.stringify(arr)); }
+        function savePinned(arr) { localStorage.setItem('pinnedBlocks.v1', JSON.stringify(arr)); persistUiPreference('pinnedBlocks.v1', arr); }
         function pageTitleOfBid(bid) {
             const src = document.querySelector(`[data-bid="${bid}"]`);
             const sec = src && src.closest('main > section');
@@ -4685,6 +4686,25 @@
             }
         }
 
+        function persistUiPreference(key, value) {
+            fetch('/api/ui-preferences', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ preferences: { [key]: value } })
+            }).catch(() => { /* 離線時保留瀏覽器版本，下一次操作再同步 */ });
+        }
+        async function restoreUiPreferences() {
+            try {
+                const response = await fetch('/api/ui-preferences');
+                if (!response.ok) return;
+                const saved = (await response.json()).preferences || {};
+                let changed = false;
+                Object.entries(saved).forEach(([key, value]) => {
+                    const next = typeof value === 'string' ? value : JSON.stringify(value);
+                    if (localStorage.getItem(key) !== next) { localStorage.setItem(key, next); changed = true; }
+                });
+                if (changed) location.reload();
+            } catch { /* 沒有後端時沿用瀏覽器本機偏好 */ }
+        }
         function initUiSystem() {
             document.querySelectorAll('button:not([type])').forEach(button => { button.type = 'button'; });
             document.querySelector('.nav-btn[data-page="overview"]')?.setAttribute('aria-current', 'page');
@@ -4719,6 +4739,7 @@
                 else if (!document.getElementById('smart-modal').classList.contains('hidden')) closeDiskSmart();
                 else if (!document.getElementById('docker-log-modal').classList.contains('hidden')) closeDockerLog();
             });
+            restoreUiPreferences();
         }
 
         function refreshChartTheme(theme) {
@@ -4947,7 +4968,7 @@
                 pollTimers[k] = setInterval(j.fn, getPollSec(k) * 1000);
             });
         }
-        function savePollConfig(cfg) { localStorage.setItem('pollConfig', JSON.stringify(cfg)); applyPolling(); }
+        function savePollConfig(cfg) { localStorage.setItem('pollConfig', JSON.stringify(cfg)); persistUiPreference('pollConfig', cfg); applyPolling(); }
 
         // 心跳：僅在分頁可見時發送。頁面關閉或切到背景後停止，後端 30 秒內自動降為每小時取樣
         async function sendHeartbeat() {
@@ -6897,6 +6918,7 @@
         function setTheme(t) {
             document.documentElement.classList.toggle('light', t === 'light');
             localStorage.setItem('theme', t);
+            persistUiPreference('theme', t);
             const moon = document.getElementById('theme-icon-moon'), sun = document.getElementById('theme-icon-sun');
             if (moon && sun) { moon.classList.toggle('hidden', t === 'light'); sun.classList.toggle('hidden', t !== 'light'); }
             const meta = document.querySelector('meta[name="theme-color"]');

@@ -630,6 +630,31 @@ let appSettings = normalizeAppSettings((() => {
 })());
 function saveAppSettings() { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); }
 
+/* ===================== 跨部署 UI 偏好 =====================
+   連線、通知與伺服器設定各自已有專用檔案；這裡保存純介面偏好，讓重建
+   容器或換瀏覽器後，仍可還原使用者最後選擇的主題、輪詢與版面。 */
+const UI_PREFERENCES_FILE = path.join(DATA_DIR, 'ui-preferences.json');
+const UI_PREFERENCE_KEYS = new Set(['theme', 'pollConfig', 'layoutOrder.v1', 'pinnedBlocks.v1', 'wiimSrcOrder.v1']);
+let uiPreferences = (() => {
+    try { return JSON.parse(fs.readFileSync(UI_PREFERENCES_FILE, 'utf8')); }
+    catch { return {}; }
+})();
+app.get('/api/ui-preferences', (_req, res) => res.json({ preferences: uiPreferences }));
+app.post('/api/ui-preferences', (req, res) => {
+    const incoming = req.body?.preferences;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return apiError(res, new Error('invalid preferences'), {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'invalid preferences', module: 'api.uiPreferences', function: 'save'
+    });
+    for (const [key, value] of Object.entries(incoming)) {
+        if (!UI_PREFERENCE_KEYS.has(key)) continue;
+        const encoded = JSON.stringify(value);
+        if (encoded && encoded.length <= 100000) uiPreferences[key] = value;
+    }
+    try { fs.writeFileSync(UI_PREFERENCES_FILE, JSON.stringify(uiPreferences, null, 2)); }
+    catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.uiPreferences', function: 'save', logMessage: 'UI preference persistence failed' }); }
+    res.json({ ok: true, preferences: uiPreferences });
+});
+
 // SQLite 以資料庫端清理取代舊的記憶體陣列 prune；清理後保留增量 vacuum，避免檔案無限膨脹。
 historyDb.cleanup(appSettings.historyKeepDays);
 setInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays)), 60 * 60 * 1000);
