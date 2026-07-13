@@ -68,7 +68,7 @@
 
 統計/歷史資料以 SQLite `smarthub.db` 存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`)，設定類資料仍為 JSON。一般遙測先放記憶體 queue，預設每 10 分鐘或達 1,000 筆 / 1 MiB 時以單一 transaction 批次寫入；查詢會合併未落盤資料。UPS 事件、封鎖、報表與 NAS 日誌手機推播仍立即處理。首次啟動會將舊 history/event JSON 匯入並改名為 `.migrated.bak` 保留。`GET /health` 為 Docker liveness、`GET /health/ready` 檢查 SQLite/worker、`GET /api/system/status` 提供完整診斷。
 
-**取樣為裝置感知的自適應頻率**:前端每 5 秒以 `GET /api/heartbeat?scope=...` 為目前可見頁面的 trend／NAS／WiiM／Linux 續約；後端以自身時間計算、每個 scope 最多只活躍 3 分鐘，沒有新心跳、切頁或分頁隱藏就自動回到低頻，避免錯誤判斷後持續高頻。總覽會替其顯示的 trend、NAS、WiiM 同時續約；`GET /api/history` 只加快 trend。UPS 取樣獨立，不受瀏覽狀態影響。
+**取樣為裝置感知的自適應頻率**:UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁登記的全部前端資訊統一每 3 秒更新；後端的 trend／UCG／NAS／WiiM／Linux 歷史取樣也在對應 scope 活躍時每 3 秒執行。前端每 5 秒以 `GET /api/heartbeat?scope=...` 續約，切頁會立即撤銷上一頁 scope，分頁進背景也主動釋放；若心跳中斷，伺服器短租約仍會自動到期並回到原本低頻。總覽只使用原本各項預設輪詢，避免同時高頻查詢全部設備；UPS 後端斷電取樣獨立，不受瀏覽狀態影響。
 
 ## 前端版面 (public/index.html)
 
@@ -181,7 +181,7 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 | `GET /api/wiim/history` | 溫度歷史(記憶體,上限 5000 點;**只存真實樣本**,連不上裝置時跳過取樣不偽造) |
 | `GET /api/wiim/clear`, `GET /api/wiim/csv` | 清空 / 匯出溫度記錄 |
 
-溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 30 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 30s / `wiimPlayback` 5s，只在 WiiM 頁啟用)。遙控器欄位以 key 名稱模糊匹配。
+溫度輪詢為**自適應排程**(與趨勢取樣器同一套裝置 scope 判定):WiiM 頁可見時每 3 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 30s / `wiimPlayback` 5s，只在 WiiM 頁啟用)，進入 WiiM 頁時兩者的有效間隔統一覆寫為 3 秒。遙控器欄位以 key 名稱模糊匹配。
 
 ### G. CyberPower UPS(NUT 優先多來源,對照 `cyberpower-ups-api.md`)
 `UPS_SOURCE=auto` 依序嘗試:**PPB**(PowerPanel Business REST API,`PPB_HOST`/`PPB_PORT`/`PPB_USER`/`PPB_PASSWORD`,Docker 部署時 PPB_HOST 必須指向實際主機 IP 而非 127.0.0.1)→ **NUT**(`upsc <NUT_UPS_NAME>@<NUT_HOST>`,容器內需 `apk add nut`,Dockerfile 已含)→ **pwrstat**(`pwrstat -status`)→ **pmset**(`pmset -g ps`,僅容量)。以 `child_process.exec` 呼叫本地指令,無需雲端。

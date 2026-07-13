@@ -31,3 +31,15 @@ test('activity lease has a hard 3 minute maximum even for an excessive request',
     now = 181000;
     assert.equal(lease.isActive('wiim'), false);
 });
+
+test('focus replacement immediately releases the previous device scope', () => {
+    let now = 1000;
+    const lease = createActivityLease({ now: () => now });
+    lease.mark('nas', 30000);
+    assert.equal(lease.isActive('nas'), true);
+
+    const focused = lease.mark('ucg', 30000, { replace: true });
+    assert.deepEqual(focused.accepted, ['ucg']);
+    assert.equal(lease.isActive('nas'), false);
+    assert.equal(lease.isActive('ucg'), true);
+});

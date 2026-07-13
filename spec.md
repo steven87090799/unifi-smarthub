@@ -47,12 +47,12 @@ unifi-smarthub/
 * **UGREEN UGOS Pro 認證**：實作了兩階段認證流程。先調用 `/ugreen/v1/verify/rsa_public_key` 獲取公鑰，隨後使用 **RSA PKCS1v15** 加密演算法將密碼加密並以 Base64 編碼，最後發送 `POST /ugreen/v1/verify/login` 取回 JWT Token。Token 緩存在記憶體中 12 小時。
 
 ### 2.2 背景取樣與自適應調度 (Background Sampling & trendScheduler)
-為了解決無人使用網頁時後端仍持續輪詢上游硬體造成的 CPU 浪費，後端實作了 **活動狀態自適應排程器 (Adaptive trendScheduler)**：
-* **心跳上報**：前端只要處於被瀏覽狀態，每 5 秒就會向後端發送一次心跳（`GET /api/heartbeat`），後端藉此更新暫存中的活動時間戳記 `lastClientActivity`。
+為了解決無人使用網頁時後端仍持續輪詢上游硬體造成的 CPU 浪費，後端實作了 **設備 scope 自適應排程器**：
+* **心跳上報**：前端每 5 秒只替目前可見設備頁送出 `GET /api/heartbeat?scope=...`。切頁會立即取代上一頁 scope，分頁進背景也會主動釋放；若瀏覽器異常中斷，伺服器租約仍會自動到期。
 * **頻率切換邏輯**：
-  * 當系統判定為 **Active 活躍狀態**（當前時間與 `lastClientActivity` 差值小於等於 30 秒）時，趨勢採樣排程器以 **5 秒** 一次的頻率執行。
-  * 當系統判定為 **Idle 閒置狀態**（超過 30 秒無心跳上報）時，取樣排程器自動降為 **30 分鐘** 一次。
-* **數據持久化**：取樣獲得的資訊（如線上客戶端數、24H 威脅數、ISP 延遲等）會寫入本地的 `data/trend-history.json` 中，資料條數上限為 9,999 筆（約覆蓋 7 天的歷史趨勢數據）。
+  * UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁所有前端資訊以 **3 秒** 間隔更新；trend／UCG／NAS／WiiM／Linux 對應歷史取樣也以 3 秒執行。
+  * 離開設備頁後，前端立即停止上一頁輪詢；後端 scope 被撤銷或租約到期後恢復各設備原本的低頻間隔。總覽維持各項預設，避免同時高頻查詢全部設備。
+* **數據持久化**：一般遙測先進入有上限的記憶體 queue，查詢會合併未落盤點；預設每 10 分鐘或達 1,000 筆／1 MiB 時以單一 transaction 批次寫入 SQLite。
 
 ### 2.3 威脅安全評分模型與自動隔離機制 (Security Model & Auto Defense)
 * **資安評分公式**：安全評分起點為 100 分。系統掃描近 24 小時內的 IPS/IDS 威脅事件（`ips:alert`）：
