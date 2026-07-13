@@ -205,8 +205,7 @@ docker volume ls                      # 確認 smarthub-data 存在
 
 ## 附錄
 
-- `CLAUDE.md` — 完整架構、後端 API 端點對應表、變更紀錄
+- `AGENTS.md` / `CLAUDE.md` — 精簡 AI 工作入口與讀檔路由
 - `ROADMAP.md` — 未使用 API 盤點與功能路線圖
-- `SQLITE-MIGRATION.md` — JSON → SQLite 遷移評估與步驟
 - `OBSERVABILITY.md` — Structured Logging、Status Code、Health/Diagnostics API、監控門檻與 Docker 除錯
 - `*-api.md` — UniFi / UGREEN / WiiM / CyberPower 各 API 規格參考

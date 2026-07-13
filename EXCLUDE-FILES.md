@@ -10,14 +10,18 @@
 | `node_modules/` | 依賴原始碼巨大且低價值 | 幾乎不讀 |
 | `package-lock.json` | lockfile 內容長 | 只有 dependency/安全性問題 |
 | `data/` | 歷史資料與 runtime 狀態，最大檔超過 1 MB | 只抽樣資料 schema 或異常紀錄 |
-| `public/index.html` | 533 KB / 7367 行巨型 SPA | 前端 UI/JS/CSS 任務，且切片讀 |
-| `server-mock.js` | mock 後端，非正式服務 | mock 行為或開發模式問題 |
+| `server.js` | 正式後端大檔 | 後端任務先讀 `SERVER-MAP.md`，再切片讀 |
+| `public/index.html` | 巨型 SPA | 前端任務先讀 `FRONTEND-MAP.md`，再切片讀 |
+| `server-mock.js`, `db.js` | mock／SQLite 實作 | mock parity、測試或儲存任務 |
+| `observability/` | 診斷實作 | observability／health 問題 |
 | `ppb-i18n-zh.json` | PowerPanel 翻譯資料 | PPB 事件文字對照 |
 | `unifi-network-api.md` | UniFi 上游規格 | 修改/驗證 UniFi API 行為 |
 | `ugreen-nas-api.md` | UGREEN NAS 上游規格 | 修改/驗證 NAS API 行為 |
 | `wiim_spec.md`, `wiim-amp-api.md` | WiiM 上游規格 | 修改/驗證 WiiM 指令 |
 | `cyberpower-ups-api.md` | UPS/PPB/NUT 參考 | 修改/驗證 UPS 接入 |
-| `ROADMAP.md`, `SQLITE-MIGRATION.md` | 規劃文件 | 路線圖或資料庫遷移任務 |
+| `ROADMAP.md`, `REVIEW-TODO.md` | 規劃／待辦文件 | 規劃或待辦盤點 |
+| `spec.md` | 完整技術規格，內容密集 | 需要全量架構或 endpoint 全貌 |
+| `OBSERVABILITY.md` | 維運參考 | 診斷、log、health 任務 |
 | `.git/` | Git 內部資料 | 不直接讀 |
 | `*.log` | runtime 輸出，可能很長 | debug 時讀尾端或搜尋關鍵字 |
 
@@ -28,9 +32,8 @@
 | `CONTEXT.md` | 低 token 入口 |
 | `SERVER-MAP.md` | 後端索引 |
 | `FRONTEND-MAP.md` | 前端索引 |
-| `AGENTS.md` | 架構與 AI 操作規範 |
-| `README.md` | 部署與維運 |
-| `spec.md` | 技術規格與 endpoint 全貌 |
+| `AGENTS.md` | 常駐 AI 操作規範（已壓縮） |
+| `README.md` | 部署與維運（僅部署任務） |
 | `.env.example` | 設定欄位參考，不含真實密碼 |
 
 ## 關於 `.env`
