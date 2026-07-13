@@ -1434,10 +1434,17 @@ async function notificationWatcher() {
                 lastUcgTempTs = Date.now();
                 await notify('🔥 UCG-Ultra 溫度警報', `CPU ${hw.cpuTemp}°C (門檻 ${s.ucgTempAlert ?? 75}°C)`);
             }
-            if (s.triggerUcgHighCpu && hw.cpuUsage != null && hw.cpuUsage >= (s.ucgCpuAlert ?? 90)
+            const ucgCpuThreshold = s.ucgCpuAlert ?? 90;
+            if (s.triggerUcgHighCpu && hw.cpuUsage != null && hw.cpuUsage >= ucgCpuThreshold) {
+                ucgCpuHighSamples += 1;
+            } else {
+                // 只要一次取樣回到門檻以下，就重新累計，避免短暫尖峰觸發告警。
+                ucgCpuHighSamples = 0;
+            }
+            if (ucgCpuHighSamples >= UCG_CPU_ALERT_SAMPLES
                 && Date.now() - lastUcgCpuTs > 30 * 60 * 1000) {
                 lastUcgCpuTs = Date.now();
-                await notify('🖥️ UCG-Ultra CPU 使用率過高', `CPU ${hw.cpuUsage}% (門檻 ${s.ucgCpuAlert ?? 90}%)`);
+                await notify('🖥️ UCG-Ultra CPU 使用率過高', `CPU ${hw.cpuUsage}% (連續 ${ucgCpuHighSamples} 次，門檻 ${ucgCpuThreshold}%)`);
             }
             if (s.triggerWanDown) {
                 const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
@@ -1494,7 +1501,8 @@ async function notificationWatcher() {
     capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000);
     notifBootstrapped = true;
 }
-let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastNasDiskHealthCheckTs = 0, lastNasDiskHealthAlertTs = 0, lastUcgTempTs = 0, lastUcgCpuTs = 0, wanWasUp = null;
+const UCG_CPU_ALERT_SAMPLES = 3;
+let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastNasDiskHealthCheckTs = 0, lastNasDiskHealthAlertTs = 0, lastUcgTempTs = 0, lastUcgCpuTs = 0, ucgCpuHighSamples = 0, wanWasUp = null;
 const knownClientMacs = new Set();
 const notifiedNasLogIds = new Set();
 let wiimWasOnline = null;
