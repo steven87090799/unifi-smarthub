@@ -15,13 +15,13 @@ test('device activity leases are scoped, server-timed, and expire without renewa
     assert.equal(lease.isActive('nas'), false);
 });
 
-test('activity lease has a hard 45 second maximum even for an excessive request', () => {
+test('activity lease has a hard 3 minute maximum even for an excessive request', () => {
     let now = 1000;
-    const lease = createActivityLease({ now: () => now, maxLeaseMs: 45000 });
+    const lease = createActivityLease({ now: () => now, maxLeaseMs: 180000 });
     const mark = lease.mark('wiim', 3600 * 1000);
-    assert.equal(mark.expiresAt, 46000);
-    now = 45999;
+    assert.equal(mark.expiresAt, 181000);
+    now = 180999;
     assert.equal(lease.isActive('wiim'), true);
-    now = 46000;
+    now = 181000;
     assert.equal(lease.isActive('wiim'), false);
 });

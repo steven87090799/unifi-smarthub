@@ -4,7 +4,7 @@ const DEFAULT_SCOPES = ['trend', 'nas', 'wiim', 'linux'];
 
 // A short server-timed lease prevents a stale browser tab from keeping device
 // polling fast forever. Client clocks are never trusted.
-function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 45000, now = () => Date.now() } = {}) {
+function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now = () => Date.now() } = {}) {
     const allowed = new Set(scopes);
     const leases = new Map();
 

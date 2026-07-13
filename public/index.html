@@ -4968,7 +4968,7 @@
             wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
             ups: { fn: () => fetchUps(), def: 30, label: 'UPS 電源狀態', desc: '多久刷新一次 UPS 即時電壓/電池/負載與電壓歷史圖、斷電事件表。後端取樣寫檔頻率另由「伺服器端」的 UPS 取樣間隔控制。' },
             ppbEvents: { fn: () => fetchPpbEvents(), def: 120, label: 'UPS 原生事件日誌 (PPB)', desc: '多久重新讀取一次 PowerPanel Business 記錄的原生事件日誌。' },
-            heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '裝置檢視心跳', desc: '只在目前可見頁面替正在看的裝置續短租約；沒有續約最多 45 秒就回到低頻取樣。' }
+            heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '裝置檢視心跳', desc: '只在目前可見頁面替正在看的裝置續短租約；沒有續約最多 3 分鐘就回到低頻取樣。' }
         };
         const COMMON_POLL_JOBS = new Set(['critAlerts', 'heartbeat']);
         const PAGE_POLL_JOBS = {
