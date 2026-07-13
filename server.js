@@ -1302,7 +1302,7 @@ function scheduleServerJobs() {
 // 取樣頻率隨「是否有人正在看網頁」自動切換 (間隔取自 appSettings，可於設定頁調整)。
 let lastSampleTs = 0;                    // 上一次取樣時間戳
 let lastSchedulerState = null;           // 前端最後一狀態 (活躍/閒置)
-const deviceActivity = createActivityLease({ maxLeaseMs: 45000 });
+const deviceActivity = createActivityLease({ maxLeaseMs: 180000 });
 function markClientActivity(scopes = 'trend') {
     const requestedMs = (appSettings.activeWindowSec || 30) * 1000;
     return deviceActivity.mark(scopes, requestedMs);
@@ -1371,7 +1371,7 @@ app.get('/api/history', (req, res) => {
     res.json({ history: historyDb.getSince('trend', cutoff) });
 });
 
-// 輕量心跳端點：只為目前顯示的裝置續短租約；沒有續約最晚 45 秒自動回到低頻。
+// 輕量心跳端點：只為目前顯示的裝置續短租約；沒有續約最晚 3 分鐘自動回到低頻。
 app.get('/api/heartbeat', (req, res) => {
     const activity = markClientActivity(req.query.scope || '');
     res.json({ ok: true, activeScopes: deviceActivity.activeScopes(), expiresAt: activity.expiresAt });
