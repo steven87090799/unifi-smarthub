@@ -568,7 +568,7 @@ let mockNotif = {
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerWanDown: false, triggerUnifiOffline: false, triggerNasLog: true,
     triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false,
     triggerAdgProtection: true, triggerAdgOffline: false, triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90,
-    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
+    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHealth: true, triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
     triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true
 };
 let mockNotifLog = [];
@@ -610,7 +610,7 @@ setInterval(() => {
 }, 25000);
 
 /* ===== 應用程式設定 (模擬) ===== */
-let mockAppSettings = { trendActiveSec: 5, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20, autoDefenseSec: 30, reportEnabled: false, reportFreq: 'daily', reportHour: 8, reportHour2: 20 };
+let mockAppSettings = { trendActiveSec: 5, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20, autoDefenseSec: 30, reportEnabled: true, reportFreq: 'daily', reportHour: 8, reportHour2: 20 };
 app.get('/api/settings', (req, res) => res.json(mockAppSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
@@ -637,7 +637,7 @@ app.post('/api/reports/run', (req, res) => {
         const avgBoard = (boards.reduce((a, b) => a + b, 0) / boards.length).toFixed(1);
         wiimLine = `\n🔊 WiiM Amp 狀態：24H 均溫 CPU ${avgCpu}°C (最高 ${maxCpu}°C) / 主板 ${avgBoard}°C (最高 ${maxBoard}°C)`;
     }
-    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`, `🐳 Docker：3/3 運行中，近期嚴重/錯誤 Log：無`].join('\n') + wiimLine;
+    const body = [`📊 SmartHub 每日摘要 · ${new Date().toLocaleString('zh-TW')}`, `🛡️ 資安與網路\n• 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次\n• 線上客戶端：${mockClients.length} 台\n• ISP 延遲：13.2 ms`, `💾 儲存與容器\n• NAS 30 天正常運行率：99.97%\n• Docker 容器：3/3 運行中，健康檢查正常\n• Docker 近期嚴重/錯誤 Log：無`, `⚙️ SmartHub\n• 系統診斷：Healthy · 背景工作正常`].join('\n\n') + wiimLine;
     if (mockNotif.enabled) pushMockNotif({ ts: new Date().toISOString(), title: '📊 SmartHub 報表 (手動觸發)', body, channel: mockNotif.channel, ok: true });
     const delivery = mockNotif.enabled ? { ok: true } : { skipped: 'disabled' };
     pushMockReport({ id: Date.now(), ts: new Date().toISOString(), trigger: 'manual', title: '📊 SmartHub 報表 (手動觸發)', deliveryStatus: delivery.ok ? 'sent' : 'skipped:disabled', channel: delivery.ok ? mockNotif.channel : null, body });

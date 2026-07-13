@@ -2795,6 +2795,9 @@
                                             <input type="checkbox" id="notif-trig-docker-state" class="accent-blue-500 w-4 h-4"> Docker 容器停止 / 恢復運行
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-health" class="accent-blue-500 w-4 h-4"> Docker 容器健康檢查異常 / 恢復（即使容器仍在運行）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-docker-cpu" class="accent-blue-500 w-4 h-4"> Docker 容器 CPU 超過
                                             <input type="number" id="notif-docker-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
                                         </label>
@@ -3115,7 +3118,7 @@
                                 class="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 rounded-xl transition">立即產生預覽</button>
                         </div>
                         <pre id="report-preview"
-                            class="hidden bg-slate-950/70 border border-slate-800/60 rounded-lg p-4 text-[11px] text-emerald-400 mono whitespace-pre-wrap"></pre>
+                            class="hidden max-h-[32rem] overflow-y-auto terminal-scroll bg-slate-950/70 border border-slate-800/60 rounded-xl p-4 text-[11px] leading-relaxed text-slate-200 whitespace-pre-wrap"></pre>
                         <div class="pt-2 border-t border-slate-800/70">
                             <div class="flex justify-between items-center mb-2">
                                 <p class="text-[11px] font-bold text-slate-300">報表執行紀錄</p>
@@ -7042,6 +7045,7 @@
                 setCk('notif-trig-docker-critical', s.triggerDockerCriticalLog !== false);
                 setCk('notif-trig-docker-error', !!s.triggerDockerErrorLog);
                 setCk('notif-trig-docker-state', s.triggerDockerState !== false);
+                setCk('notif-trig-docker-health', s.triggerDockerHealth !== false);
                 setCk('notif-trig-docker-cpu', !!s.triggerDockerHighCpu);
                 setCk('notif-trig-docker-memory', !!s.triggerDockerHighMemory);
                 setCk('notif-trig-system-critical', s.triggerSystemCritical !== false);
@@ -7105,6 +7109,7 @@
                 triggerDockerCriticalLog: document.getElementById('notif-trig-docker-critical')?.checked ?? true,
                 triggerDockerErrorLog: document.getElementById('notif-trig-docker-error')?.checked ?? false,
                 triggerDockerState: document.getElementById('notif-trig-docker-state')?.checked ?? true,
+                triggerDockerHealth: document.getElementById('notif-trig-docker-health')?.checked ?? true,
                 triggerDockerHighCpu: document.getElementById('notif-trig-docker-cpu')?.checked ?? false,
                 dockerCpuAlert: parseInt(document.getElementById('notif-docker-cpu')?.value, 10) || 90,
                 triggerDockerHighMemory: document.getElementById('notif-trig-docker-memory')?.checked ?? false,

@@ -1020,7 +1020,7 @@ const NOTIF_DEFAULTS = {
     triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false,
     triggerAdgProtection: true, triggerAdgOffline: false,
     triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90,
-    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true,
+    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHealth: true,
     triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
     triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true
 };
@@ -1146,7 +1146,7 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline,
         triggerLinuxTemp: s.triggerLinuxTemp !== false, linuxTempAlert: s.linuxTempAlert ?? 70,
         triggerLinuxOffline: !!s.triggerLinuxOffline, triggerLinuxDisk: !!s.triggerLinuxDisk, linuxDiskAlert: s.linuxDiskAlert ?? 90,
-        triggerDockerCriticalLog: s.triggerDockerCriticalLog !== false, triggerDockerErrorLog: !!s.triggerDockerErrorLog, triggerDockerState: s.triggerDockerState !== false,
+        triggerDockerCriticalLog: s.triggerDockerCriticalLog !== false, triggerDockerErrorLog: !!s.triggerDockerErrorLog, triggerDockerState: s.triggerDockerState !== false, triggerDockerHealth: s.triggerDockerHealth !== false,
         triggerDockerHighCpu: !!s.triggerDockerHighCpu, dockerCpuAlert: s.dockerCpuAlert ?? 90,
         triggerDockerHighMemory: !!s.triggerDockerHighMemory, dockerMemoryAlert: s.dockerMemoryAlert ?? 90,
         triggerSystemCritical: s.triggerSystemCritical !== false, triggerSystemWarning: !!s.triggerSystemWarning, triggerSystemRecovery: s.triggerSystemRecovery !== false,
@@ -1164,7 +1164,7 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerWanDown', 'triggerUnifiOffline', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerWanDown', 'triggerUnifiOffline', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHealth', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
     ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'ucgCpuAlert', 'upsLoadAlert', 'upsVoltDeviationPct', 'linuxTempAlert', 'linuxDiskAlert', 'dockerCpuAlert', 'dockerMemoryAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
@@ -1222,7 +1222,7 @@ async function scanSystemIssueNotifications(s) {
 }
 
 async function scanDockerNotifications(s) {
-    const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
+    const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHealth !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
     if (!usesDockerMonitor || !nasMonConfigured()) return;
     let containers;
     try {
@@ -1237,12 +1237,17 @@ async function scanDockerNotifications(s) {
         const id = container.id || container.name;
         if (!id) continue;
         const state = String(container.state || 'unknown').toLowerCase();
+        const health = String(container.health || (/\b(unhealthy|healthy|starting)\b/i.exec(String(container.status || '')) || [])[1] || 'unknown').toLowerCase();
         const previous = dockerContainerStates.get(id);
         if (!firstBaseline && notifBootstrapped && s.triggerDockerState !== false && previous && previous.state !== state) {
             const recovered = state === 'running';
             await notify(recovered ? '✅ Docker 容器已恢復運行' : '🐳 Docker 容器狀態異常', `${container.name || id}\n${previous.state} → ${state}\n${container.status || ''}`.trim());
         }
-        dockerContainerStates.set(id, { state, status: container.status || '' });
+        if (!firstBaseline && notifBootstrapped && s.triggerDockerHealth !== false && previous && previous.health !== health) {
+            const recovered = health === 'healthy';
+            await notify(recovered ? '✅ Docker 容器健康檢查恢復' : '⚠️ Docker 容器健康檢查異常', `${container.name || id}\n${previous.health} → ${health}\n${container.status || ''}`.trim());
+        }
+        dockerContainerStates.set(id, { state, health, status: container.status || '' });
 
         const cpu = Number(container.cpu_percent);
         const memUsage = Number(container.mem_usage_mb);
@@ -1357,15 +1362,19 @@ async function notificationWatcher() {
             await notify('🔥 WiiM 溫度警報', `CPU ${last.cpu}°C (門檻 ${cpuA}°C)\n主機板 ${last.board}°C (門檻 ${brdA}°C)`);
         }
     }
-    // 新設備加入網路 (預設關閉；首輪只登記既有設備)
+    // 新設備加入網路：只在 UniFi 已配發 IP 後通知，避免收到「取得中」且錯過後續 IP。
     if (s.triggerNewClient) {
         try {
             const cookie = await getLocalSession();
             const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
             for (const c of (sta.data.data || [])) {
-                if (knownClientMacs.has(c.mac)) continue;
+                if (!c.mac || knownClientMacs.has(c.mac)) continue;
+                // 首輪只建立既有設備基準；後續的新設備則等待 DHCP/UniFi 回報有效 IP。
+                if (!notifBootstrapped) { knownClientMacs.add(c.mac); continue; }
+                const ip = String(c.ip || '').trim();
+                if (!ip || ip === '0.0.0.0') continue;
                 knownClientMacs.add(c.mac);
-                if (notifBootstrapped) await notify('📱 新設備連上網路', `${c.name || c.hostname || c.mac}\nIP ${c.ip || '(取得中)'} · ${c.is_wired ? '有線' : 'WiFi'}`);
+                await notify('📱 新設備連上網路', `${c.name || c.hostname || c.mac}\nIP ${ip} · ${c.is_wired ? '有線' : 'WiFi'}`);
             }
         } catch (error) {
             logRecoverableFailure('watcher.newClients', error, { module: 'watcher.notifications', function: 'scanNewClients', code: ERROR_CODES.EXT_UNIFI_FAILED });
@@ -2562,8 +2571,12 @@ async function buildReport() {
             const containers = Array.isArray(data) ? data : (data.containers || data.data || []);
             const running = containers.filter(c => String(c.state).toLowerCase() === 'running');
             const stopped = containers.filter(c => String(c.state).toLowerCase() !== 'running');
+            const unhealthy = containers.filter(c => /\bunhealthy\b/i.test(`${c.health || ''} ${c.status || ''}`));
+            const restarting = containers.filter(c => Number(c.restart_count ?? c.restartCount ?? 0) > 0);
             L.push('\n━━ 🐳 Docker 容器 ━━');
-            L.push(`• 容器狀態：${running.length}/${containers.length} 運行中${stopped.length ? `，⚠ 停止 ${stopped.map(c => c.name || c.id).join('、')}` : ''}`);
+            L.push(`• 容器狀態：${running.length}/${containers.length} 運行中${stopped.length ? `，⚠ 停止 ${stopped.map(c => c.name || c.id).join('、')}` : '，全部運行'}`);
+            L.push(`• 健康檢查：${unhealthy.length ? `⚠ 異常 ${unhealthy.map(c => c.name || c.id).join('、')}` : '正常'}`);
+            if (restarting.length) L.push(`• 曾重新啟動：${restarting.map(c => `${c.name || c.id} ×${c.restart_count ?? c.restartCount}`).join('、')}`);
             const hot = containers.map(c => {
                 const cpu = Number(c.cpu_percent);
                 const used = Number(c.mem_usage_mb), limit = Number(c.mem_limit_mb);
