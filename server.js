@@ -1538,16 +1538,29 @@ function markClientActivity() { lastClientActivity = Date.now(); }
 
 async function sampleTrends() {
     const point = { t: new Date().toISOString(), clients: null, threats24h: null, latency: null };
+    let cookie;
     try {
-        const cookie = await getLocalSession();
-        const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
-        point.clients = (sta.data.data || []).length;
-        const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
-        const dayAgo = Date.now() - 86400000;
-        point.threats24h = (alarm.data.data || []).filter(a => isIpsAlarm(a) && new Date(a.datetime).getTime() >= dayAgo).length;
+        cookie = await getLocalSession();
     } catch (error) {
-        logRecoverableFailure('sampler.trend.unifi', error, { module: 'scheduler.trend', function: 'sampleLocalMetrics', code: ERROR_CODES.EXT_UNIFI_FAILED });
-        // 本地控制器不可用時該欄位保留 null。
+        logRecoverableFailure('sampler.trend.unifi.auth', error, { module: 'scheduler.trend', function: 'sampleLocalMetrics.auth', code: ERROR_CODES.EXT_UNIFI_FAILED });
+    }
+    if (cookie) {
+        try {
+            const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+            point.clients = (sta.data.data || []).length;
+        } catch (error) {
+            logRecoverableFailure('sampler.trend.unifi.clients', error, { module: 'scheduler.trend', function: 'sampleLocalMetrics.clients', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
+        try {
+            const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
+            const dayAgo = Date.now() - 86400000;
+            point.threats24h = (alarm.data.data || []).filter(a => {
+                const ts = Number.isFinite(Number(a.time)) ? Number(a.time) : Date.parse(a.datetime);
+                return isIpsAlarm(a) && Number.isFinite(ts) && ts >= dayAgo;
+            }).length;
+        } catch (error) {
+            logRecoverableFailure('sampler.trend.unifi.threats', error, { module: 'scheduler.trend', function: 'sampleLocalMetrics.threats', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
     }
     try {
         if (process.env.UNIFI_API_KEY && !process.env.UNIFI_API_KEY.includes('your_unifi')) {
