@@ -1,6 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const os = require('os');
+const { version: APP_VERSION } = require('./package.json');
+const { ERROR_CODES } = require('./observability/error-codes');
 
 const app = express();
 app.use(cors());
@@ -199,6 +202,26 @@ app.get('/api/hardware', (req, res) => {
     });
 });
 
+const mockHardwareHistory = (() => {
+    const points = [];
+    const now = Date.now();
+    for (let i = 2016; i >= 0; i--) { // 7 days @ 5 minutes
+        const t = now - i * 300000;
+        points.push({
+            t: new Date(t).toISOString(),
+            cpuTemp: +(52 + Math.sin(t / 7.2e6) * 4 + Math.random()).toFixed(1),
+            cpuUsage: +(25 + Math.sin(t / 3.6e6) * 8 + Math.random() * 5).toFixed(1),
+            memUsagePct: +(54 + Math.sin(t / 2.16e7) * 3).toFixed(1)
+        });
+    }
+    return points;
+})();
+app.get('/api/hardware/history', (req, res) => {
+    const hours = Number.parseFloat(req.query.hours || '24');
+    const cutoff = Date.now() - (Number.isFinite(hours) ? hours : 24) * 3600000;
+    res.json({ data: mockHardwareHistory.filter(point => new Date(point.t).getTime() >= cutoff), source: 'mock' });
+});
+
 // 2. 獲取活躍客戶端
 app.get('/api/clients', (req, res) => {
     // 模擬流量稍微增加
@@ -210,6 +233,23 @@ app.get('/api/clients', (req, res) => {
     });
     res.json({ clients: mockClients });
 });
+
+app.get('/api/network/switches', (_req, res) => res.json({
+    source: 'mock',
+    devices: [{
+        name: 'USW-Lite-8-PoE', type: 'usw', model: 'USW-Lite-8-PoE',
+        ports: [
+            { port_idx: 1, up: true, is_uplink: true, poe: false, speedMbps: 1000, rxMbps: 18.4, txMbps: 4.2, client: { name: 'UCG-Ultra' } },
+            { port_idx: 2, up: true, is_uplink: false, poe: true, speedMbps: 1000, rxMbps: 6.8, txMbps: 1.7, client: { name: 'U7-Pro' } },
+            { port_idx: 3, up: true, is_uplink: false, poe: false, speedMbps: 1000, rxMbps: 12.1, txMbps: 8.3, client: { name: 'UGREEN-NAS' } },
+            { port_idx: 4, up: false, is_uplink: false, poe: false, speedMbps: 0, rxMbps: 0, txMbps: 0, client: null },
+            { port_idx: 5, up: true, is_uplink: false, poe: false, speedMbps: 1000, rxMbps: 2.4, txMbps: 1.1, client: { name: 'WiiM-Amp' } },
+            { port_idx: 6, up: false, is_uplink: false, poe: false, speedMbps: 0, rxMbps: 0, txMbps: 0, client: null },
+            { port_idx: 7, up: false, is_uplink: false, poe: false, speedMbps: 0, rxMbps: 0, txMbps: 0, client: null },
+            { port_idx: 8, up: false, is_uplink: false, poe: false, speedMbps: 0, rxMbps: 0, txMbps: 0, client: null }
+        ]
+    }]
+}));
 
 // 3. 獲取 SSID 列表
 app.get('/api/wifi-networks', (req, res) => {
@@ -597,7 +637,7 @@ app.get('/sw.js', (req, res) => res.type('application/javascript').send(`
 const C='smarthub-v1';
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(['/'])))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.pathname.startsWith('/api/')||u.pathname==='/healthz')return;e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));});`));
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.pathname.startsWith('/api/')||u.pathname.startsWith('/health'))return;e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));});`));
 
 // --- WiiM Amp Mock Endpoints & Background Polling ---
 let mockWiimHistory = [];
@@ -725,6 +765,7 @@ app.get('/api/ups/history', (req, res) => {
     res.json({ history: mockUpsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
 });
 app.get('/api/ups/events', (req, res) => res.json({ events: mockUpsEvents }));
+app.get('/api/ups/ppb-events', (_req, res) => res.json({ events: [], source: 'mock' }));
 app.get('/api/ups/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');
@@ -737,6 +778,18 @@ app.get('/api/ups/csv', (req, res) => {
 let mockConn = { UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4', UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo', NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '', NAS_MONITOR_URL: '', WIIM_IP: '192.168.0.170', UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '' };
 let mockConnSecrets = { SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false, NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false };
 app.get('/api/connections', (req, res) => res.json({ fields: mockConn, secretsSet: mockConnSecrets }));
+app.get('/api/connections/status', (_req, res) => res.json({
+    source: 'mock',
+    devices: [
+        { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
+        { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },
+        { name: 'Site Manager', configured: false, ok: null, detail: '' },
+        { name: 'UGREEN NAS', configured: false, ok: null, detail: '' },
+        { name: 'NAS Monitor', configured: false, ok: null, detail: '' },
+        { name: 'WiiM Amp', configured: true, ok: true, detail: mockConn.WIIM_IP },
+        { name: 'UPS', configured: true, ok: true, detail: 'NUT mock' }
+    ]
+}));
 app.post('/api/connections', (req, res) => {
     let n = 0;
     for (const [k, v] of Object.entries(req.body || {})) {
@@ -747,7 +800,45 @@ app.post('/api/connections', (req, res) => {
     res.json({ ok: true, changed: n });
 });
 
-app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
+app.get('/api/alerts/critical', (_req, res) => res.json({ alerts: [], source: 'mock' }));
+
+const mockHealth = (_req, res) => res.json({ status: 'healthy', code: ERROR_CODES.API_HEALTH_OK, uptime_seconds: Math.floor(process.uptime()), version: APP_VERSION, timestamp: new Date().toISOString(), source: 'mock' });
+app.get('/health', mockHealth);
+app.get('/healthz', mockHealth);
+app.get('/health/ready', (_req, res) => res.json({
+    status: 'ready', code: ERROR_CODES.API_READY_OK, source: 'mock',
+    checks: { database: { status: 'healthy', latency_ms: 0 }, worker: { status: 'healthy', active_tasks: 0, stuck_tasks: 0 } }
+}));
+const mockSystemTrend = [];
+app.get('/api/system/status', (_req, res) => {
+    const mem = process.memoryUsage();
+    const totalMemory = os.totalmem();
+    const availableMemory = typeof process.availableMemory === 'function' ? process.availableMemory() : os.freemem();
+    const memoryPercent = Number(((totalMemory - availableMemory) / totalMemory * 100).toFixed(1));
+    const memoryStatus = memoryPercent >= 90 ? 'critical' : memoryPercent >= 80 ? 'warning' : 'healthy';
+    const memoryIssue = memoryStatus === 'healthy' ? [] : [{
+        id: `memory:${memoryStatus}`, severity: memoryStatus,
+        code: memoryStatus === 'critical' ? ERROR_CODES.SYS_MEMORY_CRITICAL : ERROR_CODES.SYS_MEMORY_WARNING,
+        message: memoryStatus === 'critical' ? 'Memory usage critical' : 'Memory usage high',
+        first_seen: new Date().toISOString(), last_seen: new Date().toISOString(), occurrences: 1
+    }];
+    const sample = {
+        timestamp: new Date().toISOString(), process_cpu_percent: 1.2, system_cpu_percent: 18,
+        process_rss_bytes: mem.rss, system_memory_percent: memoryPercent,
+        db_active_connections: 0, active_tasks: 0
+    };
+    mockSystemTrend.push(sample);
+    if (mockSystemTrend.length > 60) mockSystemTrend.shift();
+    res.json({
+        status: memoryStatus, source: 'mock', sampled_at: sample.timestamp, uptime_seconds: Math.floor(process.uptime()), app_version: APP_VERSION,
+        cpu: { status: 'healthy', usage_percent: sample.system_cpu_percent, process_usage_percent: sample.process_cpu_percent, load_average: os.loadavg() },
+        memory: { status: memoryStatus, usage_percent: sample.system_memory_percent, process_mb: Number((mem.rss / 1048576).toFixed(1)), system_available_bytes: availableMemory, system_total_bytes: totalMemory },
+        disk: { status: 'unknown', usage_percent: null, free_bytes: null },
+        database: { status: 'unknown', type: 'mock', latency_ms: null, pool: { type: 'mock', size: 0, active: 0, available: 0, waiting: 0 }, slow_queries: 0, failed_queries: 0 },
+        worker: { status: 'healthy', active_tasks: 0, queued_tasks: 0, failed_tasks: 0, completed_tasks: 0, retry_tasks: 0, skipped_tasks: 0, long_running_tasks: 0, stuck_tasks: 0 },
+        active_issues: memoryIssue, resolved_issues: [], trend_data: mockSystemTrend
+    });
+});
 
 const PORT = 3005;
 app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));

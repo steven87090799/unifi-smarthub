@@ -66,7 +66,7 @@
 
 ## 資料持久化
 
-無資料庫,以 JSON 檔存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`):`trend-history.json`(趨勢,上限 9999 筆)、`block-history.json`(封鎖,200筆)、`security-settings.json`(資安設定)。改資料庫可換 SQLite,掛同 volume 即可。健康檢查端點 `GET /healthz`。
+統計/歷史資料以 SQLite `smarthub.db` 存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`)，設定類資料仍為 JSON。首次啟動會將舊 history/event JSON 匯入並改名為 `.migrated.bak` 保留。`GET /health` 為 Docker liveness、`GET /health/ready` 檢查 SQLite/worker、`GET /api/system/status` 提供完整診斷。
 
 **趨勢取樣為自適應頻率**(`trendScheduler` 每秒檢查):前端每 5 秒打 `GET /api/heartbeat`(分頁隱藏時暫停),或任何 `GET /api/history` 讀取,都會更新 `lastClientActivity`。最近 30 秒內有活動 → 每 5 秒取樣;否則 → 每 30 分鐘取樣。目的:無人瀏覽時不持續打上游 API。前端趨勢圖每 15 秒重繪(`update('none')`)。
 
@@ -74,7 +74,7 @@
 
 - **側邊欄 + 分頁**(分群導航):總覽 →「網路監控」客戶端/資安/WiFi/雲端 →「設備」NAS/WiiM/UPS →「系統」工具/通知推播/設定;行動版為漢堡選單。左下角三行設備狀態(UCG/NAS/WiiM)。
 - **液態玻璃 UI**:`body::before/::after` 兩顆極光光暈緩慢漂移;`main .rounded-2xl` 統一升級玻璃材質(漸層半透明+blur(20px) saturate+上緣高光+雙陰影),內層 `.rounded-xl` 薄玻璃;aside/header 玻璃化;深淺主題皆有對應覆寫。**新卡片只要用 rounded-2xl/rounded-xl 即自動獲得玻璃效果**。
-- **Debug**:後端 `sysLog(module,msg,isError)` 統一格式 + HTTP 中介層記錄所有 /api 請求(`DEBUG_HTTP=0` 關閉);前端 `dbg(module,...)`(`localStorage.debug='0'` 關閉)。
+- **Debug / Observability**:`observability/` 提供五級 structured logger、console/JSON、secret masking、request/task trace、SQLite latency、resource monitor、issue cooldown 與 60 筆 ring buffer；正常 API/job lifecycle 在 DEBUG，錯誤依 WARNING/ERROR/CRITICAL。前端 `dbg(module,...)` 可用 `localStorage.debug='0'` 關閉。
 - **版面編輯(巢狀拖曳)**:右上 🧩 進入編輯。可排序容器 = `main > section` 頂層(藍虛線+⠿標籤)+ 任何標記 **`data-drag`** 的內部容器(綠虛線;全站 21 處:資安/NAS/雲端大卡內容、各雙欄 grid、KPI 迷你卡列、WiiM 左右欄、總覽體檢列等)。排序存 localStorage `layoutOrder.v1`(容器 key = section id 或 `data-drag-key`),集合不符自動忽略。拖曳 handler 有 `stopPropagation` 防巢狀連動;grid 內橫向卡片以 X 軸判斷插入點。**新增區塊時**:放進 data-drag 容器即自動可拖;新容器加 `data-drag` 屬性即可。跨容器移動不支援(避免破壞欄位佈局)。
 - **總覽**:4 張 KPI 卡(WAN、線上設備、24H 威脅、雙設備溫度 UCG/NAS)+ **雙設備即時體檢面板**(UCG 與 NAS 並排,各顯示 CPU 溫度大字 + CPU/記憶體條 + 關鍵指標與連線徽章,點擊可下鑽)+ 資安戰情速覽 + 歷史趨勢圖 + UCG 硬體詳情。體檢面板的 UCG 欄由 `fetchHardware`/`fetchClients` 填(`ov-ucg-*`),NAS 欄由 `fetchNas` 填(`ov-nas-*`);溫度配色用 `tempColor()`/`tempLabel()`(涼爽<55/正常<65/偏高<75/過熱≥75)。目的:兩台設備重點不用切頁即可一次看清。
 - **客戶端**:管理表格 + Top 5 流量排行榜 + 封鎖歷史時間軸。
@@ -115,11 +115,11 @@
 | `PUT /api/wifi-networks/:id` | `PUT /api/s/default/rest/wlanconf/{id}` |
 | `GET /api/threats` | `GET /api/s/default/stat/alarm`(過濾 `key === 'ips:alert'`) |
 | `PUT /api/device/restrict` | `POST /api/s/default/cmd/stamgr` (`cmd: block-sta` / `unblock-sta`),成功後寫入封鎖歷史 |
-| `GET /api/block-history` | 無上游 — 讀取本地 `block-history.json`(僅記錄本面板下達的封鎖/解封,上限 200 筆) |
+| `GET /api/block-history` | 無上游 — 讀取 SQLite `block_history`(僅記錄本面板下達的封鎖/解封,上限 200 筆) |
 | `POST /api/poe/power-cycle` | `POST /api/s/default/cmd/devmgr` (`cmd: power-cycle`) |
 | `POST /api/speedtest` | `POST /api/s/default/cmd/devmgr` (`cmd: speedtest`) |
 | `GET /api/speedtest/status` | `GET /api/s/default/stat/health`(取 `www` 子系統的 `speedtest_status`/`xput_down`/`xput_up`/`speedtest_ping`) |
-| `GET /api/history` | 無上游 — 讀取本地 `trend-history.json`。內建取樣器每 5 分鐘記錄客戶端數/24h 威脅數/ISP 延遲,保留 7 天 |
+| `GET /api/history` | 無上游 — 讀取 SQLite `history` 的 `trend` series；內建自適應取樣器記錄客戶端數/24h 威脅數/ISP 延遲 |
 | `GET/POST /api/security/settings` | 無上游 — 讀寫本地 `security-settings.json`(目前僅 `autoDefense` 布林) |
 | `GET/POST /api/notifications/settings` | 無上游 — 讀寫本地 `notification-settings.json`。GET 遮罩機密(回 `webhookUrlSet`/`botTokenSet` 布林);POST 機密欄位留空=保留原值 |
 | `POST /api/notifications/test` | 立即送一則測試推播 |
@@ -189,8 +189,8 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 | 本專案端點 | 說明 |
 | :--- | :--- |
 | `GET /api/ups/status` | 即時讀取(來源/型號/輸入輸出電壓/電池/負載/剩餘時間/onBattery);全部失敗回 `source:'unreachable'`+lastKnown |
-| `GET /api/ups/history?hours=` | 電壓/電池/負載歷史(**持久化** `ups-history.json`,上限 20000 點 ≈ 7 天 @30s) |
-| `GET /api/ups/events` | 斷電事件(start/end/durationSec/minBattery,**持久化** `ups-events.json`,市電斷→開事件、恢復→補時長) |
+| `GET /api/ups/history?hours=` | 電壓/電池/負載歷史(**持久化** SQLite `history` 的 `ups` series) |
+| `GET /api/ups/events` | 斷電事件(start/end/durationSec/minBattery,**持久化** SQLite `ups_events`,市電斷→開事件、恢復→補時長) |
 | `GET /api/ups/csv` | 匯出電壓歷史 |
 
 UPS 取樣(`appSettings.upsSampleSec` 預設 30s)**不做閒置降頻**——斷電/電壓紀錄無人瀏覽也要持續記錄。前端 UPS 頁:6 格 KPI(輸入/輸出電壓/電池/負載/可撐分鐘/狀態)+ 電壓歷史圖(1h/6h/24h/7d + CSV,斷電段輸入歸零)+ 電池負載圖 + 斷電事件表(進行中標紅)+ NUT 接入指南(unreachable 時顯示)。
@@ -225,8 +225,8 @@ UPS 取樣(`appSettings.upsSampleSec` 預設 30s)**不做閒置降頻**——斷
 - 遙控器/週邊卡從左欄移至右欄(設定卡下方)平衡版面;`/api/wiim/status` 回退時補 `source` 標記;圖表範圍標籤與相對時間文案修正。
 
 ## 開發注意事項
-- **歷史資料節流落盤**:trend/ucg/nas/ups 歷史陣列常駐記憶體,`registerFlushable`+`markDirty()` 最多每 5 分鐘寫檔一次(UPS 電池供電中強制每筆寫);SIGTERM/SIGINT 強制全落盤。新增歷史型資料請沿用此機制,勿在取樣路徑直接 `fs.writeFileSync` 大檔。
-- **認證**:設 `PANEL_PASSWORD` 環境變數即啟用整站 Basic Auth(/healthz 除外);已移除 `cors()`(前後端同源不需要)。
+- **歷史資料持久化**:trend/ucg/nas/ups/wiim/linux、UPS 事件與封鎖歷史皆由 `db.js` 的 SQLite WAL 管理；新增歷史型資料請沿用 `historyDb.insertPoint()`，不要重新引入整檔 JSON 寫入。
+- **認證**:設 `PANEL_PASSWORD` 即啟用整站 Basic Auth；只有 `/health`、`/healthz`、`/health/ready` 免登入，完整 `/api/system/status` 仍受保護。已移除 `cors()`(前後端同源不需要)。
 - **時區**:報表排程 (`reportHour`) 用本地時間,Docker 部署必須設 `TZ=Asia/Taipei`(compose 已含,Dockerfile 已裝 tzdata)。
 - **`.env` 持久化**:compose 以 bind mount 掛 `./.env:/app/.env`,網頁「連線設定」的修改才能跨容器重建保留。
 - `/api/hardware` 有 5 秒快取 + in-flight 去重(`getHardwareCached()`),watcher/報表直接呼叫該函式,不再自打 HTTP。

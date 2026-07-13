@@ -4,7 +4,8 @@
   "description": "Production Secure Proxy for UniFi Controller and UCG-Ultra",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "axios": "^1.7.2",

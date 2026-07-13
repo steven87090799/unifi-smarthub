@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { performance } = require('perf_hooks');
+const { ERROR_CODES } = require('./observability/error-codes');
 
 const HISTORY_SERIES = ['trend', 'ucg', 'nas', 'ups', 'wiim', 'linux'];
 const JSON_HISTORY_FILES = {
@@ -26,10 +28,29 @@ function eventTimestamp(value) {
     return Number.isFinite(timestamp) ? timestamp : NaN;
 }
 
-function createHistoryDb(dataDir, logger = () => {}) {
+function createHistoryDb(dataDir, options = {}) {
+    const logger = typeof options === 'function' ? null : options.logger;
+    const legacyLogger = typeof options === 'function' ? options : null;
+    const slowQueryMs = Math.max(Number(options.slowQueryMs || process.env.DB_SLOW_QUERY_MS) || 1000, 1);
+    const emit = (level, event) => {
+        if (logger && typeof logger[level] === 'function') logger[level](event);
+        else if (legacyLogger) legacyLogger(`[${event.code}] ${event.message}${event.error ? `: ${event.error.message}` : ''}`);
+    };
     fs.mkdirSync(dataDir, { recursive: true });
     const file = path.join(dataDir, 'smarthub.db');
-    const db = new Database(file);
+    emit('info', {
+        module: 'database.sqlite', function: 'createHistoryDb', code: ERROR_CODES.DB_CONNECT_START,
+        message: 'Opening SQLite database', fields: { file: path.basename(file) }
+    });
+    let db;
+    try { db = new Database(file); }
+    catch (error) {
+        emit('critical', {
+            module: 'database.sqlite', function: 'createHistoryDb', code: ERROR_CODES.DB_CONNECT_FAILED,
+            message: 'Failed to open SQLite database', error, fields: { file: path.basename(file) }
+        });
+        throw error;
+    }
 
     // auto_vacuum must be configured before tables are created. Existing DBs keep
     // their current mode, which is safe; new databases use incremental vacuum.
@@ -65,6 +86,48 @@ function createHistoryDb(dataDir, logger = () => {}) {
         );
         CREATE INDEX IF NOT EXISTS idx_block_history_ts ON block_history(ts);
     `);
+    emit('info', {
+        module: 'database.sqlite', function: 'createHistoryDb', code: ERROR_CODES.DB_CONNECT_SUCCESS,
+        message: 'SQLite database connected', fields: { file: path.basename(file), journal_mode: 'WAL', slow_query_ms: slowQueryMs }
+    });
+
+    let activeQueries = 0;
+    let slowQueries = 0;
+    let failedQueries = 0;
+    let lastQueryLatencyMs = 0;
+    let lastError = null;
+    let closed = false;
+
+    function measure(operation, table, fn, { transaction = false } = {}) {
+        const started = performance.now();
+        activeQueries += 1;
+        try {
+            const result = fn();
+            lastQueryLatencyMs = Number((performance.now() - started).toFixed(2));
+            lastError = null;
+            if (lastQueryLatencyMs >= slowQueryMs) {
+                slowQueries += 1;
+                emit('warning', {
+                    module: 'database.sqlite', function: operation, code: ERROR_CODES.DB_QUERY_SLOW,
+                    message: 'Slow SQLite operation', fields: { operation, table, duration_ms: lastQueryLatencyMs }
+                });
+            }
+            return result;
+        } catch (error) {
+            lastQueryLatencyMs = Number((performance.now() - started).toFixed(2));
+            lastError = error.message;
+            failedQueries += 1;
+            emit('error', {
+                module: 'database.sqlite', function: operation,
+                code: transaction ? ERROR_CODES.DB_TRANSACTION_FAILED : ERROR_CODES.DB_QUERY_FAILED,
+                message: transaction ? 'SQLite transaction failed and was rolled back' : 'SQLite operation failed',
+                error, fields: { operation, table, duration_ms: lastQueryLatencyMs }
+            });
+            throw error;
+        } finally {
+            activeQueries -= 1;
+        }
+    }
 
     const insertPointStmt = db.prepare('INSERT INTO history (series, ts, data) VALUES (?, ?, ?)');
     const countSeriesStmt = db.prepare('SELECT COUNT(*) AS count FROM history WHERE series = ?');
@@ -104,6 +167,7 @@ function createHistoryDb(dataDir, logger = () => {}) {
         VALUES (@ts, @mac, @name, @action, @source, @reason)
     `);
     const listBlockStmt = db.prepare('SELECT * FROM block_history ORDER BY ts DESC, id DESC LIMIT 200');
+    const healthStmt = db.prepare('SELECT 1 AS ok');
 
     function decodePoint(row, series) {
         let data;
@@ -114,26 +178,31 @@ function createHistoryDb(dataDir, logger = () => {}) {
     }
 
     function getSince(series, cutoffMs = 0) {
-        return getSinceStmt.all(series, Math.max(0, Number(cutoffMs) || 0)).map(row => decodePoint(row, series));
+        return measure('getSince', 'history', () =>
+            getSinceStmt.all(series, Math.max(0, Number(cutoffMs) || 0)).map(row => decodePoint(row, series)));
     }
 
     function getLatest(series) {
-        const row = getLatestStmt.get(series);
-        return row ? decodePoint(row, series) : null;
+        return measure('getLatest', 'history', () => {
+            const row = getLatestStmt.get(series);
+            return row ? decodePoint(row, series) : null;
+        });
     }
 
     function insertPoint(series, point, { keepDays = 30, hardCap = 100000 } = {}) {
         const ts = pointTimestamp(point, series);
         if (!Number.isFinite(ts)) return false;
-        const payload = { ...point };
-        delete payload.t;
-        delete payload.ts;
-        insertPointStmt.run(series, ts, JSON.stringify(payload));
-        prune(series, keepDays, hardCap);
-        return true;
+        return measure('insertPoint', 'history', () => {
+            const payload = { ...point };
+            delete payload.t;
+            delete payload.ts;
+            insertPointStmt.run(series, ts, JSON.stringify(payload));
+            pruneRaw(series, keepDays, hardCap);
+            return true;
+        });
     }
 
-    function prune(series, keepDays = 30, hardCap = 100000) {
+    function pruneRaw(series, keepDays = 30, hardCap = 100000) {
         const days = Math.max(Number(keepDays) || 1, 1);
         deleteBeforeStmt.run(series, Date.now() - days * 86400000);
         const count = countPointsStmt.get(series).count;
@@ -141,7 +210,15 @@ function createHistoryDb(dataDir, logger = () => {}) {
         if (excess > 0) deleteOldestStmt.run(series, excess);
     }
 
+    function prune(series, keepDays = 30, hardCap = 100000) {
+        return measure('prune', 'history', db.transaction(() => pruneRaw(series, keepDays, hardCap)), { transaction: true });
+    }
+
     function migrateFromJson() {
+        emit('info', {
+            module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_START,
+            message: 'Legacy JSON migration check started'
+        });
         const filesToRename = [];
         const migrate = db.transaction(() => {
             for (const series of HISTORY_SERIES) {
@@ -149,11 +226,17 @@ function createHistoryDb(dataDir, logger = () => {}) {
                 if (!fs.existsSync(source) || countSeriesStmt.get(series).count > 0) continue;
                 let points;
                 try { points = JSON.parse(fs.readFileSync(source, 'utf8')); } catch (error) {
-                    logger(`[SQLite] ${JSON_HISTORY_FILES[series]} 解析失敗: ${error.message}`);
+                    emit('error', {
+                        module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_FAILED,
+                        message: 'Legacy history JSON parse failed', error, fields: { file: JSON_HISTORY_FILES[series], series }
+                    });
                     continue;
                 }
                 if (!Array.isArray(points)) {
-                    logger(`[SQLite] ${JSON_HISTORY_FILES[series]} 不是陣列，略過匯入`);
+                    emit('warning', {
+                        module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_FAILED,
+                        message: 'Legacy history file is not an array; migration skipped', fields: { file: JSON_HISTORY_FILES[series], series }
+                    });
                     continue;
                 }
                 let imported = 0;
@@ -167,14 +250,20 @@ function createHistoryDb(dataDir, logger = () => {}) {
                     imported++;
                 }
                 filesToRename.push({ source, imported });
-                logger(`[SQLite] 已匯入 ${JSON_HISTORY_FILES[series]}：${imported}/${points.length} 筆`);
+                emit('info', {
+                    module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_SUCCESS,
+                    message: 'Legacy history imported', fields: { file: JSON_HISTORY_FILES[series], series, imported, total: points.length }
+                });
             }
 
             const eventSource = path.join(dataDir, 'ups-events.json');
             if (fs.existsSync(eventSource) && db.prepare('SELECT COUNT(*) AS count FROM ups_events').get().count === 0) {
                 let events;
                 try { events = JSON.parse(fs.readFileSync(eventSource, 'utf8')); } catch (error) {
-                    logger(`[SQLite] ups-events.json 解析失敗: ${error.message}`);
+                    emit('error', {
+                        module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_FAILED,
+                        message: 'Legacy UPS events JSON parse failed', error, fields: { file: 'ups-events.json' }
+                    });
                     events = null;
                 }
                 if (Array.isArray(events)) {
@@ -190,7 +279,10 @@ function createHistoryDb(dataDir, logger = () => {}) {
                         });
                     }
                     filesToRename.push({ source: eventSource, imported: events.length });
-                    logger(`[SQLite] 已匯入 ups-events.json：${events.length} 筆`);
+                    emit('info', {
+                        module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_SUCCESS,
+                        message: 'Legacy UPS events imported', fields: { file: 'ups-events.json', imported: events.length }
+                    });
                 }
             }
 
@@ -198,7 +290,10 @@ function createHistoryDb(dataDir, logger = () => {}) {
             if (fs.existsSync(blockSource) && db.prepare('SELECT COUNT(*) AS count FROM block_history').get().count === 0) {
                 let entries;
                 try { entries = JSON.parse(fs.readFileSync(blockSource, 'utf8')); } catch (error) {
-                    logger(`[SQLite] block-history.json 解析失敗: ${error.message}`);
+                    emit('error', {
+                        module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_FAILED,
+                        message: 'Legacy block history JSON parse failed', error, fields: { file: 'block-history.json' }
+                    });
                     entries = null;
                 }
                 if (Array.isArray(entries)) {
@@ -215,12 +310,15 @@ function createHistoryDb(dataDir, logger = () => {}) {
                         });
                     }
                     filesToRename.push({ source: blockSource, imported: entries.length });
-                    logger(`[SQLite] 已匯入 block-history.json：${entries.length} 筆`);
+                    emit('info', {
+                        module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_SUCCESS,
+                        message: 'Legacy block history imported', fields: { file: 'block-history.json', imported: entries.length }
+                    });
                 }
             }
         });
 
-        migrate();
+        measure('migrateFromJson', 'all', migrate, { transaction: true });
         for (const { source } of filesToRename) {
             const backup = `${source}.migrated.bak`;
             try {
@@ -231,9 +329,16 @@ function createHistoryDb(dataDir, logger = () => {}) {
                     fs.renameSync(source, backup);
                 }
             } catch (error) {
-                logger(`[SQLite] ${path.basename(source)} 備份改名失敗: ${error.message}`);
+                emit('error', {
+                    module: 'database.migration', function: 'backupLegacyJson', code: ERROR_CODES.DB_MIGRATION_FAILED,
+                    message: 'Legacy JSON backup rename failed', error, fields: { file: path.basename(source) }
+                });
             }
         }
+        emit('info', {
+            module: 'database.migration', function: 'migrateFromJson', code: ERROR_CODES.DB_MIGRATION_SUCCESS,
+            message: 'Legacy JSON migration check completed', fields: { migrated_files: filesToRename.length }
+        });
     }
 
     migrateFromJson();
@@ -243,90 +348,135 @@ function createHistoryDb(dataDir, logger = () => {}) {
         insertPoint,
         getSince,
         getLatest,
-        deleteSeries(series) { deleteSeriesStmt.run(series); },
+        deleteSeries(series) { return measure('deleteSeries', 'history', () => deleteSeriesStmt.run(series)); },
         prune,
         insertUpsEvent(event) {
             const startTs = eventTimestamp(event.start);
             if (!Number.isFinite(startTs)) return null;
-            const result = insertUpsEventStmt.run({
-                start_ts: startTs,
-                end_ts: event.end ? eventTimestamp(event.end) : null,
-                duration_sec: event.durationSec ?? null,
-                min_battery: event.minBattery ?? null,
-                start_voltage: event.startVoltage ?? null
+            return measure('insertUpsEvent', 'ups_events', () => {
+                const result = insertUpsEventStmt.run({
+                    start_ts: startTs,
+                    end_ts: event.end ? eventTimestamp(event.end) : null,
+                    duration_sec: event.durationSec ?? null,
+                    min_battery: event.minBattery ?? null,
+                    start_voltage: event.startVoltage ?? null
+                });
+                deleteOldUpsEventsStmt.run();
+                return result.lastInsertRowid;
             });
-            deleteOldUpsEventsStmt.run();
-            return result.lastInsertRowid;
         },
         listUpsEvents() {
-            return listUpsEventsStmt.all().map(row => ({
-                id: row.id,
-                start: new Date(row.start_ts).toISOString(),
-                end: row.end_ts == null ? null : new Date(row.end_ts).toISOString(),
-                durationSec: row.duration_sec,
-                minBattery: row.min_battery,
-                startVoltage: row.start_voltage
-            }));
+            return measure('listUpsEvents', 'ups_events', () => listUpsEventsStmt.all().map(row => ({
+                    id: row.id,
+                    start: new Date(row.start_ts).toISOString(),
+                    end: row.end_ts == null ? null : new Date(row.end_ts).toISOString(),
+                    durationSec: row.duration_sec,
+                    minBattery: row.min_battery,
+                    startVoltage: row.start_voltage
+                })));
         },
         getOpenUpsEvent() {
-            const row = openUpsEventStmt.get();
-            return row ? {
-                id: row.id,
-                start: new Date(row.start_ts).toISOString(),
-                end: null,
-                durationSec: row.duration_sec,
-                minBattery: row.min_battery,
-                startVoltage: row.start_voltage
-            } : null;
+            return measure('getOpenUpsEvent', 'ups_events', () => {
+                const row = openUpsEventStmt.get();
+                return row ? {
+                    id: row.id,
+                    start: new Date(row.start_ts).toISOString(),
+                    end: null,
+                    durationSec: row.duration_sec,
+                    minBattery: row.min_battery,
+                    startVoltage: row.start_voltage
+                } : null;
+            });
         },
         closeOpenUpsEvent(end, durationSec) {
-            const open = openUpsEventStmt.get();
-            if (!open) return null;
-            const endTs = eventTimestamp(end);
-            if (!Number.isFinite(endTs)) return null;
-            closeUpsEventStmt.run({ id: open.id, end_ts: endTs, duration_sec: durationSec });
-            return { ...open, end_ts: endTs, duration_sec: durationSec };
+            return measure('closeOpenUpsEvent', 'ups_events', () => {
+                const open = openUpsEventStmt.get();
+                if (!open) return null;
+                const endTs = eventTimestamp(end);
+                if (!Number.isFinite(endTs)) return null;
+                closeUpsEventStmt.run({ id: open.id, end_ts: endTs, duration_sec: durationSec });
+                return { ...open, end_ts: endTs, duration_sec: durationSec };
+            });
         },
         updateOpenUpsMinBattery(minBattery) {
-            const open = openUpsEventStmt.get();
-            if (!open || minBattery == null) return;
-            updateUpsMinBatteryStmt.run({ id: open.id, min_battery: minBattery });
+            return measure('updateOpenUpsMinBattery', 'ups_events', () => {
+                const open = openUpsEventStmt.get();
+                if (!open || minBattery == null) return;
+                updateUpsMinBatteryStmt.run({ id: open.id, min_battery: minBattery });
+            });
         },
         insertBlock(entry) {
-            const ts = eventTimestamp(entry.datetime) || Date.now();
-            insertBlockStmt.run({
-                ts,
-                mac: entry.mac ?? null,
-                name: entry.name ?? null,
-                action: entry.action ?? null,
-                source: entry.source ?? null,
-                reason: entry.reason ?? null
-            });
-            db.prepare(`DELETE FROM block_history WHERE id IN (
-                SELECT id FROM block_history ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 200
-            )`).run();
+            return measure('insertBlock', 'block_history', db.transaction(() => {
+                const ts = eventTimestamp(entry.datetime) || Date.now();
+                insertBlockStmt.run({
+                    ts,
+                    mac: entry.mac ?? null,
+                    name: entry.name ?? null,
+                    action: entry.action ?? null,
+                    source: entry.source ?? null,
+                    reason: entry.reason ?? null
+                });
+                db.prepare(`DELETE FROM block_history WHERE id IN (
+                    SELECT id FROM block_history ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 200
+                )`).run();
+            }), { transaction: true });
         },
         listBlockHistory() {
-            return listBlockStmt.all().map(row => ({
-                datetime: new Date(row.ts).toISOString(),
-                mac: row.mac,
-                name: row.name,
-                action: row.action,
-                source: row.source,
-                ...(row.reason ? { reason: row.reason } : {})
-            }));
+            return measure('listBlockHistory', 'block_history', () => listBlockStmt.all().map(row => ({
+                    datetime: new Date(row.ts).toISOString(),
+                    mac: row.mac,
+                    name: row.name,
+                    action: row.action,
+                    source: row.source,
+                    ...(row.reason ? { reason: row.reason } : {})
+                })));
         },
         cleanup(keepDays = 30) {
             const cutoff = Date.now() - Math.max(Number(keepDays) || 1, 1) * 86400000;
             const cleanup = db.transaction(() => {
                 for (const series of HISTORY_SERIES) deleteBeforeStmt.run(series, cutoff);
             });
-            cleanup();
+            measure('cleanup', 'history', cleanup, { transaction: true });
             try { db.pragma('incremental_vacuum(200)'); } catch { }
         },
+        diagnostics() {
+            const started = performance.now();
+            try {
+                healthStmt.get();
+                const latency = Number((performance.now() - started).toFixed(2));
+                return {
+                    ok: !closed,
+                    latency_ms: latency,
+                    file_name: path.basename(file),
+                    pool: { type: 'single_connection', size: 1, active: activeQueries > 0 ? 1 : 0, available: activeQueries > 0 ? 0 : 1, waiting: 0 },
+                    slow_queries: slowQueries,
+                    failed_queries: failedQueries,
+                    last_query_latency_ms: lastQueryLatencyMs,
+                    last_error: lastError
+                };
+            } catch (error) {
+                failedQueries += 1;
+                lastError = error.message;
+                emit('critical', {
+                    module: 'database.sqlite', function: 'diagnostics', code: ERROR_CODES.DB_HEALTH_FAILED,
+                    message: 'SQLite health query failed', error
+                });
+                return {
+                    ok: false, latency_ms: Number((performance.now() - started).toFixed(2)), file_name: path.basename(file),
+                    pool: { type: 'single_connection', size: 1, active: 0, available: 0, waiting: 0 },
+                    slow_queries: slowQueries, failed_queries: failedQueries, last_error: lastError
+                };
+            }
+        },
         close() {
+            if (closed) return;
             try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { }
             db.close();
+            closed = true;
+            emit('info', {
+                module: 'database.sqlite', function: 'close', code: ERROR_CODES.DB_CLOSE,
+                message: 'SQLite database closed', fields: { file: path.basename(file) }
+            });
         }
     };
 }

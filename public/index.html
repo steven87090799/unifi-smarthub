@@ -2506,6 +2506,47 @@
                         </div>
                     </div>
 
+                    <!-- System Diagnostics：由後端資源監控 ring buffer 與 issue tracker 提供 -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
+                        <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <h3 class="text-lg font-bold text-white tracking-wider">System Diagnostics</h3>
+                                    <span id="sysdiag-overall" class="px-2.5 py-1 rounded-full text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">Unknown</span>
+                                </div>
+                                <p class="text-[10px] text-slate-500 mt-1">應用程式、主機資源、SQLite 與背景工作的即時健康狀態；每 30 秒低頻更新。</p>
+                            </div>
+                            <button onclick="fetchSystemStatus()" class="py-2 px-4 rounded-xl text-[10px] font-bold border bg-slate-950 text-blue-400 border-slate-800 hover:border-blue-500/40 transition shrink-0">↻ 立即檢查</button>
+                        </div>
+                        <div id="sysdiag-summary" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                            <div class="col-span-full text-xs text-slate-500 text-center py-6">等待系統診斷資料...</div>
+                        </div>
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <div class="bg-slate-950/45 border border-slate-800/60 rounded-xl p-4">
+                                <div class="flex items-center justify-between mb-3">
+                                    <p class="text-[11px] font-bold text-slate-200">Active Issues</p>
+                                    <span id="sysdiag-active-count" class="text-[9px] text-slate-500">0</span>
+                                </div>
+                                <div id="sysdiag-issues" class="space-y-2 max-h-56 overflow-y-auto terminal-scroll">
+                                    <p class="text-[10px] text-emerald-400">目前沒有未解決問題</p>
+                                </div>
+                            </div>
+                            <div class="bg-slate-950/45 border border-slate-800/60 rounded-xl p-4">
+                                <div class="flex items-center justify-between mb-3">
+                                    <p class="text-[11px] font-bold text-slate-200">Recently Resolved</p>
+                                    <span class="text-[9px] text-slate-600">最近 20 筆</span>
+                                </div>
+                                <div id="sysdiag-resolved" class="space-y-2 max-h-56 overflow-y-auto terminal-scroll">
+                                    <p class="text-[10px] text-slate-500">尚無已解除問題</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap justify-between gap-2 text-[9px] text-slate-600 mono">
+                            <span id="sysdiag-version">Version --</span>
+                            <span id="sysdiag-sampled">尚未取樣</span>
+                        </div>
+                    </div>
+
                     <!-- 連線設定 (.env 網頁化，免改檔免重啟) -->
                     <div
                         class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
@@ -4180,6 +4221,7 @@
             fetchNotifSettings();
             fetchNotifLog();
             fetchAppSettings();
+            fetchSystemStatus();
             fetchConnections();
             fetchUps();
             fetchAdguard(); fetchAdgLog();
@@ -4213,6 +4255,7 @@
             docker: { fn: () => fetchNasDocker(), def: 20, label: 'Docker 容器', desc: '多久刷新一次 Docker 容器清單與其即時 CPU/記憶體占用。' },
             trend: { fn: () => fetchTrends(), def: 15, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
             notifLog: { fn: () => fetchNotifLog(), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄清單。' },
+            systemStatus: { fn: () => fetchSystemStatus(), def: 30, label: 'System Diagnostics', desc: '多久更新一次本服務的 CPU、記憶體、磁碟、SQLite、背景工作與 Active Issues。後端監控間隔另由 MONITOR_INTERVAL_SECONDS 控制。' },
             security: { fn: () => fetchSecuritySettings(), def: 30, label: '資安設定同步', desc: '多久同步一次自動防禦開關的最新狀態（避免多裝置操作時顯示不一致）。' },
             wiimSystem: { fn: () => fetchWiimSystem(), def: 10, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
             wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
@@ -6141,6 +6184,82 @@
         function toggleTheme() { setTheme(document.documentElement.classList.contains('light') ? 'dark' : 'light'); }
 
         /* ==================== 設定頁 ==================== */
+        const DIAG_TONES = {
+            healthy: { label: 'Healthy', dot: 'bg-emerald-400', text: 'text-emerald-400', badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' },
+            warning: { label: 'Warning', dot: 'bg-amber-400', text: 'text-amber-400', badge: 'bg-amber-500/10 text-amber-400 border-amber-500/25' },
+            critical: { label: 'Critical', dot: 'bg-red-400', text: 'text-red-400', badge: 'bg-red-500/10 text-red-400 border-red-500/25' },
+            unknown: { label: 'Unknown', dot: 'bg-slate-500', text: 'text-slate-400', badge: 'bg-slate-800 text-slate-400 border-slate-700' }
+        };
+        function diagTone(status) { return DIAG_TONES[status] || DIAG_TONES.unknown; }
+        function diagBytes(bytes) {
+            if (bytes == null || !Number.isFinite(Number(bytes))) return '--';
+            const n = Number(bytes); return n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${(n / 1048576).toFixed(1)} MB`;
+        }
+        function diagUptime(seconds) {
+            const s = Math.max(0, Number(seconds) || 0), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+            return `${d ? d + 'd ' : ''}${h}h ${m}m`;
+        }
+        function diagCard(name, status, value, detail) {
+            const tone = diagTone(status);
+            return `<div class="bg-slate-950/45 border border-slate-800/60 rounded-xl p-4">
+                <div class="flex items-center justify-between gap-2 mb-2">
+                    <p class="text-[10px] uppercase tracking-wider font-bold text-slate-500">${escapeHtml(name)}</p>
+                    <span class="flex items-center gap-1.5 text-[9px] font-bold ${tone.text}"><span class="w-1.5 h-1.5 rounded-full ${tone.dot}"></span>${tone.label}</span>
+                </div>
+                <p class="text-lg font-black text-slate-100 mono">${escapeHtml(value)}</p>
+                <p class="text-[9px] text-slate-500 mt-1 break-words">${escapeHtml(detail || '')}</p>
+            </div>`;
+        }
+        async function fetchSystemStatus() {
+            const badge = document.getElementById('sysdiag-overall');
+            try {
+                const response = await fetch('/api/system/status');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const d = await response.json();
+                const tone = diagTone(d.status);
+                if (badge) { badge.textContent = tone.label; badge.className = `px-2.5 py-1 rounded-full text-[9px] font-bold uppercase border ${tone.badge}`; }
+                const cards = [
+                    ['App', d.status, diagUptime(d.uptime_seconds), `v${d.app_version || '--'} · Uptime`],
+                    ['CPU', d.cpu?.status, d.cpu?.usage_percent == null ? '--' : `${d.cpu.usage_percent}%`, `Process ${d.cpu?.process_usage_percent ?? '--'}% · Load ${(d.cpu?.load_average || []).map(v => Number(v).toFixed(2)).join(' / ')}`],
+                    ['Memory', d.memory?.status, d.memory?.usage_percent == null ? '--' : `${d.memory.usage_percent}%`, `Process ${d.memory?.process_mb ?? '--'} MB · Available ${diagBytes(d.memory?.system_available_bytes)}`],
+                    ['Disk', d.disk?.status, d.disk?.usage_percent == null ? '--' : `${d.disk.usage_percent}%`, `Free ${diagBytes(d.disk?.free_bytes)} · DATA_DIR`],
+                    ['SQLite', d.database?.status, d.database?.latency_ms == null ? '--' : `${d.database.latency_ms} ms`, `Connection ${d.database?.pool?.active ?? 0}/${d.database?.pool?.size ?? 1} · Slow ${d.database?.slow_queries ?? 0} · Failed ${d.database?.failed_queries ?? 0}`],
+                    ['Worker', d.worker?.status, `${d.worker?.active_tasks ?? 0} active`, `Queued ${d.worker?.queued_tasks ?? 0} · Failed ${d.worker?.failed_tasks ?? 0} · Completed ${d.worker?.completed_tasks ?? 0} · Stuck ${d.worker?.stuck_tasks ?? 0}`]
+                ];
+                const summary = document.getElementById('sysdiag-summary');
+                if (summary) summary.innerHTML = cards.map(c => diagCard(...c)).join('');
+
+                const issues = d.active_issues || [];
+                const issueWrap = document.getElementById('sysdiag-issues');
+                const count = document.getElementById('sysdiag-active-count');
+                if (count) count.textContent = String(issues.length);
+                if (issueWrap) issueWrap.innerHTML = issues.length ? issues.map(issue => {
+                    const t = diagTone(issue.severity);
+                    return `<div class="rounded-lg border ${issue.severity === 'critical' ? 'border-red-500/25 bg-red-500/5' : 'border-amber-500/25 bg-amber-500/5'} p-3">
+                        <div class="flex items-center justify-between gap-2"><span class="text-[9px] font-black uppercase ${t.text}">${escapeHtml(issue.severity)}</span><code class="text-[9px] text-slate-400">${escapeHtml(issue.code || '')}</code></div>
+                        <p class="text-[11px] font-bold text-slate-200 mt-1">${escapeHtml(issue.message || '')}</p>
+                        <p class="text-[9px] text-slate-500 mt-1">First ${new Date(issue.first_seen).toLocaleString('zh-TW')} · Last ${new Date(issue.last_seen).toLocaleString('zh-TW')} · ${issue.occurrences || 1} 次</p>
+                    </div>`;
+                }).join('') : '<p class="text-[10px] text-emerald-400">目前沒有未解決問題</p>';
+
+                const resolved = (d.resolved_issues || []).slice(0, 20);
+                const resolvedWrap = document.getElementById('sysdiag-resolved');
+                if (resolvedWrap) resolvedWrap.innerHTML = resolved.length ? resolved.map(issue => `<div class="rounded-lg border border-emerald-500/15 bg-emerald-500/5 p-3">
+                    <div class="flex items-center justify-between gap-2"><span class="text-[9px] font-black uppercase text-emerald-400">Resolved</span><code class="text-[9px] text-slate-500">${escapeHtml(issue.code || '')}</code></div>
+                    <p class="text-[10px] text-slate-300 mt-1">${escapeHtml(issue.message || '')}</p>
+                    <p class="text-[9px] text-slate-600 mt-1">Duration ${diagUptime(issue.duration_seconds)} · ${new Date(issue.resolved_at).toLocaleString('zh-TW')}</p>
+                </div>`).join('') : '<p class="text-[10px] text-slate-500">尚無已解除問題</p>';
+                const version = document.getElementById('sysdiag-version'), sampled = document.getElementById('sysdiag-sampled');
+                if (version) version.textContent = `Version ${d.app_version || '--'} · Trend ${(d.trend_data || []).length}/60 samples`;
+                if (sampled) sampled.textContent = `Sampled ${new Date(d.sampled_at).toLocaleString('zh-TW')}`;
+            } catch (error) {
+                const tone = diagTone('unknown');
+                if (badge) { badge.textContent = tone.label; badge.className = `px-2.5 py-1 rounded-full text-[9px] font-bold uppercase border ${tone.badge}`; }
+                const wrap = document.getElementById('sysdiag-summary');
+                if (wrap) wrap.innerHTML = `<div class="col-span-full rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-xs text-red-400">Diagnostics API 無法讀取：${escapeHtml(error.message)}</div>`;
+            }
+        }
+
         function renderPollConfig() {
             const grid = document.getElementById('poll-config-grid');
             if (!grid) return;

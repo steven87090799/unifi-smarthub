@@ -1,6 +1,6 @@
 # SmartHub Frontend Map
 
-`public/index.html` 是巨型單檔 SPA，約 7367 行 / 533 KB。前端任務先用這份索引定位，再讀小區段。
+`public/index.html` 是巨型單檔 SPA，約 7520 行。前端任務先用這份索引定位，再讀小區段。
 
 ## Page Sections
 
@@ -18,24 +18,24 @@
 | 2181 | `page-tools` | 工具 |
 | 2277 | `page-notify` | 通知推播 |
 | 2485 | `page-settings` | 設定 |
-| 2847 | `page-wiim` | WiiM |
-| 3554 | `page-ups` | UPS |
+| 2878 | `page-wiim` | WiiM |
+| 3585 | `page-ups` | UPS |
 
 ## Script Anchors
 
 | 行號約略 | 名稱 | 用途 |
 |---:|---|---|
-| 3972 | `renderPinned()` | 總覽釘選區 |
-| 4052 | `initNasHeroChart()` | NAS hero 圖表 |
-| 4069 | `initUpsHeroChart()` | UPS hero 圖表 |
-| 4203 | `POLL_JOBS` | 全站前端輪詢設定 |
-| 4232 | `applyPolling()` | 套用輪詢 interval |
-| 4305 | `initChart()` | UCG 即時硬體圖 |
-| 4342 | `initTrendChart()` | 趨勢圖 |
-| 4396 | `fetchTrends()` | 趨勢資料 |
-| 4479 | `fetchHardware()` | UCG 硬體 |
-| 4602 | `fetchClients()` | 客戶端 |
-| 4817 | `fetchWiFiNetworks()` | WiFi |
+| 4010 | `renderPinned()` | 總覽釘選區 |
+| 4090 | `initNasHeroChart()` | NAS hero 圖表 |
+| 4107 | `initUpsHeroChart()` | UPS hero 圖表 |
+| 4241 | `POLL_JOBS` | 全站前端輪詢設定（含 System Diagnostics） |
+| 4269 | `applyPolling()` | 套用輪詢 interval |
+| 4348 | `initChart()` | UCG 即時硬體圖 |
+| 4385 | `initTrendChart()` | 趨勢圖 |
+| 4439 | `fetchTrends()` | 趨勢資料 |
+| 4522 | `fetchHardware()` | UCG 硬體 |
+| 4645 | `fetchClients()` | 客戶端 |
+| 4863 | `fetchWiFiNetworks()` | WiFi |
 | 4868-4979 | `fetchCloud*()` | Site Manager |
 | 5023 | `renderThreatTable()` | 資安事件表 |
 | 5123 | `updateSecurityAnalytics()` | 資安分析/評分 |
@@ -44,16 +44,17 @@
 | 5549 | `initNasCharts()` | NAS 圖表初始化 |
 | 5596-5843 | `fetchNas*()` | NAS 進階/告警/Docker |
 | 5984 | `fetchNotifSettings()` | 通知設定 |
-| 6112 | `renderPollConfig()` | 設定頁輪詢表 |
-| 6132 | `fetchAppSettings()` | 後端設定 |
-| 6204 | `fetchConnections()` | 連線設定 |
-| 6322 | `initWiimPage()` | WiiM 頁初始化 |
-| 6381 | `fetchWiimPlayback()` | WiiM 播放狀態 |
-| 6470 | `fetchWiimSystem()` | WiiM 系統資訊 |
-| 6990-7052 | `fetchUcgHist()` | UCG 歷史與 spikes |
-| 7082-7212 | `fetchUps*()` | UPS 圖表/事件 |
-| 7240-7279 | `fetchAdguard*()` | AdGuard |
-| 7301-7324 | `fetchLinux*()` | Linux 小主機 |
+| 6213 | `fetchSystemStatus()` | 設定頁 System Diagnostics / Active Issues |
+| 6263 | `renderPollConfig()` | 設定頁輪詢表 |
+| 6283 | `fetchAppSettings()` | 後端設定 |
+| 6353 | `fetchConnections()` | 連線設定 |
+| 6471 | `initWiimPage()` | WiiM 頁初始化 |
+| 6530 | `fetchWiimPlayback()` | WiiM 播放狀態 |
+| 6619 | `fetchWiimSystem()` | WiiM 系統資訊 |
+| 7160 | `fetchUcgHist()` | UCG 歷史與 spikes |
+| 7255 | `fetchUps*()` | UPS 圖表/事件 |
+| 7395 | `fetchAdguard*()` | AdGuard |
+| 7456 | `fetchLinux*()` | Linux 小主機 |
 
 ## 常用定位
 
