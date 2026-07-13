@@ -925,10 +925,67 @@ function capSet(set, max = 2000) {
     keep.forEach(x => set.add(x));
 }
 
+function notificationSecretValues() {
+    return Object.entries(process.env)
+        .filter(([key, value]) => /pass(word)?|api[_-]?key|token|authorization|cookie|session|secret|webhook|private[_-]?key/i.test(key)
+            && typeof value === 'string' && value.length >= 4)
+        .map(([, value]) => value);
+}
+function safeDockerLogExcerpt(value, max = 320) {
+    return maskString(String(value || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim(), notificationSecretValues()).slice(0, max);
+}
+function dockerLogSeverity(line) {
+    const text = String(line || '');
+    if (/\b(fatal|panic|critical|oomkilled|out of memory|segmentation fault|unhandled (exception|rejection))\b/i.test(text)) return 'critical';
+    if (/\b(error|err(or)?|exception|failed|failure|crash(?:ed)?)\b/i.test(text)) return 'error';
+    return null;
+}
+function dockerLogFindings(raw, container, max = 8) {
+    const id = container.id || container.name || 'unknown';
+    return String(raw || '').split('\n').map(line => {
+        const severity = dockerLogSeverity(line);
+        if (!severity) return null;
+        const excerpt = safeDockerLogExcerpt(line);
+        return excerpt ? { id, name: container.name || id, severity, excerpt, fingerprint: `${id}:${severity}:${excerpt}` } : null;
+    }).filter(Boolean).slice(-max);
+}
+async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
+    if (!nasMonConfigured()) return [];
+    const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
+    const results = await Promise.all(selected.map(async container => {
+        try {
+            const data = await nasMonGet(`/api/docker/containers/${encodeURIComponent(container.id)}/logs`, { lines });
+            const raw = typeof data === 'string' ? data : (data?.logs || JSON.stringify(data || ''));
+            return dockerLogFindings(raw, container, maxPerContainer);
+        } catch (error) {
+            logRecoverableFailure(`watcher.dockerLogs:${container.id}`, error, {
+                module: 'watcher.notifications', function: 'scanDockerLogs', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
+                fields: { container: container.name || container.id }
+            });
+            return [];
+        }
+    }));
+    return results.flat();
+}
+
 /* ===================== 通知推播中心 ===================== */
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
-const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true, triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true, triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerUcgTemp: false, ucgTempAlert: 75, triggerWanDown: false, triggerNasLog: true, triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerAdgProtection: true, triggerAdgOffline: false, triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90 };
+const NOTIF_DEFAULTS = {
+    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '',
+    triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
+    triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true,
+    triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85,
+    triggerNasDiskHealth: true, triggerNasOffline: false,
+    triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerWanDown: false,
+    triggerUnifiOffline: false, triggerNasLog: true,
+    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false,
+    triggerAdgProtection: true, triggerAdgOffline: false,
+    triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90,
+    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true,
+    triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
+    triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true
+};
 // 記憶體快取：watcher 每輪呼叫多次，不需要每次讀檔
 let notifSettingsCache = null;
 function loadNotifSettings() {
@@ -1043,11 +1100,18 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerNewClient: !!s.triggerNewClient, triggerWiimOffline: !!s.triggerWiimOffline, triggerBlockAction: s.triggerBlockAction !== false,
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
-        triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75, triggerWanDown: !!s.triggerWanDown, triggerNasLog: !!s.triggerNasLog,
+        triggerNasDiskHealth: s.triggerNasDiskHealth !== false, triggerNasOffline: !!s.triggerNasOffline,
+        triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75,
+        triggerUcgHighCpu: !!s.triggerUcgHighCpu, ucgCpuAlert: s.ucgCpuAlert ?? 90,
+        triggerWanDown: !!s.triggerWanDown, triggerUnifiOffline: !!s.triggerUnifiOffline, triggerNasLog: !!s.triggerNasLog,
         triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange,
         triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline,
         triggerLinuxTemp: s.triggerLinuxTemp !== false, linuxTempAlert: s.linuxTempAlert ?? 70,
         triggerLinuxOffline: !!s.triggerLinuxOffline, triggerLinuxDisk: !!s.triggerLinuxDisk, linuxDiskAlert: s.linuxDiskAlert ?? 90,
+        triggerDockerCriticalLog: s.triggerDockerCriticalLog !== false, triggerDockerErrorLog: !!s.triggerDockerErrorLog, triggerDockerState: s.triggerDockerState !== false,
+        triggerDockerHighCpu: !!s.triggerDockerHighCpu, dockerCpuAlert: s.dockerCpuAlert ?? 90,
+        triggerDockerHighMemory: !!s.triggerDockerHighMemory, dockerMemoryAlert: s.dockerMemoryAlert ?? 90,
+        triggerSystemCritical: s.triggerSystemCritical !== false, triggerSystemWarning: !!s.triggerSystemWarning, triggerSystemRecovery: s.triggerSystemRecovery !== false,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -1062,8 +1126,8 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerUcgTemp', 'triggerWanDown', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
-    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'upsLoadAlert', 'upsVoltDeviationPct', 'linuxTempAlert', 'linuxDiskAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerWanDown', 'triggerUnifiOffline', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'ucgCpuAlert', 'upsLoadAlert', 'upsVoltDeviationPct', 'linuxTempAlert', 'linuxDiskAlert', 'dockerCpuAlert', 'dockerMemoryAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     try { saveNotifSettings(s); }
@@ -1084,9 +1148,105 @@ app.get('/api/notifications/log', (req, res) => res.json({ log: notifLog }));
 const notifiedThreatIds = new Set();
 const notifiedNasAlertIds = new Set();
 let notifBootstrapped = false;
+
+async function scanSystemIssueNotifications(s) {
+    if (!s.triggerSystemCritical && !s.triggerSystemWarning && !s.triggerSystemRecovery) return;
+    let status;
+    try { status = await systemMonitor.ensureSample(); }
+    catch (error) {
+        logRecoverableFailure('watcher.systemDiagnostics', error, { module: 'watcher.notifications', function: 'scanSystemIssues', code: ERROR_CODES.SYS_MONITOR_FAILED });
+        return;
+    }
+    const current = new Map((status.active_issues || []).map(issue => [issue.id || issue.code || issue.message, issue]));
+    const nextKnown = new Map();
+    const firstBaseline = !systemIssueWatcherBootstrapped;
+    for (const [id, issue] of current) {
+        const previousState = knownSystemIssues.get(id);
+        const previous = previousState?.issue;
+        let notified = previousState?.notified || false;
+        const isCritical = issue.severity === 'critical';
+        const enabled = isCritical ? s.triggerSystemCritical : s.triggerSystemWarning;
+        if (!firstBaseline && notifBootstrapped && enabled && (!previous || previous.severity !== issue.severity)) {
+            const emoji = isCritical ? '🚨' : '⚠️';
+            await notify(`${emoji} SmartHub 系統${isCritical ? '嚴重' : '警告'}事件`, `${issue.code || 'SYSTEM'}\n${issue.message || '系統診斷偵測到異常'}\n發生次數 ${issue.occurrences || 1}`);
+            notified = true;
+        }
+        nextKnown.set(id, { issue, notified });
+    }
+    if (!firstBaseline && notifBootstrapped && s.triggerSystemRecovery) {
+        for (const [id, state] of knownSystemIssues) {
+            if (!current.has(id) && state.notified) await notify('✅ SmartHub 系統事件已恢復', `${state.issue.code || 'SYSTEM'}\n${state.issue.message || '先前的診斷異常已解除'}`);
+        }
+    }
+    knownSystemIssues.clear();
+    nextKnown.forEach((state, id) => knownSystemIssues.set(id, state));
+    systemIssueWatcherBootstrapped = true;
+}
+
+async function scanDockerNotifications(s) {
+    const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
+    if (!usesDockerMonitor || !nasMonConfigured()) return;
+    let containers;
+    try {
+        const data = await nasMonGet('/api/docker/containers');
+        containers = Array.isArray(data) ? data : (data.containers || data.data || []);
+    } catch (error) {
+        logRecoverableFailure('watcher.dockerContainers', error, { module: 'watcher.notifications', function: 'scanDocker', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+        return;
+    }
+    const firstBaseline = !dockerWatcherBootstrapped;
+    for (const container of containers) {
+        const id = container.id || container.name;
+        if (!id) continue;
+        const state = String(container.state || 'unknown').toLowerCase();
+        const previous = dockerContainerStates.get(id);
+        if (!firstBaseline && notifBootstrapped && s.triggerDockerState !== false && previous && previous.state !== state) {
+            const recovered = state === 'running';
+            await notify(recovered ? '✅ Docker 容器已恢復運行' : '🐳 Docker 容器狀態異常', `${container.name || id}\n${previous.state} → ${state}\n${container.status || ''}`.trim());
+        }
+        dockerContainerStates.set(id, { state, status: container.status || '' });
+
+        const cpu = Number(container.cpu_percent);
+        const memUsage = Number(container.mem_usage_mb);
+        const memLimit = Number(container.mem_limit_mb);
+        const memPercent = memLimit > 0 && Number.isFinite(memUsage) ? memUsage / memLimit * 100 : null;
+        const metricChecks = [
+            { enabled: s.triggerDockerHighCpu, value: cpu, threshold: s.dockerCpuAlert ?? 90, key: 'cpu', label: 'CPU', unit: '%' },
+            { enabled: s.triggerDockerHighMemory, value: memPercent, threshold: s.dockerMemoryAlert ?? 90, key: 'memory', label: '記憶體', unit: '%' }
+        ];
+        for (const metric of metricChecks) {
+            const metricKey = `${metric.key}:${id}`;
+            if (!metric.enabled || !Number.isFinite(metric.value) || metric.value < metric.threshold) continue;
+            const last = lastDockerMetricAlertTs.get(metricKey) || 0;
+            if (firstBaseline || !notifBootstrapped || Date.now() - last <= 30 * 60 * 1000) continue;
+            lastDockerMetricAlertTs.set(metricKey, Date.now());
+            await notify('🐳 Docker 容器資源過高', `${container.name || id}\n${metric.label} ${metric.value.toFixed(1)}${metric.unit} (門檻 ${metric.threshold}${metric.unit})`);
+        }
+    }
+
+    const dockerLogScanGap = Math.max(Number(appSettings.watcherSec) || 20, 30) * 1000;
+    if ((s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog) && Date.now() - lastDockerLogScanTs >= dockerLogScanGap) {
+        lastDockerLogScanTs = Date.now();
+        const findings = await readDockerLogFindings(containers);
+        for (const finding of findings) {
+            if (notifiedDockerLogFingerprints.has(finding.fingerprint)) continue;
+            notifiedDockerLogFingerprints.add(finding.fingerprint);
+            const enabled = finding.severity === 'critical' ? s.triggerDockerCriticalLog !== false : s.triggerDockerErrorLog;
+            if (!firstBaseline && notifBootstrapped && enabled) {
+                const emoji = finding.severity === 'critical' ? '🚨' : '❌';
+                await notify(`${emoji} Docker ${finding.severity === 'critical' ? '嚴重' : '錯誤'}日誌`, `[${finding.name}]\n${finding.excerpt}`);
+            }
+        }
+    }
+    capSet(notifiedDockerLogFingerprints, 5000);
+    dockerWatcherBootstrapped = true;
+}
+
 async function notificationWatcher() {
     const s = loadNotifSettings();
     if (!s.enabled) return;
+    await scanSystemIssueNotifications(s);
+    await scanDockerNotifications(s);
     // 新威脅
     if (s.triggerThreats) {
         try {
@@ -1106,6 +1266,22 @@ async function notificationWatcher() {
             logRecoverableFailure('watcher.unifiThreats', error, { module: 'watcher.notifications', function: 'scanThreats', code: ERROR_CODES.EXT_UNIFI_FAILED });
         }
     }
+    // UniFi 本地控制器離線 / 恢復 (只在使用者開啟時額外做驗證，避免增加預設輪詢成本)
+    if (s.triggerUnifiOffline) {
+        let ok = false;
+        try {
+            const cookie = await getLocalSession();
+            await unifiClient.get('/proxy/network/api/s/default/stat/health', { headers: { 'Cookie': cookie } });
+            ok = true;
+        }
+        catch (error) {
+            logRecoverableFailure('watcher.unifiOffline', error, { module: 'watcher.notifications', function: 'checkUnifiOnline', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
+        if (unifiWasOnline !== null && ok !== unifiWasOnline && notifBootstrapped) {
+            await notify(ok ? '✅ UniFi 控制器已恢復連線' : '🌐 UniFi 控制器失去連線', ok ? '本地控制器登入驗證恢復正常' : '無法向本地控制器建立登入 Session，請檢查控制器、網路與帳密');
+        }
+        unifiWasOnline = ok;
+    }
     // NAS 嚴重警報
     if (s.triggerNasAlerts && nasMonConfigured()) {
         try {
@@ -1120,6 +1296,18 @@ async function notificationWatcher() {
         } catch (error) {
             logRecoverableFailure('watcher.nasAlerts', error, { module: 'watcher.notifications', function: 'scanNasAlerts', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
         }
+    }
+    // NAS 原生 API 離線 / 恢復
+    if (s.triggerNasOffline && nasConfigured()) {
+        let ok = false;
+        try { await nasGet('/ugreen/v1/sysinfo/machine/common'); ok = true; }
+        catch (error) {
+            logRecoverableFailure('watcher.nasOffline', error, { module: 'watcher.notifications', function: 'checkNasOnline', code: ERROR_CODES.EXT_NAS_FAILED });
+        }
+        if (nasWasOnline !== null && ok !== nasWasOnline && notifBootstrapped) {
+            await notify(ok ? '✅ NAS 已恢復連線' : '💾 NAS 失去連線', ok ? 'UGOS Pro API 恢復回應' : 'NAS 原生 API 無回應，請檢查 NAS、網路與帳密');
+        }
+        nasWasOnline = ok;
     }
     // WiiM 溫度超標推播 (30 分鐘冷卻，避免洗版)
     if (s.triggerWiimTemp !== false) {
@@ -1159,16 +1347,23 @@ async function notificationWatcher() {
         }
         wiimWasOnline = ok;
     }
-    // NAS 硬碟溫度 / 儲存空間門檻 (30 分鐘冷卻)
-    if ((s.triggerNasDiskTemp || s.triggerNasSpace) && nasConfigured()) {
+    // NAS 硬碟溫度 / 健康 / 儲存空間門檻 (溫度 30 分鐘、健康 6 小時冷卻)
+    if ((s.triggerNasDiskTemp || s.triggerNasDiskHealth !== false || s.triggerNasSpace) && nasConfigured()) {
         try {
-            if (s.triggerNasDiskTemp && Date.now() - lastNasDiskTempTs > 30 * 60 * 1000) {
+            if ((s.triggerNasDiskTemp && Date.now() - lastNasDiskTempTs > 30 * 60 * 1000)
+                || (s.triggerNasDiskHealth !== false && Date.now() - lastNasDiskHealthCheckTs > 10 * 60 * 1000)) {
                 const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
                 const disks = deepFind({ d: data }, ['result', 'list', 'disks']) || [];
-                const hot = disks.filter(d => d.temperature != null && d.temperature >= (s.nasDiskTempAlert ?? 50));
-                if (hot.length) {
+                lastNasDiskHealthCheckTs = Date.now();
+                const hot = s.triggerNasDiskTemp ? disks.filter(d => d.temperature != null && d.temperature >= (s.nasDiskTempAlert ?? 50)) : [];
+                if (hot.length && Date.now() - lastNasDiskTempTs > 30 * 60 * 1000) {
                     lastNasDiskTempTs = Date.now();
                     await notify('🌡️ NAS 硬碟溫度警報', hot.map(d => `${d.label || d.name} ${d.temperature}°C (門檻 ${s.nasDiskTempAlert ?? 50}°C)`).join('\n'));
+                }
+                const bad = s.triggerNasDiskHealth !== false ? disks.filter(d => d.status != null && !['1', 'healthy', 'normal', 'ok'].includes(String(d.status).toLowerCase())) : [];
+                if (bad.length && Date.now() - lastNasDiskHealthAlertTs > 6 * 60 * 60 * 1000) {
+                    lastNasDiskHealthAlertTs = Date.now();
+                    await notify('🚨 NAS 硬碟健康異常', bad.map(d => `${d.label || d.name}：${d.status}`).join('\n'));
                 }
             }
             if (s.triggerNasSpace && Date.now() - lastNasSpaceTs > 6 * 60 * 60 * 1000) {
@@ -1199,14 +1394,19 @@ async function notificationWatcher() {
             logRecoverableFailure('watcher.nasLogs', error, { module: 'watcher.notifications', function: 'scanNasLogs', code: ERROR_CODES.EXT_NAS_FAILED });
         }
     }
-    // UCG CPU 溫度 / WAN 斷線 (透過本機 /api/hardware，僅在開啟時才發起 SSH)
-    if ((s.triggerUcgTemp || s.triggerWanDown) && !isPlaceholder(process.env.SSH_PASSWORD)) {
+    // UCG CPU 溫度 / 使用率 / WAN 斷線 (透過本機 /api/hardware，僅在開啟時才發起 SSH)
+    if ((s.triggerUcgTemp || s.triggerUcgHighCpu || s.triggerWanDown) && !isPlaceholder(process.env.SSH_PASSWORD)) {
         try {
             const hw = await getHardwareCached();
             if (s.triggerUcgTemp && hw.cpuTemp != null && hw.cpuTemp >= (s.ucgTempAlert ?? 75)
                 && Date.now() - lastUcgTempTs > 30 * 60 * 1000) {
                 lastUcgTempTs = Date.now();
                 await notify('🔥 UCG-Ultra 溫度警報', `CPU ${hw.cpuTemp}°C (門檻 ${s.ucgTempAlert ?? 75}°C)`);
+            }
+            if (s.triggerUcgHighCpu && hw.cpuUsage != null && hw.cpuUsage >= (s.ucgCpuAlert ?? 90)
+                && Date.now() - lastUcgCpuTs > 30 * 60 * 1000) {
+                lastUcgCpuTs = Date.now();
+                await notify('🖥️ UCG-Ultra CPU 使用率過高', `CPU ${hw.cpuUsage}% (門檻 ${s.ucgCpuAlert ?? 90}%)`);
             }
             if (s.triggerWanDown) {
                 const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
@@ -1263,12 +1463,19 @@ async function notificationWatcher() {
     capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000);
     notifBootstrapped = true;
 }
-let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastUcgTempTs = 0, wanWasUp = null;
+let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastNasDiskHealthCheckTs = 0, lastNasDiskHealthAlertTs = 0, lastUcgTempTs = 0, lastUcgCpuTs = 0, wanWasUp = null;
 const knownClientMacs = new Set();
 const notifiedNasLogIds = new Set();
 let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0;
 let adgWasOn = null, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0;
+let nasWasOnline = null, unifiWasOnline = null;
+let dockerWatcherBootstrapped = false, systemIssueWatcherBootstrapped = false;
+const dockerContainerStates = new Map();
+const lastDockerMetricAlertTs = new Map();
+const notifiedDockerLogFingerprints = new Set();
+const knownSystemIssues = new Map();
+let lastDockerLogScanTs = 0;
 
 /* ===================== 伺服器端排程 (間隔可於設定頁調整，變更後即時重排) ===================== */
 let jobTimers = {};
@@ -2267,6 +2474,34 @@ async function buildReport() {
         } catch { L.push('• NAS 讀取失敗 (可能需管理員權限)'); }
     }
 
+    // ── Docker（NAS Monitor 選配）──
+    if (nasMonConfigured()) {
+        try {
+            const data = await nasMonGet('/api/docker/containers');
+            const containers = Array.isArray(data) ? data : (data.containers || data.data || []);
+            const running = containers.filter(c => String(c.state).toLowerCase() === 'running');
+            const stopped = containers.filter(c => String(c.state).toLowerCase() !== 'running');
+            L.push('\n━━ 🐳 Docker 容器 ━━');
+            L.push(`• 容器狀態：${running.length}/${containers.length} 運行中${stopped.length ? `，⚠ 停止 ${stopped.map(c => c.name || c.id).join('、')}` : ''}`);
+            const hot = containers.map(c => {
+                const cpu = Number(c.cpu_percent);
+                const used = Number(c.mem_usage_mb), limit = Number(c.mem_limit_mb);
+                const memory = limit > 0 && Number.isFinite(used) ? used / limit * 100 : null;
+                return { ...c, cpu, memory };
+            }).filter(c => (Number.isFinite(c.cpu) && c.cpu >= 80) || (Number.isFinite(c.memory) && c.memory >= 80));
+            if (hot.length) L.push(`• 高資源：${hot.map(c => `${c.name || c.id} CPU ${Number.isFinite(c.cpu) ? c.cpu.toFixed(1) + '%' : '--'} / RAM ${Number.isFinite(c.memory) ? c.memory.toFixed(0) + '%' : '--'}`).join('、')}`);
+            const findings = await readDockerLogFindings(containers, { lines: 100, maxPerContainer: 3 });
+            if (findings.length) {
+                const recent = findings.slice(-6);
+                L.push(`• 近期嚴重/錯誤 Log：${findings.length} 筆`);
+                recent.forEach(f => L.push(`  [${f.severity}] ${f.name}：${f.excerpt}`));
+            } else L.push('• 近期嚴重/錯誤 Log：無');
+        } catch (error) {
+            logRecoverableFailure('report.docker', error, { module: 'report.builder', function: 'appendDockerStatus', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+            L.push('\n━━ 🐳 Docker 容器 ━━\n• 無法讀取 NAS Monitor');
+        }
+    }
+
     // ── UPS ──
     try {
         const ups = await readUpsLive();
@@ -2335,8 +2570,50 @@ async function buildReport() {
 
     // ── 面板本身 ──
     L.push('\n━━ ⚙️ 面板 ━━');
-    L.push(`• 面板運行：${fmtDur(Math.round(process.uptime()))}　記憶體 ${(process.memoryUsage().rss / 1048576).toFixed(0)} MB`);
+    try {
+        const diag = await systemMonitor.ensureSample();
+        L.push(`• 面板運行：${fmtDur(Math.round(process.uptime()))}　程序記憶體 ${(process.memoryUsage().rss / 1048576).toFixed(0)} MB`);
+        L.push(`• 主機資源：CPU ${diag.cpu?.usage_percent ?? '--'}%／記憶體 ${diag.memory?.usage_percent ?? '--'}%／磁碟 ${diag.disk?.usage_percent ?? '--'}%`);
+        L.push(`• SQLite：${diag.database?.status || '--'} ${diag.database?.latency_ms ?? '--'} ms；背景工作 ${diag.worker?.status || '--'}（失敗 ${diag.worker?.failed_tasks ?? 0}）`);
+        const issues = diag.active_issues || [];
+        if (issues.length) L.push(`• Active Issues：${issues.map(i => `[${i.severity}] ${i.code || i.message}`).join('、')}`);
+        else L.push('• Active Issues：無');
+    } catch {
+        L.push(`• 面板運行：${fmtDur(Math.round(process.uptime()))}　記憶體 ${(process.memoryUsage().rss / 1048576).toFixed(0)} MB`);
+    }
     return L.join('\n') || '（無可彙整的資料）';
+}
+
+function reportDeliveryStatus(delivery) {
+    if (delivery?.ok) return 'sent';
+    if (delivery?.skipped) return `skipped:${delivery.skipped}`;
+    return 'failed';
+}
+async function createReportRun(trigger, title) {
+    const ts = new Date().toISOString();
+    let body;
+    let delivery;
+    try {
+        body = await buildReport();
+        delivery = await notify(title, body);
+    } catch (error) {
+        const failureBody = `報表建立失敗：${publicError(error)}`;
+        try {
+            historyDb.insertReportRun({ ts, trigger, title, deliveryStatus: 'failed', deliveryError: publicError(error), body: failureBody });
+        } catch (dbError) {
+            logger.error({ module: 'report.audit', function: 'recordFailure', code: ERROR_CODES.DB_QUERY_FAILED, message: 'Could not persist failed report run', error: dbError });
+        }
+        throw error;
+    }
+    try {
+        historyDb.insertReportRun({
+            ts, trigger, title, body, deliveryStatus: reportDeliveryStatus(delivery),
+            channel: delivery?.ok ? loadNotifSettings().channel : null, deliveryError: delivery?.error || null
+        });
+    } catch (error) {
+        logger.error({ module: 'report.audit', function: 'recordRun', code: ERROR_CODES.DB_QUERY_FAILED, message: 'Could not persist report run', error });
+    }
+    return { report: body, delivery };
 }
 
 let lastReportKey = '';
@@ -2354,18 +2631,17 @@ async function reportScheduler() {
     const key = now.toISOString().slice(0, 13); // 精確到「小時」去重，每個觸發時段最多發一次
     if (key === lastReportKey) return;
     lastReportKey = key;
-    const body = await buildReport();
     const freqLabel = { weekly: '每週', twice: '每日兩次', every6h: '每 6 小時' }[f] || '每日';
-    await notify(`📊 SmartHub ${freqLabel}報表`, body);
+    await createReportRun('scheduled', `📊 SmartHub ${freqLabel}報表`);
 }
 setInterval(() => runSerialJob('reportScheduler', reportScheduler), 60 * 1000);
 
 // 立即產生報表 (預覽 + 若已啟用推播則送出)
 app.post('/api/reports/run', async (req, res) => {
-    const body = await buildReport();
-    const r = await notify('📊 SmartHub 報表 (手動觸發)', body);
-    res.json({ report: body, delivery: r });
+    try { res.json(await createReportRun('manual', '📊 SmartHub 報表 (手動觸發)')); }
+    catch (error) { apiError(res, error, { code: ERROR_CODES.API_INTERNAL_ERROR, module: 'api.reports', function: 'runNow', logMessage: 'Manual report generation failed' }); }
 });
+app.get('/api/reports/log', (req, res) => res.json({ runs: historyDb.listReportRuns(req.query.limit) }));
 
 /* ===================== PWA (manifest + service worker) ===================== */
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');

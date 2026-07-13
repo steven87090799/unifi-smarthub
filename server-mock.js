@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { version: APP_VERSION } = require('./package.json');
@@ -559,17 +560,29 @@ app.post('/api/nas/alerts/:id/ack', (req, res) => {
 });
 
 /* ===== 通知推播中心 (模擬) ===== */
-let mockNotif = { enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', triggerThreats: true, triggerNasAlerts: true };
+let mockNotif = {
+    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '',
+    triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
+    triggerNewClient: false, triggerWiimOffline: false, triggerBlockAction: true,
+    triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerNasDiskHealth: true, triggerNasOffline: false,
+    triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerWanDown: false, triggerUnifiOffline: false, triggerNasLog: true,
+    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false,
+    triggerAdgProtection: true, triggerAdgOffline: false, triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90,
+    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
+    triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true
+};
 let mockNotifLog = [];
 function pushMockNotif(e) { mockNotifLog.unshift(e); mockNotifLog = mockNotifLog.slice(0, 50); }
-app.get('/api/notifications/settings', (req, res) => res.json({
-    enabled: mockNotif.enabled, channel: mockNotif.channel, chatId: mockNotif.chatId,
-    triggerThreats: mockNotif.triggerThreats, triggerNasAlerts: mockNotif.triggerNasAlerts,
-    webhookUrlSet: !!mockNotif.webhookUrl, botTokenSet: !!mockNotif.botToken
-}));
+app.get('/api/notifications/settings', (req, res) => {
+    const { webhookUrl, botToken, ...safe } = mockNotif;
+    res.json({ ...safe, webhookUrlSet: !!webhookUrl, botTokenSet: !!botToken });
+});
 app.post('/api/notifications/settings', (req, res) => {
     const b = req.body || {};
-    if (typeof b.enabled === 'boolean') mockNotif.enabled = b.enabled;
+    Object.keys(mockNotif).forEach(key => {
+        if (typeof mockNotif[key] === 'boolean' && typeof b[key] === 'boolean') mockNotif[key] = b[key];
+        if (typeof mockNotif[key] === 'number' && typeof b[key] === 'number' && b[key] > 0) mockNotif[key] = b[key];
+    });
     if (b.channel) mockNotif.channel = b.channel;
     if (typeof b.chatId === 'string') mockNotif.chatId = b.chatId;
     if (typeof b.triggerThreats === 'boolean') mockNotif.triggerThreats = b.triggerThreats;
@@ -597,13 +610,13 @@ setInterval(() => {
 }, 25000);
 
 /* ===== 應用程式設定 (模擬) ===== */
-let mockAppSettings = { trendActiveSec: 5, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20, autoDefenseSec: 30, reportEnabled: false, reportFreq: 'daily', reportHour: 8 };
+let mockAppSettings = { trendActiveSec: 5, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20, autoDefenseSec: 30, reportEnabled: false, reportFreq: 'daily', reportHour: 8, reportHour2: 20 };
 app.get('/api/settings', (req, res) => res.json(mockAppSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour'].forEach(k => { if (typeof b[k] === 'number' && b[k] >= 0) mockAppSettings[k] = b[k]; });
+    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'reportHour2'].forEach(k => { if (typeof b[k] === 'number' && b[k] >= 0) mockAppSettings[k] = b[k]; });
     if (typeof b.reportEnabled === 'boolean') mockAppSettings.reportEnabled = b.reportEnabled;
-    if (b.reportFreq === 'daily' || b.reportFreq === 'weekly') mockAppSettings.reportFreq = b.reportFreq;
+    if (['daily', 'twice', 'every6h', 'weekly'].includes(b.reportFreq)) mockAppSettings.reportFreq = b.reportFreq;
     // 套用新的趨勢取樣間隔
     ACTIVE_SAMPLE_MS = mockAppSettings.trendActiveSec * 1000;
     IDLE_SAMPLE_MS = mockAppSettings.trendIdleSec * 1000;
@@ -611,6 +624,8 @@ app.post('/api/settings', (req, res) => {
     res.json({ ok: true, settings: mockAppSettings });
 });
 
+let mockReportLog = [];
+function pushMockReport(entry) { mockReportLog.unshift(entry); mockReportLog = mockReportLog.slice(0, 20); }
 app.post('/api/reports/run', (req, res) => {
     const cpus = mockWiimHistory.map(h => h.cpu).filter(v => v !== null);
     const boards = mockWiimHistory.map(h => h.board).filter(v => v !== null);
@@ -622,10 +637,13 @@ app.post('/api/reports/run', (req, res) => {
         const avgBoard = (boards.reduce((a, b) => a + b, 0) / boards.length).toFixed(1);
         wiimLine = `\n🔊 WiiM Amp 狀態：24H 均溫 CPU ${avgCpu}°C (最高 ${maxCpu}°C) / 主板 ${avgBoard}°C (最高 ${maxBoard}°C)`;
     }
-    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`].join('\n') + wiimLine;
+    const body = [`🛡️ 24H 威脅攔截：${mockThreats.filter(t => Date.now() - new Date(t.datetime).getTime() < 86400000).length} 次`, `📱 目前線上客戶端：${mockClients.length} 台`, `📶 平均 ISP 延遲：13.2 ms`, `💾 NAS 30 天正常運行率：99.97%`, `🐳 Docker：3/3 運行中，近期嚴重/錯誤 Log：無`].join('\n') + wiimLine;
     if (mockNotif.enabled) pushMockNotif({ ts: new Date().toISOString(), title: '📊 SmartHub 報表 (手動觸發)', body, channel: mockNotif.channel, ok: true });
-    res.json({ report: body, delivery: mockNotif.enabled ? { ok: true } : { skipped: 'disabled' } });
+    const delivery = mockNotif.enabled ? { ok: true } : { skipped: 'disabled' };
+    pushMockReport({ id: Date.now(), ts: new Date().toISOString(), trigger: 'manual', title: '📊 SmartHub 報表 (手動觸發)', deliveryStatus: delivery.ok ? 'sent' : 'skipped:disabled', channel: delivery.ok ? mockNotif.channel : null, body });
+    res.json({ report: body, delivery });
 });
+app.get('/api/reports/log', (req, res) => res.json({ runs: mockReportLog }));
 
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');
 app.get('/manifest.webmanifest', (req, res) => res.json({
@@ -775,8 +793,29 @@ app.get('/api/ups/csv', (req, res) => {
 });
 
 /* ===== 連線設定 (模擬) ===== */
-let mockConn = { UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4', UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo', NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '', NAS_MONITOR_URL: '', WIIM_IP: '192.168.0.170', UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '' };
-let mockConnSecrets = { SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false, NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false };
+const MOCK_CONNECTION_FILE = path.join(__dirname, 'data', 'mock-connections.json');
+const mockConnDefaults = { UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4', UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo', NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '', NAS_MONITOR_URL: '', WIIM_IP: '192.168.0.170', UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '' };
+const mockSecretDefaults = { SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false, NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false };
+
+// Mock Server 也保留「已填過」的連線狀態，重啟開發伺服器時不用重填；密碼本身不會寫入。
+function loadMockConnections() {
+    try {
+        const saved = JSON.parse(fs.readFileSync(MOCK_CONNECTION_FILE, 'utf8'));
+        return {
+            fields: { ...mockConnDefaults, ...(saved.fields || {}) },
+            secretsSet: { ...mockSecretDefaults, ...(saved.secretsSet || {}) }
+        };
+    } catch { return { fields: { ...mockConnDefaults }, secretsSet: { ...mockSecretDefaults } }; }
+}
+function saveMockConnections() {
+    fs.mkdirSync(path.dirname(MOCK_CONNECTION_FILE), { recursive: true });
+    const tempFile = `${MOCK_CONNECTION_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify({ fields: mockConn, secretsSet: mockConnSecrets }, null, 2) + '\n', { mode: 0o600 });
+    fs.renameSync(tempFile, MOCK_CONNECTION_FILE);
+}
+const savedMockConnections = loadMockConnections();
+let mockConn = savedMockConnections.fields;
+let mockConnSecrets = savedMockConnections.secretsSet;
 app.get('/api/connections', (req, res) => res.json({ fields: mockConn, secretsSet: mockConnSecrets }));
 app.get('/api/connections/status', (_req, res) => res.json({
     source: 'mock',
@@ -784,8 +823,8 @@ app.get('/api/connections/status', (_req, res) => res.json({
         { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
         { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },
         { name: 'Site Manager', configured: false, ok: null, detail: '' },
-        { name: 'UGREEN NAS', configured: false, ok: null, detail: '' },
-        { name: 'NAS Monitor', configured: false, ok: null, detail: '' },
+        { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
+        { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, detail: mockConn.NAS_MONITOR_URL || '' },
         { name: 'WiiM Amp', configured: true, ok: true, detail: mockConn.WIIM_IP },
         { name: 'UPS', configured: true, ok: true, detail: 'NUT mock' }
     ]
@@ -797,6 +836,7 @@ app.post('/api/connections', (req, res) => {
         if (k in mockConnSecrets) mockConnSecrets[k] = true; else if (k in mockConn) mockConn[k] = v.trim();
         n++;
     }
+    if (n) saveMockConnections();
     res.json({ ok: true, changed: n });
 });
 

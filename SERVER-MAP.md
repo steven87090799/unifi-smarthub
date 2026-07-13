@@ -74,7 +74,8 @@
 - `GET /api/notifications/log` around 1043
 - `GET/POST /api/settings` around 1976/1977
 - `GET/POST /api/connections` around 2036/2047
-- `POST /api/reports/run` around 2286
+- `POST /api/reports/run` around 2640
+- `GET /api/reports/log` around 2644 (SQLite-persisted report generation and delivery log)
 
 ### WiiM / UPS / AdGuard / Linux
 
