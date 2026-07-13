@@ -194,7 +194,7 @@ docker compose logs -f                # 追蹤日誌
 docker compose logs | grep Diag       # 只看啟動連線診斷
 docker compose logs unifi-smarthub | grep 'ERROR\|CRITICAL'
 docker compose logs unifi-smarthub | grep 'CODE=DB-'
-docker compose logs unifi-smarthub | grep 'TASK=8af32' # LOG_LEVEL=DEBUG 可見完整正常 lifecycle
+docker compose logs unifi-smarthub | grep 'TASK=8af32' # 暫時設 LOG_LEVEL=DEBUG 才會看到完整正常 lifecycle
 docker compose restart                # 重啟
 docker compose up -d --build          # 改程式後重建
 docker compose down                   # 停止 (歷史資料保留在 volume)
