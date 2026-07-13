@@ -4182,6 +4182,7 @@
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
             toggleSidebar(false);
             applyPolling(true);
+            sendHeartbeat();
             requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize()); });
             window.scrollTo({ top: 0 });
         }
@@ -4273,7 +4274,7 @@
             wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
             ups: { fn: () => fetchUps(), def: 30, label: 'UPS 電源狀態', desc: '多久刷新一次 UPS 即時電壓/電池/負載與電壓歷史圖、斷電事件表。後端取樣寫檔頻率另由「伺服器端」的 UPS 取樣間隔控制。' },
             ppbEvents: { fn: () => fetchPpbEvents(), def: 120, label: 'UPS 原生事件日誌 (PPB)', desc: '多久重新讀取一次 PowerPanel Business 記錄的原生事件日誌。' },
-            heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '心跳 (維持後端高頻取樣)', desc: '⭐ 關鍵橋樑：多久送一次心跳告訴後端「有人正在看」。只要心跳持續，後端就用「有人瀏覽」的高頻率取樣歷史；分頁關閉或切背景就停止，後端隨即降為閒置頻率。' }
+            heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '裝置檢視心跳', desc: '只在目前可見頁面替正在看的裝置續短租約；沒有續約最多 45 秒就回到低頻取樣。' }
         };
         const COMMON_POLL_JOBS = new Set(['critAlerts', 'heartbeat']);
         const PAGE_POLL_JOBS = {
@@ -4283,6 +4284,10 @@
             nas: ['nas', 'nasAdvanced', 'docker'], wiim: ['wiimSystem', 'wiimPlayback'],
             ups: ['ups', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security']
+        };
+        const PAGE_ACTIVITY_SCOPES = {
+            overview: ['trend', 'nas', 'wiim'], clients: ['trend'], security: ['trend'],
+            cloud: ['trend'], nas: ['nas'], wiim: ['wiim'], linuxhost: ['linux']
         };
         let pollTimers = {};
         function getPollConfig() { try { return JSON.parse(localStorage.getItem('pollConfig')) || {}; } catch { return {}; } }
@@ -4302,7 +4307,9 @@
         // 心跳：僅在分頁可見時發送。頁面關閉或切到背景後停止，後端會切回閒置取樣。
         async function sendHeartbeat() {
             if (document.hidden) return;
-            try { await fetch('/api/heartbeat'); } catch (e) { /* 靜默 */ }
+            const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
+            if (!scopes.length) return;
+            try { await fetch('/api/heartbeat?scope=' + encodeURIComponent(scopes.join(','))); } catch (e) { /* 靜默 */ }
         }
         // 分頁重新可見時立即補一次心跳，讓高頻取樣馬上恢復
         document.addEventListener('visibilitychange', () => {
