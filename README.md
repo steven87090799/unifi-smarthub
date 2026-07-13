@@ -128,15 +128,15 @@ volumes:
 
 ## 五、歷史資料與持久化
 
-**無資料庫,以 JSON 檔存於 volume `smarthub-data`**(規劃升級 SQLite,見 `SQLITE-MIGRATION.md`)。
+**統計資料使用 SQLite，資料庫檔 `smarthub.db` 存於 volume `smarthub-data`**。設定類資料仍使用 JSON，方便人工檢查與編輯。
 
 | 類別 | 檔案 | 說明 |
 | :--- | :--- | :--- |
-| 歷史序列 | `trend / ucg / nas / ups / wiim / linux -history.json` | 六組時間序列,**保存天數統一由設定頁控制(預設 30 天)**,超過自動汰舊 |
-| 事件 | `ups-events.json`, `block-history.json` | 斷電事件(每筆即時落盤)、封鎖時間軸(200 筆) |
+| 歷史序列 | `smarthub.db` 的 `history` table | 六組時間序列，WAL + 索引查詢，**保存天數統一由設定頁控制(預設 30 天)** |
+| 事件 | `smarthub.db` 的 `ups_events` / `block_history` | 斷電事件與封鎖時間軸，SQLite transaction 即時寫入 |
 | 設定 | `app-settings / security-settings / notification-settings / client-aliases .json` | 取樣間隔、報表、推播、客戶端別名 |
 
-**寫入策略**:歷史資料常駐記憶體,每 N 分鐘(設定頁「歷史資料落盤間隔」,預設 30)才批次寫檔一次——減少硬碟寫入、讓 NAS 硬碟能休眠;收到關機訊號會強制全部落盤,UPS 斷電期間改為每筆即寫。**最壞情況(直接斷電)損失最後一個落盤間隔的資料**。
+**寫入策略**:每筆歷史樣本以 SQLite transaction 寫入 WAL，避免重寫整個 JSON 大檔；資料庫每小時清理過期資料並執行增量 vacuum。SQLite WAL 可在程序被硬殺或主機重啟後復原最後完整 transaction。
 
 **取樣頻率是自適應的**:有人開著網頁時高頻(趨勢 5 秒),無人瀏覽時自動降頻(30 分鐘),不會在沒人看時持續轟炸上游 API。唯一例外是 **UPS 取樣不降頻**(斷電紀錄無人看也要記)。
 
@@ -145,6 +145,8 @@ volumes:
 docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
   tar czf /b/smarthub-backup.tar.gz -C /d .
 ```
+
+備份時需包含 `smarthub.db`、`smarthub.db-wal`、`smarthub.db-shm`（上述停止容器後備份的方式會完整包含）。若服務仍在執行，請先停止容器，或使用 SQLite 的 `VACUUM INTO` 產生一致性備份。
 
 ---
 

@@ -2,6 +2,8 @@
 
 > 產生日期:2026-07-12。評估範圍:`data/` 下所有統計/歷史類 JSON 改用 SQLite 儲存。
 
+> 實作狀態: 已於 `feature/sqlite-migration` 完成。實作入口為 `db.js`；首次啟動會匯入舊 JSON 並保留 `.migrated.bak`，前端 API 格式維持不變。實際依 Node 26 相容性採用 `better-sqlite3 12.x`（Docker Node 20 亦在支援範圍內）。本文的步驟圖保留作為設計與驗證依據。
+
 ---
 
 ## 一、現況盤點(要搬什麼、不搬什麼)

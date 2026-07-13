@@ -2818,16 +2818,6 @@
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
-                                <label class="text-[11px] font-bold text-slate-300 block mb-1">歷史資料落盤間隔</label>
-                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">溫度/電壓等歷史紀錄先累積在<span
-                                        class="text-slate-300">記憶體</span>，每隔此時間才寫入硬碟一次（減少硬碟讀寫、讓 NAS
-                                    硬碟能休眠）。關機時會強制寫入；直接斷電最多損失此區間的資料。</p>
-                                <div class="flex items-center gap-2"><input type="number" id="srv-historyFlushMin"
-                                        min="1" max="1440"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
-                                        class="text-[10px] text-slate-600 shrink-0">分鐘</span></div>
-                            </div>
-                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">歷史資料保存天數</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">趨勢 / UCG / NAS / UPS / WiiM
                                     所有歷史紀錄統一保存幾天，超過自動汰舊。<span
@@ -3865,6 +3855,13 @@
             console.debug(`[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}][${module}]`, ...args);
         }
 
+        // 所有 API／裝置／使用者可控字串進入 HTML template 前都必須轉義。
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[ch]);
+        }
+
         /* ==================== 版面編輯 (全站區塊 + 導航列拖曳排序，存 localStorage) ==================== */
         let layoutEditing = false, dragEl = null;
 
@@ -4191,7 +4188,6 @@
             initWiimPage();
             initWiimSrcDrag();
             refreshSideUps();
-            setInterval(refreshSideUps, 60000);
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
             renderPollConfig();
             checkLastSpeedtest();
@@ -4218,7 +4214,6 @@
             trend: { fn: () => fetchTrends(), def: 15, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
             notifLog: { fn: () => fetchNotifLog(), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄清單。' },
             security: { fn: () => fetchSecuritySettings(), def: 30, label: '資安設定同步', desc: '多久同步一次自動防禦開關的最新狀態（避免多裝置操作時顯示不一致）。' },
-            wiimPlay: { fn: () => fetchWiimPlayback(), def: 10, label: 'WiiM 播放狀態與歌名', desc: '多久抓一次 WiiM Amp 的播放狀態、當前歌曲、專輯封面與取樣率。' },
             wiimSystem: { fn: () => fetchWiimSystem(), def: 10, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
             wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
             ups: { fn: () => fetchUps(), def: 15, label: 'UPS 電源狀態', desc: '多久刷新一次 UPS 即時電壓/電池/負載與電壓歷史圖、斷電事件表。後端取樣寫檔頻率另由「伺服器端」的 UPS 取樣間隔控制。' },
@@ -4231,6 +4226,8 @@
         function applyPolling() {
             Object.entries(POLL_JOBS).forEach(([k, j]) => {
                 clearInterval(pollTimers[k]);
+                delete pollTimers[k];
+                if (document.hidden) return;
                 pollTimers[k] = setInterval(j.fn, getPollSec(k) * 1000);
             });
         }
@@ -4242,7 +4239,10 @@
             try { await fetch('/api/heartbeat'); } catch (e) { /* 靜默 */ }
         }
         // 分頁重新可見時立即補一次心跳，讓高頻取樣馬上恢復
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) sendHeartbeat(); });
+        document.addEventListener('visibilitychange', () => {
+            applyPolling();
+            if (!document.hidden) sendHeartbeat();
+        });
 
         // 共用小圖示 (線條 SVG，取代 emoji)
         const _ic = (paths, extra = '') => `<svg class="w-3 h-3 inline-block ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
@@ -4472,7 +4472,7 @@
                     .text(`${p.country} (${p.n})`);
             });
             const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
-            document.getElementById('map-top-countries').innerHTML = top.map(([c, n], i) => `<span class="mono">#${i + 1} ${c} ×${n}</span>`).join('<br>');
+            document.getElementById('map-top-countries').innerHTML = top.map(([c, n], i) => `<span class="mono">#${i + 1} ${escapeHtml(c)} ×${n}</span>`).join('<br>');
         }
 
         /* ==================== 硬體 (真實數據) ==================== */
@@ -4569,15 +4569,15 @@
                 if (!devices || !devices.length) { wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">無法取得裝置清單</p>'; return; }
                 wrap.innerHTML = devices.map(d => `
                 <div>
-                    <p class="text-[11px] font-bold text-slate-300 mb-2">${d.name} <span class="text-slate-600 font-normal">（${DEV_TYPE_LABEL[d.type] || d.type} · ${d.model}）</span></p>
+                    <p class="text-[11px] font-bold text-slate-300 mb-2">${escapeHtml(d.name)} <span class="text-slate-600 font-normal">（${escapeHtml(DEV_TYPE_LABEL[d.type] || d.type)} · ${escapeHtml(d.model)}）</span></p>
                     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                         ${d.ports.map(p => `
                             <div class="flex items-center justify-between p-2.5 bg-slate-950/40 rounded-xl border border-slate-850">
                                 <div class="flex items-center gap-2 min-w-0">
                                     <div class="w-2 h-2 rounded-full shrink-0 ${p.up ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}"></div>
                                     <div class="min-w-0">
-                                        <p class="text-[11px] font-bold text-slate-200">Port ${p.port_idx}${p.is_uplink ? ' (上聯)' : ''}${p.poe ? ' ⚡PoE' : ''}</p>
-                                        <p class="text-[9px] text-slate-500 truncate">${p.client ? p.client.name : (p.up ? '已連線 (無客戶端紀錄)' : '無連線')}</p>
+                                        <p class="text-[11px] font-bold text-slate-200">Port ${escapeHtml(p.port_idx)}${p.is_uplink ? ' (上聯)' : ''}${p.poe ? ' ⚡PoE' : ''}</p>
+                                        <p class="text-[9px] text-slate-500 truncate">${escapeHtml(p.client ? p.client.name : (p.up ? '已連線 (無客戶端紀錄)' : '無連線'))}</p>
                                     </div>
                                 </div>
                                 <div class="text-right shrink-0 ml-2">
@@ -4624,10 +4624,12 @@
                 tr.className = `hover:bg-slate-800/15 cursor-pointer ${c.blocked ? 'opacity-50' : ''}`;
                 tr.onclick = (ev) => { if (!ev.target.closest('button')) showClientDetail(c.mac); };
                 tr.innerHTML = `
-                <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'} flex items-center gap-1.5">${c.name}${c.aliased ? '<span class="text-[8px] px-1 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/25 rounded font-normal">自訂</span>' : ''}<button onclick="renameClient('${c.mac}')" title="自訂名稱" class="text-slate-600 hover:text-blue-400 transition"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7m-1.5-9.5a2.12 2.12 0 013 3L12 18l-4 1 1-4 9.5-9.5z"/></svg></button></p><p class="text-[9px] text-slate-500 mono">${c.mac} | ${c.ip}</p></div></td>
-                <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold inline-flex items-center gap-1">${ICON_WIFI} Wi-Fi (${c.wifi_signal}dBm)</span>` : `<span class="text-emerald-400 font-semibold inline-flex items-center gap-1">${ICON_LAN} LAN</span>`}</td>
+                <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'} flex items-center gap-1.5">${escapeHtml(c.name)}${c.aliased ? '<span class="text-[8px] px-1 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/25 rounded font-normal">自訂</span>' : ''}<button type="button" data-client-action="rename" title="自訂名稱" class="text-slate-600 hover:text-blue-400 transition"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7m-1.5-9.5a2.12 2.12 0 013 3L12 18l-4 1 1-4 9.5-9.5z"/></svg></button></p><p class="text-[9px] text-slate-500 mono">${escapeHtml(c.mac)} | ${escapeHtml(c.ip)}</p></div></td>
+                <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold inline-flex items-center gap-1">${ICON_WIFI} Wi-Fi (${escapeHtml(c.wifi_signal)}dBm)</span>` : `<span class="text-emerald-400 font-semibold inline-flex items-center gap-1">${ICON_LAN} LAN</span>`}</td>
                 <td class="mono text-slate-400"><span class="inline-flex items-center gap-0.5">${ICON_DOWN} ${(c.rx_bytes / 1048576).toFixed(1)}MB</span> / <span class="inline-flex items-center gap-0.5">${ICON_UP} ${(c.tx_bytes / 1048576).toFixed(1)}MB</span></td>
-                <td class="text-right py-3 pr-2"><button onclick="toggleBlock('${c.mac}', ${!c.blocked})" class="px-2.5 py-1.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-lg text-[10px] transition">${c.blocked ? '解封' : '斷網'}</button></td>`;
+                <td class="text-right py-3 pr-2"><button type="button" data-client-action="block" class="px-2.5 py-1.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-lg text-[10px] transition">${c.blocked ? '解封' : '斷網'}</button></td>`;
+                tr.querySelector('[data-client-action="rename"]').addEventListener('click', () => renameClient(c.mac));
+                tr.querySelector('[data-client-action="block"]').addEventListener('click', () => toggleBlock(c.mac, !c.blocked));
                 tbody.appendChild(tr);
             });
         }
@@ -4645,7 +4647,7 @@
                 return `
                 <div>
                     <div class="flex justify-between text-[11px] mb-1">
-                        <span class="font-bold text-slate-300 truncate max-w-[140px]">#${i + 1} ${c.name}</span>
+                        <span class="font-bold text-slate-300 truncate max-w-[140px]">#${i + 1} ${escapeHtml(c.name)}</span>
                         <span class="mono text-slate-400">${label}</span>
                     </div>
                     <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
@@ -4684,7 +4686,7 @@
             const c = allClients.find(x => x.mac === mac);
             if (!c) return;
             document.getElementById('cd-title').innerText = c.name || '客戶端詳情';
-            const row = (label, val) => `<div class="flex justify-between text-xs border-b border-slate-800/50 pb-2"><span class="text-slate-500">${label}</span><span class="text-slate-200 font-semibold mono text-right break-all">${val}</span></div>`;
+            const row = (label, val, html = false) => `<div class="flex justify-between text-xs border-b border-slate-800/50 pb-2"><span class="text-slate-500">${escapeHtml(label)}</span><span class="text-slate-200 font-semibold mono text-right break-all">${html ? val : escapeHtml(val)}</span></div>`;
             const totalMB = (c.rx_bytes + c.tx_bytes) / 1048576;
             document.getElementById('cd-body').innerHTML =
                 row('設備名稱', c.name || '未知') +
@@ -4694,8 +4696,9 @@
                 row('下載量 (Rx)', (c.rx_bytes / 1048576).toFixed(1) + ' MB') +
                 row('上傳量 (Tx)', (c.tx_bytes / 1048576).toFixed(1) + ' MB') +
                 row('累計流量', (totalMB >= 1024 ? (totalMB / 1024).toFixed(2) + ' GB' : totalMB.toFixed(1) + ' MB')) +
-                row('存取狀態', c.blocked ? '<span class="text-red-400">已封鎖</span>' : '<span class="text-emerald-400">正常連線</span>') +
-                `<button onclick="toggleBlock('${c.mac}', ${!c.blocked})" class="w-full mt-2 py-2.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-xl text-xs transition">${c.blocked ? '解除封鎖' : '斷網封鎖此設備'}</button>`;
+                row('存取狀態', c.blocked ? '<span class="text-red-400">已封鎖</span>' : '<span class="text-emerald-400">正常連線</span>', true) +
+                `<button type="button" id="client-detail-block" class="w-full mt-2 py-2.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-xl text-xs transition">${c.blocked ? '解除封鎖' : '斷網封鎖此設備'}</button>`;
+            document.getElementById('client-detail-block').addEventListener('click', () => toggleBlock(c.mac, !c.blocked));
             const m = document.getElementById('client-modal');
             m.classList.remove('hidden'); m.classList.add('flex');
         }
@@ -4752,9 +4755,9 @@
                 body.innerHTML = `
                 <div class="flex flex-wrap gap-2 mb-4">
                     <span class="px-3 py-1.5 rounded-lg text-xs font-bold ${bad.length ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}">${overall}</span>
-                    ${tempAttr ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300">目前溫度 ${tempAttr.value}°C</span>` : ''}
-                    ${pohAttr ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300">通電 ${(pohAttr.raw ?? 0).toLocaleString()} 小時</span>` : ''}
-                    ${s.last && s.last.status != null ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-400">上次自我測試狀態碼 ${s.last.status}</span>` : ''}
+                    ${tempAttr ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300">目前溫度 ${escapeHtml(tempAttr.value)}°C</span>` : ''}
+                    ${pohAttr ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-300">通電 ${escapeHtml((pohAttr.raw ?? 0).toLocaleString())} 小時</span>` : ''}
+                    ${s.last && s.last.status != null ? `<span class="px-3 py-1.5 rounded-lg text-xs bg-slate-800 text-slate-400">上次自我測試狀態碼 ${escapeHtml(s.last.status)}</span>` : ''}
                 </div>
                 <div class="overflow-x-auto">
                 <table class="w-full text-[10px] mono">
@@ -4766,12 +4769,12 @@
                     const attrBad = (a.status && a.status !== 1) || (a.thresh > 0 && a.value <= a.thresh);
                     const hint = SMART_HINT[a.id];
                     return `<tr class="border-b border-slate-850/60 ${attrBad ? 'bg-red-500/5' : ''}">
-                            <td class="py-1.5 pr-2 text-slate-500">${a.id}</td>
-                            <td class="pr-2 text-slate-300" ${hint ? `title="${hint}"` : ''}>${a.label || a.name}${hint ? ' <span class="text-slate-600">ⓘ</span>' : ''}</td>
-                            <td class="pr-2 text-right text-slate-300">${a.value}</td>
-                            <td class="pr-2 text-right text-slate-500">${a.worst}</td>
-                            <td class="pr-2 text-right text-slate-500">${a.thresh}</td>
-                            <td class="pr-2 text-right text-slate-400">${(a.raw ?? '').toLocaleString?.() ?? a.raw ?? ''}</td>
+                            <td class="py-1.5 pr-2 text-slate-500">${escapeHtml(a.id)}</td>
+                            <td class="pr-2 text-slate-300" ${hint ? `title="${hint}"` : ''}>${escapeHtml(a.label || a.name)}${hint ? ' <span class="text-slate-600">ⓘ</span>' : ''}</td>
+                            <td class="pr-2 text-right text-slate-300">${escapeHtml(a.value)}</td>
+                            <td class="pr-2 text-right text-slate-500">${escapeHtml(a.worst)}</td>
+                            <td class="pr-2 text-right text-slate-500">${escapeHtml(a.thresh)}</td>
+                            <td class="pr-2 text-right text-slate-400">${escapeHtml((a.raw ?? '').toLocaleString?.() ?? a.raw ?? '')}</td>
                             <td class="text-center">${attrBad ? '<span class="text-red-400">⚠</span>' : '<span class="text-emerald-500">✓</span>'}</td>
                         </tr>`;
                 }).join('')}
@@ -4780,7 +4783,7 @@
                 </div>
                 <p class="text-[9px] text-slate-600 mt-3 leading-relaxed">Value/Worst 是硬碟廠商正規化後的健康分數（越高越好），跌到「門檻」以下才算異常；原始值(Raw)是實際計數。滑鼠停在有 ⓘ 的屬性上可看白話解釋。資料即時取自 NAS 的 UGOS SMART。</p>`;
             } catch (e) {
-                body.innerHTML = `<p class="text-xs text-red-400 text-center py-8">讀取 SMART 失敗：${e.message}</p>`;
+                body.innerHTML = `<p class="text-xs text-red-400 text-center py-8">讀取 SMART 失敗：${escapeHtml(e.message)}</p>`;
             }
         }
 
@@ -4803,8 +4806,8 @@
                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 bg-slate-950/50 border border-slate-800/60 rounded-xl px-4 py-2.5">
                         <div>
                             <span class="text-xs font-bold ${isBlock ? 'text-red-400' : 'text-emerald-400'}">${isBlock ? '🚫 斷網封鎖' : '✅ 解除封鎖'}</span>
-                            <span class="text-xs text-slate-200 font-semibold ml-2">${h.name}</span>
-                            <span class="text-[9px] text-slate-500 mono ml-2">${h.mac}</span>
+                            <span class="text-xs text-slate-200 font-semibold ml-2">${escapeHtml(h.name)}</span>
+                            <span class="text-[9px] text-slate-500 mono ml-2">${escapeHtml(h.mac)}</span>
                         </div>
                         <span class="text-[9px] text-slate-500 mono">${new Date(h.datetime).toLocaleString('zh-TW')}</span>
                     </div>
@@ -4820,23 +4823,26 @@
                 if (!res.ok) throw new Error();
                 const networks = (await res.json()).networks || [];
                 const list = document.getElementById('wifi-list');
-                list.innerHTML = '';
-                networks.forEach(net => {
-                    list.innerHTML += `
+                list.innerHTML = networks.map((net, index) => `
                     <div class="flex items-center justify-between p-3.5 bg-slate-950/70 rounded-xl border border-slate-800/60 ${net.enabled ? '' : 'opacity-50'}">
-                        <div><p class="text-xs font-bold">${net.name}</p></div>
+                        <div><p class="text-xs font-bold">${escapeHtml(net.name)}</p></div>
                         <label class="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" ${net.enabled ? 'checked' : ''} onchange="toggleWiFi('${net._id}', this.checked)" class="sr-only peer">
+                            <input type="checkbox" ${net.enabled ? 'checked' : ''} data-wifi-index="${index}" class="sr-only peer">
                             <div class="w-9 h-5 bg-slate-850 rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:rounded-full after:h-4 after:w-4 peer-checked:bg-blue-600 transition-all"></div>
                         </label>
-                    </div>`;
+                    </div>`).join('');
+                list.querySelectorAll('[data-wifi-index]').forEach(input => {
+                    input.addEventListener('change', () => {
+                        const net = networks[Number(input.dataset.wifiIndex)];
+                        if (net) toggleWiFi(net._id, input.checked);
+                    });
                 });
             } catch (e) { console.error('WiFi fetch failed'); }
         }
 
         async function toggleWiFi(id, state) {
             try {
-                await fetch(`/api/wifi-networks/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: state }) });
+                await fetch(`/api/wifi-networks/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: state }) });
                 showToast('WiFi 設定已更新');
                 fetchWiFiNetworks();
             } catch (e) { showToast('WiFi 更新失敗', true); }
@@ -4894,8 +4900,8 @@
                     container.innerHTML += `
                     <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
                         <div>
-                            <p class="font-bold text-slate-200">${desc}</p>
-                            <p class="text-[9px] text-slate-500">時區: ${site.meta ? site.meta.timezone : 'Asia/Taipei'}</p>
+                            <p class="font-bold text-slate-200">${escapeHtml(desc)}</p>
+                            <p class="text-[9px] text-slate-500">時區: ${escapeHtml(site.meta ? site.meta.timezone : 'Asia/Taipei')}</p>
                         </div>
                         <div class="text-right">
                             <p class="text-slate-300 font-semibold">${totalDev} 台設備</p>
@@ -4918,12 +4924,12 @@
                     container.innerHTML += `
                     <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
                         <div>
-                            <p class="font-bold text-slate-200">${dev.name || dev.model}</p>
-                            <p class="text-[9px] text-slate-500 font-mono">${dev.model} | v${dev.version}</p>
+                            <p class="font-bold text-slate-200">${escapeHtml(dev.name || dev.model)}</p>
+                            <p class="text-[9px] text-slate-500 font-mono">${escapeHtml(dev.model)} | v${escapeHtml(dev.version)}</p>
                         </div>
                         <div class="text-right">
-                            <p class="font-mono text-slate-300">${dev.ip || 'DHCP'}</p>
-                            <p class="text-[9px] ${isOnline ? 'text-emerald-400' : 'text-red-400'} font-bold uppercase tracking-wider">${dev.status}</p>
+                            <p class="font-mono text-slate-300">${escapeHtml(dev.ip || 'DHCP')}</p>
+                            <p class="text-[9px] ${isOnline ? 'text-emerald-400' : 'text-red-400'} font-bold uppercase tracking-wider">${escapeHtml(dev.status)}</p>
                         </div>
                     </div>`;
                 });
@@ -4944,12 +4950,12 @@
                     container.innerHTML += `
                     <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
                         <div>
-                            <p class="font-bold text-slate-200">${name}</p>
-                            <p class="text-[9px] text-slate-500 font-mono">類型: ${host.type} | Hardware ID: ${host.hardwareId ? host.hardwareId.substring(0, 8) : ''}...</p>
+                            <p class="font-bold text-slate-200">${escapeHtml(name)}</p>
+                            <p class="text-[9px] text-slate-500 font-mono">類型: ${escapeHtml(host.type)} | Hardware ID: ${escapeHtml(host.hardwareId ? host.hardwareId.substring(0, 8) : '')}...</p>
                         </div>
                         <div class="text-right">
-                            <p class="font-mono text-slate-300">${host.ipAddress || 'Unknown'}</p>
-                            <p class="text-[9px] ${isOnline ? 'text-emerald-400' : 'text-red-400'} font-bold uppercase tracking-wider">${state}</p>
+                            <p class="font-mono text-slate-300">${escapeHtml(host.ipAddress || 'Unknown')}</p>
+                            <p class="text-[9px] ${isOnline ? 'text-emerald-400' : 'text-red-400'} font-bold uppercase tracking-wider">${escapeHtml(state)}</p>
                         </div>
                     </div>`;
                 });
@@ -4967,8 +4973,8 @@
                     container.innerHTML += `
                     <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
                         <div>
-                            <p class="font-bold text-slate-200">${cfg.name}</p>
-                            <p class="text-[9px] text-slate-500">類型: ${cfg.type}</p>
+                            <p class="font-bold text-slate-200">${escapeHtml(cfg.name)}</p>
+                            <p class="text-[9px] text-slate-500">類型: ${escapeHtml(cfg.type)}</p>
                         </div>
                         <span class="px-2 py-0.5 rounded text-[8px] bg-blue-950 text-blue-400 border border-blue-900/40 font-bold">CONNECTED</span>
                     </div>`;
@@ -5037,15 +5043,15 @@
                 const canBlock = t.src_ip && t.src_ip !== '-' && /^\d+\.\d+\.\d+\.\d+$/.test(t.src_ip);
                 return `
                 <tr class="hover:bg-slate-900/40 transition border-b border-slate-850/30">
-                    <td class="py-2.5 mono text-[10px] text-slate-400">${timeStr}</td>
-                    <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[8px] border font-bold uppercase tracking-wider" style="color:${catColor};border-color:${catColor}44;background:${catColor}18;">${t.category}</span></td>
-                    <td class="py-2.5"><span class="px-1.5 py-0.5 rounded text-[8px] border font-bold ${sevColor}">${t.severity || '-'}</span></td>
-                    <td class="py-2.5 mono text-[11px] text-slate-200">${t.src_ip} <span class="text-[9px] text-slate-500">(${t.src_country})</span></td>
-                    <td class="py-2.5 mono text-[11px] text-slate-300">${t.target_ip} <span class="text-[9px] text-slate-500">(${t.target_device})</span></td>
-                    <td class="py-2.5 text-[11px] text-slate-450 truncate max-w-xs" title="${(t.msg || '').replace(/"/g, '&quot;')}">${t.msg}</td>
-                    <td class="py-2.5 mono text-[10px] text-slate-400">${t.port}</td>
+                    <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(timeStr)}</td>
+                    <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[8px] border font-bold uppercase tracking-wider" style="color:${catColor};border-color:${catColor}44;background:${catColor}18;">${escapeHtml(t.category)}</span></td>
+                    <td class="py-2.5"><span class="px-1.5 py-0.5 rounded text-[8px] border font-bold ${sevColor}">${escapeHtml(t.severity || '-')}</span></td>
+                    <td class="py-2.5 mono text-[11px] text-slate-200">${escapeHtml(t.src_ip)} <span class="text-[9px] text-slate-500">(${escapeHtml(t.src_country)})</span></td>
+                    <td class="py-2.5 mono text-[11px] text-slate-300">${escapeHtml(t.target_ip)} <span class="text-[9px] text-slate-500">(${escapeHtml(t.target_device)})</span></td>
+                    <td class="py-2.5 text-[11px] text-slate-450 truncate max-w-xs" title="${escapeHtml(t.msg)}">${escapeHtml(t.msg)}</td>
+                    <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(t.port)}</td>
                     <td class="py-2.5 text-right whitespace-nowrap">
-                        <span class="font-black text-red-500 text-[10px] uppercase tracking-wider">${t.action_taken}</span>
+                        <span class="font-black text-red-500 text-[10px] uppercase tracking-wider">${escapeHtml(t.action_taken)}</span>
                         ${canBlock ? `<button onclick="copySrcIp('${t.src_ip}')" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg></button>` : ''}
                     </td>
                 </tr>`;
@@ -5111,7 +5117,7 @@
             el.innerHTML = entries.map(([k, v]) => `
             <div>
                 <div class="flex justify-between text-[10px] mb-1">
-                    <span class="text-slate-300 font-semibold truncate max-w-[150px]">${k}</span>
+                    <span class="text-slate-300 font-semibold truncate max-w-[150px]">${escapeHtml(k)}</span>
                     <span class="mono text-slate-400">${v} 次</span>
                 </div>
                 <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
@@ -5208,8 +5214,8 @@
                     return `
                 <div class="flex items-center gap-2 text-[10px] border-b border-slate-800/40 pb-1.5">
                     <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:${c};"></span>
-                    <span class="mono text-slate-300 shrink-0">${t.src_ip}</span>
-                    <span class="text-slate-500 truncate flex-grow">${t.category} · ${t.src_country}</span>
+                    <span class="mono text-slate-300 shrink-0">${escapeHtml(t.src_ip)}</span>
+                    <span class="text-slate-500 truncate flex-grow">${escapeHtml(t.category)} · ${escapeHtml(t.src_country)}</span>
                     <span class="text-slate-600 mono shrink-0">${new Date(t.datetime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>`;
                 }).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
@@ -5221,7 +5227,7 @@
             if (!sel) return;
             const cats = [...new Set(threats.map(t => t.category).filter(Boolean))];
             const cur = sel.value;
-            sel.innerHTML = '<option value="">全部類別</option>' + cats.map(c => `<option value="${c}">${c}</option>`).join('');
+            sel.innerHTML = '<option value="">全部類別</option>' + cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
             if (cats.includes(cur)) sel.value = cur;
         }
 
@@ -5471,7 +5477,7 @@
                     brand = brand.replace(/western digital/i, 'WD');
                     if (nm) nasDiskMeta[nm] = [szStr, brand].filter(Boolean).join(' ');
                 });
-                disks.forEach(d => {
+                disks.forEach((d, index) => {
                     const name = nFind(d, ['name', 'label']) || 'Disk';
                     const dModel = nFind(d, ['model']) || '';
                     const dev = nFind(d, ['dev_name']) || '';
@@ -5493,21 +5499,32 @@
                         ? '<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="7" y1="10" x2="7" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>'
                         : '<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.4"/><line x1="17.5" y1="6.5" x2="13.7" y2="10.3"/></svg>';
                     diskList.innerHTML += `
-                    <button onclick="confirmDiskSmart('${dev}','${name.replace(/'/g, '')}',${sleeping})" class="w-full text-left flex items-center justify-between p-3 bg-slate-900/40 rounded-xl border border-slate-800/50 hover:border-blue-500/40 hover:bg-slate-900/70 transition group">
+                    <button type="button" data-disk-index="${index}" class="w-full text-left flex items-center justify-between p-3 bg-slate-900/40 rounded-xl border border-slate-800/50 hover:border-blue-500/40 hover:bg-slate-900/70 transition group">
                         <div class="flex items-center gap-3 min-w-0">
                             <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${good ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}">${icon}</div>
                             <div class="min-w-0">
-                                <p class="text-xs font-bold text-slate-200 truncate">${name} <span class="text-slate-600 font-normal">${sizeStr}</span></p>
-                                <p class="text-[9px] text-slate-500 mono truncate">${dModel}${poh != null ? ' · 通電 ' + poh.toLocaleString() + ' 小時' : ''}</p>
+                                <p class="text-xs font-bold text-slate-200 truncate">${escapeHtml(name)} <span class="text-slate-600 font-normal">${sizeStr}</span></p>
+                                <p class="text-[9px] text-slate-500 mono truncate">${escapeHtml(dModel)}${poh != null ? ' · 通電 ' + poh.toLocaleString() + ' 小時' : ''}</p>
                                 <div class="mt-1">${stateBadge}</div>
                             </div>
                         </div>
                         <div class="text-right shrink-0 ml-2">
-                            <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${good ? '健康' : health}</span>
+                            <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${good ? '健康' : escapeHtml(health)}</span>
                             <p class="text-[10px] mono mt-0.5" style="color:${tColor}">${sleeping ? '<span class="text-slate-500">休眠</span>' : (temp != null ? temp + '°C' : '')}</p>
                             <p class="text-[8px] text-slate-600 group-hover:text-blue-400 transition mt-0.5">點擊看 SMART ›</p>
                         </div>
                     </button>`;
+                });
+                diskList.querySelectorAll('[data-disk-index]').forEach(button => {
+                    button.addEventListener('click', () => {
+                        const disk = disks[Number(button.dataset.diskIndex)];
+                        if (!disk) return;
+                        confirmDiskSmart(
+                            nFind(disk, ['dev_name']) || '',
+                            nFind(disk, ['name', 'label']) || 'Disk',
+                            disk.sleeping === true
+                        );
+                    });
                 });
 
                 // 儲存區
@@ -5525,7 +5542,7 @@
                     volList.innerHTML += `
                     <div>
                         <div class="flex justify-between text-[11px] mb-1.5">
-                            <span class="font-bold text-slate-200">${name} <span class="text-[9px] text-slate-500 mono">${raid} ${fsType}</span></span>
+                            <span class="font-bold text-slate-200">${escapeHtml(name)} <span class="text-[9px] text-slate-500 mono">${escapeHtml(raid)} ${escapeHtml(fsType)}</span></span>
                             <span class="mono text-slate-400">${used != null ? used.toFixed(0) : '--'} GB / ${total ? total.toFixed(0) : '--'} GB (${pct}%)</span>
                         </div>
                         <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800 p-0.5">
@@ -5673,24 +5690,34 @@
                 document.getElementById('nas-docker-sub').innerText = `共 ${containers.length} 個容器`;
                 document.getElementById('nas-docker-count').innerText = `— ${running}/${containers.length} 運行中`;
                 const tbody = document.getElementById('nas-docker-list');
-                tbody.innerHTML = containers.length ? '' : '<tr><td colspan="5" class="text-center py-4 text-slate-500">無容器</td></tr>';
-                containers.forEach(c => {
+                tbody.innerHTML = containers.length ? containers.map((c, index) => {
                     const on = c.state === 'running';
-                    const memPct = c.mem_limit_mb ? Math.round((c.mem_usage_mb || 0) / c.mem_limit_mb * 100) : 0;
-                    tbody.innerHTML += `
+                    const cpuPct = Number.isFinite(Number(c.cpu_percent)) ? Number(c.cpu_percent) : 0;
+                    const memUsage = Number.isFinite(Number(c.mem_usage_mb)) ? Number(c.mem_usage_mb) : 0;
+                    const memLimit = Number.isFinite(Number(c.mem_limit_mb)) ? Number(c.mem_limit_mb) : 0;
+                    const memPct = memLimit > 0 ? Math.round(memUsage / memLimit * 100) : 0;
+                    return `
                     <tr class="hover:bg-slate-900/30">
-                        <td class="py-2.5"><p class="font-bold text-slate-200">${c.name}</p><p class="text-[9px] text-slate-500 mono truncate max-w-[180px]">${c.image || ''}</p></td>
-                        <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[9px] border font-bold ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-500 border-slate-700/40'}">${on ? '運行中' : '已停止'}</span><p class="text-[8px] text-slate-600 mt-0.5">${c.status || ''}</p></td>
-                        <td class="py-2.5 mono text-[11px] text-slate-300">${on ? (c.cpu_percent ?? 0) + '%' : '-'}</td>
-                        <td class="py-2.5 mono text-[11px] text-slate-300">${on ? `${c.mem_usage_mb || 0}MB <span class="text-slate-600">(${memPct}%)</span>` : '-'}</td>
+                        <td class="py-2.5"><p class="font-bold text-slate-200">${escapeHtml(c.name)}</p><p class="text-[9px] text-slate-500 mono truncate max-w-[180px]">${escapeHtml(c.image)}</p></td>
+                        <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[9px] border font-bold ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-500 border-slate-700/40'}">${on ? '運行中' : '已停止'}</span><p class="text-[8px] text-slate-600 mt-0.5">${escapeHtml(c.status)}</p></td>
+                        <td class="py-2.5 mono text-[11px] text-slate-300">${on ? cpuPct + '%' : '-'}</td>
+                        <td class="py-2.5 mono text-[11px] text-slate-300">${on ? `${memUsage}MB <span class="text-slate-600">(${memPct}%)</span>` : '-'}</td>
                         <td class="py-2.5 text-right whitespace-nowrap">
                             ${on
-                            ? `<button onclick="dockerAction('${c.id}','restart')" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded">重啟</button>
-                                   <button onclick="dockerAction('${c.id}','stop')" class="px-2 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-bold rounded ml-1">停止</button>`
-                            : `<button onclick="dockerAction('${c.id}','start')" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded">啟動</button>`}
-                            <button onclick="showDockerLog('${c.id}','${c.name}')" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded ml-1">日誌</button>
+                            ? `<button type="button" data-docker-index="${index}" data-docker-action="restart" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded">重啟</button>
+                                   <button type="button" data-docker-index="${index}" data-docker-action="stop" class="px-2 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-bold rounded ml-1">停止</button>`
+                            : `<button type="button" data-docker-index="${index}" data-docker-action="start" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded">啟動</button>`}
+                            <button type="button" data-docker-index="${index}" data-docker-action="logs" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded ml-1">日誌</button>
                         </td>
                     </tr>`;
+                }).join('') : '<tr><td colspan="5" class="text-center py-4 text-slate-500">無容器</td></tr>';
+                tbody.querySelectorAll('[data-docker-index]').forEach(button => {
+                    button.addEventListener('click', () => {
+                        const c = containers[Number(button.dataset.dockerIndex)];
+                        if (!c) return;
+                        if (button.dataset.dockerAction === 'logs') showDockerLog(c.id, c.name);
+                        else dockerAction(c.id, button.dataset.dockerAction);
+                    });
                 });
             } catch (e) { console.error('NAS docker fetch failed', e); }
         }
@@ -5698,7 +5725,7 @@
         async function dockerAction(id, action) {
             const labels = { start: '啟動', stop: '停止', restart: '重啟' };
             try {
-                const res = await fetch(`/api/nas/docker/${id}/${action}`, { method: 'POST' });
+                const res = await fetch(`/api/nas/docker/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
                 if (!res.ok) throw new Error();
                 showToast(`已對容器下達${labels[action]}指令`);
                 setTimeout(fetchNasDocker, 800);
@@ -5711,7 +5738,7 @@
             document.getElementById('docker-log-modal').classList.remove('hidden');
             document.getElementById('docker-log-modal').classList.add('flex');
             try {
-                const data = await (await fetch(`/api/nas/docker/${id}/logs?lines=200`)).json();
+                const data = await (await fetch(`/api/nas/docker/${encodeURIComponent(id)}/logs?lines=200`)).json();
                 document.getElementById('docker-log-body').innerText = data.logs || '(無日誌)';
             } catch (e) { document.getElementById('docker-log-body').innerText = '日誌讀取失敗'; }
         }
@@ -5730,18 +5757,23 @@
                 if (events.length) {
                     const unack = events.filter(e => !e.acknowledged).length;
                     document.getElementById('nas-alert-count').innerText = `— ${unack} 則待確認 / 共 ${events.length} 則`;
-                    list.innerHTML = '';
-                    events.forEach(a => {
+                    list.innerHTML = events.map((a, index) => {
                         const cls = colorMap[a.level] || colorMap.info;
-                        list.innerHTML += `
+                        return `
                         <div class="flex items-center gap-3 p-3 rounded-lg border ${cls} ${a.acknowledged ? 'opacity-50' : ''}">
-                            <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-16">${a.level}</span>
+                            <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-16">${escapeHtml(a.level)}</span>
                             <div class="flex-grow min-w-0">
-                                <p class="text-[11px] text-slate-200 truncate">${a.message}</p>
-                                <p class="text-[9px] text-slate-500 mono">${a.metric} · ${new Date(a.datetime).toLocaleString('zh-TW')}</p>
+                                <p class="text-[11px] text-slate-200 truncate">${escapeHtml(a.message)}</p>
+                                <p class="text-[9px] text-slate-500 mono">${escapeHtml(a.metric)} · ${escapeHtml(new Date(a.datetime).toLocaleString('zh-TW'))}</p>
                             </div>
-                            ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button onclick="ackAlert('${a.id}')" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded shrink-0">確認</button>`}
+                            ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button type="button" data-alert-index="${index}" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded shrink-0">確認</button>`}
                         </div>`;
+                    }).join('');
+                    list.querySelectorAll('[data-alert-index]').forEach(button => {
+                        button.addEventListener('click', () => {
+                            const alert = events[Number(button.dataset.alertIndex)];
+                            if (alert) ackAlert(alert.id);
+                        });
                     });
                     return;
                 }
@@ -5773,10 +5805,10 @@
                     const mod = NAS_LOG_MODULE_LABEL[l.module] || l.module;
                     list.innerHTML += `
                     <div class="flex items-center gap-3 p-2.5 rounded-lg border ${cls}">
-                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-14 ${severe ? '' : 'opacity-60'}">${icon[l.level] || ''}${l.level}</span>
+                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-14 ${severe ? '' : 'opacity-60'}">${icon[l.level] || ''}${escapeHtml(l.level)}</span>
                         <div class="flex-grow min-w-0">
-                            <p class="text-[11px] ${severe ? 'font-bold' : ''} text-slate-200 truncate" title="${l.content.replace(/"/g, '&quot;')}">${l.content}</p>
-                            <p class="text-[9px] text-slate-500 mono">${mod} · ${l.operator} · ${new Date(l.ts).toLocaleString('zh-TW')}</p>
+                            <p class="text-[11px] ${severe ? 'font-bold' : ''} text-slate-200 truncate" title="${escapeHtml(l.content)}">${escapeHtml(l.content)}</p>
+                            <p class="text-[9px] text-slate-500 mono">${escapeHtml(mod)} · ${escapeHtml(l.operator)} · ${escapeHtml(new Date(l.ts).toLocaleString('zh-TW'))}</p>
                         </div>
                     </div>`;
                 });
@@ -6138,7 +6170,6 @@
                 set('srv-autoDefenseSec', s.autoDefenseSec);
                 set('srv-upsSampleSec', s.upsSampleSec ?? 30);
                 set('srv-toastSec', s.toastSec ?? 10); toastSec = s.toastSec ?? 10;
-                set('srv-historyFlushMin', s.historyFlushMin ?? 30);
                 set('srv-historyKeepDays', s.historyKeepDays ?? 30);
                 const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
                 set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
@@ -6186,7 +6217,6 @@
                 autoDefenseSec: num('srv-autoDefenseSec'),
                 upsSampleSec: num('srv-upsSampleSec'),
                 toastSec: num('srv-toastSec'),
-                historyFlushMin: num('srv-historyFlushMin'),
                 historyKeepDays: num('srv-historyKeepDays'),
                 reportEnabled: document.getElementById('report-enabled').checked,
                 reportFreq: document.getElementById('report-freq').value,
@@ -6229,7 +6259,7 @@
                 list.innerHTML = (d.devices || []).map(v => {
                     const ok = v.configured ? v.ok : undefined;
                     const state = !v.configured ? '未設定' : v.ok === true ? '已連線' : v.ok === false ? '未連線' : '已設定';
-                    return `<div class="flex items-center gap-2">${dot(ok)}<span class="text-slate-400">${v.name}</span><span class="ml-auto mono ${v.configured && v.ok === false ? 'text-red-400' : 'text-slate-300'} text-[10px]">${state}${v.configured && v.detail ? ' · ' + v.detail : ''}</span></div>`;
+                    return `<div class="flex items-center gap-2">${dot(ok)}<span class="text-slate-400">${escapeHtml(v.name)}</span><span class="ml-auto mono ${v.configured && v.ok === false ? 'text-red-400' : 'text-slate-300'} text-[10px]">${escapeHtml(state)}${v.configured && v.detail ? ' · ' + escapeHtml(v.detail) : ''}</span></div>`;
                 }).join('');
             } catch { list.innerHTML = '<p class="text-red-400 text-xs">狀態讀取失敗</p>'; }
         }
@@ -6272,10 +6302,10 @@
                 <div class="flex items-start gap-3 p-3 rounded-lg border ${e.ok ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5'}">
                     <span class="text-sm shrink-0 mt-0.5">${e.ok ? '✅' : '⚠️'}</span>
                     <div class="flex-grow min-w-0">
-                        <p class="text-[11px] font-bold text-slate-200">${e.title}</p>
-                        <p class="text-[10px] text-slate-400 whitespace-pre-line break-all">${e.body}</p>
-                        ${e.error ? `<p class="text-[9px] text-red-400 mt-0.5">${e.error}</p>` : ''}
-                        <p class="text-[9px] text-slate-600 mono mt-0.5">${e.channel} · ${new Date(e.ts).toLocaleString('zh-TW')}</p>
+                        <p class="text-[11px] font-bold text-slate-200">${escapeHtml(e.title)}</p>
+                        <p class="text-[10px] text-slate-400 whitespace-pre-line break-all">${escapeHtml(e.body)}</p>
+                        ${e.error ? `<p class="text-[9px] text-red-400 mt-0.5">${escapeHtml(e.error)}</p>` : ''}
+                        <p class="text-[9px] text-slate-600 mono mt-0.5">${escapeHtml(e.channel)} · ${escapeHtml(new Date(e.ts).toLocaleString('zh-TW'))}</p>
                     </div>
                 </div>`).join('');
             } catch (e) { console.error('notif log fetch failed', e); }
@@ -6955,7 +6985,7 @@
                 try { n = JSON.parse(ip.result); } catch { }
                 dbg('WiiM', '設備資訊', s, n);
                 if (!Object.keys(s).length) { el.innerHTML = '<p class="text-slate-500 text-center py-4">裝置無回應 (檢查 WIIM_IP 與網路)</p>'; return; }
-                const row = (k, v) => v ? `<div class="flex justify-between gap-3 border-b border-slate-800/40 pb-1.5"><span class="text-slate-500 shrink-0">${k}</span><span class="text-slate-300 mono text-right break-all">${v}</span></div>` : '';
+                const row = (k, v) => v ? `<div class="flex justify-between gap-3 border-b border-slate-800/40 pb-1.5"><span class="text-slate-500 shrink-0">${escapeHtml(k)}</span><span class="text-slate-300 mono text-right break-all">${escapeHtml(v)}</span></div>` : '';
                 el.innerHTML =
                     row('設備名稱', s.DeviceName) + row('韌體', s.firmware) + row('硬體', s.hardware || s.project) +
                     row('PCB 版本', s.PCB_version) + row('MAC', s.MAC) + row('UUID', s.uuid || s.UUID) +
@@ -6977,7 +7007,7 @@
                 [...cont.children].forEach((btn, i) => {
                     const p = list.find(x => (x.number || x.index) == i + 1) || list[i];
                     if (p && (p.name || p.title)) {
-                        btn.innerHTML = `<span class="block text-[10px] font-black">${i + 1}</span><span class="block text-[8px] text-slate-500 truncate px-1">${p.name || p.title}</span>`;
+                        btn.innerHTML = `<span class="block text-[10px] font-black">${i + 1}</span><span class="block text-[8px] text-slate-500 truncate px-1">${escapeHtml(p.name || p.title)}</span>`;
                         btn.title = p.name || p.title;
                     }
                 });
@@ -7108,8 +7138,14 @@
             try {
                 const s = await (await fetch('/api/ups/status')).json();
                 dbg('UPS', '即時狀態', s.source, s.status, `in=${s.inputV}V bat=${s.battery}%`);
+                const sideOk = s.source && s.source !== 'unreachable';
+                const sideDot = document.getElementById('side-ups-dot');
+                const sideState = document.getElementById('side-ups-state');
+                if (sideDot) sideDot.className = `w-1.5 h-1.5 rounded-full ${sideOk ? 'bg-emerald-500' : 'bg-red-500'}`;
+                if (sideState) sideState.textContent = sideOk ? s.source : '未連接';
                 const badge = document.getElementById('ups-source-badge');
                 const setT = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML = v; };
+                const safeNum = value => Number.isFinite(Number(value)) ? Number(value) : null;
                 if (s.source === 'unreachable') {
                     badge.textContent = '未連接 (檢視下方接入指南)';
                     badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-red-500/10 text-red-400 border-red-500/20 self-start md:self-auto';
@@ -7118,12 +7154,12 @@
                     badge.textContent = `來源: ${s.source.toUpperCase()}`;
                     badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 self-start md:self-auto';
                     if (s.source !== 'nut' || true) document.getElementById('ups-setup-guide').classList.toggle('hidden', s.source === 'nut');
-                    setT('ups-model-line', `${s.model || 'UPS'} · 資料來源 ${s.source} · 後端每 ${s.sampleSec}s 取樣`);
-                    setT('ups-kpi-inv', (s.inputV ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
-                    setT('ups-kpi-outv', (s.outputV ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
-                    setT('ups-kpi-batt', (s.battery ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
+                    document.getElementById('ups-model-line').textContent = `${s.model || 'UPS'} · 資料來源 ${s.source} · 後端每 ${safeNum(s.sampleSec) ?? '--'}s 取樣`;
+                    setT('ups-kpi-inv', (safeNum(s.inputV) ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
+                    setT('ups-kpi-outv', (safeNum(s.outputV) ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
+                    setT('ups-kpi-batt', (safeNum(s.battery) ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
                     document.getElementById('ups-kpi-batt-bar').style.width = (s.battery || 0) + '%';
-                    setT('ups-kpi-load', (s.loadPct ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
+                    setT('ups-kpi-load', (safeNum(s.loadPct) ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
                     document.getElementById('ups-kpi-load-bar').style.width = (s.loadPct || 0) + '%';
                     setT('ups-kpi-rt', (s.runtimeSec != null ? Math.round(s.runtimeSec / 60) : '--') + '<span class="text-xs text-slate-500"> 分</span>');
                     const st = document.getElementById('ups-kpi-status');
@@ -7254,9 +7290,9 @@
                 btn.className = `px-4 py-1.5 rounded-full text-[10px] font-bold border transition ${adgProtectionOn ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30 animate-pulse'}`;
                 const bar = (n, max, name, val, color) => `
                     <div class="flex items-center gap-2 text-[11px]">
-                        <span class="w-40 truncate text-slate-300" title="${name}">${name}</span>
+                        <span class="w-40 truncate text-slate-300" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
                         <div class="flex-grow bg-slate-950 h-1.5 rounded-full overflow-hidden"><div class="${color} h-full rounded-full" style="width:${Math.max(val / max * 100, 2)}%"></div></div>
-                        <span class="mono text-slate-500 w-12 text-right">${val.toLocaleString()}</span>
+                        <span class="mono text-slate-500 w-12 text-right">${escapeHtml(val != null && val.toLocaleString ? val.toLocaleString() : val)}</span>
                     </div>`;
                 const tb = st.top_blocked_domains || [];
                 const maxB = tb.length ? Object.values(tb[0])[0] : 1;
@@ -7272,8 +7308,8 @@
                     <div class="flex items-center gap-3 p-1.5 rounded-lg text-[10px] ${e.blocked ? 'bg-red-500/5 border border-red-500/15' : 'bg-slate-950/30'}">
                         <span class="mono text-slate-500 shrink-0">${new Date(e.time).toLocaleTimeString('zh-TW', { hour12: false })}</span>
                         <span class="shrink-0 font-bold ${e.blocked ? 'text-red-400' : 'text-emerald-500'}">${e.blocked ? '攔截' : '放行'}</span>
-                        <span class="flex-grow truncate mono text-slate-300" title="${e.domain}">${e.domain}</span>
-                        <span class="mono text-slate-600 shrink-0">${e.client}</span>
+                        <span class="flex-grow truncate mono text-slate-300" title="${escapeHtml(e.domain)}">${escapeHtml(e.domain)}</span>
+                        <span class="mono text-slate-600 shrink-0">${escapeHtml(e.client)}</span>
                     </div>`).join('') || '<p class="text-xs text-slate-500 text-center py-4">無資料</p>';
         }
         async function fetchAdgLog() {

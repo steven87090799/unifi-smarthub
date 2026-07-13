@@ -14,7 +14,7 @@ services:
       # 時區：報表排程 (reportHour)、日誌時間戳、UPS 事件時間皆依此；容器預設 UTC 會差 8 小時
       - TZ=Asia/Taipei
     volumes:
-      # 具名 volume：持久化歷史趨勢、封鎖紀錄、資安設定 (容器重建不遺失)
+      # 具名 volume：持久化 SQLite、設定與遷移備份 (容器重建不遺失)
       - smarthub-data:/app/data
       # bind mount .env：讓「設定 → 連線設定」網頁修改的連線資訊寫回宿主機，容器重建不遺失
       # (.dockerignore 排除了 .env，若不掛載，網頁上改的設定會在重建後消失)
