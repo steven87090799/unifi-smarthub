@@ -48,10 +48,10 @@ unifi-smarthub/
 
 ### 2.2 背景取樣與自適應調度 (Background Sampling & trendScheduler)
 為了解決無人使用網頁時後端仍持續輪詢上游硬體造成的 CPU 浪費，後端實作了 **設備 scope 自適應排程器**：
-* **心跳上報**：前端每 5 秒只替目前可見設備頁送出 `GET /api/heartbeat?scope=...`。切頁會立即取代上一頁 scope，分頁進背景也會主動釋放；若瀏覽器異常中斷，伺服器租約仍會自動到期。
+* **心跳上報**：前端每 5 秒只替目前可見頁面送出 `GET /api/heartbeat?scope=...`。切頁會立即取代上一頁 scope，分頁進背景也會主動釋放；若瀏覽器異常中斷，伺服器租約仍會自動到期。
 * **頻率切換邏輯**：
-  * UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁所有前端資訊以 **3 秒** 間隔更新；trend／UCG／NAS／WiiM／Linux 對應歷史取樣也以 3 秒執行。
-  * 離開設備頁後，前端立即停止上一頁輪詢；後端 scope 被撤銷或租約到期後恢復各設備原本的低頻間隔。總覽維持各項預設，避免同時高頻查詢全部設備。
+  * 總覽或 UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁所有前端資訊以 **3 秒** 間隔更新；總覽會同時啟用 trend／UCG／NAS／WiiM scope，後端對應歷史取樣也以 3 秒執行。
+  * 離開總覽或設備頁後，前端立即停止上一頁輪詢；後端 scope 被撤銷或租約到期後恢復各設備原本的低頻間隔。
 * **數據持久化**：一般遙測先進入有上限的記憶體 queue，查詢會合併未落盤點；預設每 10 分鐘或達 1,000 筆／1 MiB 時以單一 transaction 批次寫入 SQLite。
 
 ### 2.3 威脅安全評分模型與自動隔離機制 (Security Model & Auto Defense)

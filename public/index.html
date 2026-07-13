@@ -488,6 +488,36 @@
             animation: statPop .45s cubic-bezier(.34, 1.56, .64, 1);
         }
 
+        /* 總覽大型數字更新：模擬翻頁時鐘向上翻動 */
+        @keyframes metricFlipUp {
+            0% {
+                opacity: .15;
+                transform: perspective(520px) translateY(42%) rotateX(-78deg);
+                filter: blur(2px);
+            }
+            58% {
+                opacity: 1;
+                transform: perspective(520px) translateY(-8%) rotateX(9deg);
+                filter: blur(0);
+            }
+            100% {
+                opacity: 1;
+                transform: perspective(520px) translateY(0) rotateX(0);
+                filter: blur(0);
+            }
+        }
+
+        .metric-flip-value {
+            display: inline-block;
+            transform-origin: center top;
+            backface-visibility: hidden;
+            will-change: transform, opacity, filter;
+        }
+
+        .metric-flip-up {
+            animation: metricFlipUp .58s cubic-bezier(.2, .72, .25, 1);
+        }
+
         /* ===== 淺色主題 ===== */
         html.light body {
             background: #eef2f7 !important;
@@ -1051,10 +1081,6 @@
                     <p class="text-[10px] text-slate-500" id="page-subtitle">全系統健康狀態一覽</p>
                 </div>
                 <div class="ml-auto flex items-center gap-2">
-                    <span id="focused-refresh-badge"
-                        class="hidden px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-bold mono uppercase tracking-wider">
-                        LIVE · 3 秒更新
-                    </span>
                     <!-- 重大事件警報橫幅：只在 UPS 斷電/WAN 斷線等嚴重事件時出現，強烈閃爍，點擊關閉 -->
                     <button id="crit-alert-banner" onclick="dismissCritAlerts()" title="點擊關閉此警報"
                         class="hidden items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider crit-blink cursor-pointer max-w-[50vw]">
@@ -4983,7 +5009,6 @@
             });
             document.getElementById('page-title').innerText = PAGE_META[page][0];
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
-            updateFocusedRefreshBadge(page);
             toggleSidebar(false);
             if (page === 'overview') syncPinned();
             sendHeartbeat(true);
@@ -5003,9 +5028,32 @@
             document.getElementById('sidebar').setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
         }
 
+        const OVERVIEW_FLIP_NUMBER_IDS = [
+            'kpi-clients', 'kpi-threats', 'kpi-temp', 'kpi-nas-temp', 'kpi-wiim-temp',
+            'ov-ucg-temp', 'ov-nas-temp', 'ov-wiim-temp', 'sec-score'
+        ];
+        function initOverviewFlipNumbers() {
+            if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+            OVERVIEW_FLIP_NUMBER_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.classList.add('metric-flip-value');
+                el.dataset.flipValue = el.textContent.trim();
+                new MutationObserver(() => {
+                    const next = el.textContent.trim();
+                    if (next === el.dataset.flipValue) return;
+                    el.dataset.flipValue = next;
+                    el.classList.remove('metric-flip-up');
+                    void el.offsetWidth;
+                    el.classList.add('metric-flip-up');
+                }).observe(el, { childList: true, characterData: true, subtree: true });
+            });
+        }
+
         /* ==================== 初始化 ==================== */
         window.onload = () => {
             initUiSystem();
+            initOverviewFlipNumbers();
             layoutTagAll();
             layoutApplySaved();
             renderPinned();
@@ -5059,7 +5107,6 @@
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
             renderPollConfig();
             checkLastSpeedtest();
-            updateFocusedRefreshBadge(currentPage);
             sendHeartbeat(true);
             applyPolling();
         };
@@ -5101,10 +5148,10 @@
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security']
         };
         const PAGE_ACTIVITY_SCOPES = {
-            overview: ['trend'], clients: ['trend'], security: ['trend'],
+            overview: ['trend', 'ucg', 'nas', 'wiim'], clients: ['trend'], security: ['trend'],
             cloud: ['trend'], ucg: ['ucg'], nas: ['nas'], wiim: ['wiim'], linuxhost: ['linux']
         };
-        const FOCUSED_DEVICE_PAGES = new Set(['ucg', 'nas', 'wiim', 'ups', 'adguard', 'linuxhost']);
+        const FOCUSED_DEVICE_PAGES = new Set(['overview', 'ucg', 'nas', 'wiim', 'ups', 'adguard', 'linuxhost']);
         const FOCUSED_POLL_SEC = 3;
         let pollTimers = {};
         const pollRunning = new Set();
@@ -5117,10 +5164,6 @@
             if (pollRunning.has(key)) return;
             pollRunning.add(key);
             try { await job.fn(); } finally { pollRunning.delete(key); }
-        }
-        function updateFocusedRefreshBadge(page) {
-            const badge = document.getElementById('focused-refresh-badge');
-            if (badge) badge.classList.toggle('hidden', !FOCUSED_DEVICE_PAGES.has(page));
         }
         function applyPolling(runNow = false) {
             Object.entries(POLL_JOBS).forEach(([k, j]) => {
