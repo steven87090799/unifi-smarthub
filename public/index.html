@@ -4070,8 +4070,8 @@
         }
         // 編輯模式時攔截主內容區點擊，避免拖曳時誤觸卡片跳頁
         document.addEventListener('click', e => {
-            // 「＋總覽」按鈕要放行，否則編輯模式的防誤觸攔截會吃掉它的點擊
-            if (layoutEditing && e.target.closest('.pin-add-btn')) return;
+            // 總覽釘選的新增與移除按鈕都要放行，否則編輯模式的防誤觸攔截會吃掉點擊。
+            if (layoutEditing && e.target.closest('.pin-add-btn, .pin-badge button')) return;
             if (layoutEditing && e.target.closest('main > section')) { e.stopPropagation(); e.preventDefault(); }
         }, true);
 
