@@ -264,7 +264,8 @@ class SystemMonitor {
                 status: database.ok ? (dbLatencyStatus === 'unknown' ? 'healthy' : dbLatencyStatus) : 'critical',
                 type: 'sqlite', latency_ms: database.latency_ms, file: database.file_name,
                 active_connections: database.pool.active, pool: database.pool,
-                slow_queries: database.slow_queries, failed_queries: database.failed_queries
+                slow_queries: database.slow_queries, failed_queries: database.failed_queries,
+                write_buffer: database.write_buffer
             },
             worker,
             active_issues: activeIssues,

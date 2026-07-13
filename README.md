@@ -136,9 +136,9 @@ volumes:
 | 事件 | `smarthub.db` 的 `ups_events` / `block_history` | 斷電事件與封鎖時間軸，SQLite transaction 即時寫入 |
 | 設定 | `app-settings / security-settings / notification-settings / client-aliases .json` | 取樣間隔、報表、推播、客戶端別名 |
 
-**寫入策略**:每筆歷史樣本以 SQLite transaction 寫入 WAL，避免重寫整個 JSON 大檔；資料庫每小時清理過期資料並執行增量 vacuum。SQLite WAL 可在程序被硬殺或主機重啟後復原最後完整 transaction。
+**寫入策略**:一般歷史樣本先放入有上限的記憶體 queue，預設每 10 分鐘（或累積 1,000 筆 / 1 MiB）以單一 SQLite transaction 批次寫入 WAL。查詢會合併尚未落盤的資料；正常關機與 UPS 斷電轉態會強制 flush。UPS 斷電事件、封鎖紀錄、報表及 NAS 日誌手機推播不經過此緩衝。資料庫每小時清理過期資料並執行增量 vacuum。
 
-**取樣頻率是自適應的**:有人開著網頁時高頻(趨勢 5 秒),無人瀏覽時自動降頻(30 分鐘),不會在沒人看時持續轟炸上游 API。唯一例外是 **UPS 取樣不降頻**(斷電紀錄無人看也要記)。
+**取樣頻率是自適應的**:有人開著網頁時趨勢預設每 30 秒取樣，無人瀏覽時降為 30 分鐘；前端只輪詢當前 SmartHub 分頁所需的設備。唯一例外是 **UPS 取樣不降頻**(斷電紀錄無人看也要記)。
 
 備份:
 ```bash

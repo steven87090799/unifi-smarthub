@@ -66,9 +66,9 @@
 
 ## 資料持久化
 
-統計/歷史資料以 SQLite `smarthub.db` 存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`)，設定類資料仍為 JSON。首次啟動會將舊 history/event JSON 匯入並改名為 `.migrated.bak` 保留。`GET /health` 為 Docker liveness、`GET /health/ready` 檢查 SQLite/worker、`GET /api/system/status` 提供完整診斷。
+統計/歷史資料以 SQLite `smarthub.db` 存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`)，設定類資料仍為 JSON。一般遙測先放記憶體 queue，預設每 10 分鐘或達 1,000 筆 / 1 MiB 時以單一 transaction 批次寫入；查詢會合併未落盤資料。UPS 事件、封鎖、報表與 NAS 日誌手機推播仍立即處理。首次啟動會將舊 history/event JSON 匯入並改名為 `.migrated.bak` 保留。`GET /health` 為 Docker liveness、`GET /health/ready` 檢查 SQLite/worker、`GET /api/system/status` 提供完整診斷。
 
-**趨勢取樣為自適應頻率**(`trendScheduler` 每秒檢查):前端每 5 秒打 `GET /api/heartbeat`(分頁隱藏時暫停),或任何 `GET /api/history` 讀取,都會更新 `lastClientActivity`。最近 30 秒內有活動 → 每 5 秒取樣;否則 → 每 30 分鐘取樣。目的:無人瀏覽時不持續打上游 API。前端趨勢圖每 15 秒重繪(`update('none')`)。
+**趨勢取樣為自適應頻率**(`trendScheduler` 每秒檢查):前端每 5 秒打 `GET /api/heartbeat`(分頁隱藏時暫停),或任何 `GET /api/history` 讀取,都會更新 `lastClientActivity`。最近 30 秒內有活動 → 預設每 30 秒取樣;否則 → 每 30 分鐘取樣。前端僅輪詢當前 SmartHub 分頁需要的工作，趨勢圖預設每 30 秒重繪。
 
 ## 前端版面 (public/index.html)
 
@@ -181,7 +181,7 @@ NAS 頁對應區塊:進階 KPI 列(運行率/今日流量/滿載預估/Docker �
 | `GET /api/wiim/history` | 溫度歷史(記憶體,上限 5000 點;**只存真實樣本**,連不上裝置時跳過取樣不偽造) |
 | `GET /api/wiim/clear`, `GET /api/wiim/csv` | 清空 / 匯出溫度記錄 |
 
-溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 10 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 10s / `wiimPlayback` 5s)。遙控器欄位以 key 名稱模糊匹配。
+溫度輪詢為**自適應排程**(與趨勢取樣器同一套 `lastClientActivity` 判定):活躍時每 30 秒、閒置時 `trendIdleSec`。**正式後端不回退假資料**:裝置無回應時 `/api/wiim/status` 各欄位 null + `source:'unreachable'`,前端顯示「無法連線」(假資料只在 server-mock)。前端 WiiM 頁:Hero 播放卡(封面/可點擊進度條 seek/音量±/循環模式 loopmode)+ 左欄溫度監控與歷史日誌 + 右欄七分頁設定卡(音訊 DSP/EQ 含 EQGetStat 徽章/輸入源含 getPresetInfo 名稱標籤/藍牙/**串流群組**(URL 注入 play/playlist、Multiroom JoinGroupMaster、LMS、Chromecast)/運維(含 setShutdown 定時關機)/原始指令)+ 遙控器狀態卡 + **設備與網路資訊卡**(getStatusEx/getStaticIpInfo)。輪詢在 `POLL_JOBS` 註冊(`wiimSystem` 30s / `wiimPlayback` 5s，只在 WiiM 頁啟用)。遙控器欄位以 key 名稱模糊匹配。
 
 ### G. CyberPower UPS(NUT 優先多來源,對照 `cyberpower-ups-api.md`)
 `UPS_SOURCE=auto` 依序嘗試:**PPB**(PowerPanel Business REST API,`PPB_HOST`/`PPB_PORT`/`PPB_USER`/`PPB_PASSWORD`,Docker 部署時 PPB_HOST 必須指向實際主機 IP 而非 127.0.0.1)→ **NUT**(`upsc <NUT_UPS_NAME>@<NUT_HOST>`,容器內需 `apk add nut`,Dockerfile 已含)→ **pwrstat**(`pwrstat -status`)→ **pmset**(`pmset -g ps`,僅容量)。以 `child_process.exec` 呼叫本地指令,無需雲端。

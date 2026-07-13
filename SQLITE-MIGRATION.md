@@ -151,7 +151,7 @@ server.js 內會被取代的機制:
 1. **時間格式不一致(最容易出 bug)**:現有 5 個系列用 `t`(ISO 字串)、wiim 用 `ts`(epoch 秒)。DB 統一存 epoch 毫秒,但 API 回應必須轉回原格式,否則前端所有圖表的時間軸直接壞掉。每切一個系列就開頁面比對一次。
 2. **Docker 原生模組**:better-sqlite3 在 alpine(musl)上,x64 有 prebuild 但不保證每版都有;Dockerfile 要嘛加 `apk add --no-cache --virtual .build python3 make g++` 再 `npm ci` 後 `apk del .build`,要嘛換 debian-slim base。**先在本機 build 一次 Docker 映像再開始寫程式**,避免寫完才發現編不過。
 3. **ups-events 的就地改寫模式**:現在是 `upsEvents.unshift(...)` + 直接改 `upsEvents[0].end`,還有「重啟時檢查 `[0]` 未結束就接續」的邏輯。改成 DB 後要用 `WHERE end_ts IS NULL` 找進行中事件,漏改任何一處都會出現重複/斷裂的斷電紀錄。
-4. **磁碟寫入頻率變高**:JSON 時代是 30 分鐘寫一次大檔,SQLite 是每筆樣本一次小寫入(WAL append)。對 SSD 完全沒問題,但如果 `data/` volume 在機械碟上會**妨礙硬碟休眠**。對策:DB 放系統碟(UGREEN 預設 docker volume 在系統 SSD 即可);若真的需要,再把 `historyFlushMin` 重新利用為「批次 transaction 間隔」(記憶體暫存 + 定時批次寫)——但先不要做,不要為了不存在的問題加複雜度。
+4. **磁碟寫入頻率**:已將 `historyFlushMin` 重新利用為批次 transaction 間隔（預設 10 分鐘），並以 1,000 筆 / 1 MiB 作為提前 flush 的記憶體上限。查詢會合併 pending queue，正常關機與 UPS 斷電轉態會強制 flush；UPS 事件、封鎖、報表與 NAS 日誌推播仍立即處理。
 5. **保留清理殘留空間**:`DELETE` 不會縮小檔案。開庫時設 `PRAGMA auto_vacuum = INCREMENTAL`(必須在建表前!),清理後跑 `PRAGMA incremental_vacuum`。
 6. **匯入只能跑一次**:啟動匯入要判斷「該系列 DB 已有資料就跳過」,且舊檔改名 `.migrated.bak` 保留而不是刪除——這是你的回滾保險,穩定跑兩週後再手動刪。
 7. **`/api/ups/csv` 與報表**:`buildReport` 裡 `sliceSince(upsHistory...)`、`sliceSince(linuxHistory...)` 等 10 處讀取要一起改,漏掉會 ReferenceError(變數已刪)。用 `grep -n "History\b" server.js` 全面掃一次。

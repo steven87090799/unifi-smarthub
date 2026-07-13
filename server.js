@@ -19,6 +19,7 @@ const { IssueTracker } = require('./observability/issue-tracker');
 const { TaskTracker } = require('./observability/task-tracker');
 const { SystemMonitor } = require('./observability/system-monitor');
 const { registerHealthRoutes } = require('./observability/health-routes');
+const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 
 const APP_STARTED_AT = Date.now();
 const logger = createLogger({ service: 'smarthub' });
@@ -360,7 +361,7 @@ function fetchHardwareSSH() {
 
 // 行程內共用入口 (route / notificationWatcher / buildReport 皆走這裡，不再自打 HTTP)
 async function getHardwareCached() {
-    if (hwCache && Date.now() - hwCache.ts < 5000) return hwCache.data;
+    if (hwCache && Date.now() - hwCache.ts < 15000) return hwCache.data;
     if (!hwInflight) hwInflight = fetchHardwareSSH().finally(() => { hwInflight = null; });
     const data = await hwInflight;
     hwCache = { ts: Date.now(), data };
@@ -588,7 +589,7 @@ const systemMonitor = new SystemMonitor({
 /* ===================== 應用程式設定 (可於「設定」頁調整所有伺服器端輪詢間隔) ===================== */
 const APP_SETTINGS_FILE = path.join(DATA_DIR, 'app-settings.json');
 const APP_DEFAULTS = {
-    trendActiveSec: 5,      // 有人瀏覽時趨勢取樣間隔
+    trendActiveSec: 30,     // 有人瀏覽時趨勢取樣間隔
     trendIdleSec: 1800,     // 閒置時趨勢取樣間隔 (30 分鐘)
     activeWindowSec: 30,    // 最近幾秒內有活動視為「有人瀏覽」
     watcherSec: 20,         // 通知監看器間隔
@@ -601,14 +602,14 @@ const APP_DEFAULTS = {
     upsSampleSec: 30,       // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
     wiimCpuAlert: 70,       // WiiM CPU 溫度警示門檻 (°C，圖上門檻線 + 超標推播)
     wiimBoardAlert: 60,     // WiiM 主機板溫度警示門檻 (°C)
-    historyFlushMin: 30,    // 舊版相容欄位；SQLite 已改為每筆交易寫入，欄位不再控制落盤
+    historyFlushMin: 10,    // 一般遙測先存記憶體，再批次寫入 SQLite
     historyKeepDays: 30     // 歷史資料保存天數 (trend/UCG/NAS/UPS/WiiM 統一)
 };
 const APP_SETTING_RANGES = {
     trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600],
     watcherSec: [5, 3600], autoDefenseSec: [5, 3600], reportHour: [0, 23], reportHour2: [0, 23],
     upsSampleSec: [5, 3600], wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
-    toastSec: [1, 60], historyKeepDays: [1, 365]
+    toastSec: [1, 60], historyFlushMin: [1, 60], historyKeepDays: [1, 365]
 };
 function normalizeAppSettings(settings) {
     for (const [key, [min, max]] of Object.entries(APP_SETTING_RANGES)) {
@@ -656,8 +657,15 @@ app.post('/api/ui-preferences', (req, res) => {
 });
 
 // SQLite 以資料庫端清理取代舊的記憶體陣列 prune；清理後保留增量 vacuum，避免檔案無限膨脹。
-historyDb.cleanup(appSettings.historyKeepDays);
-setInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays)), 60 * 60 * 1000);
+historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP);
+setInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP)), 60 * 60 * 1000);
+let lastHistoryFlushTs = Date.now();
+setInterval(() => {
+    const gap = Math.max(Number(appSettings.historyFlushMin) || 10, 1) * 60 * 1000;
+    if (Date.now() - lastHistoryFlushTs < gap) return;
+    lastHistoryFlushTs = Date.now();
+    runSerialJob('historyFlush', () => historyDb.flush());
+}, 10000);
 
 // 封鎖歷史紀錄 (僅記錄透過本面板下達的動作)
 function loadBlockHistory() { return historyDb.listBlockHistory(); }
@@ -1312,12 +1320,11 @@ async function notificationWatcher() {
         try {
             const data = await nasMonGet('/api/alerts/events', { hours: 24 });
             const events = Array.isArray(data) ? data : (data.events || data.data || []);
-            for (const e of events) {
-                if (e.acknowledged || e.level === 'info') continue;
-                if (notifiedNasAlertIds.has(e.id)) continue;
-                notifiedNasAlertIds.add(e.id);
-                if (notifBootstrapped) await notify('💾 NAS 警報', `[${e.level}] ${e.message || e.metric}`);
-            }
+            await forwardNasAlerts(events, {
+                knownIds: notifiedNasAlertIds,
+                bootstrapped: notifBootstrapped,
+                notify
+            });
         } catch (error) {
             logRecoverableFailure('watcher.nasAlerts', error, { module: 'watcher.notifications', function: 'scanNasAlerts', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
         }
@@ -1408,13 +1415,12 @@ async function notificationWatcher() {
     if (s.triggerNasLog && nasConfigured()) {
         try {
             const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 50, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
-            for (const l of (data.log_list || [])) {
-                if (notifiedNasLogIds.has(l.log_id)) continue;
-                notifiedNasLogIds.add(l.log_id);
-                if (!notifBootstrapped) continue;               // 首輪只登記既有事件
-                const emoji = { critical: '🚨', error: '❌', warning: '⚠️' }[l.level] || '📋';
-                await notify(`${emoji} NAS 日誌 [${l.level}]`, `[${l.module}] ${l.content}`);
-            }
+            // NAS 事件一旦進入 SmartHub 就立即呼叫手機推播，不經過歷史資料的記憶體緩衝。
+            await forwardNasLogs(data.log_list || [], {
+                knownIds: notifiedNasLogIds,
+                bootstrapped: notifBootstrapped,
+                notify
+            });
         } catch (error) {
             logRecoverableFailure('watcher.nasLogs', error, { module: 'watcher.notifications', function: 'scanNasLogs', code: ERROR_CODES.EXT_NAS_FAILED });
         }
@@ -2040,10 +2046,10 @@ async function sampleNasHistory() {
         historyDb.insertPoint('nas', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
     } catch (e) { throw e; }
 }
-// 自適應：有人看網頁時每 60 秒、閒置時每 10 分鐘 (歷史圖不需要太密)
+// 自適應：有人看網頁時每 120 秒、閒置時每 15 分鐘。
 setInterval(() => {
     const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
-    const gap = (active ? 60 : 600) * 1000;
+    const gap = (active ? 120 : 900) * 1000;
     if (Date.now() - lastNasSampleTs >= gap) {
         lastNasSampleTs = Date.now();
         runSerialJob('nasHistory', sampleNasHistory);
@@ -2762,12 +2768,12 @@ async function pollWiimTemp() {
     });
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
-// 自適應排程：有人瀏覽時每 10 秒取樣，閒置時降為 trendIdleSec (與趨勢取樣器同一套活躍判定)
+// 自適應排程：有人瀏覽時每 30 秒取樣，閒置時降為 trendIdleSec。
 let lastWiimPollTs = 0;
 setInterval(() => {
     const now = Date.now();
     const active = (now - lastClientActivity) < appSettings.activeWindowSec * 1000;
-    const gap = active ? 10000 : appSettings.trendIdleSec * 1000;
+    const gap = active ? 30000 : appSettings.trendIdleSec * 1000;
     if (now - lastWiimPollTs >= gap) {
         lastWiimPollTs = now;
         runSerialJob('wiimTemperature', pollWiimTemp);
@@ -3074,6 +3080,7 @@ async function sampleUps() {
 
     // 斷電事件：市電斷 → 開新事件；恢復 → 補上結束時間與時長
     if (live.onBattery && !upsWasOnBattery) {
+        historyDb.flush(); // 電源異常時先保全尚未落盤的一般遙測
         historyDb.insertUpsEvent({ start: new Date().toISOString(), minBattery: live.battery, startVoltage: live.inputV });
         sysLog('UPS', `⚡ 偵測到斷電！事件已記錄 (電池 ${live.battery}%)`, true);
         const ns = loadNotifSettings();
@@ -3134,7 +3141,11 @@ setInterval(() => {
 }, 1000);
 
 app.get('/api/ups/status', async (req, res) => {
-    // 讀取即時值；失敗時回報最後一次成功樣本供前端顯示「最後已知狀態」
+    // 前端與背景取樣共用最近狀態，避免每次畫面刷新都重新呼叫 PPB/NUT。
+    const maxAge = (appSettings.upsSampleSec || 30) * 1000;
+    if (upsLastLive && Date.now() - upsLastLive.ts < maxAge) {
+        return res.json({ ...upsLastLive, cached: true, sampleSec: appSettings.upsSampleSec || 30 });
+    }
     const live = await readUpsLive();
     if (live) upsLastLive = { ...live, ts: Date.now() };
     res.json(live ? { ...live, sampleSec: appSettings.upsSampleSec || 30 }
@@ -3281,12 +3292,12 @@ app.get('/api/linux/stats', async (req, res) => {
         res.json({ source: 'error', error: publicError(e) });
     }
 });
-// 歷史取樣 (自適應：活躍 60s / 閒置 10min)，與其他歷史相同的節流落盤
+// 歷史取樣 (自適應：活躍 120s / 閒置 15min)
 let lastLinuxSampleTs = 0;
 setInterval(() => {
     if (!linuxConfigured()) return;
     const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
-    const gap = (active ? 60 : 600) * 1000;
+    const gap = (active ? 120 : 900) * 1000;
     if (Date.now() - lastLinuxSampleTs < gap) return;
     lastLinuxSampleTs = Date.now();
     runSerialJob('linuxHistory', async () => {
