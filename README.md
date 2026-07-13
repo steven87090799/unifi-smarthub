@@ -6,7 +6,7 @@
 - **後端**:`server.js`(Express,port 3000)— 資料來源:SSH×2、UniFi 本地 API、Site Manager 雲端 API、UGOS API、LinkPlay HTTP API、NUT/PowerPanel Business、AdGuard REST API
 - **開發預覽**:`node server-mock.js`(port 3005,純假資料免設定)
 
-主要功能:即時監控與歷史圖表(範圍 10 分鐘~7 天)、封鎖設備/關 WiFi/PoE 斷電、IPS 威脅戰情室與自動防禦、UPS 斷電事件記錄、硬碟休眠統計、客戶端自訂名稱、Discord/Telegram/Webhook 推播(20+ 種觸發條件)、定期報表、Structured Logging、System Diagnostics、頂部重大事件閃爍警報、PWA 手機安裝。
+主要功能:即時監控與歷史圖表(範圍 10 分鐘~7 天)、封鎖設備/關 WiFi/PoE 斷電、IPS 威脅戰情室與自動防禦、UPS 斷電事件記錄、硬碟休眠統計、客戶端自訂名稱、Discord/Telegram/Webhook 推播(56 種可獨立勾選的觸發條件)、定期報表、Structured Logging、System Diagnostics、頂部重大事件閃爍警報、PWA 手機安裝。
 
 ---
 

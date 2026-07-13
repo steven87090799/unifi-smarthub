@@ -1,6 +1,6 @@
 {
   "name": "unifi-smarthub-production",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Production Secure Proxy for UniFi Controller and UCG-Ultra",
   "main": "server.js",
   "scripts": {
