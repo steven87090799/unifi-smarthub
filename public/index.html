@@ -584,6 +584,308 @@
             50% { background: rgba(127, 29, 29, 0.6); color: #fecaca; box-shadow: 0 0 4px rgba(239, 68, 68, 0.3); }
         }
         .crit-blink { animation: critBlink 0.9s ease-in-out infinite; border: 1px solid rgba(248, 113, 113, 0.8); }
+
+        /* ===== SmartHub UI System 2026 ===== */
+        :root {
+            --ui-bg: #07101d;
+            --ui-surface: rgba(15, 25, 43, .82);
+            --ui-surface-strong: rgba(12, 21, 37, .94);
+            --ui-surface-soft: rgba(20, 32, 52, .64);
+            --ui-border: rgba(148, 163, 184, .16);
+            --ui-border-strong: rgba(148, 163, 184, .28);
+            --ui-text: #f1f5f9;
+            --ui-muted: #94a3b8;
+            --ui-subtle: #64748b;
+            --ui-info: #60a5fa;
+            --ui-healthy: #34d399;
+            --ui-warning: #fbbf24;
+            --ui-critical: #fb7185;
+            --ui-error: #f87171;
+            --ui-radius-card: 18px;
+            --ui-radius-control: 10px;
+            --ui-shadow-card: 0 14px 40px rgba(2, 6, 23, .28);
+            --ui-duration-fast: 140ms;
+            --ui-duration: 220ms;
+            --ui-ease: cubic-bezier(.2, .8, .2, 1);
+        }
+
+        html { color-scheme: dark; }
+        html.light { color-scheme: light; }
+        body {
+            background-color: var(--ui-bg);
+            color: var(--ui-text);
+            line-height: 1.55;
+            text-rendering: optimizeLegibility;
+            -webkit-font-smoothing: antialiased;
+            overflow-x: hidden;
+            overflow-x: clip;
+        }
+
+        main {
+            max-width: 1680px !important;
+            padding: clamp(1rem, 2vw, 2rem) !important;
+        }
+
+        main > section { gap: clamp(1rem, 1.5vw, 1.5rem); min-width: 0; max-width: 100%; }
+
+        main .rounded-2xl {
+            border-radius: var(--ui-radius-card) !important;
+            background: linear-gradient(155deg, rgba(25, 38, 61, .78), rgba(10, 18, 32, .88)) !important;
+            border-color: var(--ui-border) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.055), var(--ui-shadow-card) !important;
+            transform: none;
+        }
+
+        main .rounded-2xl:hover { transform: none; border-color: var(--ui-border-strong) !important; }
+        main .kpi-card:hover,
+        main [onclick].rounded-2xl:hover {
+            transform: translateY(-2px);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 18px 48px rgba(2, 6, 23, .38) !important;
+        }
+
+        main .rounded-2xl .rounded-xl {
+            border-radius: 14px !important;
+            background-color: rgba(6, 13, 25, .5) !important;
+            border-color: rgba(148, 163, 184, .13) !important;
+        }
+
+        main [class*="text-[8px]"],
+        main [class*="text-[9px]"],
+        main [class*="text-[10px]"],
+        main [class*="text-[11px]"] { font-size: .75rem !important; }
+
+        main h3 { line-height: 1.35; }
+        main p { text-wrap: pretty; }
+        .mono { font-variant-numeric: tabular-nums; }
+
+        button, input, select, textarea { font: inherit; }
+        main button {
+            min-height: 36px;
+            border-radius: var(--ui-radius-control);
+            transition-duration: var(--ui-duration-fast) !important;
+            transition-timing-function: var(--ui-ease) !important;
+        }
+        main button:hover { filter: brightness(1.1); }
+        main button:disabled { opacity: .48; cursor: not-allowed; filter: none; }
+        input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+        select,
+        textarea {
+            min-height: 42px;
+            border-radius: var(--ui-radius-control) !important;
+            background: rgba(2, 8, 18, .72) !important;
+            border-color: rgba(148, 163, 184, .22) !important;
+        }
+        input::placeholder, textarea::placeholder { color: #64748b; opacity: 1; }
+
+        :where(button, [role="button"], input, select, textarea, a):focus-visible {
+            outline: 3px solid rgba(96, 165, 250, .5) !important;
+            outline-offset: 2px;
+        }
+
+        main table { border-collapse: separate; border-spacing: 0; }
+        main table th {
+            color: #cbd5e1;
+            font-size: .75rem !important;
+            letter-spacing: .04em;
+            white-space: nowrap;
+        }
+        main table td {
+            padding-top: .7rem !important;
+            padding-bottom: .7rem !important;
+            vertical-align: middle;
+        }
+        main table tbody tr { transition: background var(--ui-duration-fast) ease; }
+        main table tbody tr:hover { background: rgba(59, 130, 246, .055); }
+        .table-scroll-region {
+            overflow-x: auto;
+            overscroll-behavior-inline: contain;
+            scrollbar-gutter: stable;
+            border-radius: 12px;
+        }
+
+        /* 統一狀態語言：健康／警告／危險／錯誤 */
+        [class*="bg-emerald-500/10"][class*="rounded-full"] { box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .08); }
+        [class*="bg-amber-500/10"][class*="rounded-full"] { box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .08); }
+        [class*="bg-red-500/10"][class*="rounded-full"] { box-shadow: inset 0 0 0 1px rgba(248, 113, 113, .08); }
+
+        .ui-loading-state {
+            display: flex !important;
+            align-items: center;
+            justify-content: center;
+            gap: .65rem;
+            min-height: 54px;
+            color: var(--ui-muted) !important;
+        }
+        .ui-loading-state::before {
+            content: '';
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(148, 163, 184, .2);
+            border-top-color: var(--ui-info);
+            border-radius: 999px;
+            animation: spinSlow .8s linear infinite;
+        }
+        .ui-empty-state,
+        .ui-error-state {
+            display: grid;
+            place-items: center;
+            min-height: 72px;
+            padding: 1rem;
+            border-radius: 12px;
+            text-align: center;
+        }
+        .ui-empty-state {
+            color: #94a3b8 !important;
+            border: 1px dashed rgba(148, 163, 184, .22);
+            background: rgba(15, 23, 42, .24);
+        }
+        .ui-error-state {
+            color: #fca5a5 !important;
+            border: 1px solid rgba(248, 113, 113, .22);
+            background: rgba(127, 29, 29, .1);
+        }
+        .chart-loading::after {
+            content: '整理資料中';
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            color: var(--ui-muted);
+            font-size: .75rem;
+            letter-spacing: .08em;
+            background: linear-gradient(100deg, transparent 20%, rgba(96, 165, 250, .05) 50%, transparent 80%);
+            background-size: 220% 100%;
+            animation: uiShimmer 1.5s linear infinite;
+            pointer-events: none;
+        }
+        @keyframes uiShimmer { to { background-position: -220% 0; } }
+
+        /* Chart.js 共用互動層 */
+        .chart-host { position: relative; isolation: isolate; }
+        .chart-tooltip {
+            position: absolute;
+            z-index: 20;
+            min-width: 180px;
+            max-width: min(300px, calc(100vw - 40px));
+            padding: .75rem;
+            border: 1px solid rgba(148, 163, 184, .24);
+            border-radius: 12px;
+            background: rgba(6, 13, 25, .96);
+            box-shadow: 0 18px 45px rgba(0,0,0,.42);
+            color: #e2e8f0;
+            font-size: .75rem;
+            line-height: 1.35;
+            pointer-events: none;
+            transform: translate(-50%, calc(-100% - 14px));
+            transition: opacity 80ms linear;
+        }
+        .chart-tooltip-title { color: #fff; font-weight: 800; margin-bottom: .5rem; }
+        .chart-tooltip-row { display: grid; grid-template-columns: 8px minmax(0,1fr) auto; gap: .5rem; align-items: center; margin-top: .3rem; }
+        .chart-tooltip-dot { width: 7px; height: 7px; border-radius: 999px; }
+        .chart-tooltip-label { color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .chart-tooltip-value { color: #f8fafc; font-family: 'Fira Code', monospace; font-weight: 700; }
+        .chart-tooltip-more { margin-top: .55rem; padding-top: .45rem; border-top: 1px solid rgba(148,163,184,.15); color: #60a5fa; }
+
+        .chart-legend-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: .45rem;
+            margin: .25rem 0 .75rem;
+            width: 100%;
+            max-width: 100%;
+            min-width: 0;
+        }
+        .chart-legend-toolbar button {
+            display: inline-flex;
+            align-items: center;
+            gap: .4rem;
+            min-height: 32px;
+            padding: .3rem .65rem;
+            color: #cbd5e1;
+            background: rgba(15,23,42,.56);
+            border: 1px solid rgba(148,163,184,.17);
+            border-radius: 999px;
+            font-size: .75rem;
+            font-weight: 700;
+        }
+        .chart-legend-toolbar button[aria-pressed="false"] { opacity: .48; text-decoration: line-through; }
+        .chart-legend-swatch { width: 12px; height: 3px; border-radius: 999px; }
+
+        .chart-detail-panel {
+            display: none;
+            margin-top: .75rem;
+            padding: .85rem 1rem;
+            border: 1px solid rgba(96, 165, 250, .2);
+            border-radius: 12px;
+            background: rgba(30, 64, 175, .075);
+        }
+        .chart-detail-panel.is-open { display: block; animation: detailIn var(--ui-duration) var(--ui-ease); }
+        @keyframes detailIn { from { opacity: 0; transform: translateY(-4px); } }
+        .chart-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .65rem; }
+        .chart-detail-title { color: #e2e8f0; font-size: .78rem; font-weight: 800; }
+        .chart-detail-close { min-height: 30px !important; color: #94a3b8; padding: .15rem .5rem; }
+        .chart-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .5rem; }
+        .chart-detail-item { padding: .55rem .65rem; border-radius: 9px; background: rgba(2,6,23,.35); }
+        .chart-detail-label { display: flex; align-items: center; gap: .4rem; color: #94a3b8; font-size: .7rem; }
+        .chart-detail-value { margin-top: .2rem; color: #f8fafc; font: 700 .8rem 'Fira Code', monospace; }
+
+        /* Modal 與 Toast */
+        [role="dialog"] > div { box-shadow: 0 30px 90px rgba(0,0,0,.55); }
+        #toast { max-width: min(430px, calc(100vw - 2rem)); backdrop-filter: blur(18px); }
+        .nav-active { animation: none !important; }
+        .logo-glow { animation: none !important; box-shadow: 0 0 18px rgba(59, 130, 246, .26); }
+        .crit-blink { animation: critBlink 1.8s ease-in-out 3; }
+        #threat-map text { font-size: 12px !important; }
+
+        html.light main .rounded-2xl {
+            background: linear-gradient(155deg, rgba(255,255,255,.92), rgba(241,245,249,.84)) !important;
+            box-shadow: inset 0 1px 0 #fff, 0 14px 36px rgba(15,23,42,.08) !important;
+        }
+        html.light .chart-tooltip { background: rgba(255,255,255,.98); color: #0f172a; border-color: #cbd5e1; }
+        html.light .chart-tooltip-title,
+        html.light .chart-tooltip-value,
+        html.light .chart-detail-title,
+        html.light .chart-detail-value { color: #0f172a; }
+        html.light input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+        html.light select,
+        html.light textarea { background: rgba(255,255,255,.92) !important; }
+
+        @media (max-width: 639px) {
+            main { padding: 1rem !important; }
+            header { min-height: 68px; padding: .75rem 1rem !important; }
+            #page-title { font-size: 1rem; }
+            #page-subtitle { max-width: 210px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            main .rounded-2xl { border-radius: 16px !important; }
+            main .rounded-2xl[class*="p-6"] { padding: 1rem !important; }
+            main .rounded-2xl[class*="p-5"] { padding: 1rem !important; }
+            main button { min-height: 42px; }
+            .chart-legend-toolbar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: .25rem; }
+            .chart-legend-toolbar button { flex: 0 0 auto; min-height: 38px; }
+            .chart-detail-grid { grid-template-columns: 1fr 1fr; }
+            #toast { left: 1rem; right: 1rem; bottom: 1rem; }
+            #crit-alert-banner { max-width: 42vw; padding-inline: .65rem; }
+            #threat-map text { display: none; }
+            body::before, body::after { animation: none !important; }
+            main .rounded-2xl { backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15); }
+        }
+
+        @media (max-width: 430px) {
+            .dashboard-kpi-grid { grid-template-columns: 1fr !important; }
+            .dashboard-kpi-grid .kpi-card { min-height: 118px; display: flex; flex-direction: column; justify-content: center; }
+            #ov-vitals > div > .flex.items-center.gap-5 { align-items: flex-start; gap: 1rem; }
+            #ov-vitals > div > .grid { grid-template-columns: 1fr; }
+            .chart-detail-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                transition-duration: .01ms !important;
+            }
+            body::before, body::after { display: none; }
+        }
     </style>
 </head>
 
@@ -738,7 +1040,7 @@
         <div class="flex-1 flex flex-col min-w-0">
             <header
                 class="border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-xl sticky top-0 z-30 px-4 md:px-6 py-3.5 flex items-center gap-4">
-                <button class="lg:hidden p-2 rounded-lg border border-slate-800 text-slate-400"
+                <button aria-label="開啟導航選單" aria-controls="sidebar" class="lg:hidden p-2 rounded-lg border border-slate-800 text-slate-400"
                     onclick="toggleSidebar(true)">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16" />
@@ -790,7 +1092,7 @@
                 <!-- ==================== 頁面：總覽 ==================== -->
                 <section id="page-overview" class="space-y-6">
                     <!-- 4 張 KPI 卡 -->
-                    <div data-drag class="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div data-drag class="dashboard-kpi-grid grid grid-cols-2 xl:grid-cols-4 gap-4">
                         <div class="kpi-card bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5"
                             onclick="navigate('cloud')">
                             <div class="flex justify-between items-start">
@@ -2282,7 +2584,7 @@
                             <div class="flex justify-between items-start">
                                 <div>
                                     <h3 class="text-lg font-bold text-white tracking-wider">推播設定</h3>
-                                    <p class="text-[10px] text-slate-500 mt-0.5">威脅攔截與 NAS 嚴重警報發生時，自動推播到你的裝置</p>
+                                    <p class="text-[10px] text-slate-500 mt-0.5">各條件依伺服器監看器週期檢查；首次啟用只建立基準，不會把既有歷史事件一次洗版</p>
                                 </div>
                                 <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
                                     <input type="checkbox" id="notif-enabled" class="sr-only peer">
@@ -2452,6 +2754,49 @@
                                             class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             onclick="event.preventDefault()"> %
                                     </label>
+                                    <div class="pt-3 mt-3 border-t border-slate-800/70 space-y-2.5">
+                                        <p class="text-[10px] font-bold text-blue-300 uppercase tracking-wider">Docker、系統健康與連線</p>
+                                        <p class="text-[9px] text-slate-500 leading-relaxed">Docker 條件需設定 NAS Monitor。嚴重 Log 只比對 fatal、panic、OOM、critical、未處理例外等高風險關鍵字；錯誤 Log 會更頻繁，預設關閉。</p>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-critical" class="accent-blue-500 w-4 h-4"> Docker 嚴重 Log（fatal / panic / OOM / critical / 未處理例外）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-error" class="accent-blue-500 w-4 h-4"> Docker 一般錯誤 Log（error / failed / exception，較容易頻繁）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-state" class="accent-blue-500 w-4 h-4"> Docker 容器停止 / 恢復運行
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-cpu" class="accent-blue-500 w-4 h-4"> Docker 容器 CPU 超過
+                                            <input type="number" id="notif-docker-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-memory" class="accent-blue-500 w-4 h-4"> Docker 容器記憶體使用率超過
+                                            <input type="number" id="notif-docker-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-nas-disk-health" class="accent-blue-500 w-4 h-4"> NAS 硬碟健康狀態異常（非 healthy / normal / OK）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-nas-offline" class="accent-blue-500 w-4 h-4"> NAS 原生 API 離線 / 恢復
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-unifi-offline" class="accent-blue-500 w-4 h-4"> UniFi 本地控制器登入失敗 / 恢復
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-ucg-cpu" class="accent-blue-500 w-4 h-4"> UCG CPU 使用率超過
+                                            <input type="number" id="notif-ucg-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-system-critical" class="accent-blue-500 w-4 h-4"> SmartHub 系統嚴重事件（主機資源、SQLite、卡住的背景工作）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-system-warning" class="accent-blue-500 w-4 h-4"> SmartHub 系統警告事件（較早期預警，可能較頻繁）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-system-recovery" class="accent-blue-500 w-4 h-4"> SmartHub 系統事件解除後通知恢復
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
 
@@ -2514,7 +2859,7 @@
                                     <h3 class="text-lg font-bold text-white tracking-wider">System Diagnostics</h3>
                                     <span id="sysdiag-overall" class="px-2.5 py-1 rounded-full text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">Unknown</span>
                                 </div>
-                                <p class="text-[10px] text-slate-500 mt-1">應用程式、主機資源、SQLite 與背景工作的即時健康狀態；每 30 秒低頻更新。</p>
+                                <p class="text-[10px] text-slate-500 mt-1">主機／容器的 CPU、記憶體、資料碟用量，加上本 Node 程序、SQLite 與背景工作健康；每 30 秒低頻更新。</p>
                             </div>
                             <button onclick="fetchSystemStatus()" class="py-2 px-4 rounded-xl text-[10px] font-bold border bg-slate-950 text-blue-400 border-slate-800 hover:border-blue-500/40 transition shrink-0">↻ 立即檢查</button>
                         </div>
@@ -2703,7 +3048,7 @@
                         <div class="flex justify-between items-start">
                             <div>
                                 <h3 class="text-lg font-bold text-white tracking-wider">定期報表</h3>
-                                <p class="text-[10px] text-slate-500 mt-0.5">自動彙整威脅/流量/運行率，透過「通知推播」定時發送（需先在通知頁啟用推播）</p>
+                                <p class="text-[10px] text-slate-500 mt-0.5">自動彙整資安、設備、主機健康、Docker 容器與近期嚴重 Log；發送結果會保存於下方執行紀錄</p>
                             </div>
                             <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
                                 <input type="checkbox" id="report-enabled" class="sr-only peer">
@@ -2743,6 +3088,15 @@
                         </div>
                         <pre id="report-preview"
                             class="hidden bg-slate-950/70 border border-slate-800/60 rounded-lg p-4 text-[11px] text-emerald-400 mono whitespace-pre-wrap"></pre>
+                        <div class="pt-2 border-t border-slate-800/70">
+                            <div class="flex justify-between items-center mb-2">
+                                <p class="text-[11px] font-bold text-slate-300">報表執行紀錄</p>
+                                <button onclick="fetchReportLog()" class="text-[10px] text-blue-400 hover:text-blue-300 font-bold">↻ 重新整理</button>
+                            </div>
+                            <div id="report-log" class="space-y-2 max-h-72 overflow-y-auto terminal-scroll">
+                                <p class="text-[10px] text-slate-500 text-center py-3">尚無報表執行紀錄</p>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- 兩種間隔的差異說明 -->
@@ -3841,12 +4195,12 @@
     </div>
 
     <!-- 客戶端詳情彈窗 -->
-    <div id="client-modal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
+    <div id="client-modal" role="dialog" aria-modal="true" aria-labelledby="cd-title" aria-hidden="true" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
         onclick="if(event.target===this)closeClientDetail()">
         <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md">
             <div class="flex justify-between items-center px-5 py-4 border-b border-slate-800">
                 <span class="text-sm font-bold text-white" id="cd-title">客戶端詳情</span>
-                <button onclick="closeClientDetail()"
+                <button aria-label="關閉客戶端詳情" onclick="closeClientDetail()"
                     class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
             </div>
             <div class="p-5 space-y-3" id="cd-body"></div>
@@ -3854,12 +4208,12 @@
     </div>
 
     <!-- 硬碟 SMART 詳情彈窗 -->
-    <div id="smart-modal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
+    <div id="smart-modal" role="dialog" aria-modal="true" aria-labelledby="smart-title" aria-hidden="true" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
         onclick="if(event.target===this)closeDiskSmart()">
         <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col">
             <div class="flex justify-between items-center px-5 py-4 border-b border-slate-800">
                 <span class="text-sm font-bold text-white" id="smart-title">SMART 詳情</span>
-                <button onclick="closeDiskSmart()"
+                <button aria-label="關閉 SMART 詳情" onclick="closeDiskSmart()"
                     class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
             </div>
             <div class="p-5 overflow-auto terminal-scroll" id="smart-body">
@@ -3869,12 +4223,12 @@
     </div>
 
     <!-- Docker 日誌彈窗 (置於頂層，避免被 backdrop-blur 祖先影響 fixed 定位) -->
-    <div id="docker-log-modal" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
+    <div id="docker-log-modal" role="dialog" aria-modal="true" aria-labelledby="docker-log-title" aria-hidden="true" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
         onclick="if(event.target===this)closeDockerLog()">
         <div class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
             <div class="flex justify-between items-center px-4 py-3 border-b border-slate-800">
                 <span class="text-xs font-bold text-slate-200 mono" id="docker-log-title">容器日誌</span>
-                <button onclick="closeDockerLog()"
+                <button aria-label="關閉容器日誌" onclick="closeDockerLog()"
                     class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
             </div>
             <pre class="p-4 text-[10px] text-emerald-400 mono overflow-auto flex-grow terminal-scroll"
@@ -3882,7 +4236,7 @@
         </div>
     </div>
 
-    <div id="toast"
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true"
         class="fixed bottom-6 right-6 px-4 py-2.5 bg-slate-900 border border-blue-900/60 text-blue-200 text-xs rounded-xl shadow-2xl opacity-0 transition-all duration-300 flex items-center gap-2 z-[60] transform translate-y-2 pointer-events-none">
         <span class="w-2.5 h-2.5 bg-blue-500 rounded-full animate-ping" id="toast-dot"></span>
         <span id="toast-text"></span>
@@ -4034,6 +4388,7 @@
             syncPinned();
         }
         function syncPinned() {
+            if (document.hidden || document.getElementById('page-overview')?.classList.contains('hidden')) return;
             document.querySelectorAll('#ov-pinned [data-mirror-of]').forEach(holder => {
                 const src = document.querySelector(`[data-bid="${holder.dataset.mirrorOf}"]`);
                 const mirror = holder.querySelector('.pinned-mirror');
@@ -4074,6 +4429,314 @@
             if (layoutEditing && e.target.closest('.pin-add-btn')) return;
             if (layoutEditing && e.target.closest('main > section')) { e.stopPropagation(); e.preventDefault(); }
         }, true);
+
+        /* ==================== 共用 UI / Chart System ==================== */
+        const compactNumberFormatter = new Intl.NumberFormat('zh-TW', { notation: 'compact', maximumFractionDigits: 1 });
+        const preciseNumberFormatter = new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2 });
+
+        function compactNumber(value) {
+            const number = Number(value);
+            if (!Number.isFinite(number)) return value == null ? '--' : String(value);
+            return Math.abs(number) >= 1000 ? compactNumberFormatter.format(number) : preciseNumberFormatter.format(number);
+        }
+
+        function chartUnit(dataset) {
+            const label = String(dataset?.label || '').toLowerCase();
+            if (label.includes('°c') || label.includes('溫度')) return '°C';
+            if (label.includes('rpm') || label.includes('風扇')) return ' RPM';
+            if (label.includes('延遲') || label.includes('(ms)')) return ' ms';
+            if (label.includes('mbps') || label.includes('下載') || label.includes('上傳')) return ' Mbps';
+            if (label.includes('gb')) return ' GB';
+            if (label.includes('(v)') || label.includes('電壓') || label.includes('市電') || label.includes('ups 輸出')) return ' V';
+            if (label.includes('%') || label.includes('cpu') || label.includes('記憶體') || label.includes('負載') || label.includes('電池')) return '%';
+            return '';
+        }
+
+        function formatChartValue(value, dataset) {
+            const raw = value && typeof value === 'object' ? (value.y ?? value.r ?? value.x) : value;
+            return `${compactNumber(raw)}${chartUnit(dataset)}`;
+        }
+
+        function chartPointBudget() { return window.innerWidth < 640 ? 72 : 180; }
+
+        // 多欄位、峰值優先的視覺降採樣。統計仍使用原始資料，僅降低 canvas 繪製點數。
+        function downsampleRows(rows, keys = [], target = chartPointBudget()) {
+            if (!Array.isArray(rows) || rows.length <= target || target < 4) return rows || [];
+            const numericKeys = keys.filter(key => rows.some(row => Number.isFinite(Number(row?.[key]))));
+            if (!numericKeys.length) {
+                const stride = (rows.length - 1) / (target - 1);
+                return Array.from({ length: target }, (_, index) => rows[Math.round(index * stride)]);
+            }
+            const ranges = Object.fromEntries(numericKeys.map(key => {
+                const values = rows.map(row => Number(row?.[key])).filter(Number.isFinite);
+                return [key, Math.max(1, Math.max(...values) - Math.min(...values))];
+            }));
+            const selected = [rows[0]];
+            const stride = (rows.length - 2) / (target - 2);
+            for (let bucket = 0; bucket < target - 2; bucket++) {
+                const start = Math.max(1, Math.floor(1 + bucket * stride));
+                const end = Math.min(rows.length - 1, Math.ceil(1 + (bucket + 1) * stride));
+                const before = rows[Math.max(0, start - 1)];
+                const after = rows[Math.min(rows.length - 1, end)];
+                let bestIndex = start;
+                let bestScore = -1;
+                for (let index = start; index < end; index++) {
+                    const ratio = end === start ? 0 : (index - start + 1) / (end - start + 1);
+                    const score = numericKeys.reduce((maxScore, key) => {
+                        const current = Number(rows[index]?.[key]);
+                        const left = Number(before?.[key]);
+                        const right = Number(after?.[key]);
+                        if (![current, left, right].every(Number.isFinite)) return maxScore;
+                        const expected = left + (right - left) * ratio;
+                        return Math.max(maxScore, Math.abs(current - expected) / ranges[key]);
+                    }, 0);
+                    if (score > bestScore) { bestScore = score; bestIndex = index; }
+                }
+                selected.push(rows[bestIndex]);
+            }
+            selected.push(rows[rows.length - 1]);
+            return selected;
+        }
+
+        function uiExternalTooltip({ chart, tooltip }) {
+            const host = chart.canvas.parentElement;
+            if (!host) return;
+            host.classList.add('chart-host');
+            let element = host.querySelector('.chart-tooltip');
+            if (!element) {
+                element = document.createElement('div');
+                element.className = 'chart-tooltip';
+                element.setAttribute('role', 'tooltip');
+                host.appendChild(element);
+            }
+            if (!tooltip || tooltip.opacity === 0) { element.style.opacity = '0'; return; }
+            const points = (tooltip.dataPoints || []).filter(point => point.raw != null);
+            const visible = points.slice(0, 4);
+            const rows = visible.map(point => {
+                const color = point.dataset.borderColor || point.dataset.backgroundColor || '#94a3b8';
+                return `<div class="chart-tooltip-row"><span class="chart-tooltip-dot" style="background:${escapeHtml(Array.isArray(color) ? color[point.dataIndex] : color)}"></span><span class="chart-tooltip-label">${escapeHtml(point.dataset.label || '數值')}</span><span class="chart-tooltip-value">${escapeHtml(formatChartValue(point.parsed, point.dataset))}</span></div>`;
+            }).join('');
+            const more = points.length > 4 ? `<div class="chart-tooltip-more">另有 ${points.length - 4} 項，點擊資料點查看完整明細</div>` : '<div class="chart-tooltip-more">點擊可固定完整明細</div>';
+            element.innerHTML = `<div class="chart-tooltip-title">${escapeHtml(tooltip.title?.[0] || '')}</div>${rows}${more}`;
+            element.style.opacity = '1';
+            const half = Math.min(150, element.offsetWidth / 2 || 100);
+            const left = Math.max(half + 6, Math.min(host.clientWidth - half - 6, tooltip.caretX));
+            element.style.left = `${left}px`;
+            element.style.top = `${Math.max(26, tooltip.caretY)}px`;
+        }
+
+        function ensureChartDetailPanel(chart) {
+            const host = chart.canvas.parentElement;
+            if (!host) return null;
+            const id = `chart-detail-${chart.canvas.id || chart.id}`;
+            let panel = document.getElementById(id);
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = id;
+                panel.className = 'chart-detail-panel';
+                panel.setAttribute('role', 'region');
+                panel.setAttribute('aria-live', 'polite');
+                host.insertAdjacentElement('afterend', panel);
+            }
+            return panel;
+        }
+
+        function showChartDetail(chart, dataIndex) {
+            const panel = ensureChartDetailPanel(chart);
+            if (!panel) return;
+            const label = chart.data.labels?.[dataIndex] ?? `資料點 ${dataIndex + 1}`;
+            const items = chart.data.datasets.map((dataset, datasetIndex) => ({
+                label: dataset.label || `系列 ${datasetIndex + 1}`,
+                value: dataset.data?.[dataIndex],
+                color: Array.isArray(dataset.borderColor) ? dataset.borderColor[dataIndex] : (dataset.borderColor || dataset.backgroundColor || '#94a3b8'),
+                dataset
+            })).filter(item => item.value != null);
+            panel.innerHTML = `<div class="chart-detail-head"><div><p class="chart-detail-title">${escapeHtml(label)}</p><p class="text-[10px] text-slate-500 mt-0.5">已固定資料點 · 可切換上方系列比較</p></div><button type="button" class="chart-detail-close" aria-label="關閉資料點明細">✕</button></div><div class="chart-detail-grid">${items.map(item => `<div class="chart-detail-item"><div class="chart-detail-label"><span class="chart-tooltip-dot" style="background:${escapeHtml(item.color)}"></span>${escapeHtml(item.label)}</div><div class="chart-detail-value">${escapeHtml(formatChartValue(item.value, item.dataset))}</div></div>`).join('')}</div>`;
+            panel.classList.add('is-open');
+            panel.querySelector('.chart-detail-close').addEventListener('click', () => panel.classList.remove('is-open'));
+        }
+
+        function renderHtmlChartLegend(chart) {
+            if (!chart.$htmlLegendEnabled || chart.data.datasets.length < 2) return;
+            const host = chart.canvas.parentElement;
+            if (!host) return;
+            const legendId = `chart-legend-${chart.canvas.id || chart.id}`;
+            let toolbar = document.getElementById(legendId);
+            if (!toolbar) {
+                toolbar = document.createElement('div');
+                toolbar.id = legendId;
+                toolbar.className = 'chart-legend-toolbar';
+                toolbar.setAttribute('aria-label', '圖表系列切換');
+                host.insertAdjacentElement('beforebegin', toolbar);
+            }
+            const signature = chart.data.datasets.map(dataset => `${dataset.label}|${dataset.borderColor}`).join('::');
+            if (toolbar.dataset.signature !== signature) {
+                toolbar.dataset.signature = signature;
+                toolbar.innerHTML = '';
+                chart.data.datasets.forEach((dataset, index) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.dataset.datasetIndex = index;
+                    button.innerHTML = `<span class="chart-legend-swatch" style="background:${escapeHtml(Array.isArray(dataset.borderColor) ? dataset.borderColor[0] : (dataset.borderColor || dataset.backgroundColor || '#94a3b8'))}"></span><span>${escapeHtml(dataset.label || `系列 ${index + 1}`)}</span>`;
+                    button.addEventListener('click', () => {
+                        chart.setDatasetVisibility(index, !chart.isDatasetVisible(index));
+                        chart.update();
+                    });
+                    toolbar.appendChild(button);
+                });
+            }
+            toolbar.querySelectorAll('button').forEach(button => {
+                const index = Number(button.dataset.datasetIndex);
+                button.setAttribute('aria-pressed', chart.isDatasetVisible(index) ? 'true' : 'false');
+            });
+        }
+
+        const smartChartUxPlugin = {
+            id: 'smartChartUx',
+            beforeInit(chart) {
+                const host = chart.canvas.parentElement;
+                if (host) host.classList.add('chart-host', 'chart-loading');
+                chart.canvas.setAttribute('role', 'img');
+                chart.canvas.setAttribute('tabindex', '0');
+                chart.canvas.setAttribute('aria-label', `${chart.data.datasets.map(dataset => dataset.label).filter(Boolean).join('、') || '資料'}圖表；滑過查看摘要，點擊資料點固定完整明細`);
+                const legendConfig = chart.config.options?.plugins?.legend;
+                const compactLegend = ['nasHeroChart'].includes(chart.canvas.id);
+                chart.$htmlLegendEnabled = chart.config.type !== 'doughnut' && chart.data.datasets.length > 1 && !compactLegend;
+                if (chart.$htmlLegendEnabled && legendConfig) legendConfig.display = false;
+                chart.canvas.addEventListener('click', event => {
+                    const points = chart.getElementsAtEventForMode(event, 'nearest', { intersect: false }, true);
+                    if (points.length) showChartDetail(chart, points[0].index);
+                });
+            },
+            beforeUpdate(chart) {
+                const scales = chart.config.options?.scales || {};
+                const mobile = window.innerWidth < 640;
+                Object.entries(scales).forEach(([axisId, scale]) => {
+                    scale.ticks ||= {};
+                    scale.ticks.autoSkip = true;
+                    scale.ticks.padding ??= 7;
+                    if (axisId.toLowerCase().startsWith('x')) {
+                        scale.ticks.maxTicksLimit = Math.min(scale.ticks.maxTicksLimit || 10, mobile ? 4 : 10);
+                        scale.ticks.maxRotation = 0;
+                        scale.ticks.minRotation = 0;
+                    } else {
+                        scale.ticks.maxTicksLimit = Math.min(scale.ticks.maxTicksLimit || 7, mobile ? 5 : 7);
+                    }
+                });
+            },
+            afterUpdate(chart) { renderHtmlChartLegend(chart); },
+            afterRender(chart) { chart.canvas.parentElement?.classList.remove('chart-loading'); },
+            afterDraw(chart) {
+                if (!['line', 'bar'].includes(chart.config.type)) return;
+                const active = chart.getActiveElements();
+                if (!active.length || !chart.chartArea) return;
+                const x = active[0].element.x;
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(x, chart.chartArea.top);
+                ctx.lineTo(x, chart.chartArea.bottom);
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = 'rgba(148, 163, 184, .5)';
+                ctx.stroke();
+                ctx.restore();
+            }
+        };
+
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = "'Noto Sans TC', sans-serif";
+        Chart.defaults.font.size = 11;
+        Chart.defaults.animation.duration = 240;
+        Chart.defaults.animation.easing = 'easeOutQuart';
+        Chart.defaults.interaction.mode = 'index';
+        Chart.defaults.interaction.intersect = false;
+        Chart.defaults.elements.line.borderWidth = 1.8;
+        Chart.defaults.elements.point.radius = 0;
+        Chart.defaults.elements.point.hoverRadius = 5;
+        Chart.defaults.elements.point.hitRadius = 14;
+        Chart.defaults.plugins.tooltip.enabled = false;
+        Chart.defaults.plugins.tooltip.external = uiExternalTooltip;
+        Chart.defaults.plugins.legend.labels.usePointStyle = true;
+        Chart.defaults.plugins.legend.labels.pointStyle = 'line';
+        Chart.defaults.plugins.legend.labels.padding = 14;
+        if (Chart.defaults.scales?.linear?.ticks) Chart.defaults.scales.linear.ticks.callback = value => compactNumber(value);
+        Chart.register(smartChartUxPlugin);
+
+        function syncLoadingState(element) {
+            if (!(element instanceof HTMLElement) || !element.matches('main p')) return;
+            const text = element.textContent.trim();
+            const loading = text.length < 32 && /^(載入|讀取|分析|偵測|等待|連線).*(中|\.\.\.|…)$/.test(text);
+            element.classList.toggle('ui-loading-state', loading);
+            element.classList.toggle('ui-empty-state', !loading && text.length < 80 && /^(尚無|無.*資料|暫無|沒有|無容器)/.test(text));
+            element.classList.toggle('ui-error-state', !loading && text.length < 100 && /^(讀取失敗|載入失敗|分析失敗|無法讀取|連線失敗)/.test(text));
+        }
+
+        function setDialogState(id, open) {
+            const modal = document.getElementById(id);
+            if (!modal) return;
+            modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+            if (open) {
+                modal._returnFocus = document.activeElement;
+                requestAnimationFrame(() => modal.querySelector('button')?.focus());
+            } else if (modal._returnFocus?.focus) {
+                modal._returnFocus.focus();
+                modal._returnFocus = null;
+            }
+        }
+
+        function initUiSystem() {
+            document.querySelectorAll('button:not([type])').forEach(button => { button.type = 'button'; });
+            document.querySelector('.nav-btn[data-page="overview"]')?.setAttribute('aria-current', 'page');
+            document.querySelector('header button[aria-controls="sidebar"]')?.setAttribute('aria-expanded', 'false');
+            document.getElementById('sidebar')?.setAttribute('aria-hidden', window.innerWidth < 1024 ? 'true' : 'false');
+            document.querySelectorAll('main table').forEach(table => {
+                const region = table.parentElement;
+                if (!region) return;
+                region.classList.add('table-scroll-region');
+                region.tabIndex = 0;
+                const section = table.closest('section');
+                region.setAttribute('aria-label', `${PAGE_META[section?.id?.replace('page-', '')]?.[0] || 'SmartHub'} 資料表，可水平捲動`);
+            });
+            document.querySelectorAll('.kpi-card, main [onclick].rounded-2xl, main [onclick].rounded-xl').forEach(element => {
+                if (element.matches('button, a, input')) return;
+                element.setAttribute('role', 'button');
+                element.tabIndex = 0;
+                element.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); element.click(); }
+                });
+            });
+            document.querySelectorAll('main p').forEach(syncLoadingState);
+            const observer = new MutationObserver(mutations => mutations.forEach(mutation => {
+                const element = mutation.target.nodeType === Node.TEXT_NODE ? mutation.target.parentElement : mutation.target;
+                if (element?.matches?.('p')) syncLoadingState(element);
+                element?.querySelectorAll?.('p').forEach(syncLoadingState);
+            }));
+            observer.observe(document.querySelector('main'), { childList: true, characterData: true, subtree: true });
+            document.addEventListener('keydown', event => {
+                if (event.key !== 'Escape') return;
+                if (!document.getElementById('client-modal').classList.contains('hidden')) closeClientDetail();
+                else if (!document.getElementById('smart-modal').classList.contains('hidden')) closeDiskSmart();
+                else if (!document.getElementById('docker-log-modal').classList.contains('hidden')) closeDockerLog();
+            });
+        }
+
+        function refreshChartTheme(theme) {
+            const light = theme === 'light';
+            const muted = light ? '#475569' : '#94a3b8';
+            const grid = light ? 'rgba(100,116,139,.18)' : 'rgba(51,65,85,.28)';
+            Chart.defaults.color = muted;
+            Chart.defaults.borderColor = grid;
+            Object.values(Chart.instances || {}).forEach(chart => {
+                const legendLabels = chart.config.options?.plugins?.legend?.labels;
+                if (legendLabels) legendLabels.color = muted;
+                Object.values(chart.config.options?.scales || {}).forEach(scale => {
+                    if (scale.ticks && ['#64748b', '#94a3b8', '#cbd5e1'].includes(String(scale.ticks.color))) scale.ticks.color = muted;
+                    if (scale.grid && scale.grid.display !== false) scale.grid.color = grid;
+                });
+                chart.update('none');
+            });
+        }
 
         /* ==================== 全域狀態 ==================== */
         let allClients = [];
@@ -4165,11 +4828,15 @@
                 const sec = document.getElementById('page-' + p);
                 if (sec) sec.classList.toggle('hidden', p !== page);
                 const btn = document.querySelector(`.nav-btn[data-page="${p}"]`);
-                if (btn) btn.className = `nav-btn ${p === page ? 'nav-active' : 'nav-idle'} w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left`;
+                if (btn) {
+                    btn.className = `nav-btn ${p === page ? 'nav-active' : 'nav-idle'} w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left`;
+                    btn.setAttribute('aria-current', p === page ? 'page' : 'false');
+                }
             });
             document.getElementById('page-title').innerText = PAGE_META[page][0];
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
             toggleSidebar(false);
+            if (page === 'overview') syncPinned();
             requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize()); });
             window.scrollTo({ top: 0 });
         }
@@ -4177,10 +4844,14 @@
         function toggleSidebar(open) {
             document.getElementById('sidebar').classList.toggle('-translate-x-full', !open);
             document.getElementById('sidebar-backdrop').classList.toggle('hidden', !open);
+            const trigger = document.querySelector('header button[aria-controls="sidebar"]');
+            if (trigger) trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+            document.getElementById('sidebar').setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
         }
 
         /* ==================== 初始化 ==================== */
         window.onload = () => {
+            initUiSystem();
             layoutTagAll();
             layoutApplySaved();
             renderPinned();
@@ -4221,6 +4892,7 @@
             fetchNotifSettings();
             fetchNotifLog();
             fetchAppSettings();
+            fetchReportLog();
             fetchSystemStatus();
             fetchConnections();
             fetchUps();
@@ -4255,6 +4927,7 @@
             docker: { fn: () => fetchNasDocker(), def: 20, label: 'Docker 容器', desc: '多久刷新一次 Docker 容器清單與其即時 CPU/記憶體占用。' },
             trend: { fn: () => fetchTrends(), def: 15, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
             notifLog: { fn: () => fetchNotifLog(), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄清單。' },
+            reportLog: { fn: () => fetchReportLog(), def: 30, label: '報表執行紀錄', desc: '多久刷新一次定期報表的手動／排程發送紀錄與保存的報表內容。' },
             systemStatus: { fn: () => fetchSystemStatus(), def: 30, label: 'System Diagnostics', desc: '多久更新一次本服務的 CPU、記憶體、磁碟、SQLite、背景工作與 Active Issues。後端監控間隔另由 MONITOR_INTERVAL_SECONDS 控制。' },
             security: { fn: () => fetchSecuritySettings(), def: 30, label: '資安設定同步', desc: '多久同步一次自動防禦開關的最新狀態（避免多裝置操作時顯示不一致）。' },
             wiimSystem: { fn: () => fetchWiimSystem(), def: 10, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
@@ -4360,8 +5033,8 @@
                     plugins: { legend: { display: false } },
                     scales: {
                         x: { display: false },
-                        yTemp: { min: 30, max: 100, ticks: { color: '#64748b' } },
-                        yUsage: { min: 0, max: 100, position: 'right', ticks: { color: '#64748b' } }
+                        yTemp: { min: 30, max: 100, ticks: { color: '#64748b', callback: v => v + '°C' } },
+                        yUsage: { min: 0, max: 100, position: 'right', ticks: { color: '#64748b', callback: v => v + '%' } }
                     }
                 }
             });
@@ -4399,7 +5072,7 @@
                     scales: {
                         x: { ticks: { color: '#64748b', maxTicksLimit: 10, font: { size: 9 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
                         yCount: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(30,41,59,0.4)' } },
-                        yMs: { beginAtZero: true, position: 'right', ticks: { color: '#10b981', font: { size: 9 } }, grid: { display: false } }
+                        yMs: { beginAtZero: true, position: 'right', ticks: { color: '#10b981', font: { size: 9 }, callback: v => compactNumber(v) + ' ms' }, grid: { display: false } }
                     }
                 }
             });
@@ -4440,7 +5113,8 @@
             try {
                 const res = await fetch('/api/history?hours=' + trendHours);
                 if (!res.ok) throw new Error();
-                const hist = (await res.json()).history || [];
+                const rawHistory = (await res.json()).history || [];
+                const hist = downsampleRows(rawHistory, ['clients', 'threats24h', 'latency']);
                 const fmt = trendHours > 24
                     ? p => new Date(p.t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit' })
                     : p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
@@ -4665,7 +5339,16 @@
             filtered.forEach(c => {
                 const tr = document.createElement('tr');
                 tr.className = `hover:bg-slate-800/15 cursor-pointer ${c.blocked ? 'opacity-50' : ''}`;
+                tr.tabIndex = 0;
+                tr.setAttribute('role', 'button');
+                tr.setAttribute('aria-label', `查看 ${c.name || c.ip} 的客戶端詳情`);
                 tr.onclick = (ev) => { if (!ev.target.closest('button')) showClientDetail(c.mac); };
+                tr.onkeydown = ev => {
+                    if ((ev.key === 'Enter' || ev.key === ' ') && !ev.target.closest('button')) {
+                        ev.preventDefault();
+                        showClientDetail(c.mac);
+                    }
+                };
                 tr.innerHTML = `
                 <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'} flex items-center gap-1.5">${escapeHtml(c.name)}${c.aliased ? '<span class="text-[8px] px-1 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/25 rounded font-normal">自訂</span>' : ''}<button type="button" data-client-action="rename" title="自訂名稱" class="text-slate-600 hover:text-blue-400 transition"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7m-1.5-9.5a2.12 2.12 0 013 3L12 18l-4 1 1-4 9.5-9.5z"/></svg></button></p><p class="text-[9px] text-slate-500 mono">${escapeHtml(c.mac)} | ${escapeHtml(c.ip)}</p></div></td>
                 <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold inline-flex items-center gap-1">${ICON_WIFI} Wi-Fi (${escapeHtml(c.wifi_signal)}dBm)</span>` : `<span class="text-emerald-400 font-semibold inline-flex items-center gap-1">${ICON_LAN} LAN</span>`}</td>
@@ -4744,15 +5427,18 @@
             document.getElementById('client-detail-block').addEventListener('click', () => toggleBlock(c.mac, !c.blocked));
             const m = document.getElementById('client-modal');
             m.classList.remove('hidden'); m.classList.add('flex');
+            setDialogState('client-modal', true);
         }
         function closeClientDetail() {
             const m = document.getElementById('client-modal');
             m.classList.add('hidden'); m.classList.remove('flex');
+            setDialogState('client-modal', false);
         }
 
         function closeDiskSmart() {
             const m = document.getElementById('smart-modal');
             m.classList.add('hidden'); m.classList.remove('flex');
+            setDialogState('smart-modal', false);
         }
         // 常見 SMART 屬性的白話說明（滑鼠停留可看）
         const SMART_HINT = {
@@ -4779,6 +5465,7 @@
         async function showDiskSmart(dev, name) {
             const m = document.getElementById('smart-modal');
             m.classList.remove('hidden'); m.classList.add('flex');
+            setDialogState('smart-modal', true);
             document.getElementById('smart-title').textContent = `${name} — SMART 詳情`;
             const body = document.getElementById('smart-body');
             body.innerHTML = '<p class="text-xs text-slate-500 text-center py-8">讀取中...</p>';
@@ -5631,14 +6318,14 @@
                         { label: '下載', data: [], borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.06)', fill: true, tension: 0.3, pointRadius: 0 },
                         { label: '上傳', data: [], borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 0 }
                     ]
-                }, options: lineOpts()
+                }, options: lineOpts({ y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 8 }, callback: v => compactNumber(v) + ' Mbps' }, grid: { color: 'rgba(30,41,59,0.4)' } } })
             });
             nasStorageChart = new Chart(document.getElementById('nasStorageChart'), {
                 type: 'line', data: {
                     labels: [], datasets: [
                         { label: '已用 GB', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.08)', fill: true, tension: 0.2, pointRadius: 0 }
                     ]
-                }, options: lineOpts()
+                }, options: lineOpts({ y: { beginAtZero: true, ticks: { color: '#64748b', font: { size: 8 }, callback: v => compactNumber(v) + ' GB' }, grid: { color: 'rgba(30,41,59,0.4)' } } })
             });
             nasTempChart = new Chart(document.getElementById('nasTempChart'), {
                 type: 'line', data: { labels: [], datasets: [] }, options: {
@@ -5688,29 +6375,35 @@
             const rangeLbl = document.getElementById('nas-hist-rangelbl');
             if (rangeLbl) rangeLbl.textContent = nasHistWinMin >= 60 ? `近 ${nasHistWinMin / 60} 小時` : `近 ${nasHistWinMin} 分`;
             try {
-                const sys = (await (await fetch(`/api/nas/system-history?hours=${hrs}`)).json()).data || [];
+                const rawSys = (await (await fetch(`/api/nas/system-history?hours=${hrs}`)).json()).data || [];
+                const sys = downsampleRows(rawSys, ['cpu', 'memory', 'temperature', 'fan_rpm']);
                 nasSystemChart.data.labels = fmtH(sys);
                 nasSystemChart.data.datasets[0].data = sys.map(p => p.cpu);
                 nasSystemChart.data.datasets[1].data = sys.map(p => p.memory);
                 nasSystemChart.data.datasets[2].data = sys.map(p => p.temperature);
                 nasSystemChart.data.datasets[3].data = sys.map(p => p.fan_rpm);
                 nasSystemChart.update('none');
-                document.getElementById('nas-sys-cnt') && (document.getElementById('nas-sys-cnt').textContent = sys.length + ' 點');
+                document.getElementById('nas-sys-cnt') && (document.getElementById('nas-sys-cnt').textContent = rawSys.length > sys.length ? `${rawSys.length} 點 · 繪製 ${sys.length}` : `${sys.length} 點`);
 
-                const tr = (await (await fetch(`/api/nas/traffic-history?hours=${hrs}`)).json()).data || [];
+                const rawTraffic = (await (await fetch(`/api/nas/traffic-history?hours=${hrs}`)).json()).data || [];
+                const tr = downsampleRows(rawTraffic, ['download_mbps', 'upload_mbps']);
                 nasTrafficChart.data.labels = fmtH(tr);
                 nasTrafficChart.data.datasets[0].data = tr.map(p => p.download_mbps);
                 nasTrafficChart.data.datasets[1].data = tr.map(p => p.upload_mbps);
                 nasTrafficChart.update('none');
 
-                const st = (await (await fetch('/api/nas/storage-history?hours=720')).json()).data || [];
+                const rawStorage = (await (await fetch('/api/nas/storage-history?hours=720')).json()).data || [];
+                const st = downsampleRows(rawStorage, ['used_gb']);
                 nasStorageChart.data.labels = fmtD(st);
                 nasStorageChart.data.datasets[0].data = st.map(p => p.used_gb);
                 nasStorageChart.update('none');
 
                 const tpRes = await (await fetch(`/api/nas/temperature-history?hours=${hrs}`)).json();
-                const tp = tpRes.data || [];
+                const rawTemps = tpRes.data || [];
                 const diskNames = tpRes.diskNames || [];
+                const tempKeys = diskNames.map((_, index) => `__disk${index}`);
+                const tempRows = rawTemps.map(point => ({ ...point, ...Object.fromEntries(diskNames.map((name, index) => [tempKeys[index], (point.disks || {})[name] ?? null])) }));
+                const tp = downsampleRows(tempRows, tempKeys);
                 nasTempChart.data.labels = fmtH(tp);
                 nasTempChart.data.datasets = diskNames.map((name, i) => ({
                     label: nasDiskMeta[name] ? `${name} (${nasDiskMeta[name]})` : name,
@@ -5721,7 +6414,7 @@
 
                 // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
                 const note = document.getElementById('nas-charts-note');
-                if (note) note.classList.toggle('hidden', tp.length >= 2);
+                if (note) note.classList.toggle('hidden', rawTemps.length >= 2);
             } catch (e) { console.error('NAS charts fetch failed', e); }
         }
 
@@ -5780,6 +6473,7 @@
             document.getElementById('docker-log-body').innerText = '載入中...';
             document.getElementById('docker-log-modal').classList.remove('hidden');
             document.getElementById('docker-log-modal').classList.add('flex');
+            setDialogState('docker-log-modal', true);
             try {
                 const data = await (await fetch(`/api/nas/docker/${encodeURIComponent(id)}/logs?lines=200`)).json();
                 document.getElementById('docker-log-body').innerText = data.logs || '(無日誌)';
@@ -5788,6 +6482,7 @@
         function closeDockerLog() {
             document.getElementById('docker-log-modal').classList.add('hidden');
             document.getElementById('docker-log-modal').classList.remove('flex');
+            setDialogState('docker-log-modal', false);
         }
 
         const NAS_LOG_MODULE_LABEL = { login: '登入', storage_manager: '儲存管理', snapshot: '快照', system: '系統', network: '網路', file_manager: '檔案管理', app_center: '應用中心', usb: 'USB', backup: '備份' };
@@ -6072,8 +6767,12 @@
                 setCk('notif-trig-block', s.triggerBlockAction !== false);
                 setCk('notif-trig-nasdisk', !!s.triggerNasDiskTemp);
                 setCk('notif-trig-nasspace', !!s.triggerNasSpace);
+                setCk('notif-trig-nas-disk-health', s.triggerNasDiskHealth !== false);
+                setCk('notif-trig-nas-offline', !!s.triggerNasOffline);
                 setCk('notif-trig-ucgtemp', !!s.triggerUcgTemp);
+                setCk('notif-trig-ucg-cpu', !!s.triggerUcgHighCpu);
                 setCk('notif-trig-wandown', !!s.triggerWanDown);
+                setCk('notif-trig-unifi-offline', !!s.triggerUnifiOffline);
                 setCk('notif-trig-naslog', !!s.triggerNasLog);
                 setCk('notif-trig-upsload', !!s.triggerUpsHighLoad);
                 setCk('notif-trig-upsvolt', !!s.triggerUpsVoltAbnormal);
@@ -6083,14 +6782,25 @@
                 setCk('notif-trig-lnxtemp', s.triggerLinuxTemp !== false);
                 setCk('notif-trig-lnxoff', !!s.triggerLinuxOffline);
                 setCk('notif-trig-lnxdisk', !!s.triggerLinuxDisk);
+                setCk('notif-trig-docker-critical', s.triggerDockerCriticalLog !== false);
+                setCk('notif-trig-docker-error', !!s.triggerDockerErrorLog);
+                setCk('notif-trig-docker-state', s.triggerDockerState !== false);
+                setCk('notif-trig-docker-cpu', !!s.triggerDockerHighCpu);
+                setCk('notif-trig-docker-memory', !!s.triggerDockerHighMemory);
+                setCk('notif-trig-system-critical', s.triggerSystemCritical !== false);
+                setCk('notif-trig-system-warning', !!s.triggerSystemWarning);
+                setCk('notif-trig-system-recovery', s.triggerSystemRecovery !== false);
                 const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
                 setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
                 setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
                 setV('notif-ucg-temp', s.ucgTempAlert ?? 75);
+                setV('notif-ucg-cpu', s.ucgCpuAlert ?? 90);
                 setV('notif-ups-load', s.upsLoadAlert ?? 80);
                 setV('notif-ups-volt', s.upsVoltDeviationPct ?? 10);
                 setV('notif-lnx-temp', s.linuxTempAlert ?? 70);
                 setV('notif-lnx-disk', s.linuxDiskAlert ?? 90);
+                setV('notif-docker-cpu', s.dockerCpuAlert ?? 90);
+                setV('notif-docker-memory', s.dockerMemoryAlert ?? 90);
                 document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
                 document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
                 setNotifChannel(s.channel || 'discord');
@@ -6112,8 +6822,12 @@
                 triggerBlockAction: document.getElementById('notif-trig-block')?.checked ?? true,
                 triggerNasDiskTemp: document.getElementById('notif-trig-nasdisk')?.checked ?? false,
                 triggerNasSpace: document.getElementById('notif-trig-nasspace')?.checked ?? false,
+                triggerNasDiskHealth: document.getElementById('notif-trig-nas-disk-health')?.checked ?? true,
+                triggerNasOffline: document.getElementById('notif-trig-nas-offline')?.checked ?? false,
                 triggerUcgTemp: document.getElementById('notif-trig-ucgtemp')?.checked ?? false,
+                triggerUcgHighCpu: document.getElementById('notif-trig-ucg-cpu')?.checked ?? false,
                 triggerWanDown: document.getElementById('notif-trig-wandown')?.checked ?? false,
+                triggerUnifiOffline: document.getElementById('notif-trig-unifi-offline')?.checked ?? false,
                 triggerNasLog: document.getElementById('notif-trig-naslog')?.checked ?? false,
                 triggerUpsHighLoad: document.getElementById('notif-trig-upsload')?.checked ?? false,
                 triggerUpsVoltAbnormal: document.getElementById('notif-trig-upsvolt')?.checked ?? false,
@@ -6121,6 +6835,7 @@
                 nasDiskTempAlert: parseInt(document.getElementById('notif-nasdisk-temp')?.value, 10) || 50,
                 nasSpaceAlert: parseInt(document.getElementById('notif-nasspace-pct')?.value, 10) || 85,
                 ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75,
+                ucgCpuAlert: parseInt(document.getElementById('notif-ucg-cpu')?.value, 10) || 90,
                 upsLoadAlert: parseInt(document.getElementById('notif-ups-load')?.value, 10) || 80,
                 upsVoltDeviationPct: parseInt(document.getElementById('notif-ups-volt')?.value, 10) || 10,
                 triggerAdgProtection: document.getElementById('notif-trig-adgprot')?.checked ?? true,
@@ -6129,7 +6844,17 @@
                 triggerLinuxOffline: document.getElementById('notif-trig-lnxoff')?.checked ?? false,
                 triggerLinuxDisk: document.getElementById('notif-trig-lnxdisk')?.checked ?? false,
                 linuxTempAlert: parseInt(document.getElementById('notif-lnx-temp')?.value, 10) || 70,
-                linuxDiskAlert: parseInt(document.getElementById('notif-lnx-disk')?.value, 10) || 90
+                linuxDiskAlert: parseInt(document.getElementById('notif-lnx-disk')?.value, 10) || 90,
+                triggerDockerCriticalLog: document.getElementById('notif-trig-docker-critical')?.checked ?? true,
+                triggerDockerErrorLog: document.getElementById('notif-trig-docker-error')?.checked ?? false,
+                triggerDockerState: document.getElementById('notif-trig-docker-state')?.checked ?? true,
+                triggerDockerHighCpu: document.getElementById('notif-trig-docker-cpu')?.checked ?? false,
+                dockerCpuAlert: parseInt(document.getElementById('notif-docker-cpu')?.value, 10) || 90,
+                triggerDockerHighMemory: document.getElementById('notif-trig-docker-memory')?.checked ?? false,
+                dockerMemoryAlert: parseInt(document.getElementById('notif-docker-memory')?.value, 10) || 90,
+                triggerSystemCritical: document.getElementById('notif-trig-system-critical')?.checked ?? true,
+                triggerSystemWarning: document.getElementById('notif-trig-system-warning')?.checked ?? false,
+                triggerSystemRecovery: document.getElementById('notif-trig-system-recovery')?.checked ?? true
             };
             const wh = document.getElementById('notif-webhook').value.trim();
             const tk = document.getElementById('notif-token').value.trim();
@@ -6175,11 +6900,12 @@
             const moon = document.getElementById('theme-icon-moon'), sun = document.getElementById('theme-icon-sun');
             if (moon && sun) { moon.classList.toggle('hidden', t === 'light'); sun.classList.toggle('hidden', t !== 'light'); }
             const meta = document.querySelector('meta[name="theme-color"]');
-            if (meta) meta.setAttribute('content', t === 'light' ? '#eef2f7' : '#030712');
+            if (meta) meta.setAttribute('content', t === 'light' ? '#eef2f7' : '#07101d');
             document.querySelectorAll('[data-theme-btn]').forEach(b => {
                 const on = b.dataset.themeBtn === t;
                 b.className = `theme-btn py-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2 ${on ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'}`;
             });
+            refreshChartTheme(t);
         }
         function toggleTheme() { setTheme(document.documentElement.classList.contains('light') ? 'dark' : 'light'); }
 
@@ -6187,7 +6913,8 @@
         const DIAG_TONES = {
             healthy: { label: 'Healthy', dot: 'bg-emerald-400', text: 'text-emerald-400', badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' },
             warning: { label: 'Warning', dot: 'bg-amber-400', text: 'text-amber-400', badge: 'bg-amber-500/10 text-amber-400 border-amber-500/25' },
-            critical: { label: 'Critical', dot: 'bg-red-400', text: 'text-red-400', badge: 'bg-red-500/10 text-red-400 border-red-500/25' },
+            critical: { label: 'Critical', dot: 'bg-rose-400', text: 'text-rose-400', badge: 'bg-rose-500/10 text-rose-400 border-rose-500/25' },
+            error: { label: 'Error', dot: 'bg-red-400', text: 'text-red-400', badge: 'bg-red-500/10 text-red-400 border-red-500/25' },
             unknown: { label: 'Unknown', dot: 'bg-slate-500', text: 'text-slate-400', badge: 'bg-slate-800 text-slate-400 border-slate-700' }
         };
         function diagTone(status) { return DIAG_TONES[status] || DIAG_TONES.unknown; }
@@ -6405,11 +7132,41 @@
         async function runReportNow() {
             showToast('產生報表中...');
             try {
-                const r = await (await fetch('/api/reports/run', { method: 'POST' })).json();
+                const response = await fetch('/api/reports/run', { method: 'POST' });
+                const r = await response.json();
+                if (!response.ok) throw new Error(r.error || '報表產生失敗');
                 const pre = document.getElementById('report-preview');
                 pre.classList.remove('hidden');
-                pre.innerText = r.report + (r.delivery && r.delivery.ok ? '\n\n✅ 已透過推播送出' : r.delivery && r.delivery.skipped ? '\n\n（推播未啟用，僅預覽）' : '');
-            } catch (e) { showToast('產生失敗', true); }
+                pre.innerText = r.report + (r.delivery && r.delivery.ok ? '\n\n✅ 已透過推播送出' : r.delivery && r.delivery.skipped ? `\n\n（未送出：${r.delivery.skipped}）` : r.delivery?.error ? `\n\n⚠️ 推播失敗：${r.delivery.error}` : '');
+                fetchReportLog();
+            } catch (e) { showToast('產生失敗: ' + e.message, true); }
+        }
+
+        async function fetchReportLog() {
+            const el = document.getElementById('report-log');
+            if (!el) return;
+            try {
+                const runs = (await (await fetch('/api/reports/log?limit=20')).json()).runs || [];
+                if (!runs.length) { el.innerHTML = '<p class="text-[10px] text-slate-500 text-center py-3">尚無報表執行紀錄</p>'; return; }
+                const statusMeta = status => status === 'sent'
+                    ? ['✅ 已送出', 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5']
+                    : status?.startsWith('skipped')
+                        ? ['◌ 僅產生', 'text-amber-400 border-amber-500/20 bg-amber-500/5']
+                        : ['⚠️ 失敗', 'text-red-400 border-red-500/20 bg-red-500/5'];
+                el.innerHTML = runs.map(run => {
+                    const [label, cls] = statusMeta(run.deliveryStatus);
+                    return `<details class="rounded-lg border ${cls} p-3 group">
+                        <summary class="cursor-pointer list-none flex items-start gap-2">
+                            <span class="text-[10px] font-bold ${cls.split(' ')[0]}">${label}</span>
+                            <span class="text-[10px] text-slate-300 flex-grow">${escapeHtml(run.trigger === 'scheduled' ? '排程報表' : '手動報表')}</span>
+                            <span class="text-[9px] text-slate-500 mono">${escapeHtml(new Date(run.ts).toLocaleString('zh-TW'))}</span>
+                        </summary>
+                        <p class="text-[9px] text-slate-500 mt-2">${escapeHtml(run.channel ? `管道：${run.channel}` : '未經推播管道送出')}</p>
+                        ${run.deliveryError ? `<p class="text-[9px] text-red-400 mt-1">${escapeHtml(run.deliveryError)}</p>` : ''}
+                        <pre class="mt-2 pt-2 border-t border-slate-700/40 whitespace-pre-wrap text-[10px] leading-relaxed text-slate-300 mono">${escapeHtml(run.body || '')}</pre>
+                    </details>`;
+                }).join('');
+            } catch (e) { el.innerHTML = '<p class="text-[10px] text-red-400 text-center py-3">報表執行紀錄讀取失敗</p>'; }
         }
 
         async function fetchNotifLog() {
@@ -6512,7 +7269,7 @@
                             },
                             y: {
                                 grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                                ticks: { color: '#64748b', font: { size: 9 } }
+                                ticks: { color: '#64748b', font: { size: 9 }, callback: v => compactNumber(v) + '°C' }
                             }
                         }
                     }
@@ -6795,17 +7552,20 @@
 
         function renderWiimChart() {
             if (!wiimChart) return;
-            let dataPoints = wiimRawHistory;
+            let visiblePoints = wiimRawHistory;
             if (wiimChartWindowMinutes > 0) {
                 const cutoff = Date.now() - (wiimChartWindowMinutes * 60 * 1000);
-                dataPoints = wiimRawHistory.filter(d => (d.ts * 1000) >= cutoff);
+                visiblePoints = wiimRawHistory.filter(d => (d.ts * 1000) >= cutoff);
             }
-            const labels = dataPoints.map(d => new Date(d.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-            let cpuData = dataPoints.map(d => d.cpu);
-            let boardData = dataPoints.map(d => d.board);
-            // 平滑曲線：5 點移動平均，撫平感測器整數階梯
+            let rawCpuData = visiblePoints.map(d => d.cpu);
+            let rawBoardData = visiblePoints.map(d => d.board);
             const smoothOn = document.getElementById('wiim-smooth')?.checked;
-            if (smoothOn) { cpuData = movAvg(cpuData, 5); boardData = movAvg(boardData, 5); }
+            if (smoothOn) { rawCpuData = movAvg(rawCpuData, 5); rawBoardData = movAvg(rawBoardData, 5); }
+            const plotRows = visiblePoints.map((point, index) => ({ ...point, __cpu: rawCpuData[index], __board: rawBoardData[index] }));
+            const dataPoints = downsampleRows(plotRows, ['__cpu', '__board']);
+            const labels = dataPoints.map(d => new Date(d.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            const cpuData = dataPoints.map(d => d.__cpu);
+            const boardData = dataPoints.map(d => d.__board);
 
             wiimChart.data.labels = labels;
             wiimChart.data.datasets[0].data = cpuData;
@@ -6832,7 +7592,7 @@
                 ? (wiimChartWindowMinutes >= 60 ? `近 ${wiimChartWindowMinutes / 60} 小時` : `近 ${wiimChartWindowMinutes} 分`)
                 : '全部記錄';
             const rangeLbl = document.getElementById('wiim-chart-status');
-            if (rangeLbl) rangeLbl.textContent = `${rangeText} · ${dataPoints.length} 點`;
+            if (rangeLbl) rangeLbl.textContent = visiblePoints.length > dataPoints.length ? `${rangeText} · ${visiblePoints.length} 點（繪製 ${dataPoints.length}）` : `${rangeText} · ${dataPoints.length} 點`;
             const hdrLbl = document.getElementById('wiim-rangelbl');
             if (hdrLbl) hdrLbl.textContent = rangeText;
 
@@ -6867,7 +7627,7 @@
             }
 
             // 更新統計最小值/平均值/最大值
-            updateWiimStats(dataPoints);
+            updateWiimStats(visiblePoints);
         }
 
         // 移動平均 (忽略 null)
@@ -7168,15 +7928,16 @@
         function renderUcgHistChart() {
             if (!ucgHistChart) return;
             const pts = ucgHistRaw;
-            const labels = pts.map(p => new Date(p.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            const plotted = downsampleRows(pts, ['cpuTemp', 'cpuUsage', 'memUsagePct']);
+            const labels = plotted.map(p => new Date(p.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
             ucgHistChart.data.labels = labels;
-            ucgHistChart.data.datasets[0].data = pts.map(p => p.cpuTemp);
-            ucgHistChart.data.datasets[1].data = pts.map(p => p.cpuUsage);
-            ucgHistChart.data.datasets[2].data = pts.map(p => p.memUsagePct);
+            ucgHistChart.data.datasets[0].data = plotted.map(p => p.cpuTemp);
+            ucgHistChart.data.datasets[1].data = plotted.map(p => p.cpuUsage);
+            ucgHistChart.data.datasets[2].data = plotted.map(p => p.memUsagePct);
             ucgHistChart.update('none');
             const rangeText = ucgHistWinMin > 0 ? (ucgHistWinMin >= 60 ? `近 ${ucgHistWinMin / 60} 小時` : `近 ${ucgHistWinMin} 分`) : '全部記錄';
             const lbl = document.getElementById('ucg-rangelbl'); if (lbl) lbl.textContent = rangeText;
-            document.getElementById('ucg-h-cnt').textContent = pts.length;
+            document.getElementById('ucg-h-cnt').textContent = pts.length > plotted.length ? `${pts.length} / ${plotted.length}` : pts.length;
             const stat = (key, elPrefix) => {
                 const vals = pts.map(p => p[key]).filter(v => v != null);
                 const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -7238,7 +7999,7 @@
                         { label: 'UPS 輸出 (V)', data: [], borderColor: '#10b981', fill: false, tension: 0.25, pointRadius: 0, spanGaps: true }
                     ]
                 },
-                options: { ...base, scales: { x, y: { ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' }, suggestedMin: 90, suggestedMax: 125 } } }
+                options: { ...base, scales: { x, y: { ticks: { color: '#64748b', font: { size: 8 }, callback: v => compactNumber(v) + ' V' }, grid: { color: 'rgba(30,41,59,0.4)' }, suggestedMin: 90, suggestedMax: 125 } } }
             });
             upsLoadChart = new Chart(document.getElementById('upsLoadChart'), {
                 type: 'line', data: {
@@ -7247,7 +8008,7 @@
                         { label: '負載 %', data: [], borderColor: '#8b5cf6', fill: false, tension: 0.25, pointRadius: 0 }
                     ]
                 },
-                options: { ...base, scales: { x, y: { beginAtZero: true, max: 100, ticks: { color: '#64748b', font: { size: 8 } }, grid: { color: 'rgba(30,41,59,0.4)' } } } }
+                options: { ...base, scales: { x, y: { beginAtZero: true, max: 100, ticks: { color: '#64748b', font: { size: 8 }, callback: v => v + '%' }, grid: { color: 'rgba(30,41,59,0.4)' } } } }
             });
             dbg('UPS', '圖表初始化完成');
         }
@@ -7311,9 +8072,10 @@
                 const fmt = upsRangeHours > 24
                     ? p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit' })
                     : p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
-                upsVoltChart.data.labels = h.map(fmt);
-                upsVoltChart.data.datasets[0].data = h.map(p => p.inV);
-                upsVoltChart.data.datasets[1].data = h.map(p => p.outV);
+                const plottedVolt = downsampleRows(h, ['inV', 'outV']);
+                upsVoltChart.data.labels = plottedVolt.map(fmt);
+                upsVoltChart.data.datasets[0].data = plottedVolt.map(p => p.inV);
+                upsVoltChart.data.datasets[1].data = plottedVolt.map(p => p.outV);
                 upsVoltChart.update('none');
                 const vstat = (key, prefix) => {
                     const vals = h.map(p => p[key]).filter(v => v != null && v > 0);
@@ -7330,9 +8092,10 @@
                 const fmtL = upsLoadRangeHours > 24
                     ? (p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) + ' ' + new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }))
                     : (p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }));
-                upsLoadChart.data.labels = hl.map(fmtL);
-                upsLoadChart.data.datasets[0].data = hl.map(p => p.batt);
-                upsLoadChart.data.datasets[1].data = hl.map(p => p.load);
+                const plottedLoad = downsampleRows(hl, ['batt', 'load']);
+                upsLoadChart.data.labels = plottedLoad.map(fmtL);
+                upsLoadChart.data.datasets[0].data = plottedLoad.map(p => p.batt);
+                upsLoadChart.data.datasets[1].data = plottedLoad.map(p => p.load);
                 upsLoadChart.update('none');
             } catch (e) { dbg('UPS', '歷史讀取失敗', e); }
             try {
@@ -7480,6 +8243,7 @@
             try {
                 const d = await (await fetch(`/api/linux/history?hours=${lnxRangeHours}`)).json();
                 const pts = d.data || [];
+                const plotted = downsampleRows(pts, ['cpu', 'temp', 'mem']);
                 const fmt = p => lnxRangeHours > 24
                     ? new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) + ' ' + new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false })
                     : new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -7494,10 +8258,10 @@
                         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 10 } } } }, scales: { x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } }, y: { ticks: { color: '#64748b', font: { size: 9 } }, grid: { color: 'rgba(51,65,85,.2)' } } } }
                     });
                 }
-                lnxChart.data.labels = pts.map(fmt);
-                lnxChart.data.datasets[0].data = pts.map(p => p.cpu);
-                lnxChart.data.datasets[1].data = pts.map(p => p.temp);
-                lnxChart.data.datasets[2].data = pts.map(p => p.mem);
+                lnxChart.data.labels = plotted.map(fmt);
+                lnxChart.data.datasets[0].data = plotted.map(p => p.cpu);
+                lnxChart.data.datasets[1].data = plotted.map(p => p.temp);
+                lnxChart.data.datasets[2].data = plotted.map(p => p.mem);
                 lnxChart.update('none');
             } catch { }
         }
