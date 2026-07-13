@@ -20,6 +20,7 @@ const { TaskTracker } = require('./observability/task-tracker');
 const { SystemMonitor } = require('./observability/system-monitor');
 const { registerHealthRoutes } = require('./observability/health-routes');
 const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
+const { createActivityLease } = require('./activity-lease');
 
 const APP_STARTED_AT = Date.now();
 const logger = createLogger({ service: 'smarthub' });
@@ -1539,10 +1540,14 @@ function scheduleServerJobs() {
 /* ===================== 歷史趨勢取樣器 (自適應頻率) ===================== */
 // 記錄一筆：客戶端數、24h 威脅數、ISP 延遲。
 // 取樣頻率隨「是否有人正在看網頁」自動切換 (間隔取自 appSettings，可於設定頁調整)。
-let lastClientActivity = 0;              // 前端最後一次活動時間戳
 let lastSampleTs = 0;                    // 上一次取樣時間戳
 let lastSchedulerState = null;           // 前端最後一狀態 (活躍/閒置)
-function markClientActivity() { lastClientActivity = Date.now(); }
+const deviceActivity = createActivityLease({ maxLeaseMs: 45000 });
+function markClientActivity(scopes = 'trend') {
+    const requestedMs = (appSettings.activeWindowSec || 30) * 1000;
+    return deviceActivity.mark(scopes, requestedMs);
+}
+function isDeviceSamplingActive(scope) { return deviceActivity.isActive(scope); }
 
 async function sampleTrends() {
     const point = { t: new Date().toISOString(), clients: null, threats24h: null, latency: null };
@@ -1586,7 +1591,7 @@ async function sampleTrends() {
 // 排程器：每秒檢查一次，依活躍/閒置狀態與設定的間隔決定是否該取樣
 async function trendScheduler() {
     const now = Date.now();
-    const active = (now - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const active = isDeviceSamplingActive('trend');
     const stateStr = active ? 'Active (活躍模式)' : 'Idle (閒置模式)';
     if (stateStr !== lastSchedulerState) {
         sysLog('Scheduler', `取樣頻率切換至：${stateStr}。取樣間隔：${active ? appSettings.trendActiveSec : appSettings.trendIdleSec} 秒`);
@@ -1611,18 +1616,18 @@ logger.info({
     }
 });
 
-// 14. 歷史趨勢查詢 (?hours=24 / 168)。任何前端讀取都視為「活躍」，觸發高頻取樣。
+// 14. 歷史趨勢查詢 (?hours=24 / 168)。只加快 trend，不會連帶加快 NAS/WiiM/Linux。
 app.get('/api/history', (req, res) => {
-    markClientActivity();
+    markClientActivity('trend');
     const hours = parseInt(req.query.hours || '24', 10);
     const cutoff = Date.now() - hours * 3600000;
     res.json({ history: historyDb.getSince('trend', cutoff) });
 });
 
-// 輕量心跳端點：前端開著頁面時定時呼叫，維持「活躍」狀態 (不觸發任何上游 API)
+// 輕量心跳端點：只為目前顯示的裝置續短租約；沒有續約最晚 45 秒自動回到低頻。
 app.get('/api/heartbeat', (req, res) => {
-    markClientActivity();
-    res.json({ ok: true, mode: 'active' });
+    const activity = markClientActivity(req.query.scope || '');
+    res.json({ ok: true, activeScopes: deviceActivity.activeScopes(), expiresAt: activity.expiresAt });
 });
 
 /* ===================== UGREEN NAS (UGOS Pro 原生 API) ===================== */
@@ -2069,7 +2074,7 @@ async function sampleNasHistory() {
 }
 // 自適應：有人看網頁時每 120 秒、閒置時每 15 分鐘。
 setInterval(() => {
-    const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const active = isDeviceSamplingActive('nas');
     const gap = (active ? 120 : 900) * 1000;
     if (Date.now() - lastNasSampleTs >= gap) {
         lastNasSampleTs = Date.now();
@@ -2793,7 +2798,7 @@ async function pollWiimTemp() {
 let lastWiimPollTs = 0;
 setInterval(() => {
     const now = Date.now();
-    const active = (now - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const active = isDeviceSamplingActive('wiim');
     const gap = active ? 30000 : appSettings.trendIdleSec * 1000;
     if (now - lastWiimPollTs >= gap) {
         lastWiimPollTs = now;
@@ -3317,7 +3322,7 @@ app.get('/api/linux/stats', async (req, res) => {
 let lastLinuxSampleTs = 0;
 setInterval(() => {
     if (!linuxConfigured()) return;
-    const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
+    const active = isDeviceSamplingActive('linux');
     const gap = (active ? 120 : 900) * 1000;
     if (Date.now() - lastLinuxSampleTs < gap) return;
     lastLinuxSampleTs = Date.now();

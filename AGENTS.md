@@ -68,7 +68,7 @@
 
 統計/歷史資料以 SQLite `smarthub.db` 存於 `DATA_DIR`(預設 `<專案>/data`,Docker 為 `/app/data` 並掛具名 volume `smarthub-data`)，設定類資料仍為 JSON。一般遙測先放記憶體 queue，預設每 10 分鐘或達 1,000 筆 / 1 MiB 時以單一 transaction 批次寫入；查詢會合併未落盤資料。UPS 事件、封鎖、報表與 NAS 日誌手機推播仍立即處理。首次啟動會將舊 history/event JSON 匯入並改名為 `.migrated.bak` 保留。`GET /health` 為 Docker liveness、`GET /health/ready` 檢查 SQLite/worker、`GET /api/system/status` 提供完整診斷。
 
-**趨勢取樣為自適應頻率**(`trendScheduler` 每秒檢查):前端每 5 秒打 `GET /api/heartbeat`(分頁隱藏時暫停),或任何 `GET /api/history` 讀取,都會更新 `lastClientActivity`。最近 30 秒內有活動 → 預設每 30 秒取樣;否則 → 每 30 分鐘取樣。前端僅輪詢當前 SmartHub 分頁需要的工作，趨勢圖預設每 30 秒重繪。
+**取樣為裝置感知的自適應頻率**:前端每 5 秒以 `GET /api/heartbeat?scope=...` 為目前可見頁面的 trend／NAS／WiiM／Linux 續約；後端以自身時間計算、每個 scope 最多只活躍 45 秒，沒有新心跳、切頁或分頁隱藏就自動回到低頻，避免錯誤判斷後持續高頻。總覽會替其顯示的 trend、NAS、WiiM 同時續約；`GET /api/history` 只加快 trend。UPS 取樣獨立，不受瀏覽狀態影響。
 
 ## 前端版面 (public/index.html)
 
