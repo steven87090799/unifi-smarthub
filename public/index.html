@@ -7655,6 +7655,21 @@
         // LinkPlay 無資料時回 "unknow"/"un_known" 等字串，一律視為空值
         const wiimBadVal = v => !v || /^un_?know/i.test(String(v).trim());
 
+        // LinkPlay 的播放時間欄位即使代表毫秒，實機仍以字串回傳。
+        // 若直接做 curpos + 1000 會變成字串串接並瞬間衝到 100%，因此在狀態入口統一數值化。
+        function normalizeWiimPlayer(raw) {
+            if (!raw || typeof raw !== 'object') return null;
+            const toNonNegativeNumber = value => {
+                const parsed = Number(value);
+                return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+            };
+            return {
+                ...raw,
+                curpos: toNonNegativeNumber(raw.curpos),
+                totlen: toNonNegativeNumber(raw.totlen)
+            };
+        }
+
         function initWiimPage() {
             // 產生捷徑按鈕 1-12
             const presetCont = document.getElementById('wiim-preset-container');
@@ -7731,7 +7746,7 @@
 
                 // 播放器狀態 — 進度防抖動：輪詢回報常比本地秒針慢半拍，直接覆蓋會前進→倒退跳動。
                 // 差距 <3 秒視為輪詢誤差取較大值 (時間軸永不倒退)；>3 秒視為使用者 seek 或換曲，採用裝置值。
-                const dev = data.player;
+                const dev = normalizeWiimPlayer(data.player);
                 if (dev && wiimPlayerState && dev.status === 'play' && wiimPlayerState.status === 'play'
                     && dev.totlen === wiimPlayerState.totlen
                     && Math.abs((dev.curpos || 0) - (wiimPlayerState.curpos || 0)) < 3000) {
@@ -8133,8 +8148,11 @@
 
         function tickWiimProg() {
             if (wiimIsLive) return; // LIVE 訊源無進度概念，不自走
-            if (wiimPlayerState && wiimPlayerState.status === "play" && wiimPlayerState.totlen > 0) {
-                wiimPlayerState.curpos = Math.min(wiimPlayerState.totlen, wiimPlayerState.curpos + 1000);
+            const currentMs = Number(wiimPlayerState?.curpos);
+            const totalMs = Number(wiimPlayerState?.totlen);
+            if (wiimPlayerState?.status === "play" && Number.isFinite(currentMs)
+                && Number.isFinite(totalMs) && totalMs > 0) {
+                wiimPlayerState.curpos = Math.min(totalMs, currentMs + 1000);
                 updateWiimProgUI();
             }
         }
