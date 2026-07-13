@@ -1,6 +1,6 @@
 'use strict';
 
-const DEFAULT_SCOPES = ['trend', 'nas', 'wiim', 'linux'];
+const DEFAULT_SCOPES = ['trend', 'ucg', 'nas', 'wiim', 'linux'];
 
 // A short server-timed lease prevents a stale browser tab from keeping device
 // polling fast forever. Client clocks are never trusted.
@@ -14,7 +14,7 @@ function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now
         return Math.min(Math.max(safeRequested, 1000), maxLeaseMs);
     }
 
-    function mark(scopeList, requestedMs) {
+    function mark(scopeList, requestedMs, { replace = false } = {}) {
         const nowMs = now();
         const expiresAt = nowMs + duration(requestedMs);
         const requested = String(scopeList || '').split(',').map(scope => scope.trim()).filter(Boolean);
@@ -23,6 +23,7 @@ function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now
         // The caller can use this to take one prompt sample without letting every
         // five-second heartbeat continually reset its sampling interval.
         const activated = accepted.filter(scope => (leases.get(scope) || 0) <= nowMs);
+        if (replace) leases.clear();
         accepted.forEach(scope => leases.set(scope, expiresAt));
         return { accepted, activated, expiresAt };
     }

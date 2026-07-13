@@ -1051,6 +1051,10 @@
                     <p class="text-[10px] text-slate-500" id="page-subtitle">全系統健康狀態一覽</p>
                 </div>
                 <div class="ml-auto flex items-center gap-2">
+                    <span id="focused-refresh-badge"
+                        class="hidden px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-bold mono uppercase tracking-wider">
+                        LIVE · 3 秒更新
+                    </span>
                     <!-- 重大事件警報橫幅：只在 UPS 斷電/WAN 斷線等嚴重事件時出現，強烈閃爍，點擊關閉 -->
                     <button id="crit-alert-banner" onclick="dismissCritAlerts()" title="點擊關閉此警報"
                         class="hidden items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider crit-blink cursor-pointer max-w-[50vw]">
@@ -1385,7 +1389,7 @@
                         <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
                             <div>
                                 <h3 class="text-sm font-bold text-white tracking-wider">歷史數據趨勢</h3>
-                                <p class="text-[9px] text-slate-500">線上客戶端 / 24H 威脅數 / ISP 延遲 — 有人瀏覽時每 5 秒取樣、閒置時每 30
+                                <p class="text-[9px] text-slate-500">線上客戶端 / 24H 威脅數 / ISP 延遲 — 有人瀏覽時每 3 秒取樣、閒置時每 30
                                     分鐘一次 <span id="trend-data-quality" class="text-slate-600"></span></p>
                             </div>
                             <div
@@ -4979,10 +4983,11 @@
             });
             document.getElementById('page-title').innerText = PAGE_META[page][0];
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
+            updateFocusedRefreshBadge(page);
             toggleSidebar(false);
             if (page === 'overview') syncPinned();
-            applyPolling(true);
             sendHeartbeat(true);
+            applyPolling(true);
             requestAnimationFrame(() => {
                 [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
                 replayPageChartEntrances(page);
@@ -5054,14 +5059,15 @@
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
             renderPollConfig();
             checkLastSpeedtest();
+            updateFocusedRefreshBadge(currentPage);
             sendHeartbeat(true);
             applyPolling();
         };
 
         /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
         const POLL_JOBS = {
-            adguard: { fn: () => { fetchAdguard(); fetchAdgLog(); }, def: 60, label: 'AdGuard DNS 統計', desc: '多久更新一次 AdGuard Home 的攔截統計與查詢日誌。' },
-            linuxMon: { fn: () => { fetchLinux(); fetchLnxChart(); }, def: 120, label: 'Linux 小主機監控', desc: '多久 SSH 抓一次小主機的 CPU/溫度/記憶體/磁碟並更新歷史圖。' },
+            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog()]), def: 60, label: 'AdGuard DNS 統計', desc: '多久更新一次 AdGuard Home 的攔截統計與查詢日誌。' },
+            linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]), def: 120, label: 'Linux 小主機監控', desc: '多久 SSH 抓一次小主機的 CPU/溫度/記憶體/磁碟並更新歷史圖。' },
             critAlerts: { fn: () => fetchCritAlerts(), def: 10, label: '重大事件警報', desc: '多久檢查一次重大事件 (UPS 斷電/WAN 斷線等)，觸發頂部紅色閃爍橫幅。' },
             hardware: { fn: () => fetchHardware(), def: 15, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
             ucgHist: { fn: () => fetchUcgHist(), def: 60, label: 'UCG 歷史紀錄圖', desc: '多久重新整理一次 UCG 歷史紀錄圖表 (依所選範圍)。' },
@@ -5072,7 +5078,7 @@
             cloud: { fn: () => { fetchCloudSites(); fetchCloudDevices(); fetchCloudHosts(); fetchCloudSdwan(); }, def: 120, label: '雲端站點 (Site Manager)', desc: '多久抓一次 UniFi 官方雲端的站點、託管設備、控制主機與 SD-WAN VPN 清單。' },
             isp: { fn: () => fetchIspMetrics(), def: 60, label: 'ISP 網路品質', desc: '多久抓一次延遲、丟包率、上/下載速度 → 更新雲端頁的 ISP 卡與總覽的「WAN 狀態」KPI。' },
             nas: { fn: () => fetchNas(), def: 30, label: 'NAS 即時遙測', desc: '多久抓一次 NAS 的 CPU/記憶體/網路/UPS、硬碟健康與儲存區容量。' },
-            nasAdvanced: { fn: () => { fetchNasAdvanced(); fetchNasCharts(); fetchNasAlerts(); fetchNasSleepStats(); }, def: 120, label: 'NAS 進階 (歷史圖/警報)', desc: '多久抓一次 NAS 的系統/流量/溫度/儲存歷史圖、滿載預估、警報事件與硬碟休眠統計（資料量較大，建議較長間隔）。' },
+            nasAdvanced: { fn: () => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts(), fetchNasSleepStats()]), def: 120, label: 'NAS 進階 (歷史圖/警報)', desc: '多久抓一次 NAS 的系統/流量/溫度/儲存歷史圖、滿載預估、警報事件與硬碟休眠統計（資料量較大，建議較長間隔）。' },
             docker: { fn: () => fetchNasDocker(), def: 30, label: 'Docker 容器', desc: '多久刷新一次 Docker 容器清單與其即時 CPU/記憶體占用。' },
             trend: { fn: () => fetchTrends(), def: 30, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
             notifLog: { fn: () => fetchNotifLog(), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄清單。' },
@@ -5095,20 +5101,36 @@
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security']
         };
         const PAGE_ACTIVITY_SCOPES = {
-            overview: ['trend', 'nas', 'wiim'], clients: ['trend'], security: ['trend'],
-            cloud: ['trend'], nas: ['nas'], wiim: ['wiim'], linuxhost: ['linux']
+            overview: ['trend'], clients: ['trend'], security: ['trend'],
+            cloud: ['trend'], ucg: ['ucg'], nas: ['nas'], wiim: ['wiim'], linuxhost: ['linux']
         };
+        const FOCUSED_DEVICE_PAGES = new Set(['ucg', 'nas', 'wiim', 'ups', 'adguard', 'linuxhost']);
+        const FOCUSED_POLL_SEC = 3;
         let pollTimers = {};
+        const pollRunning = new Set();
         function getPollConfig() { try { return JSON.parse(localStorage.getItem('pollConfig')) || {}; } catch { return {}; } }
         function getPollSec(key) { const c = getPollConfig(); return (typeof c[key] === 'number' && c[key] > 0) ? c[key] : POLL_JOBS[key].def; }
+        function getEffectivePollSec(key, pageJobs) {
+            return FOCUSED_DEVICE_PAGES.has(currentPage) && pageJobs.includes(key) ? FOCUSED_POLL_SEC : getPollSec(key);
+        }
+        async function runPollJob(key, job) {
+            if (pollRunning.has(key)) return;
+            pollRunning.add(key);
+            try { await job.fn(); } finally { pollRunning.delete(key); }
+        }
+        function updateFocusedRefreshBadge(page) {
+            const badge = document.getElementById('focused-refresh-badge');
+            if (badge) badge.classList.toggle('hidden', !FOCUSED_DEVICE_PAGES.has(page));
+        }
         function applyPolling(runNow = false) {
             Object.entries(POLL_JOBS).forEach(([k, j]) => {
                 clearInterval(pollTimers[k]);
                 delete pollTimers[k];
                 const pageJobs = PAGE_POLL_JOBS[currentPage] || [];
                 if (document.hidden || (!COMMON_POLL_JOBS.has(k) && !pageJobs.includes(k))) return;
-                if (runNow) setTimeout(j.fn, 0);
-                pollTimers[k] = setInterval(j.fn, getPollSec(k) * 1000);
+                const run = () => runPollJob(k, j);
+                if (runNow) setTimeout(run, 0);
+                pollTimers[k] = setInterval(run, getEffectivePollSec(k, pageJobs) * 1000);
             });
         }
         function savePollConfig(cfg) { localStorage.setItem('pollConfig', JSON.stringify(cfg)); persistUiPreference('pollConfig', cfg); applyPolling(); }
@@ -5118,14 +5140,18 @@
         async function sendHeartbeat(focus = false) {
             if (document.hidden) return;
             const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
-            if (!scopes.length) return;
+            if (!scopes.length && !focus) return;
             const query = '?scope=' + encodeURIComponent(scopes.join(',')) + (focus ? '&focus=1' : '');
             try { await fetch('/api/heartbeat' + query); } catch (e) { /* 靜默 */ }
+        }
+        function releaseDeviceFocus() {
+            fetch('/api/heartbeat?scope=&focus=1').catch(() => { /* 靜默 */ });
         }
         // 分頁重新可見時立即補一次心跳，讓高頻取樣馬上恢復
         document.addEventListener('visibilitychange', () => {
             applyPolling();
-            if (!document.hidden) sendHeartbeat(true);
+            if (document.hidden) releaseDeviceFocus();
+            else sendHeartbeat(true);
         });
 
         // 共用小圖示 (線條 SVG，取代 emoji)

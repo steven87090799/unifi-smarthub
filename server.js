@@ -21,6 +21,7 @@ const { SystemMonitor } = require('./observability/system-monitor');
 const { registerHealthRoutes } = require('./observability/health-routes');
 const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
+const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 const APP_STARTED_AT = Date.now();
 const logger = createLogger({ service: 'smarthub' });
@@ -362,7 +363,10 @@ function fetchHardwareSSH() {
 
 // 行程內共用入口 (route / notificationWatcher / buildReport 皆走這裡，不再自打 HTTP)
 async function getHardwareCached() {
-    if (hwCache && Date.now() - hwCache.ts < 15000) return hwCache.data;
+    // Focused UCG page refreshes every 3s. Keep the active cache slightly shorter
+    // so each visible refresh can obtain a fresh SSH sample.
+    const cacheMs = isDeviceSamplingActive('ucg') ? 2000 : 15000;
+    if (hwCache && Date.now() - hwCache.ts < cacheMs) return hwCache.data;
     if (!hwInflight) hwInflight = fetchHardwareSSH().finally(() => { hwInflight = null; });
     const data = await hwInflight;
     hwCache = { ts: Date.now(), data };
@@ -1547,13 +1551,18 @@ function requestPromptSampling(scopes) {
     // This deliberately only clears scheduler guards. Existing interval loops and
     // runSerialJob still control I/O and prevent concurrent duplicate sampling.
     if (scopes.includes('trend')) lastSampleTs = 0;
+    if (scopes.includes('ucg')) {
+        hwCache = null;
+        lastUcgSampleTs = 0;
+    }
     if (scopes.includes('nas')) lastNasSampleTs = 0;
     if (scopes.includes('wiim')) lastWiimPollTs = 0;
     if (scopes.includes('linux')) lastLinuxSampleTs = 0;
 }
 function markClientActivity(scopes = 'trend', { focus = false } = {}) {
     const requestedMs = (appSettings.activeWindowSec || 30) * 1000;
-    const activity = deviceActivity.mark(scopes, requestedMs);
+    // A focus heartbeat replaces the previous page's scopes immediately.
+    const activity = deviceActivity.mark(scopes, requestedMs, { replace: focus });
     // A page focus gets one prompt sample. A lease which had already expired
     // receives the same treatment, while normal heartbeat renewals do not.
     const promptScopes = focus ? activity.accepted : activity.activated;
@@ -1607,10 +1616,10 @@ async function trendScheduler() {
     const active = isDeviceSamplingActive('trend');
     const stateStr = active ? 'Active (活躍模式)' : 'Idle (閒置模式)';
     if (stateStr !== lastSchedulerState) {
-        sysLog('Scheduler', `取樣頻率切換至：${stateStr}。取樣間隔：${active ? appSettings.trendActiveSec : appSettings.trendIdleSec} 秒`);
+        sysLog('Scheduler', `取樣頻率切換至：${stateStr}。取樣間隔：${active ? FOCUSED_DEVICE_SAMPLE_MS / 1000 : appSettings.trendIdleSec} 秒`);
         lastSchedulerState = stateStr;
     }
-    const gap = (active ? appSettings.trendActiveSec : appSettings.trendIdleSec) * 1000;
+    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : appSettings.trendIdleSec * 1000;
     if (now - lastSampleTs >= gap) {
         lastSampleTs = now;
         sysLog('Scheduler', '開始執行趨勢遙測資料取樣...');
@@ -2015,11 +2024,13 @@ app.get('/api/nas/ups-usb', async (req, res) => {
 });
 
 /* ===================== UCG 歷史自建取樣器 =====================
-   跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時，順手記一筆 (節流 30 秒)，
+   跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時順手記一筆；
+   UCG 頁可見時每 3 秒，離頁後恢復原本 30 秒節流，
    不需要額外開 SSH 連線。*/
 let lastUcgSampleTs = 0;
 function sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct }) {
-    if (Date.now() - lastUcgSampleTs < 30000) return;
+    const gap = isDeviceSamplingActive('ucg') ? FOCUSED_DEVICE_SAMPLE_MS : 30000;
+    if (Date.now() - lastUcgSampleTs < gap) return;
     lastUcgSampleTs = Date.now();
     historyDb.insertPoint('ucg', { t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores }, {
         keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP
@@ -2085,15 +2096,15 @@ async function sampleNasHistory() {
         historyDb.insertPoint('nas', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
     } catch (e) { throw e; }
 }
-// 自適應：有人看網頁時每 120 秒、閒置時每 15 分鐘。
+// 自適應：正在看 NAS 頁時每 3 秒、閒置時每 15 分鐘。
 setInterval(() => {
     const active = isDeviceSamplingActive('nas');
-    const gap = (active ? 120 : 900) * 1000;
+    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : 900000;
     if (Date.now() - lastNasSampleTs >= gap) {
         lastNasSampleTs = Date.now();
         runSerialJob('nasHistory', sampleNasHistory);
     }
-}, 5000);
+}, 1000);
 
 function nasHistorySince(hours) {
     return historyDb.getSince('nas', Date.now() - hours * 3600000);
@@ -2807,12 +2818,12 @@ async function pollWiimTemp() {
     });
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
-// 自適應排程：有人瀏覽時每 30 秒取樣，閒置時降為 trendIdleSec。
+// 自適應排程：正在看 WiiM 頁時每 3 秒取樣，閒置時降為 trendIdleSec。
 let lastWiimPollTs = 0;
 setInterval(() => {
     const now = Date.now();
     const active = isDeviceSamplingActive('wiim');
-    const gap = active ? 30000 : appSettings.trendIdleSec * 1000;
+    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : appSettings.trendIdleSec * 1000;
     if (now - lastWiimPollTs >= gap) {
         lastWiimPollTs = now;
         runSerialJob('wiimTemperature', pollWiimTemp);
@@ -3317,7 +3328,8 @@ function fetchLinuxSSH() {
     });
 }
 async function getLinuxCached() {
-    if (linuxCache && Date.now() - linuxCache.ts < 10000) return linuxCache.data;
+    const cacheMs = isDeviceSamplingActive('linux') ? 2000 : 10000;
+    if (linuxCache && Date.now() - linuxCache.ts < cacheMs) return linuxCache.data;
     if (!linuxInflight) linuxInflight = fetchLinuxSSH().finally(() => { linuxInflight = null; });
     const data = await linuxInflight;
     linuxCache = { ts: Date.now(), data };
@@ -3331,12 +3343,12 @@ app.get('/api/linux/stats', async (req, res) => {
         res.json({ source: 'error', error: publicError(e) });
     }
 });
-// 歷史取樣 (自適應：活躍 120s / 閒置 15min)
+// 歷史取樣 (自適應：Linux 頁可見時 3s / 閒置 15min)
 let lastLinuxSampleTs = 0;
 setInterval(() => {
     if (!linuxConfigured()) return;
     const active = isDeviceSamplingActive('linux');
-    const gap = (active ? 120 : 900) * 1000;
+    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : 900000;
     if (Date.now() - lastLinuxSampleTs < gap) return;
     lastLinuxSampleTs = Date.now();
     runSerialJob('linuxHistory', async () => {
@@ -3346,7 +3358,7 @@ setInterval(() => {
             mem: d.memUsagePct, load: d.load && d.load[0]
         }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
     });
-}, 5000);
+}, 1000);
 app.get('/api/linux/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     res.json({ data: historyDb.getSince('linux', Date.now() - hours * 3600000) });
