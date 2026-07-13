@@ -1018,18 +1018,21 @@ const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
 const NOTIF_DEFAULTS = {
     enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '',
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
-    triggerNewClient: false, triggerClientIpChange: false, triggerNetworkDeviceOffline: false, triggerWiimOffline: false, triggerBlockAction: true,
+    triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, clientSignalAlert: 75,
+    triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
+    triggerWiimOffline: false, triggerWiimHighVolume: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85,
     triggerNasDiskHealth: true, triggerNasOffline: false,
     triggerNasHighCpu: false, nasCpuAlert: 90, triggerNasHighMemory: false, nasMemoryAlert: 90,
-    triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85, triggerWanDown: false,
+    triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,
+    triggerWanDown: false, triggerWanLatency: false, wanLatencyAlert: 100,
     triggerUnifiOffline: false, triggerNasLog: true,
-    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false,
-    triggerAdgProtection: true, triggerAdgOffline: false,
-    triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90, triggerLinuxHighCpu: false, linuxCpuAlert: 90, triggerLinuxHighMemory: false, linuxMemoryAlert: 90,
-    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHealth: true, triggerDockerRestart: true,
+    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerUpsOffline: true,
+    triggerAdgProtection: true, triggerAdgOffline: false, triggerAdgHighBlockRate: false, adgBlockRateAlert: 50,
+    triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90, triggerLinuxHighCpu: false, linuxCpuAlert: 90, triggerLinuxHighMemory: false, linuxMemoryAlert: 90, triggerLinuxHighLoad: false, linuxLoadAlert: 4,
+    triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHealth: true, triggerDockerRestart: true, triggerDockerInventory: false, triggerDockerOom: true,
     triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
-    triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true
+    triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true, triggerSystemStartup: false
 };
 // 記憶體快取：watcher 每輪呼叫多次，不需要每次讀檔
 let notifSettingsCache = null;
@@ -1142,22 +1145,24 @@ app.get('/api/notifications/settings', (req, res) => {
         enabled: s.enabled, channel: s.channel, chatId: s.chatId,
         triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts, triggerWiimTemp: s.triggerWiimTemp !== false,
         triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
-        triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerNetworkDeviceOffline: !!s.triggerNetworkDeviceOffline, triggerWiimOffline: !!s.triggerWiimOffline, triggerBlockAction: s.triggerBlockAction !== false,
+        triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerClientWeakSignal: !!s.triggerClientWeakSignal, clientSignalAlert: s.clientSignalAlert ?? 75,
+        triggerNetworkDeviceOffline: !!s.triggerNetworkDeviceOffline, triggerWifiSsidChange: !!s.triggerWifiSsidChange, triggerUnifiUpgrade: !!s.triggerUnifiUpgrade, triggerCloudOffline: !!s.triggerCloudOffline,
+        triggerWiimOffline: !!s.triggerWiimOffline, triggerWiimHighVolume: !!s.triggerWiimHighVolume, wiimVolumeAlert: s.wiimVolumeAlert ?? 80, triggerBlockAction: s.triggerBlockAction !== false,
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
         triggerNasDiskHealth: s.triggerNasDiskHealth !== false, triggerNasOffline: !!s.triggerNasOffline,
         triggerNasHighCpu: !!s.triggerNasHighCpu, nasCpuAlert: s.nasCpuAlert ?? 90, triggerNasHighMemory: !!s.triggerNasHighMemory, nasMemoryAlert: s.nasMemoryAlert ?? 90,
         triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75,
         triggerUcgHighCpu: !!s.triggerUcgHighCpu, ucgCpuAlert: s.ucgCpuAlert ?? 90, triggerUcgHighMemory: !!s.triggerUcgHighMemory, ucgMemoryAlert: s.ucgMemoryAlert ?? 90, triggerUcgDisk: !!s.triggerUcgDisk, ucgDiskAlert: s.ucgDiskAlert ?? 85,
-        triggerWanDown: !!s.triggerWanDown, triggerUnifiOffline: !!s.triggerUnifiOffline, triggerNasLog: !!s.triggerNasLog,
-        triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsLowRuntime: !!s.triggerUpsLowRuntime, upsRuntimeAlertMin: s.upsRuntimeAlertMin ?? 10, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange,
-        triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline,
+        triggerWanDown: !!s.triggerWanDown, triggerWanLatency: !!s.triggerWanLatency, wanLatencyAlert: s.wanLatencyAlert ?? 100, triggerUnifiOffline: !!s.triggerUnifiOffline, triggerNasLog: !!s.triggerNasLog,
+        triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsLowRuntime: !!s.triggerUpsLowRuntime, upsRuntimeAlertMin: s.upsRuntimeAlertMin ?? 10, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange, triggerUpsOffline: s.triggerUpsOffline !== false,
+        triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline, triggerAdgHighBlockRate: !!s.triggerAdgHighBlockRate, adgBlockRateAlert: s.adgBlockRateAlert ?? 50,
         triggerLinuxTemp: s.triggerLinuxTemp !== false, linuxTempAlert: s.linuxTempAlert ?? 70,
-        triggerLinuxOffline: !!s.triggerLinuxOffline, triggerLinuxDisk: !!s.triggerLinuxDisk, linuxDiskAlert: s.linuxDiskAlert ?? 90, triggerLinuxHighCpu: !!s.triggerLinuxHighCpu, linuxCpuAlert: s.linuxCpuAlert ?? 90, triggerLinuxHighMemory: !!s.triggerLinuxHighMemory, linuxMemoryAlert: s.linuxMemoryAlert ?? 90,
-        triggerDockerCriticalLog: s.triggerDockerCriticalLog !== false, triggerDockerErrorLog: !!s.triggerDockerErrorLog, triggerDockerState: s.triggerDockerState !== false, triggerDockerHealth: s.triggerDockerHealth !== false, triggerDockerRestart: s.triggerDockerRestart !== false,
+        triggerLinuxOffline: !!s.triggerLinuxOffline, triggerLinuxDisk: !!s.triggerLinuxDisk, linuxDiskAlert: s.linuxDiskAlert ?? 90, triggerLinuxHighCpu: !!s.triggerLinuxHighCpu, linuxCpuAlert: s.linuxCpuAlert ?? 90, triggerLinuxHighMemory: !!s.triggerLinuxHighMemory, linuxMemoryAlert: s.linuxMemoryAlert ?? 90, triggerLinuxHighLoad: !!s.triggerLinuxHighLoad, linuxLoadAlert: s.linuxLoadAlert ?? 4,
+        triggerDockerCriticalLog: s.triggerDockerCriticalLog !== false, triggerDockerErrorLog: !!s.triggerDockerErrorLog, triggerDockerState: s.triggerDockerState !== false, triggerDockerHealth: s.triggerDockerHealth !== false, triggerDockerRestart: s.triggerDockerRestart !== false, triggerDockerInventory: !!s.triggerDockerInventory, triggerDockerOom: s.triggerDockerOom !== false,
         triggerDockerHighCpu: !!s.triggerDockerHighCpu, dockerCpuAlert: s.dockerCpuAlert ?? 90,
         triggerDockerHighMemory: !!s.triggerDockerHighMemory, dockerMemoryAlert: s.dockerMemoryAlert ?? 90,
-        triggerSystemCritical: s.triggerSystemCritical !== false, triggerSystemWarning: !!s.triggerSystemWarning, triggerSystemRecovery: s.triggerSystemRecovery !== false,
+        triggerSystemCritical: s.triggerSystemCritical !== false, triggerSystemWarning: !!s.triggerSystemWarning, triggerSystemRecovery: s.triggerSystemRecovery !== false, triggerSystemStartup: !!s.triggerSystemStartup,
         webhookUrlSet: !!s.webhookUrl, botTokenSet: !!s.botToken
     });
 });
@@ -1172,8 +1177,8 @@ app.post('/api/notifications/settings', (req, res) => {
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange', 'triggerNetworkDeviceOffline', 'triggerWiimOffline', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerNasHighCpu', 'triggerNasHighMemory', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerUcgHighMemory', 'triggerUcgDisk', 'triggerWanDown', 'triggerUnifiOffline', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsLowRuntime', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerLinuxHighCpu', 'triggerLinuxHighMemory', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHealth', 'triggerDockerRestart', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
-    ['nasDiskTempAlert', 'nasSpaceAlert', 'nasCpuAlert', 'nasMemoryAlert', 'ucgTempAlert', 'ucgCpuAlert', 'ucgMemoryAlert', 'ucgDiskAlert', 'upsLoadAlert', 'upsRuntimeAlertMin', 'upsVoltDeviationPct', 'linuxTempAlert', 'linuxDiskAlert', 'linuxCpuAlert', 'linuxMemoryAlert', 'dockerCpuAlert', 'dockerMemoryAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange', 'triggerClientWeakSignal', 'triggerNetworkDeviceOffline', 'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerWiimOffline', 'triggerWiimHighVolume', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerNasHighCpu', 'triggerNasHighMemory', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerUcgHighMemory', 'triggerUcgDisk', 'triggerWanDown', 'triggerWanLatency', 'triggerUnifiOffline', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsLowRuntime', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerUpsOffline', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerAdgHighBlockRate', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerLinuxHighCpu', 'triggerLinuxHighMemory', 'triggerLinuxHighLoad', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHealth', 'triggerDockerRestart', 'triggerDockerInventory', 'triggerDockerOom', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery', 'triggerSystemStartup'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['clientSignalAlert', 'wiimVolumeAlert', 'nasDiskTempAlert', 'nasSpaceAlert', 'nasCpuAlert', 'nasMemoryAlert', 'ucgTempAlert', 'ucgCpuAlert', 'ucgMemoryAlert', 'ucgDiskAlert', 'wanLatencyAlert', 'upsLoadAlert', 'upsRuntimeAlertMin', 'upsVoltDeviationPct', 'adgBlockRateAlert', 'linuxTempAlert', 'linuxDiskAlert', 'linuxCpuAlert', 'linuxMemoryAlert', 'linuxLoadAlert', 'dockerCpuAlert', 'dockerMemoryAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
     try { saveNotifSettings(s); }
@@ -1230,7 +1235,7 @@ async function scanSystemIssueNotifications(s) {
 }
 
 async function scanDockerNotifications(s) {
-    const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHealth !== false || s.triggerDockerRestart !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
+    const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHealth !== false || s.triggerDockerRestart !== false || s.triggerDockerInventory || s.triggerDockerOom !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
     if (!usesDockerMonitor || !nasMonConfigured()) return;
     let containers;
     try {
@@ -1241,13 +1246,19 @@ async function scanDockerNotifications(s) {
         return;
     }
     const firstBaseline = !dockerWatcherBootstrapped;
+    const currentIds = new Set();
     for (const container of containers) {
         const id = container.id || container.name;
         if (!id) continue;
+        currentIds.add(id);
         const state = String(container.state || 'unknown').toLowerCase();
         const health = String(container.health || (/\b(unhealthy|healthy|starting)\b/i.exec(String(container.status || '')) || [])[1] || 'unknown').toLowerCase();
         const restartCount = Math.max(0, Number(container.restart_count ?? container.restartCount ?? 0) || 0);
+        const oomKilled = container.oom_killed === true || container.OOMKilled === true || /\boomkilled\b|out of memory/i.test(String(container.status || ''));
         const previous = dockerContainerStates.get(id);
+        if (!firstBaseline && notifBootstrapped && s.triggerDockerInventory && !previous) {
+            await notify('➕ Docker 新容器出現', `${container.name || id}\n狀態 ${state} · ${container.image || 'image unknown'}`);
+        }
         if (!firstBaseline && notifBootstrapped && s.triggerDockerState !== false && previous && previous.state !== state) {
             const recovered = state === 'running';
             await notify(recovered ? '✅ Docker 容器已恢復運行' : '🐳 Docker 容器狀態異常', `${container.name || id}\n${previous.state} → ${state}\n${container.status || ''}`.trim());
@@ -1259,7 +1270,10 @@ async function scanDockerNotifications(s) {
         if (!firstBaseline && notifBootstrapped && s.triggerDockerRestart !== false && previous && restartCount > previous.restartCount) {
             await notify('🔄 Docker 容器重新啟動', `${container.name || id}\n重新啟動次數 ${previous.restartCount} → ${restartCount}\n${container.status || ''}`.trim());
         }
-        dockerContainerStates.set(id, { state, health, restartCount, status: container.status || '' });
+        if (!firstBaseline && notifBootstrapped && s.triggerDockerOom !== false && oomKilled && !previous?.oomKilled) {
+            await notify('💥 Docker 容器發生 OOM', `${container.name || id}\n容器因記憶體不足被系統終止，請檢查 memory limit 與使用量`);
+        }
+        dockerContainerStates.set(id, { name: container.name || id, state, health, restartCount, oomKilled, status: container.status || '' });
 
         const cpu = Number(container.cpu_percent);
         const memUsage = Number(container.mem_usage_mb);
@@ -1276,6 +1290,13 @@ async function scanDockerNotifications(s) {
             if (firstBaseline || !notifBootstrapped || Date.now() - last <= 30 * 60 * 1000) continue;
             lastDockerMetricAlertTs.set(metricKey, Date.now());
             await notify('🐳 Docker 容器資源過高', `${container.name || id}\n${metric.label} ${metric.value.toFixed(1)}${metric.unit} (門檻 ${metric.threshold}${metric.unit})`);
+        }
+    }
+    if (!firstBaseline && notifBootstrapped) {
+        for (const [id, previous] of dockerContainerStates) {
+            if (currentIds.has(id)) continue;
+            if (s.triggerDockerInventory) await notify('➖ Docker 容器已移除', `${previous.name || id}\n先前狀態 ${previous.state || 'unknown'}`);
+            dockerContainerStates.delete(id);
         }
     }
 
@@ -1338,7 +1359,7 @@ async function notificationWatcher() {
         unifiWasOnline = ok;
     }
     // UniFi 管理裝置（AP / Switch / Gateway）離線與恢復；首輪建立基準不推送既有狀態。
-    if (s.triggerNetworkDeviceOffline) {
+    if (s.triggerNetworkDeviceOffline || s.triggerUnifiUpgrade) {
         try {
             const cookie = await getLocalSession();
             const data = await unifiClient.get('/proxy/network/api/s/default/stat/device', { headers: { 'Cookie': cookie } });
@@ -1347,14 +1368,50 @@ async function notificationWatcher() {
                 if (!id) continue;
                 const online = device.state === 1 || device.state === '1' || String(device.state).toLowerCase() === 'connected';
                 const previous = networkDeviceStates.get(id);
-                if (notifBootstrapped && previous && previous.online !== online) {
+                if (notifBootstrapped && s.triggerNetworkDeviceOffline && previous && previous.online !== online) {
                     const name = device.name || device.model || id;
                     await notify(online ? '✅ UniFi 網路設備已恢復' : '📡 UniFi 網路設備離線', `${name}\n${previous.online ? '在線' : '離線'} → ${online ? '在線' : '離線'} · ${device.model || device.type || 'UniFi device'}`);
+                }
+                if (notifBootstrapped && s.triggerUnifiUpgrade && device.upgradable
+                    && Date.now() - (unifiUpgradeAlertTs.get(id) || 0) > 24 * 60 * 60 * 1000) {
+                    unifiUpgradeAlertTs.set(id, Date.now());
+                    await notify('⬆️ UniFi 裝置有韌體可更新', `${device.name || device.model || id}\n目前 ${device.version || '未知版本'} · 型號 ${device.model || device.type || '--'}`);
                 }
                 networkDeviceStates.set(id, { online, name: device.name || device.model || id });
             }
         } catch (error) {
             logRecoverableFailure('watcher.networkDevices', error, { module: 'watcher.notifications', function: 'checkNetworkDeviceStates', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
+    }
+    // WiFi SSID 啟用狀態變更；使用設定本身的 stable id 作為去重基準。
+    if (s.triggerWifiSsidChange) {
+        try {
+            const cookie = await getLocalSession();
+            const data = await unifiClient.get('/proxy/network/api/s/default/rest/wlanconf', { headers: { 'Cookie': cookie } });
+            for (const wlan of (data.data.data || [])) {
+                const id = wlan._id || wlan.name;
+                if (!id) continue;
+                const enabled = wlan.enabled !== false;
+                const previous = wifiSsidStates.get(id);
+                if (notifBootstrapped && previous && previous.enabled !== enabled) {
+                    await notify(enabled ? '✅ WiFi SSID 已啟用' : '📴 WiFi SSID 已停用', `${wlan.name || id}\n${previous.enabled ? '啟用' : '停用'} → ${enabled ? '啟用' : '停用'}`);
+                }
+                wifiSsidStates.set(id, { enabled, name: wlan.name || id });
+            }
+        } catch (error) {
+            logRecoverableFailure('watcher.wifiSsids', error, { module: 'watcher.notifications', function: 'checkWifiSsidStates', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
+    }
+    // Site Manager Cloud 離線 / 恢復；checkCloudStatus 已有 60 秒節流。
+    if (s.triggerCloudOffline) {
+        try {
+            const cloud = await checkCloudStatus();
+            if (cloud.configured && cloudLastOnline !== null && cloud.ok !== cloudLastOnline && notifBootstrapped) {
+                await notify(cloud.ok ? '☁️ Site Manager 已恢復連線' : '☁️ Site Manager 連線失敗', cloud.detail || (cloud.ok ? '雲端 API 回應正常' : '請檢查 API Key 與外網連線'));
+            }
+            if (cloud.configured && cloud.ok !== null) cloudLastOnline = cloud.ok;
+        } catch (error) {
+            logRecoverableFailure('watcher.cloud', error, { module: 'watcher.notifications', function: 'checkCloudOnline', code: ERROR_CODES.EXT_UNIFI_FAILED });
         }
     }
     // NAS 嚴重警報
@@ -1395,13 +1452,19 @@ async function notificationWatcher() {
         }
     }
     // 新設備加入網路：只在 UniFi 已配發 IP 後通知，避免收到「取得中」且錯過後續 IP。
-    if (s.triggerNewClient || s.triggerClientIpChange) {
+    if (s.triggerNewClient || s.triggerClientIpChange || s.triggerClientWeakSignal) {
         try {
             const cookie = await getLocalSession();
             const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
             for (const c of (sta.data.data || [])) {
                 if (!c.mac) continue;
                 const ip = String(c.ip || '').trim();
+                const rssi = Number(c.rssi);
+                if (s.triggerClientWeakSignal && !c.is_wired && Number.isFinite(rssi) && rssi <= -(s.clientSignalAlert ?? 75)
+                    && Date.now() - (clientSignalAlertTs.get(c.mac) || 0) > 30 * 60 * 1000) {
+                    clientSignalAlertTs.set(c.mac, Date.now());
+                    await notify('📶 WiFi 設備訊號過弱', `${c.name || c.hostname || c.mac}\nRSSI ${rssi} dBm (門檻 -${s.clientSignalAlert ?? 75} dBm) · IP ${ip || '尚未取得'}`);
+                }
                 // 首輪只建立既有設備基準；後續的新設備則等待 DHCP/UniFi 回報有效 IP。
                 if (!notifBootstrapped) {
                     knownClientMacs.add(c.mac);
@@ -1437,6 +1500,20 @@ async function notificationWatcher() {
             await notify(ok ? '🔊 WiiM 已恢復連線' : '🔇 WiiM 失去連線', `裝置 IP ${wiimIP}`);
         }
         wiimWasOnline = ok;
+    }
+    if (s.triggerWiimHighVolume) {
+        try {
+            const raw = await wiimGet('getPlayerStatus');
+            const status = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {});
+            const volume = Number(status.vol);
+            if (status.status === 'play' && Number.isFinite(volume) && volume >= (s.wiimVolumeAlert ?? 80)
+                && Date.now() - lastWiimVolumeTs > 30 * 60 * 1000) {
+                lastWiimVolumeTs = Date.now();
+                await notify('🔊 WiiM 音量過高', `播放中音量 ${volume}% (門檻 ${s.wiimVolumeAlert ?? 80}%)`);
+            }
+        } catch (error) {
+            logRecoverableFailure('watcher.wiimVolume', error, { module: 'watcher.notifications', function: 'checkWiimVolume', code: ERROR_CODES.EXT_WIIM_FAILED });
+        }
     }
     // NAS 硬碟溫度 / 健康 / 儲存空間門檻 (溫度 30 分鐘、健康 6 小時冷卻)
     if ((s.triggerNasDiskTemp || s.triggerNasDiskHealth !== false || s.triggerNasSpace) && nasConfigured()) {
@@ -1545,8 +1622,17 @@ async function notificationWatcher() {
             logRecoverableFailure('watcher.ucgHealth', error, { module: 'watcher.notifications', function: 'checkUcgHealth', code: ERROR_CODES.EXT_UNIFI_FAILED });
         }
     }
+    if (s.triggerWanLatency) {
+        const latestTrend = historyDb.getLatest('trend');
+        const latency = Number(latestTrend?.latency);
+        if (Number.isFinite(latency) && latency >= (s.wanLatencyAlert ?? 100)
+            && Date.now() - lastWanLatencyTs > 30 * 60 * 1000) {
+            lastWanLatencyTs = Date.now();
+            await notify('🐢 WAN 延遲過高', `目前平均延遲 ${latency.toFixed(1)} ms (門檻 ${s.wanLatencyAlert ?? 100} ms)`);
+        }
+    }
     // AdGuard：保護被暫停 / 失聯 (轉態通知)
-    if ((s.triggerAdgProtection !== false || s.triggerAdgOffline) && adgConfigured()) {
+    if ((s.triggerAdgProtection !== false || s.triggerAdgOffline || s.triggerAdgHighBlockRate) && adgConfigured()) {
         let on = null;
         try { on = !!(await adgReq('/control/status')).protection_enabled; }
         catch (error) {
@@ -1559,10 +1645,24 @@ async function notificationWatcher() {
         if (s.triggerAdgProtection !== false && on !== null && adgWasOn !== null && on !== adgWasOn && notifBootstrapped) {
             await notify(on ? '🛡️ AdGuard 保護已恢復' : '⚠️ AdGuard 保護已暫停', on ? 'DNS 廣告攔截恢復運作' : '全網 DNS 廣告攔截目前停用中');
         }
+        if (s.triggerAdgHighBlockRate && on !== null && Date.now() - lastAdgBlockRateTs > 30 * 60 * 1000) {
+            try {
+                const stats = await adgReq('/control/stats');
+                const queries = Number(stats.num_dns_queries || 0);
+                const blocked = Number(stats.num_blocked_filtering || 0);
+                const rate = queries > 0 ? blocked / queries * 100 : 0;
+                if (queries >= 100 && rate >= (s.adgBlockRateAlert ?? 50)) {
+                    lastAdgBlockRateTs = Date.now();
+                    await notify('🛡️ AdGuard 攔截率異常升高', `DNS 查詢 ${queries.toLocaleString()} 次，攔截 ${blocked.toLocaleString()} 次 (${rate.toFixed(1)}%，門檻 ${s.adgBlockRateAlert ?? 50}%)`);
+                }
+            } catch (error) {
+                logRecoverableFailure('watcher.adguardStats', error, { module: 'watcher.notifications', function: 'checkAdguardBlockRate', code: ERROR_CODES.EXT_ADGUARD_FAILED });
+            }
+        }
         if (on !== null) adgWasOn = on;
     }
     // Linux 小主機：過熱 / 磁碟滿 (30 分鐘冷卻)、離線/恢復 (轉態)
-    if ((s.triggerLinuxTemp !== false || s.triggerLinuxOffline || s.triggerLinuxDisk || s.triggerLinuxHighCpu || s.triggerLinuxHighMemory) && linuxConfigured()) {
+    if ((s.triggerLinuxTemp !== false || s.triggerLinuxOffline || s.triggerLinuxDisk || s.triggerLinuxHighCpu || s.triggerLinuxHighMemory || s.triggerLinuxHighLoad) && linuxConfigured()) {
         let d = null;
         try { d = await getLinuxCached(); }
         catch (error) {
@@ -1593,21 +1693,32 @@ async function notificationWatcher() {
             lastLinuxMemoryTs = Date.now();
             await notify('🧠 小主機記憶體使用率過高', `${d.hostname} 記憶體 ${d.memUsagePct}% (門檻 ${s.linuxMemoryAlert ?? 90}%)`);
         }
+        const load1m = Number(d?.load?.[0]);
+        if (d && s.triggerLinuxHighLoad && Number.isFinite(load1m) && load1m >= (s.linuxLoadAlert ?? 4)
+            && Date.now() - lastLinuxLoadTs > 30 * 60 * 1000) {
+            lastLinuxLoadTs = Date.now();
+            await notify('📈 小主機系統負載過高', `${d.hostname} 1 分鐘 load average ${load1m.toFixed(2)} (門檻 ${s.linuxLoadAlert ?? 4})`);
+        }
     }
     // 去重 Set 上限維護 (防長期運行無限成長；iOS 隨機 MAC 會讓 knownClientMacs 持續累積)
-    capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000); capMap(clientIpByMac, 4000); capMap(networkDeviceStates, 1000);
+    capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000);
+    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000);
     notifBootstrapped = true;
 }
 const UCG_CPU_ALERT_SAMPLES = 3;
-let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastNasDiskHealthCheckTs = 0, lastNasDiskHealthAlertTs = 0, lastNasCpuTs = 0, lastNasMemoryTs = 0, lastUcgTempTs = 0, lastUcgCpuTs = 0, lastUcgMemoryTs = 0, lastUcgDiskTs = 0, ucgCpuHighSamples = 0, wanWasUp = null;
+let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastNasDiskHealthCheckTs = 0, lastNasDiskHealthAlertTs = 0, lastNasCpuTs = 0, lastNasMemoryTs = 0, lastUcgTempTs = 0, lastUcgCpuTs = 0, lastUcgMemoryTs = 0, lastUcgDiskTs = 0, lastWanLatencyTs = 0, ucgCpuHighSamples = 0, wanWasUp = null;
 const knownClientMacs = new Set();
 const clientIpByMac = new Map();
+const clientSignalAlertTs = new Map();
 const networkDeviceStates = new Map();
+const wifiSsidStates = new Map();
+const unifiUpgradeAlertTs = new Map();
 const notifiedNasLogIds = new Set();
 let wiimWasOnline = null;
-let lastWiimTempAlertTs = 0;
-let adgWasOn = null, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0, lastLinuxCpuTs = 0, lastLinuxMemoryTs = 0;
+let lastWiimTempAlertTs = 0, lastWiimVolumeTs = 0;
+let adgWasOn = null, lastAdgBlockRateTs = 0, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0, lastLinuxCpuTs = 0, lastLinuxMemoryTs = 0, lastLinuxLoadTs = 0;
 let nasWasOnline = null, unifiWasOnline = null;
+let cloudLastOnline = null;
 let dockerWatcherBootstrapped = false, systemIssueWatcherBootstrapped = false;
 const dockerContainerStates = new Map();
 const lastDockerMetricAlertTs = new Map();
@@ -3219,7 +3330,21 @@ async function readUpsLive() {
 // 取樣 + 斷電事件偵測 (皆持久化)
 async function sampleUps() {
     const live = await readUpsLive();
-    if (!live) { sysLog('UPS', '所有來源皆不可用，跳過本次取樣', true); upsLastLive = null; return; }
+    if (!live) {
+        sysLog('UPS', '所有來源皆不可用，跳過本次取樣', true);
+        const ns = loadNotifSettings();
+        if (ns.enabled && ns.triggerUpsOffline !== false && upsWasReachable === true) {
+            await notify('🔌 UPS 監控完全失聯', upsLastReason || 'PPB / NUT / pwrstat / pmset 所有資料來源皆無法讀取');
+        }
+        upsWasReachable = false;
+        upsLastLive = null;
+        return;
+    }
+    if (upsWasReachable === false) {
+        const ns = loadNotifSettings();
+        if (ns.enabled && ns.triggerUpsOffline !== false) await notify('✅ UPS 監控已恢復', `資料來源 ${(live.actualSource || 'unknown').toUpperCase()} · 電池 ${live.battery ?? '--'}%`);
+    }
+    upsWasReachable = true;
     upsLastLive = { ...live, ts: Date.now() };
     historyDb.insertPoint('ups', {
         t: new Date().toISOString(), inV: live.inputV, outV: live.outputV,
@@ -3282,7 +3407,7 @@ async function sampleUps() {
     }
     if (live.actualSource) lastUpsSource = live.actualSource;
 }
-let lastUpsHighLoadTs = 0, lastUpsLowRuntimeTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null;
+let lastUpsHighLoadTs = 0, lastUpsLowRuntimeTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null, upsWasReachable = null;
 // UPS 取樣「不做閒置降頻」：斷電/電壓紀錄是核心需求，無人看網頁也要持續記錄 (本地指令，成本低)
 let upsLowBattNotified = false;
 let lastUpsSampleTs = 0;
@@ -3670,6 +3795,12 @@ httpServer = app.listen(PORT, () => {
         module: 'startup.diagnostics', function: 'startupDiagnostics', code: ERROR_CODES.SYS_CONFIG_INVALID,
         message: 'External service startup diagnostics failed', error
     })), 3000);
+    setTimeout(() => {
+        const settings = loadNotifSettings();
+        if (settings.enabled && settings.triggerSystemStartup) {
+            notify('🚀 SmartHub 服務已啟動', `版本 ${APP_VERSION} · Port ${PORT} · 啟動耗時 ${Date.now() - APP_STARTED_AT} ms`).catch(() => { });
+        }
+    }, 5000).unref();
 });
 
 httpServer.on('error', error => {
