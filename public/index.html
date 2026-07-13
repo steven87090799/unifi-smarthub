@@ -2702,6 +2702,14 @@
                                             class="accent-blue-500 w-4 h-4"> 新設備連上網路 (陌生設備警示)
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-client-ip-change"
+                                            class="accent-blue-500 w-4 h-4"> 已知設備 IP 位址變更（DHCP 重新配發）
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-network-device-offline"
+                                            class="accent-blue-500 w-4 h-4"> UniFi AP／交換器／閘道器離線 / 恢復
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-wiim-offline"
                                             class="accent-blue-500 w-4 h-4"> WiiM 離線 / 恢復連線
                                     </label>
@@ -2724,6 +2732,14 @@
                                             onclick="event.preventDefault()"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-nas-cpu" class="accent-blue-500 w-4 h-4"> NAS CPU 超過
+                                        <input type="number" id="notif-nas-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-nas-memory" class="accent-blue-500 w-4 h-4"> NAS 記憶體使用率超過
+                                        <input type="number" id="notif-nas-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-ucgtemp" class="accent-blue-500 w-4 h-4">
                                         UCG CPU 溫度超過
                                         <input type="number" id="notif-ucg-temp" min="50" max="95"
@@ -2744,6 +2760,10 @@
                                         <input type="number" id="notif-ups-load" min="50" max="99"
                                             class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-ups-runtime" class="accent-blue-500 w-4 h-4"> UPS 斷電時預估續航少於
+                                        <input type="number" id="notif-ups-runtime" min="1" max="120" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> 分鐘
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-upsvolt" class="accent-blue-500 w-4 h-4">
@@ -2782,6 +2802,14 @@
                                             class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             onclick="event.preventDefault()"> %
                                     </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-lnx-cpu" class="accent-blue-500 w-4 h-4"> 小主機 CPU 使用率超過
+                                        <input type="number" id="notif-lnx-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-lnx-memory" class="accent-blue-500 w-4 h-4"> 小主機記憶體使用率超過
+                                        <input type="number" id="notif-lnx-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                    </label>
                                     <div class="pt-3 mt-3 border-t border-slate-800/70 space-y-2.5">
                                         <p class="text-[10px] font-bold text-blue-300 uppercase tracking-wider">Docker、系統健康與連線</p>
                                         <p class="text-[9px] text-slate-500 leading-relaxed">Docker 條件需設定 NAS Monitor。嚴重 Log 只比對 fatal、panic、OOM、critical、未處理例外等高風險關鍵字；錯誤 Log 會更頻繁，預設關閉。</p>
@@ -2796,6 +2824,9 @@
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-docker-health" class="accent-blue-500 w-4 h-4"> Docker 容器健康檢查異常 / 恢復（即使容器仍在運行）
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-docker-restart" class="accent-blue-500 w-4 h-4"> Docker 容器重新啟動（restart count 增加）
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-docker-cpu" class="accent-blue-500 w-4 h-4"> Docker 容器 CPU 超過
@@ -2817,6 +2848,14 @@
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-ucg-cpu" class="accent-blue-500 w-4 h-4"> UCG CPU 使用率超過
                                             <input type="number" id="notif-ucg-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-ucg-memory" class="accent-blue-500 w-4 h-4"> UCG 記憶體使用率超過
+                                            <input type="number" id="notif-ucg-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
+                                        </label>
+                                        <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                            <input type="checkbox" id="notif-trig-ucg-disk" class="accent-blue-500 w-4 h-4"> UCG 系統碟 eMMC 使用率超過
+                                            <input type="number" id="notif-ucg-disk" min="50" max="99" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" onclick="event.preventDefault()"> %
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-system-critical" class="accent-blue-500 w-4 h-4"> SmartHub 系統嚴重事件（主機資源、SQLite、卡住的背景工作）
@@ -7023,18 +7062,25 @@
                 setCk('notif-trig-ups-outage', s.triggerUpsOutage !== false);
                 setCk('notif-trig-ups-lowbatt', s.triggerUpsLowBatt !== false);
                 setCk('notif-trig-newclient', !!s.triggerNewClient);
+                setCk('notif-trig-client-ip-change', !!s.triggerClientIpChange);
+                setCk('notif-trig-network-device-offline', !!s.triggerNetworkDeviceOffline);
                 setCk('notif-trig-wiim-offline', !!s.triggerWiimOffline);
                 setCk('notif-trig-block', s.triggerBlockAction !== false);
                 setCk('notif-trig-nasdisk', !!s.triggerNasDiskTemp);
                 setCk('notif-trig-nasspace', !!s.triggerNasSpace);
                 setCk('notif-trig-nas-disk-health', s.triggerNasDiskHealth !== false);
                 setCk('notif-trig-nas-offline', !!s.triggerNasOffline);
+                setCk('notif-trig-nas-cpu', !!s.triggerNasHighCpu);
+                setCk('notif-trig-nas-memory', !!s.triggerNasHighMemory);
                 setCk('notif-trig-ucgtemp', !!s.triggerUcgTemp);
                 setCk('notif-trig-ucg-cpu', !!s.triggerUcgHighCpu);
+                setCk('notif-trig-ucg-memory', !!s.triggerUcgHighMemory);
+                setCk('notif-trig-ucg-disk', !!s.triggerUcgDisk);
                 setCk('notif-trig-wandown', !!s.triggerWanDown);
                 setCk('notif-trig-unifi-offline', !!s.triggerUnifiOffline);
                 setCk('notif-trig-naslog', !!s.triggerNasLog);
                 setCk('notif-trig-upsload', !!s.triggerUpsHighLoad);
+                setCk('notif-trig-ups-runtime', !!s.triggerUpsLowRuntime);
                 setCk('notif-trig-upsvolt', !!s.triggerUpsVoltAbnormal);
                 setCk('notif-trig-upssrc', !!s.triggerUpsSourceChange);
                 setCk('notif-trig-adgprot', s.triggerAdgProtection !== false);
@@ -7042,10 +7088,13 @@
                 setCk('notif-trig-lnxtemp', s.triggerLinuxTemp !== false);
                 setCk('notif-trig-lnxoff', !!s.triggerLinuxOffline);
                 setCk('notif-trig-lnxdisk', !!s.triggerLinuxDisk);
+                setCk('notif-trig-lnx-cpu', !!s.triggerLinuxHighCpu);
+                setCk('notif-trig-lnx-memory', !!s.triggerLinuxHighMemory);
                 setCk('notif-trig-docker-critical', s.triggerDockerCriticalLog !== false);
                 setCk('notif-trig-docker-error', !!s.triggerDockerErrorLog);
                 setCk('notif-trig-docker-state', s.triggerDockerState !== false);
                 setCk('notif-trig-docker-health', s.triggerDockerHealth !== false);
+                setCk('notif-trig-docker-restart', s.triggerDockerRestart !== false);
                 setCk('notif-trig-docker-cpu', !!s.triggerDockerHighCpu);
                 setCk('notif-trig-docker-memory', !!s.triggerDockerHighMemory);
                 setCk('notif-trig-system-critical', s.triggerSystemCritical !== false);
@@ -7054,12 +7103,16 @@
                 const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
                 setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
                 setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
+                setV('notif-nas-cpu', s.nasCpuAlert ?? 90); setV('notif-nas-memory', s.nasMemoryAlert ?? 90);
                 setV('notif-ucg-temp', s.ucgTempAlert ?? 75);
                 setV('notif-ucg-cpu', s.ucgCpuAlert ?? 90);
+                setV('notif-ucg-memory', s.ucgMemoryAlert ?? 90); setV('notif-ucg-disk', s.ucgDiskAlert ?? 85);
                 setV('notif-ups-load', s.upsLoadAlert ?? 80);
+                setV('notif-ups-runtime', s.upsRuntimeAlertMin ?? 10);
                 setV('notif-ups-volt', s.upsVoltDeviationPct ?? 10);
                 setV('notif-lnx-temp', s.linuxTempAlert ?? 70);
                 setV('notif-lnx-disk', s.linuxDiskAlert ?? 90);
+                setV('notif-lnx-cpu', s.linuxCpuAlert ?? 90); setV('notif-lnx-memory', s.linuxMemoryAlert ?? 90);
                 setV('notif-docker-cpu', s.dockerCpuAlert ?? 90);
                 setV('notif-docker-memory', s.dockerMemoryAlert ?? 90);
                 document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
@@ -7079,25 +7132,37 @@
                 triggerUpsOutage: document.getElementById('notif-trig-ups-outage')?.checked ?? true,
                 triggerUpsLowBatt: document.getElementById('notif-trig-ups-lowbatt')?.checked ?? true,
                 triggerNewClient: document.getElementById('notif-trig-newclient')?.checked ?? false,
+                triggerClientIpChange: document.getElementById('notif-trig-client-ip-change')?.checked ?? false,
+                triggerNetworkDeviceOffline: document.getElementById('notif-trig-network-device-offline')?.checked ?? false,
                 triggerWiimOffline: document.getElementById('notif-trig-wiim-offline')?.checked ?? false,
                 triggerBlockAction: document.getElementById('notif-trig-block')?.checked ?? true,
                 triggerNasDiskTemp: document.getElementById('notif-trig-nasdisk')?.checked ?? false,
                 triggerNasSpace: document.getElementById('notif-trig-nasspace')?.checked ?? false,
                 triggerNasDiskHealth: document.getElementById('notif-trig-nas-disk-health')?.checked ?? true,
                 triggerNasOffline: document.getElementById('notif-trig-nas-offline')?.checked ?? false,
+                triggerNasHighCpu: document.getElementById('notif-trig-nas-cpu')?.checked ?? false,
+                triggerNasHighMemory: document.getElementById('notif-trig-nas-memory')?.checked ?? false,
                 triggerUcgTemp: document.getElementById('notif-trig-ucgtemp')?.checked ?? false,
                 triggerUcgHighCpu: document.getElementById('notif-trig-ucg-cpu')?.checked ?? false,
+                triggerUcgHighMemory: document.getElementById('notif-trig-ucg-memory')?.checked ?? false,
+                triggerUcgDisk: document.getElementById('notif-trig-ucg-disk')?.checked ?? false,
                 triggerWanDown: document.getElementById('notif-trig-wandown')?.checked ?? false,
                 triggerUnifiOffline: document.getElementById('notif-trig-unifi-offline')?.checked ?? false,
                 triggerNasLog: document.getElementById('notif-trig-naslog')?.checked ?? false,
                 triggerUpsHighLoad: document.getElementById('notif-trig-upsload')?.checked ?? false,
+                triggerUpsLowRuntime: document.getElementById('notif-trig-ups-runtime')?.checked ?? false,
                 triggerUpsVoltAbnormal: document.getElementById('notif-trig-upsvolt')?.checked ?? false,
                 triggerUpsSourceChange: document.getElementById('notif-trig-upssrc')?.checked ?? false,
                 nasDiskTempAlert: parseInt(document.getElementById('notif-nasdisk-temp')?.value, 10) || 50,
                 nasSpaceAlert: parseInt(document.getElementById('notif-nasspace-pct')?.value, 10) || 85,
+                nasCpuAlert: parseInt(document.getElementById('notif-nas-cpu')?.value, 10) || 90,
+                nasMemoryAlert: parseInt(document.getElementById('notif-nas-memory')?.value, 10) || 90,
                 ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75,
                 ucgCpuAlert: parseInt(document.getElementById('notif-ucg-cpu')?.value, 10) || 90,
+                ucgMemoryAlert: parseInt(document.getElementById('notif-ucg-memory')?.value, 10) || 90,
+                ucgDiskAlert: parseInt(document.getElementById('notif-ucg-disk')?.value, 10) || 85,
                 upsLoadAlert: parseInt(document.getElementById('notif-ups-load')?.value, 10) || 80,
+                upsRuntimeAlertMin: parseInt(document.getElementById('notif-ups-runtime')?.value, 10) || 10,
                 upsVoltDeviationPct: parseInt(document.getElementById('notif-ups-volt')?.value, 10) || 10,
                 triggerAdgProtection: document.getElementById('notif-trig-adgprot')?.checked ?? true,
                 triggerAdgOffline: document.getElementById('notif-trig-adgoff')?.checked ?? false,
@@ -7106,10 +7171,15 @@
                 triggerLinuxDisk: document.getElementById('notif-trig-lnxdisk')?.checked ?? false,
                 linuxTempAlert: parseInt(document.getElementById('notif-lnx-temp')?.value, 10) || 70,
                 linuxDiskAlert: parseInt(document.getElementById('notif-lnx-disk')?.value, 10) || 90,
+                triggerLinuxHighCpu: document.getElementById('notif-trig-lnx-cpu')?.checked ?? false,
+                linuxCpuAlert: parseInt(document.getElementById('notif-lnx-cpu')?.value, 10) || 90,
+                triggerLinuxHighMemory: document.getElementById('notif-trig-lnx-memory')?.checked ?? false,
+                linuxMemoryAlert: parseInt(document.getElementById('notif-lnx-memory')?.value, 10) || 90,
                 triggerDockerCriticalLog: document.getElementById('notif-trig-docker-critical')?.checked ?? true,
                 triggerDockerErrorLog: document.getElementById('notif-trig-docker-error')?.checked ?? false,
                 triggerDockerState: document.getElementById('notif-trig-docker-state')?.checked ?? true,
                 triggerDockerHealth: document.getElementById('notif-trig-docker-health')?.checked ?? true,
+                triggerDockerRestart: document.getElementById('notif-trig-docker-restart')?.checked ?? true,
                 triggerDockerHighCpu: document.getElementById('notif-trig-docker-cpu')?.checked ?? false,
                 dockerCpuAlert: parseInt(document.getElementById('notif-docker-cpu')?.value, 10) || 90,
                 triggerDockerHighMemory: document.getElementById('notif-trig-docker-memory')?.checked ?? false,
