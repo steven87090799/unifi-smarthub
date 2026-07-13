@@ -2,15 +2,27 @@
 node_modules/
 package-lock.json
 
-# ── 歷史資料 JSON（純資料，AI 不需閱讀）───────────────────
-data/trend-history.json
-data/nas-history.json
-data/ups-history.json
-data/ups-events.json
+# ── 機密與本機設定（需要 debug 時再由使用者明確提供或精準讀取）────────
+.env
+.env.*
+!.env.example
 
-# ── 超大前端單檔（376 KB SPA）────────────────────────────
-# 如果你需要 Claude 編輯前端，請暫時刪除這行
+# ── 歷史資料 / runtime 狀態（純資料，AI 不需預設閱讀）───────────────
+data/
 
+# ── 超大前端單檔（需要前端任務時再用 rg/sed 精準讀片段）─────────────
+public/index.html
+
+# ── 大型但低頻使用檔案 ─────────────────────────────────────
+server-mock.js
+ppb-i18n-zh.json
+unifi-network-api.md
+ugreen-nas-api.md
+wiim_spec.md
+wiim-amp-api.md
+cyberpower-ups-api.md
+ROADMAP.md
+SQLITE-MIGRATION.md
 
 # ── Git 內部資料 ──────────────────────────────────────────
 .git/

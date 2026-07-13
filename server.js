@@ -11,40 +11,110 @@ const path = require('path');
 const https = require('https');
 const { exec } = require('child_process');
 require('dotenv').config({ path: path.join(__dirname, '.env') }); // 以專案目錄定位 .env，與啟動時的 cwd 無關
+const os = require('os');
+const { version: APP_VERSION } = require('./package.json');
+const { ERROR_CODES } = require('./observability/error-codes');
+const { createLogger, maskString } = require('./observability/logger');
+const { IssueTracker } = require('./observability/issue-tracker');
+const { TaskTracker } = require('./observability/task-tracker');
+const { SystemMonitor } = require('./observability/system-monitor');
+const { registerHealthRoutes } = require('./observability/health-routes');
+
+const APP_STARTED_AT = Date.now();
+const logger = createLogger({ service: 'smarthub' });
+const issueTracker = new IssueTracker({ cooldownSeconds: process.env.ALERT_COOLDOWN_SECONDS || 300 });
+const taskTracker = new TaskTracker({ logger, stuckSeconds: process.env.TASK_STUCK_SECONDS || 1800 });
 
 // 統一結構化日誌輸出
 function sysLog(module, message, isError = false) {
-    const time = new Date().toLocaleString('zh-TW');
-    const prefix = `[${time}] [${module}]`;
-    if (isError) {
-        console.error(`${prefix} ❌ ${message}`);
-    } else {
-        console.log(`${prefix} ℹ️ ${message}`);
-    }
+    const moduleName = String(module || 'app').toLowerCase().replace(/\s+/g, '.');
+    const errorCode = moduleName.includes('scheduler') ? ERROR_CODES.WORKER_TASK_FAILED
+        : moduleName.includes('persist') || moduleName.includes('history') ? ERROR_CODES.DB_QUERY_FAILED
+            : moduleName.includes('diag') ? ERROR_CODES.SYS_CONFIG_INVALID
+                : moduleName.includes('nas') ? ERROR_CODES.EXT_NAS_FAILED
+                    : moduleName.includes('unifi') ? ERROR_CODES.EXT_UNIFI_FAILED
+                        : moduleName.includes('wiim') ? ERROR_CODES.EXT_WIIM_FAILED
+                            : moduleName.includes('ups') ? ERROR_CODES.EXT_UPS_FAILED
+                                : ERROR_CODES.API_INTERNAL_ERROR;
+    const event = {
+        module: moduleName,
+        function: 'legacy',
+        code: isError ? errorCode : undefined,
+        message
+    };
+    if (isError) logger.error(event);
+    else logger.info(event);
 }
+
+function apiError(res, error, options = {}) {
+    const status = options.status || 500;
+    const code = options.code || (status === 400 ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR);
+    const context = logger.getContext();
+    logger[status >= 500 ? 'error' : 'warning']({
+        module: options.module || 'api', function: options.function || 'handler', code,
+        http_status: status, message: options.logMessage || 'API request failed', error,
+        fields: options.fields
+    });
+    return res.status(status).json({
+        error: options.publicMessage || (status >= 500 ? 'Internal server error' : maskString(error?.message || String(error))),
+        code,
+        request_id: context.request_id
+    });
+}
+
+// 某些唯讀整合端點為維持既有 UI 契約，失敗時仍以 200 + source:error 回退。
+// 這些錯誤必須進 Docker log，但以 cooldown 合併，避免前端輪詢造成 log storm。
+const recoverableFailures = new Map();
+const RECOVERABLE_LOG_COOLDOWN_MS = Math.max(Number(process.env.ALERT_COOLDOWN_SECONDS) || 300, 1) * 1000;
+function publicError(error) {
+    return maskString(error?.message || String(error || 'External service unavailable')).slice(0, 500);
+}
+function logRecoverableFailure(key, error, options = {}) {
+    const now = Date.now();
+    const state = recoverableFailures.get(key) || { occurrences: 0, last_logged_at: 0 };
+    state.occurrences += 1;
+    if (now - state.last_logged_at >= RECOVERABLE_LOG_COOLDOWN_MS) {
+        state.last_logged_at = now;
+        logger.warning({
+            module: options.module || 'external', function: options.function || 'fallback',
+            code: options.code || ERROR_CODES.API_INTERNAL_ERROR,
+            message: options.message || 'Recoverable integration failure; fallback response returned',
+            error, fields: { ...options.fields, occurrences: state.occurrences, cooldown_seconds: RECOVERABLE_LOG_COOLDOWN_MS / 1000 }
+        });
+    }
+    recoverableFailures.set(key, state);
+}
+
+logger.info({
+    module: 'app.lifecycle', function: 'bootstrap', code: ERROR_CODES.SYS_START,
+    message: 'SmartHub starting', fields: {
+        version: APP_VERSION,
+        environment: process.env.NODE_ENV || 'development',
+        node: process.version,
+        hostname: os.hostname(),
+        log_level: logger.level,
+        log_format: logger.format
+    }
+});
 
 const app = express();
 // 前端與後端同源 (由本伺服器託管)，不需要 CORS；移除全開 cors() 以避免跨站請求濫用
+app.use(logger.requestMiddleware());
 app.use(express.json());
 
-// 可選的整站 Basic Auth：設定 PANEL_PASSWORD 環境變數即啟用 (帳號任意)。/healthz 不擋，供容器健康檢查
+// 可選的整站 Basic Auth：liveness/readiness 不擋，完整 diagnostics 仍受保護。
 app.use((req, res, next) => {
     const pw = process.env.PANEL_PASSWORD;
-    if (!pw || req.path === '/healthz') return next();
+    if (!pw || ['/health', '/healthz', '/health/ready'].includes(req.path)) return next();
     const hdr = req.headers.authorization || '';
     const decoded = hdr.startsWith('Basic ') ? Buffer.from(hdr.slice(6), 'base64').toString('utf8') : '';
     if (decoded.split(':').slice(1).join(':') === pw) return next();
+    logger.warning({
+        module: 'api.auth', function: 'basicAuth', code: ERROR_CODES.API_AUTH_FAILED,
+        http_status: 401, message: 'Panel authentication failed', fields: { method: req.method, path: req.path }
+    });
     res.set('WWW-Authenticate', 'Basic realm="SmartHub"');
-    res.status(401).send('Authentication required');
-});
-
-// Debug 中介層：記錄所有 API 請求 (設 DEBUG_HTTP=0 可關閉)
-app.use((req, res, next) => {
-    if (process.env.DEBUG_HTTP !== '0' && req.path.startsWith('/api/')) {
-        const q = Object.keys(req.query).length ? ' ' + JSON.stringify(req.query) : '';
-        sysLog('HTTP', `${req.method} ${req.path}${q}`);
-    }
-    next();
+    res.status(401).json({ error: 'Authentication required', code: ERROR_CODES.API_AUTH_FAILED, request_id: logger.getContext().request_id });
 });
 
 // 託管前端靜態網頁
@@ -57,7 +127,8 @@ function buildUnifiClient() {
     const c = axios.create({
         baseURL: process.env.UNIFI_CONTROLLER_URL,
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        httpsAgent: new https.Agent({ rejectUnauthorized: false })
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        timeout: 10000
     });
     // UniFi OS 的寫入操作 (POST/PUT) 需要登入時取得的 CSRF token
     c.interceptors.request.use(cfg => { if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken; return cfg; });
@@ -120,7 +191,8 @@ function buildUnifiCloudClient() {
         headers: {
             'Accept': 'application/json',
             'X-API-KEY': process.env.UNIFI_API_KEY || ''
-        }
+        },
+        timeout: 8000
     });
 }
 let unifiCloudClient = buildUnifiCloudClient();
@@ -298,7 +370,10 @@ async function getHardwareCached() {
 app.get('/api/hardware', async (req, res) => {
     // 帳密未填時不發起 SSH：反覆的 SSH 連線嘗試會被 UniFi IPS 判定為 SSH 掃描 (ET SCAN 2003068)
     if (isPlaceholder(process.env.SSH_PASSWORD) || !process.env.UCG_IP) {
-        return res.status(503).json({ error: 'ssh_not_configured', hint: '請在 .env 填寫 SSH_PASSWORD 後重啟' });
+        return apiError(res, new Error('UCG SSH is not configured'), {
+            status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'ssh_not_configured',
+            module: 'api.hardware', function: 'getHardware', fields: { hint: 'Configure SSH_PASSWORD and UCG_IP.' }
+        });
     }
     try {
         res.json(await getHardwareCached());
@@ -329,8 +404,7 @@ app.get('/api/clients', async (req, res) => {
         sysLog('UniFi API', `成功獲取 ${clients.length} 個客戶端。`);
         res.json({ clients });
     } catch (error) {
-        sysLog('UniFi API', `獲取客戶端失敗: ${error.message}`, true);
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.clients', function: 'getClients', logMessage: 'Failed to fetch UniFi clients' });
     }
 });
 
@@ -371,7 +445,7 @@ app.get('/api/network/switches', async (req, res) => {
             }));
         res.json({ devices });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.switches', function: 'getSwitches', logMessage: 'Failed to fetch UniFi switches' });
     }
 });
 
@@ -384,8 +458,7 @@ app.get('/api/wifi-networks', async (req, res) => {
         sysLog('UniFi API', `成功獲取 ${response.data.data.length} 個 SSID 配置。`);
         res.json({ networks: response.data.data });
     } catch (error) {
-        sysLog('UniFi API', `獲取 SSID 失敗: ${error.message}`, true);
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.wifi', function: 'getWifiNetworks', logMessage: 'Failed to fetch WiFi networks' });
     }
 });
 
@@ -400,8 +473,7 @@ app.put('/api/wifi-networks/:id', async (req, res) => {
         sysLog('UniFi API', `SSID 狀態變更成功。`);
         res.json({ success: true });
     } catch (error) {
-        sysLog('UniFi API', `SSID 變更失敗: ${error.message}`, true);
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.wifi', function: 'updateWifiNetwork', logMessage: 'Failed to update WiFi network' });
     }
 });
 
@@ -442,14 +514,22 @@ app.get('/api/threats', async (req, res) => {
         }).sort((a, b) => new Date(b.datetime) - new Date(a.datetime)); // list/alarm 由舊到新，前端要最新在前
         res.json({ threats });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.threats', function: 'getThreats', logMessage: 'Failed to fetch UniFi threats' });
     }
 });
 
 // 資料持久化目錄 (可用 DATA_DIR 環境變數覆寫；Docker 部署時掛載為 volume 以保留歷史資料)
 const fs = require('fs');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch { }
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); }
+catch (error) {
+    logger.critical({
+        module: 'app.storage', function: 'mkdir', code: ERROR_CODES.SYS_START_FAILED,
+        message: 'Startup failed: data directory is not writable', error,
+        fields: { data_dir: DATA_DIR, suggested_check: 'Check DATA_DIR ownership and Docker volume permissions.' }
+    });
+    process.exit(1);
+}
 
 /* ===================== 單一實例鎖 =====================
    防止同一份 DATA_DIR 被多個 server.js 同時使用：每個實例都有自己的推播監看器，
@@ -463,62 +543,47 @@ if (process.env.ALLOW_MULTI_INSTANCE !== '1') {
             let alive = false;
             try { process.kill(oldPid, 0); alive = true; } catch { }
             if (alive) {
-                console.error(`[實例鎖] 偵測到另一個 SmartHub 實例正在運行 (PID ${oldPid})，同一份資料目錄多開會造成重複推播與資料互相覆寫。`);
-                console.error('[實例鎖] 若確定要多開 (例如測試)，請改用不同 DATA_DIR 或設 ALLOW_MULTI_INSTANCE=1。本實例結束。');
+                logger.critical({
+                    module: 'app.instanceLock', function: 'acquire', code: ERROR_CODES.SYS_START_FAILED,
+                    message: 'Another SmartHub instance is already using this DATA_DIR',
+                    fields: { existing_pid: oldPid, suggested_check: 'Use a different DATA_DIR or set ALLOW_MULTI_INSTANCE=1 only for isolated tests.' }
+                });
                 process.exit(1);
             }
         }
     } catch { /* 鎖檔不存在 = 正常首啟 */ }
-    try { fs.writeFileSync(LOCK_FILE, String(process.pid)); } catch { }
+    try { fs.writeFileSync(LOCK_FILE, String(process.pid)); }
+    catch (error) {
+        logger.critical({
+            module: 'app.instanceLock', function: 'acquire', code: ERROR_CODES.SYS_START_FAILED,
+            message: 'Failed to create SmartHub instance lock', error, fields: { lock_file: path.basename(LOCK_FILE) }
+        });
+        process.exit(1);
+    }
     process.on('exit', () => { try { if (parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10) === process.pid) fs.unlinkSync(LOCK_FILE); } catch { } });
 }
 
-/* ===================== 歷史資料節流落盤 =====================
-   歷史陣列 (trend/ucg/nas/ups/wiim) 平時只更新記憶體、標記 dirty，最多每
-   historyFlushMin 分鐘 (設定頁可調，預設 30) 寫檔一次；避免每筆取樣同步重寫
-   大 JSON 卡 event loop、NAS 硬碟無法休眠。
-   SIGTERM/SIGINT 時強制全部落盤；最壞情況 (直接斷電) 損失 ≤ historyFlushMin 分鐘。 */
-const _flushables = [];
-const flushGapMs = () => Math.max(appSettings.historyFlushMin ?? 30, 1) * 60 * 1000;
-function registerFlushable(file, getData) {
-    const f = { file, getData, dirty: false, lastWrite: 0 };
-    _flushables.push(f);
-    return {
-        markDirty(force = false) {
-            f.dirty = true;
-            if (force || Date.now() - f.lastWrite >= flushGapMs()) flushOne(f);
+// 統計/歷史資料集中由 SQLite 管理；啟動時會將既有 JSON 匯入並保留 .migrated.bak。
+const { createHistoryDb } = require('./db');
+let historyDb;
+try {
+    historyDb = createHistoryDb(DATA_DIR, { logger, slowQueryMs: process.env.DB_SLOW_QUERY_MS });
+} catch (error) {
+    logger.critical({
+        module: 'app.lifecycle', function: 'initializeDatabase', code: ERROR_CODES.SYS_START_FAILED,
+        message: 'STARTUP FAILED: SQLite initialization failed', error,
+        fields: {
+            component: 'SQLite',
+            possible_causes: ['DATA_DIR is not writable', 'Database file is corrupt or locked', 'Container volume ownership is incorrect'],
+            suggested_checks: ['docker compose logs unifi-smarthub', 'docker compose exec unifi-smarthub ls -la /app/data']
         }
-    };
+    });
+    process.exit(1);
 }
-function flushOne(f) {
-    if (!f.dirty) return;
-    try {
-        fs.writeFileSync(f.file, JSON.stringify(f.getData()));
-        f.dirty = false; f.lastWrite = Date.now();
-    } catch (e) { sysLog('Persist', `${path.basename(f.file)} 寫入失敗: ${e.message}`, true); }
-}
-function flushAllHistories() { _flushables.forEach(flushOne); }
-// 保底：每分鐘掃一次，dirty 超過落盤間隔未寫就落盤 (取樣器停擺時資料不會一直懸在記憶體)
-setInterval(() => _flushables.forEach(f => { if (f.dirty && Date.now() - f.lastWrite >= flushGapMs()) flushOne(f); }), 60 * 1000);
-process.on('SIGTERM', () => { sysLog('Persist', '收到 SIGTERM，強制落盤所有歷史資料'); flushAllHistories(); process.exit(0); });
-process.on('SIGINT', () => { flushAllHistories(); process.exit(0); });
-
-// 歷史查詢通用：資料按時間遞增，從尾端往前掃到 cutoff 即停，避免整個陣列逐筆 new Date()
-function sliceSince(arr, cutoffMs, getT = p => p.t) {
-    let i = arr.length;
-    while (i > 0 && new Date(getT(arr[i - 1])).getTime() >= cutoffMs) i--;
-    return arr.slice(i);
-}
-
-/* 歷史保存改「按時間汰舊」(設定頁可調 historyKeepDays，預設 30 天)：
-   原本各系列用固定筆數上限，取樣頻率一改保存天數就跑掉；改成直接依時間裁切，
-   另設絕對筆數上限作為記憶體保險。呼叫於每次 push 之後 (穩態下每次只 shift 掉 0~1 筆)。 */
 const HISTORY_HARD_CAP = 100000;
-function pruneHistory(arr, getMs = p => Date.parse(p.t)) {
-    const cutoff = Date.now() - Math.max(appSettings.historyKeepDays ?? 30, 1) * 86400000;
-    while (arr.length && getMs(arr[0]) < cutoff) arr.shift();
-    if (arr.length > HISTORY_HARD_CAP) arr.splice(0, arr.length - HISTORY_HARD_CAP);
-}
+const systemMonitor = new SystemMonitor({
+    dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger, version: APP_VERSION
+});
 
 /* ===================== 應用程式設定 (可於「設定」頁調整所有伺服器端輪詢間隔) ===================== */
 const APP_SETTINGS_FILE = path.join(DATA_DIR, 'app-settings.json');
@@ -536,43 +601,73 @@ const APP_DEFAULTS = {
     upsSampleSec: 30,       // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
     wiimCpuAlert: 70,       // WiiM CPU 溫度警示門檻 (°C，圖上門檻線 + 超標推播)
     wiimBoardAlert: 60,     // WiiM 主機板溫度警示門檻 (°C)
-    historyFlushMin: 30,    // 歷史資料落盤間隔 (分鐘)：記憶體累積多久寫一次硬碟
+    historyFlushMin: 30,    // 舊版相容欄位；SQLite 已改為每筆交易寫入，欄位不再控制落盤
     historyKeepDays: 30     // 歷史資料保存天數 (trend/UCG/NAS/UPS/WiiM 統一)
 };
-let appSettings = (() => { try { return { ...APP_DEFAULTS, ...JSON.parse(fs.readFileSync(APP_SETTINGS_FILE, 'utf8')) }; } catch { return { ...APP_DEFAULTS }; } })();
-function saveAppSettings() { try { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); } catch { } }
-
-// 封鎖歷史紀錄 (持久化於本地 JSON，僅記錄透過本面板下達的動作)
-const HISTORY_FILE = path.join(DATA_DIR, 'block-history.json');
-const HISTORY_LIMIT = 200;
-
-function loadBlockHistory() {
-    try {
-        return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-    } catch {
-        return [];
+const APP_SETTING_RANGES = {
+    trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600],
+    watcherSec: [5, 3600], autoDefenseSec: [5, 3600], reportHour: [0, 23], reportHour2: [0, 23],
+    upsSampleSec: [5, 3600], wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
+    toastSec: [1, 60], historyKeepDays: [1, 365]
+};
+function normalizeAppSettings(settings) {
+    for (const [key, [min, max]] of Object.entries(APP_SETTING_RANGES)) {
+        if (typeof settings[key] === 'number' && Number.isFinite(settings[key])) {
+            settings[key] = Math.min(max, Math.max(min, settings[key]));
+        }
     }
+    return settings;
 }
+let appSettings = normalizeAppSettings((() => {
+    try { return { ...APP_DEFAULTS, ...JSON.parse(fs.readFileSync(APP_SETTINGS_FILE, 'utf8')) }; }
+    catch (error) {
+        if (error.code !== 'ENOENT') logger.warning({
+            module: 'config.app', function: 'loadAppSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'App settings could not be read; defaults are in use', error, fields: { file: path.basename(APP_SETTINGS_FILE) }
+        });
+        return { ...APP_DEFAULTS };
+    }
+})());
+function saveAppSettings() { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); }
 
-function appendBlockHistory(entry) {
-    const history = loadBlockHistory();
-    history.unshift(entry);
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history.slice(0, HISTORY_LIMIT), null, 2));
-}
+// SQLite 以資料庫端清理取代舊的記憶體陣列 prune；清理後保留增量 vacuum，避免檔案無限膨脹。
+historyDb.cleanup(appSettings.historyKeepDays);
+setInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays)), 60 * 60 * 1000);
+
+// 封鎖歷史紀錄 (僅記錄透過本面板下達的動作)
+function loadBlockHistory() { return historyDb.listBlockHistory(); }
+function appendBlockHistory(entry) { historyDb.insertBlock(entry); }
 
 /* ===================== 客戶端自訂名稱 (別名) =====================
    UniFi 未命名的設備會顯示 Unknown，這裡讓使用者在面板上直接取名，
    存 data/client-aliases.json ({mac: name})，套用於客戶端清單/Top5/報表等所有顯示。 */
 const CLIENT_ALIAS_FILE = path.join(DATA_DIR, 'client-aliases.json');
-let clientAliases = (() => { try { return JSON.parse(fs.readFileSync(CLIENT_ALIAS_FILE, 'utf8')); } catch { return {}; } })();
+let clientAliases = (() => {
+    try { return JSON.parse(fs.readFileSync(CLIENT_ALIAS_FILE, 'utf8')); }
+    catch (error) {
+        if (error.code !== 'ENOENT') logger.warning({
+            module: 'config.clientAliases', function: 'loadAliases', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'Client aliases could not be read; using an empty map', error, fields: { file: path.basename(CLIENT_ALIAS_FILE) }
+        });
+        return {};
+    }
+})();
 app.get('/api/client-aliases', (req, res) => res.json({ aliases: clientAliases }));
 app.post('/api/client-aliases', (req, res) => {
     const { mac, name } = req.body || {};
-    if (!mac || !/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac)) return res.status(400).json({ error: 'invalid mac' });
-    const trimmed = (name || '').trim().slice(0, 40);
+    if (!mac || !/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(mac)) return apiError(res, new Error('invalid mac'), {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'invalid mac', module: 'api.clientAliases', function: 'saveAlias'
+    });
+    if (name != null && typeof name !== 'string') return apiError(res, new Error('invalid name'), {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'invalid name', module: 'api.clientAliases', function: 'saveAlias'
+    });
+    const trimmed = (name || '').trim().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 40);
     if (trimmed) clientAliases[mac.toLowerCase()] = trimmed;
     else delete clientAliases[mac.toLowerCase()];
-    try { fs.writeFileSync(CLIENT_ALIAS_FILE, JSON.stringify(clientAliases, null, 2)); } catch { }
+    try { fs.writeFileSync(CLIENT_ALIAS_FILE, JSON.stringify(clientAliases, null, 2)); }
+    catch (error) {
+        return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.clientAliases', function: 'saveAlias', logMessage: 'Client alias persistence failed' });
+    }
     res.json({ ok: true, aliases: clientAliases });
 });
 
@@ -623,8 +718,7 @@ app.post('/api/poe/power-cycle', async (req, res) => {
         sysLog('UniFi API', `PoE Port 重啟命令發送成功。`);
         res.json({ success: true });
     } catch (error) {
-        sysLog('UniFi API', `PoE 重啟失敗: ${error.message}`, true);
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.poe', function: 'powerCycle', logMessage: 'PoE power cycle failed' });
     }
 });
 
@@ -639,8 +733,7 @@ app.post('/api/speedtest', async (req, res) => {
         sysLog('UniFi API', '測速指令發送成功，控制器開始測速。');
         res.json({ success: true });
     } catch (error) {
-        sysLog('UniFi API', `觸發測速失敗: ${error.message}`, true);
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.speedtest', function: 'startSpeedtest', logMessage: 'UniFi speed test start failed' });
     }
 });
 
@@ -658,7 +751,7 @@ app.get('/api/speedtest/status', async (req, res) => {
             lastRun: www.speedtest_lastrun ? new Date(www.speedtest_lastrun * 1000).toISOString() : null
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.speedtest', function: 'getSpeedtestStatus', logMessage: 'Failed to fetch speed test status' });
     }
 });
 
@@ -671,7 +764,8 @@ app.get('/api/cloud/sites', async (req, res) => {
         const response = await unifiCloudClient.get('/sites');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: [], source: 'error', error: error.message });
+        logRecoverableFailure('cloud.sites', error, { module: 'api.cloud', function: 'getSites', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        res.json({ data: [], source: 'error', error: publicError(error) });
     }
 });
 
@@ -684,7 +778,8 @@ app.get('/api/cloud/devices', async (req, res) => {
         const response = await unifiCloudClient.get('/devices');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: [], source: 'error', error: error.message });
+        logRecoverableFailure('cloud.devices', error, { module: 'api.cloud', function: 'getDevices', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        res.json({ data: [], source: 'error', error: publicError(error) });
     }
 });
 
@@ -716,7 +811,8 @@ app.get('/api/cloud/isp-metrics', async (req, res) => {
         }
         throw new Error('No WAN metrics data returned from Cloud API');
     } catch (error) {
-        res.json({ data: null, source: 'error', error: error.message });
+        logRecoverableFailure('cloud.ispMetrics', error, { module: 'api.cloud', function: 'getIspMetrics', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        res.json({ data: null, source: 'error', error: publicError(error) });
     }
 });
 
@@ -729,7 +825,8 @@ app.get('/api/cloud/hosts', async (req, res) => {
         const response = await unifiCloudClient.get('/hosts');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: [], source: 'error', error: error.message });
+        logRecoverableFailure('cloud.hosts', error, { module: 'api.cloud', function: 'getHosts', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        res.json({ data: [], source: 'error', error: publicError(error) });
     }
 });
 
@@ -742,7 +839,8 @@ app.get('/api/cloud/sdwan', async (req, res) => {
         const response = await unifiCloudClient.get('/sd-wan-configs');
         res.json(response.data);
     } catch (error) {
-        res.json({ data: [], source: 'error', error: error.message });
+        logRecoverableFailure('cloud.sdwan', error, { module: 'api.cloud', function: 'getSdwan', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        res.json({ data: [], source: 'error', error: publicError(error) });
     }
 });
 
@@ -754,19 +852,27 @@ const SEC_FILE = path.join(DATA_DIR, 'security-settings.json');
 let secSettingsCache = null;
 function loadSecSettings() {
     if (secSettingsCache) return secSettingsCache;
-    try { secSettingsCache = { autoDefense: false, ...JSON.parse(fs.readFileSync(SEC_FILE, 'utf8')) }; } catch { secSettingsCache = { autoDefense: false }; }
+    try { secSettingsCache = { autoDefense: false, ...JSON.parse(fs.readFileSync(SEC_FILE, 'utf8')) }; }
+    catch (error) {
+        if (error.code !== 'ENOENT') logger.warning({
+            module: 'config.security', function: 'loadSecSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'Security settings could not be read; safe defaults are in use', error, fields: { file: path.basename(SEC_FILE) }
+        });
+        secSettingsCache = { autoDefense: false };
+    }
     return secSettingsCache;
 }
 function saveSecSettings(s) {
     secSettingsCache = s;
-    try { fs.writeFileSync(SEC_FILE, JSON.stringify(s, null, 2)); } catch { }
+    fs.writeFileSync(SEC_FILE, JSON.stringify(s, null, 2));
 }
 
 app.get('/api/security/settings', (req, res) => res.json(loadSecSettings()));
 app.post('/api/security/settings', (req, res) => {
     const s = loadSecSettings();
     if (typeof req.body.autoDefense === 'boolean') s.autoDefense = req.body.autoDefense;
-    saveSecSettings(s);
+    try { saveSecSettings(s); }
+    catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.security', function: 'saveSecSettings', logMessage: 'Security settings persistence failed' }); }
     res.json(s);
 });
 
@@ -806,9 +912,7 @@ async function autoDefenseSweep() {
                 sysLog('AutoDefense', `✅ 已成功對受感染設備 ${victim.mac} 下達 block-sta 斷網隔離命令。`);
             }
         }
-    } catch (err) {
-        sysLog('AutoDefense', `防禦掃描出錯: ${err.message}，下輪重試。`, true);
-    }
+    } catch (err) { throw err; }
 }
 // 掃描排程統一由 scheduleServerJobs() 管理 (間隔可於設定頁調整)；先前這裡多排了一個固定 30s 的
 // setInterval 導致每輪實際掃描兩遍，已移除。
@@ -829,12 +933,19 @@ const NOTIF_DEFAULTS = { enabled: false, channel: 'discord', webhookUrl: '', bot
 let notifSettingsCache = null;
 function loadNotifSettings() {
     if (notifSettingsCache) return notifSettingsCache;
-    try { notifSettingsCache = { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; } catch { notifSettingsCache = { ...NOTIF_DEFAULTS }; }
+    try { notifSettingsCache = { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; }
+    catch (error) {
+        if (error.code !== 'ENOENT') logger.warning({
+            module: 'config.notifications', function: 'loadNotifSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'Notification settings could not be read; defaults are in use', error, fields: { file: path.basename(NOTIF_FILE) }
+        });
+        notifSettingsCache = { ...NOTIF_DEFAULTS };
+    }
     return notifSettingsCache;
 }
 function saveNotifSettings(s) {
     notifSettingsCache = s;
-    try { fs.writeFileSync(NOTIF_FILE, JSON.stringify(s, null, 2)); } catch { }
+    fs.writeFileSync(NOTIF_FILE, JSON.stringify(s, null, 2));
 }
 
 let notifLog = [];
@@ -881,7 +992,10 @@ async function dispatchNotification(title, body, settings) {
 // Telegram Chat ID 偵測：讀 bot 的 getUpdates，列出最近跟它說過話的聊天室
 app.get('/api/notifications/telegram-chatid', async (req, res) => {
     const s = loadNotifSettings();
-    if (!s.botToken) return res.status(400).json({ error: '請先填入 Bot Token 並儲存' });
+    if (!s.botToken) return apiError(res, new Error('Telegram bot token is not configured'), {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: '請先填入 Bot Token 並儲存',
+        module: 'api.notifications', function: 'detectTelegramChatId'
+    });
     try {
         const r = await axios.get(`https://api.telegram.org/bot${s.botToken}/getUpdates`, { timeout: 8000 });
         const chats = {};
@@ -892,7 +1006,11 @@ app.get('/api/notifications/telegram-chatid', async (req, res) => {
         res.json({ chats: Object.values(chats) });
     } catch (e) {
         const st = e.response && e.response.status;
-        res.status(500).json({ error: st === 404 ? 'Bot Token 無效 (Telegram 回應 404)，請向 @BotFather 重新複製' : e.message });
+        apiError(res, e, {
+            code: ERROR_CODES.EXT_NOTIFICATION_FAILED, module: 'api.notifications', function: 'detectTelegramChatId',
+            logMessage: 'Telegram chat ID lookup failed',
+            publicMessage: st === 404 ? 'Bot Token 無效 (Telegram 回應 404)，請向 @BotFather 重新複製' : 'Telegram 查詢失敗'
+        });
     }
 });
 
@@ -906,9 +1024,12 @@ async function notify(title, body) {
         sysLog('Notification', '通知推送成功。');
         return { ok: true };
     } catch (e) {
-        sysLog('Notification', `通知推送失敗: ${e.message}`, true);
-        pushNotifLog({ ts: new Date().toISOString(), title, body, channel: s.channel, ok: false, error: e.message });
-        return { ok: false, error: e.message };
+        logger.error({
+            module: 'notification.dispatch', function: 'notify', code: ERROR_CODES.EXT_NOTIFICATION_FAILED,
+            message: 'Notification delivery failed', error: e, fields: { channel: s.channel, title }
+        });
+        pushNotifLog({ ts: new Date().toISOString(), title, body, channel: s.channel, ok: false, error: publicError(e) });
+        return { ok: false, error: publicError(e) };
     }
 }
 
@@ -945,7 +1066,8 @@ app.post('/api/notifications/settings', (req, res) => {
     ['nasDiskTempAlert', 'nasSpaceAlert', 'ucgTempAlert', 'upsLoadAlert', 'upsVoltDeviationPct', 'linuxTempAlert', 'linuxDiskAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
-    saveNotifSettings(s);
+    try { saveNotifSettings(s); }
+    catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.notifications', function: 'saveNotifSettings', logMessage: 'Notification settings persistence failed' }); }
     res.json({ ok: true });
 });
 
@@ -980,7 +1102,9 @@ async function notificationWatcher() {
                     await notify('🛡️ IPS 攔截新威脅', `來源 ${a.src_ip || '?'} (${(a.srcipGeo && a.srcipGeo.country_name) || '未知'})\n${a.msg || ''}`);
                 }
             }
-        } catch { }
+        } catch (error) {
+            logRecoverableFailure('watcher.unifiThreats', error, { module: 'watcher.notifications', function: 'scanThreats', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
     }
     // NAS 嚴重警報
     if (s.triggerNasAlerts && nasMonConfigured()) {
@@ -993,11 +1117,13 @@ async function notificationWatcher() {
                 notifiedNasAlertIds.add(e.id);
                 if (notifBootstrapped) await notify('💾 NAS 警報', `[${e.level}] ${e.message || e.metric}`);
             }
-        } catch { }
+        } catch (error) {
+            logRecoverableFailure('watcher.nasAlerts', error, { module: 'watcher.notifications', function: 'scanNasAlerts', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+        }
     }
     // WiiM 溫度超標推播 (30 分鐘冷卻，避免洗版)
     if (s.triggerWiimTemp !== false) {
-        const last = wiimHistory[wiimHistory.length - 1];
+        const last = historyDb.getLatest('wiim');
         const cpuA = appSettings.wiimCpuAlert ?? 70, brdA = appSettings.wiimBoardAlert ?? 60;
         if (last && ((last.cpu != null && last.cpu >= cpuA) || (last.board != null && last.board >= brdA))
             && Date.now() - lastWiimTempAlertTs > 30 * 60 * 1000) {
@@ -1016,12 +1142,18 @@ async function notificationWatcher() {
                 knownClientMacs.add(c.mac);
                 if (notifBootstrapped) await notify('📱 新設備連上網路', `${c.name || c.hostname || c.mac}\nIP ${c.ip || '(取得中)'} · ${c.is_wired ? '有線' : 'WiFi'}`);
             }
-        } catch { }
+        } catch (error) {
+            logRecoverableFailure('watcher.newClients', error, { module: 'watcher.notifications', function: 'scanNewClients', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
     }
     // WiiM 離線/恢復 (轉態才通知)
     if (s.triggerWiimOffline) {
         let ok = false;
-        try { ok = !!(await wiimGet('getStatusEx')); } catch { ok = false; }
+        try { ok = !!(await wiimGet('getStatusEx')); }
+        catch (error) {
+            ok = false;
+            logRecoverableFailure('watcher.wiimOffline', error, { module: 'watcher.notifications', function: 'checkWiimOnline', code: ERROR_CODES.EXT_WIIM_FAILED });
+        }
         if (wiimWasOnline !== null && ok !== wiimWasOnline && notifBootstrapped) {
             await notify(ok ? '🔊 WiiM 已恢復連線' : '🔇 WiiM 失去連線', `裝置 IP ${wiimIP}`);
         }
@@ -1048,7 +1180,9 @@ async function notificationWatcher() {
                     await notify('💾 NAS 儲存空間警報', full.map(v => `${v.label || v.name} 已用 ${Math.round(v.used / v.total * 100)}% (門檻 ${s.nasSpaceAlert ?? 85}%)`).join('\n'));
                 }
             }
-        } catch { }
+        } catch (error) {
+            logRecoverableFailure('watcher.nasCapacity', error, { module: 'watcher.notifications', function: 'checkNasCapacity', code: ERROR_CODES.EXT_NAS_FAILED });
+        }
     }
     // NAS 系統日誌 — 推播 UGOS 日誌中心所有事件（與前端 NAS 頁「系統日誌與警報」區塊同步）
     if (s.triggerNasLog && nasConfigured()) {
@@ -1061,7 +1195,9 @@ async function notificationWatcher() {
                 const emoji = { critical: '🚨', error: '❌', warning: '⚠️' }[l.level] || '📋';
                 await notify(`${emoji} NAS 日誌 [${l.level}]`, `[${l.module}] ${l.content}`);
             }
-        } catch { }
+        } catch (error) {
+            logRecoverableFailure('watcher.nasLogs', error, { module: 'watcher.notifications', function: 'scanNasLogs', code: ERROR_CODES.EXT_NAS_FAILED });
+        }
     }
     // UCG CPU 溫度 / WAN 斷線 (透過本機 /api/hardware，僅在開啟時才發起 SSH)
     if ((s.triggerUcgTemp || s.triggerWanDown) && !isPlaceholder(process.env.SSH_PASSWORD)) {
@@ -1080,12 +1216,18 @@ async function notificationWatcher() {
                 }
                 if (wanUp !== null) wanWasUp = wanUp;
             }
-        } catch { }
+        } catch (error) {
+            logRecoverableFailure('watcher.ucgHealth', error, { module: 'watcher.notifications', function: 'checkUcgHealth', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
     }
     // AdGuard：保護被暫停 / 失聯 (轉態通知)
     if ((s.triggerAdgProtection !== false || s.triggerAdgOffline) && adgConfigured()) {
         let on = null;
-        try { on = !!(await adgReq('/control/status')).protection_enabled; } catch { on = null; }
+        try { on = !!(await adgReq('/control/status')).protection_enabled; }
+        catch (error) {
+            on = null;
+            logRecoverableFailure('watcher.adguard', error, { module: 'watcher.notifications', function: 'checkAdguard', code: ERROR_CODES.EXT_ADGUARD_FAILED });
+        }
         if (s.triggerAdgOffline && on === null && adgWasOn !== null && notifBootstrapped) {
             await notify('🛡️ AdGuard 失聯', 'AdGuard Home 無回應，DNS 防護狀態未知');
         }
@@ -1097,7 +1239,11 @@ async function notificationWatcher() {
     // Linux 小主機：過熱 / 磁碟滿 (30 分鐘冷卻)、離線/恢復 (轉態)
     if ((s.triggerLinuxTemp !== false || s.triggerLinuxOffline || s.triggerLinuxDisk) && linuxConfigured()) {
         let d = null;
-        try { d = await getLinuxCached(); } catch { d = null; }
+        try { d = await getLinuxCached(); }
+        catch (error) {
+            d = null;
+            logRecoverableFailure('watcher.linux', error, { module: 'watcher.notifications', function: 'checkLinux', code: ERROR_CODES.EXT_LINUX_FAILED });
+        }
         if (s.triggerLinuxOffline && lnxWasOnline !== null && (!!d) !== lnxWasOnline && notifBootstrapped) {
             await notify(d ? '🖥️ 小主機已恢復連線' : '🖥️ 小主機失去連線', `${process.env.LINUX_HOST} (SSH)`);
         }
@@ -1126,28 +1272,31 @@ let adgWasOn = null, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs =
 
 /* ===================== 伺服器端排程 (間隔可於設定頁調整，變更後即時重排) ===================== */
 let jobTimers = {};
+const runningJobs = new Set();
+async function runSerialJob(name, fn) {
+    if (runningJobs.has(name)) {
+        taskTracker.skip(name);
+        return;
+    }
+    runningJobs.add(name);
+    try { return await taskTracker.run(name, fn); }
+    catch { /* TaskTracker 已記錄完整 error/stack/task_id；週期工作留待下一輪重試。 */ }
+    finally { runningJobs.delete(name); }
+}
 function scheduleServerJobs() {
     clearInterval(jobTimers.watcher);
     clearInterval(jobTimers.autodef);
-    jobTimers.watcher = setInterval(notificationWatcher, Math.max(appSettings.watcherSec, 5) * 1000);
-    jobTimers.autodef = setInterval(autoDefenseSweep, Math.max(appSettings.autoDefenseSec, 5) * 1000);
+    jobTimers.watcher = setInterval(() => runSerialJob('notificationWatcher', notificationWatcher), Math.max(appSettings.watcherSec, 5) * 1000);
+    jobTimers.autodef = setInterval(() => runSerialJob('autoDefenseSweep', autoDefenseSweep), Math.max(appSettings.autoDefenseSec, 5) * 1000);
 }
 
 /* ===================== 歷史趨勢取樣器 (自適應頻率) ===================== */
-// 記錄一筆：客戶端數、24h 威脅數、ISP 延遲。保留上限 9999 筆，持久化於 trend-history.json。
+// 記錄一筆：客戶端數、24h 威脅數、ISP 延遲。
 // 取樣頻率隨「是否有人正在看網頁」自動切換 (間隔取自 appSettings，可於設定頁調整)。
-const TREND_FILE = path.join(DATA_DIR, 'trend-history.json');
-// 保存長度統一由 pruneHistory (historyKeepDays 設定) 控制
-
 let lastClientActivity = 0;              // 前端最後一次活動時間戳
 let lastSampleTs = 0;                    // 上一次取樣時間戳
 let lastSchedulerState = null;           // 前端最後一狀態 (活躍/閒置)
 function markClientActivity() { lastClientActivity = Date.now(); }
-
-// 啟動時載入一次，之後常駐記憶體 (先前每次取樣/查詢都整檔讀取+解析)
-let trendHistory = (() => { try { return JSON.parse(fs.readFileSync(TREND_FILE, 'utf8')); } catch { return []; } })();
-const trendFlush = registerFlushable(TREND_FILE, () => trendHistory);
-function loadTrends() { return trendHistory; }
 
 async function sampleTrends() {
     const point = { t: new Date().toISOString(), clients: null, threats24h: null, latency: null };
@@ -1158,18 +1307,21 @@ async function sampleTrends() {
         const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
         const dayAgo = Date.now() - 86400000;
         point.threats24h = (alarm.data.data || []).filter(a => isIpsAlarm(a) && new Date(a.datetime).getTime() >= dayAgo).length;
-    } catch { /* 本地控制器不可用時該欄位保留 null */ }
+    } catch (error) {
+        logRecoverableFailure('sampler.trend.unifi', error, { module: 'scheduler.trend', function: 'sampleLocalMetrics', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        // 本地控制器不可用時該欄位保留 null。
+    }
     try {
         if (process.env.UNIFI_API_KEY && !process.env.UNIFI_API_KEY.includes('your_unifi')) {
             const r = await unifiCloudClient.get('/isp-metrics/5m', { params: { duration: '24h' } });
             const periods = (r.data && r.data.data && r.data.data[0] && r.data.data[0].periods) || [];
             if (periods.length) point.latency = (periods[periods.length - 1].data.wan || {}).avgLatency ?? null;
         }
-    } catch { }
+    } catch (error) {
+        logRecoverableFailure('sampler.trend.cloud', error, { module: 'scheduler.trend', function: 'sampleCloudMetrics', code: ERROR_CODES.EXT_UNIFI_FAILED });
+    }
     if (point.clients === null && point.threats24h === null && point.latency === null) return;
-    trendHistory.push(point);
-    pruneHistory(trendHistory);
-    trendFlush.markDirty();
+    historyDb.insertPoint('trend', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
 }
 
 // 排程器：每秒檢查一次，依活躍/閒置狀態與設定的間隔決定是否該取樣
@@ -1189,16 +1341,23 @@ async function trendScheduler() {
         sysLog('Scheduler', '趨勢遙測資料取樣完成。');
     }
 }
-setInterval(trendScheduler, 1000);
-trendScheduler();
+setInterval(() => runSerialJob('trendScheduler', trendScheduler), 1000);
+runSerialJob('trendScheduler', trendScheduler);
 scheduleServerJobs();
+systemMonitor.start();
+logger.info({
+    module: 'scheduler', function: 'scheduleServerJobs', code: ERROR_CODES.WORKER_READY,
+    message: 'Background schedulers ready', fields: {
+        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendScheduler', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
+    }
+});
 
 // 14. 歷史趨勢查詢 (?hours=24 / 168)。任何前端讀取都視為「活躍」，觸發高頻取樣。
 app.get('/api/history', (req, res) => {
     markClientActivity();
     const hours = parseInt(req.query.hours || '24', 10);
     const cutoff = Date.now() - hours * 3600000;
-    res.json({ history: sliceSince(trendHistory, cutoff) });
+    res.json({ history: historyDb.getSince('trend', cutoff) });
 });
 
 // 輕量心跳端點：前端開著頁面時定時呼叫，維持「活躍」狀態 (不觸發任何上游 API)
@@ -1373,7 +1532,8 @@ app.get('/api/nas/overview', async (req, res) => {
         } catch { }
         res.json({ info, stats, disksLite, fans, statsRaw, statsError, source: 'nas_api' });
     } catch (error) {
-        res.json({ info: null, stats: null, source: 'error', error: error.message });
+        logRecoverableFailure('nas.overview', error, { module: 'api.nas', function: 'getOverview', code: ERROR_CODES.EXT_NAS_FAILED });
+        res.json({ info: null, stats: null, source: 'error', error: publicError(error) });
     }
 });
 
@@ -1415,13 +1575,16 @@ app.get('/api/nas/disks', async (req, res) => {
         }));
         res.json({ disks, source: 'nas_api' });
     } catch (error) {
-        res.json({ disks: [], source: 'error', error: error.message });
+        logRecoverableFailure('nas.disks', error, { module: 'api.nas', function: 'getDisks', code: ERROR_CODES.EXT_NAS_FAILED });
+        res.json({ disks: [], source: 'error', error: publicError(error) });
     }
 });
 
 // 16-1. 單顆硬碟 SMART 詳情 (UGOS 端點需要 disk=/dev/<dev_name>)
 app.get('/api/nas/disk-smart', async (req, res) => {
-    if (!nasConfigured()) return res.status(503).json({ error: 'nas_not_configured' });
+    if (!nasConfigured()) return apiError(res, new Error('NAS is not configured'), {
+        status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_not_configured', module: 'api.nas', function: 'getDiskSmart'
+    });
     let dev = req.query.dev; // 前端傳 dev_name (sdb / nvme0n1)，或只傳 name (硬碟1) 由後端查對照
     try {
         if (!dev && req.query.name) {
@@ -1431,12 +1594,14 @@ app.get('/api/nas/disk-smart', async (req, res) => {
             const hit = list.find(d => (d.label || d.name) === req.query.name);
             if (hit) dev = hit.dev_name;
         }
-        if (!dev) return res.status(400).json({ error: 'missing dev' });
+        if (!dev) return apiError(res, new Error('missing dev'), {
+            status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'missing dev', module: 'api.nas', function: 'getDiskSmart'
+        });
         const diskPath = dev.startsWith('/dev/') ? dev : `/dev/${dev}`;
         const data = await nasGet('/ugreen/v1/storage/disk/smart/info', { disk: diskPath });
         res.json({ smart: data, source: 'nas_api' });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_FAILED, module: 'api.nas', function: 'getDiskSmart', logMessage: 'Failed to fetch NAS SMART data' });
     }
 });
 
@@ -1461,7 +1626,7 @@ app.get('/api/nas/logs', async (req, res) => {
         }
         res.json({ logs, total: data.total ?? logs.length, source: 'nas_api' });
     } catch (error) {
-        res.status(500).json({ logs: [], error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_FAILED, module: 'api.nas', function: 'getNasLogs', logMessage: 'Failed to fetch NAS system logs' });
     }
 });
 
@@ -1523,7 +1688,7 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
         }));
         res.json({ days, source: 'nas_api' });
     } catch (error) {
-        res.status(500).json({ days: [], error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_FAILED, module: 'api.nas', function: 'getNasSleepStats', logMessage: 'Failed to fetch NAS sleep statistics' });
     }
 });
 
@@ -1543,7 +1708,8 @@ app.get('/api/nas/volumes', async (req, res) => {
         }));
         res.json({ volumes, source: 'nas_api' });
     } catch (error) {
-        res.json({ volumes: [], source: 'error', error: error.message });
+        logRecoverableFailure('nas.volumes', error, { module: 'api.nas', function: 'getVolumes', code: ERROR_CODES.EXT_NAS_FAILED });
+        res.json({ volumes: [], source: 'error', error: publicError(error) });
     }
 });
 
@@ -1554,7 +1720,8 @@ app.get('/api/nas/ups', async (req, res) => {
         const data = await nasGet('/ugreen/v1/hardware/ups/config');
         res.json({ ups: data, source: 'nas_api' });
     } catch (error) {
-        res.json({ ups: null, source: 'error', error: error.message });
+        logRecoverableFailure('nas.ups', error, { module: 'api.nas', function: 'getUps', code: ERROR_CODES.EXT_NAS_FAILED });
+        res.json({ ups: null, source: 'error', error: publicError(error) });
     }
 });
 
@@ -1565,36 +1732,31 @@ app.get('/api/nas/ups-usb', async (req, res) => {
         const data = await nasGet('/ugreen/v1/hardware/ups/usb/info');
         res.json({ data, source: 'nas_api' });
     } catch (error) {
-        res.json({ present: null, source: 'error', error: error.message });
+        logRecoverableFailure('nas.upsUsb', error, { module: 'api.nas', function: 'getUpsUsb', code: ERROR_CODES.EXT_NAS_FAILED });
+        res.json({ present: null, source: 'error', error: publicError(error) });
     }
 });
 
 /* ===================== UCG 歷史自建取樣器 =====================
    跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時，順手記一筆 (節流 30 秒)，
    不需要額外開 SSH 連線。*/
-const UCG_HISTORY_FILE = path.join(DATA_DIR, 'ucg-history.json');
-let ucgHistory = (() => { try { return JSON.parse(fs.readFileSync(UCG_HISTORY_FILE, 'utf8')); } catch { return []; } })();
-const ucgFlush = registerFlushable(UCG_HISTORY_FILE, () => ucgHistory);
 let lastUcgSampleTs = 0;
 function sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct }) {
     if (Date.now() - lastUcgSampleTs < 30000) return;
     lastUcgSampleTs = Date.now();
-    ucgHistory.push({ t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores });
-    pruneHistory(ucgHistory);
-    ucgFlush.markDirty();
+    historyDb.insertPoint('ucg', { t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores }, {
+        keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP
+    });
 }
 app.get('/api/hardware/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     const cutoff = Date.now() - hours * 3600000;
-    res.json({ data: sliceSince(ucgHistory, cutoff) });
+    res.json({ data: historyDb.getSince('ucg', cutoff) });
 });
 
 /* ===================== NAS 歷史自建取樣器 =====================
    UGOS 沒有提供歷史 API (只有即時快照 get_all)，這裡自己定期取樣 get_all + volume/list 並持久化，
    讓「系統負載 / 網路流量 / 散熱 / 儲存趨勢」四張圖有真實歷史可畫，不需要另外部署 NAS Monitor (系統 B)。 */
-const NAS_HISTORY_FILE = path.join(DATA_DIR, 'nas-history.json');
-let nasHistory = (() => { try { return JSON.parse(fs.readFileSync(NAS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
-const nasFlush = registerFlushable(NAS_HISTORY_FILE, () => nasHistory);
 let lastNasSampleTs = 0;
 
 async function sampleNasHistory() {
@@ -1632,7 +1794,7 @@ async function sampleNasHistory() {
             const all = [...(ov?.cpu_fan || []), ...(ov?.device_fan || [])].map(f => f.speed).filter(v => v != null);
             if (all.length) fanRpm = Math.round(all.reduce((a, b) => a + b, 0) / all.length);
         } catch { }
-        nasHistory.push({
+        const point = {
             t: new Date().toISOString(),
             cpu: cpu.used_percent != null ? Math.round(cpu.used_percent) : null,
             memory: mem.used_percent != null ? Math.round(mem.used_percent) : null,
@@ -1642,20 +1804,22 @@ async function sampleNasHistory() {
             down_mbps: +(((netOv.recv_rate || 0) * 8 / 1e6).toFixed(2)),
             disks: diskTemps,
             used_gb: volUsedGb, total_gb: volTotalGb
-        });
-        pruneHistory(nasHistory);
-        nasFlush.markDirty();
-    } catch (e) { sysLog('NAS History', `取樣失敗: ${e.message}`, false); }
+        };
+        historyDb.insertPoint('nas', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+    } catch (e) { throw e; }
 }
 // 自適應：有人看網頁時每 60 秒、閒置時每 10 分鐘 (歷史圖不需要太密)
 setInterval(() => {
     const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
     const gap = (active ? 60 : 600) * 1000;
-    if (Date.now() - lastNasSampleTs >= gap) { lastNasSampleTs = Date.now(); sampleNasHistory(); }
+    if (Date.now() - lastNasSampleTs >= gap) {
+        lastNasSampleTs = Date.now();
+        runSerialJob('nasHistory', sampleNasHistory);
+    }
 }, 5000);
 
 function nasHistorySince(hours) {
-    return sliceSince(nasHistory, Date.now() - hours * 3600000);
+    return historyDb.getSince('nas', Date.now() - hours * 3600000);
 }
 
 /* ===================== NAS Monitor 擴充 REST API (系統 B / nas-monitor-interface) ===================== */
@@ -1687,7 +1851,8 @@ async function nasMonProxy(res, path, params, fallback) {
         const data = await nasMonGet(path, params);
         res.json({ data, source: 'nas_monitor' });
     } catch (error) {
-        res.json({ ...emptyLike(fallback), source: 'error', error: error.message });
+        logRecoverableFailure(`nasMonitor.proxy:${path}`, error, { module: 'api.nasMonitor', function: 'proxy', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, fields: { upstream_path: path } });
+        res.json({ ...emptyLike(fallback), source: 'error', error: publicError(error) });
     }
 }
 
@@ -1698,20 +1863,25 @@ app.get('/api/nas/docker', async (req, res) => {
         const data = await nasMonGet('/api/docker/containers');
         res.json({ containers: Array.isArray(data) ? data : (data.containers || data.data || []), source: 'nas_monitor' });
     } catch (error) {
-        res.json({ containers: [], source: 'error', error: error.message });
+        logRecoverableFailure('nasMonitor.docker', error, { module: 'api.nasMonitor', function: 'getDockerContainers', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+        res.json({ containers: [], source: 'error', error: publicError(error) });
     }
 });
 
 // 20. Docker 容器操作 (start / stop / restart)
 app.post('/api/nas/docker/:id/:action', async (req, res) => {
     const { id, action } = req.params;
-    if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'invalid action' });
-    if (!nasMonConfigured()) return res.status(503).json({ success: false, error: 'nas_monitor_not_configured', source: 'not_configured' });
+    if (!['start', 'stop', 'restart'].includes(action)) return apiError(res, new Error('invalid action'), {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'invalid action', module: 'api.nasMonitor', function: 'dockerAction'
+    });
+    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+        status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'dockerAction'
+    });
     try {
         const r = await nasMonClient.post(`/api/docker/containers/${id}/${action}`);
         res.json({ success: true, data: r.data, source: 'nas_monitor' });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'dockerAction', logMessage: 'NAS Monitor Docker action failed' });
     }
 });
 
@@ -1724,7 +1894,7 @@ app.get('/api/nas/docker/:id/logs', async (req, res) => {
         const data = await nasMonGet(`/api/docker/containers/${req.params.id}/logs`, { lines: req.query.lines || 200 });
         res.json({ logs: typeof data === 'string' ? data : (data.logs || JSON.stringify(data)), source: 'nas_monitor' });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'dockerLogs', logMessage: 'Failed to fetch Docker logs' });
     }
 });
 
@@ -1788,20 +1958,23 @@ app.get('/api/nas/alerts', async (req, res) => {
         const data = await nasMonGet('/api/alerts/events', { hours: req.query.hours || 24 });
         res.json({ events: Array.isArray(data) ? data : (data.events || data.data || []), source: 'nas_monitor' });
     } catch (error) {
-        res.json({ events: [], source: 'error', error: error.message });
+        logRecoverableFailure('nasMonitor.alerts', error, { module: 'api.nasMonitor', function: 'getAlerts', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+        res.json({ events: [], source: 'error', error: publicError(error) });
     }
 });
 
 // 30. 確認 (清除) 警報
 app.post('/api/nas/alerts/:id/ack', async (req, res) => {
     if (!nasMonConfigured()) {
-        return res.status(503).json({ success: false, error: 'nas_monitor_not_configured', source: 'not_configured' });
+        return apiError(res, new Error('NAS Monitor is not configured'), {
+            status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'ackAlert'
+        });
     }
     try {
         await nasMonClient.post(`/api/alerts/events/${req.params.id}/acknowledge`);
         res.json({ success: true, source: 'nas_monitor' });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'ackAlert', logMessage: 'NAS Monitor alert acknowledgement failed' });
     }
 });
 
@@ -1812,25 +1985,30 @@ app.get('/api/nas/alerts/config', async (req, res) => {
         const data = await nasMonGet('/api/alerts/config');
         res.json({ config: Array.isArray(data) ? data : (data.config || data.data || []), source: 'nas_monitor' });
     } catch (error) {
-        res.json({ config: [], source: 'error', error: error.message });
+        logRecoverableFailure('nasMonitor.alertConfig', error, { module: 'api.nasMonitor', function: 'getAlertConfig', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+        res.json({ config: [], source: 'error', error: publicError(error) });
     }
 });
 app.post('/api/nas/alerts/config', async (req, res) => {
-    if (!nasMonConfigured()) return res.status(503).json({ error: 'nas_monitor_not_configured' });
+    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+        status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'saveAlertConfig'
+    });
     try {
         const r = await nasMonClient.post('/api/alerts/config', req.body || {});
         res.json({ ok: true, data: r.data, source: 'nas_monitor' });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'saveAlertConfig', logMessage: 'NAS Monitor alert configuration failed' });
     }
 });
 app.delete('/api/nas/alerts/config/:metric', async (req, res) => {
-    if (!nasMonConfigured()) return res.status(503).json({ error: 'nas_monitor_not_configured' });
+    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+        status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'deleteAlertConfig'
+    });
     try {
         await nasMonClient.delete(`/api/alerts/config/${encodeURIComponent(req.params.metric)}`);
         res.json({ ok: true, source: 'nas_monitor' });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'deleteAlertConfig', logMessage: 'NAS Monitor alert configuration delete failed' });
     }
 });
 
@@ -1860,7 +2038,9 @@ function scheduleSseReconnect() {
     sseReconnectTimer = setTimeout(() => { sseReconnectTimer = null; sseConnectUpstream(); }, 10000);
 }
 app.get('/api/nas/stream', (req, res) => {
-    if (!nasMonConfigured()) return res.status(503).json({ error: 'nas_monitor_not_configured' });
+    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+        status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'stream'
+    });
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write(':ok\n\n');
     sseClients.add(res);
@@ -1872,12 +2052,15 @@ app.get('/api/nas/stream', (req, res) => {
 app.get('/api/settings', (req, res) => res.json(appSettings));
 app.post('/api/settings', (req, res) => {
     const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'reportHour2', 'upsSampleSec', 'wiimCpuAlert', 'wiimBoardAlert', 'toastSec', 'historyFlushMin', 'historyKeepDays'].forEach(k => {
-        if (typeof b[k] === 'number' && b[k] >= 0) appSettings[k] = b[k];
-    });
+    for (const [key, [min, max]] of Object.entries(APP_SETTING_RANGES)) {
+        if (typeof b[key] === 'number' && Number.isFinite(b[key])) {
+            appSettings[key] = Math.min(max, Math.max(min, b[key]));
+        }
+    }
     if (typeof b.reportEnabled === 'boolean') appSettings.reportEnabled = b.reportEnabled;
     if (['daily', 'twice', 'every6h', 'weekly'].includes(b.reportFreq)) appSettings.reportFreq = b.reportFreq;
-    saveAppSettings();
+    try { saveAppSettings(); }
+    catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.settings', function: 'saveAppSettings', logMessage: 'App settings persistence failed' }); }
     scheduleServerJobs();   // 立即套用新的伺服器端間隔
     res.json({ ok: true, settings: appSettings });
 });
@@ -1947,8 +2130,10 @@ app.post('/api/connections', (req, res) => {
     if (!Object.keys(updates).length) return res.json({ ok: true, changed: 0 });
     for (const [k, v] of Object.entries(updates)) process.env[k] = v;
     try { persistEnvVars(updates); } catch (e) {
-        sysLog('Connections', `.env 寫入失敗: ${e.message}`, true);
-        return res.status(500).json({ error: '.env 寫入失敗: ' + e.message });
+        return apiError(res, e, {
+            code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.connections', function: 'persistEnvVars',
+            logMessage: '.env persistence failed', publicMessage: '.env 寫入失敗，請檢查檔案權限'
+        });
     }
     rebuildClients();
     sysLog('Connections', `已更新 ${Object.keys(updates).length} 個欄位: ${Object.keys(updates).join(', ')}`);
@@ -2010,7 +2195,7 @@ async function buildReport() {
             if (www.xput_down) L.push(`• 最近測速：↓${www.xput_down} / ↑${www.xput_up} Mbps，ping ${www.speedtest_ping} ms${www.speedtest_lastrun ? ` (${new Date(www.speedtest_lastrun * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })})` : ''}`);
         } catch { }
     } catch { L.push('• 本地控制器未連線'); }
-    const trends = loadTrends().filter(p => (Date.parse(p.t)) >= dayAgo);
+    const trends = historyDb.getSince('trend', dayAgo);
     const lat = trends.map(p => p.latency).filter(v => v != null);
     if (lat.length) L.push(`• ISP 延遲：平均 ${avg(lat).toFixed(1)} ms (最高 ${Math.max(...lat)} ms)`);
     const cli = trends.map(p => p.clients).filter(v => v != null);
@@ -2028,7 +2213,7 @@ async function buildReport() {
             const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
             if (wan) L.push(`• WAN(${wan.speed})：${wan.status === 'connected' ? '正常' : '⚠ 離線'} ↓${wan.rxRate} ↑${wan.txRate}`);
             // 24H 溫度統計 (自建歷史)
-            const ucg24 = sliceSince(ucgHistory, dayAgo);
+            const ucg24 = historyDb.getSince('ucg', dayAgo);
             const temps = ucg24.map(p => p.cpuTemp).filter(v => v != null);
             if (temps.length) L.push(`• 24H CPU 溫度：平均 ${avg(temps).toFixed(1)}°C / 最高 ${Math.max(...temps)}°C / 最低 ${Math.min(...temps)}°C`);
         } catch { L.push('\n━━ 🖥️ UCG-Ultra ━━\n• SSH 讀取失敗'); }
@@ -2091,19 +2276,21 @@ async function buildReport() {
             L.push(`• 電池 ${ups.battery ?? '--'}%　負載 ${ups.loadPct ?? '--'}%　可撐 ${ups.runtimeSec ? Math.round(ups.runtimeSec / 60) + ' 分' : '--'}`);
             L.push(`• 電壓：輸入 ${ups.inputV ?? '--'}V / 輸出 ${ups.outputV ?? '--'}V`);
             // 24H 電壓/負載統計
-            const ups24 = sliceSince(upsHistory, dayAgo);
+            const ups24 = historyDb.getSince('ups', dayAgo);
             const inv = ups24.map(p => p.inV).filter(v => v != null && v > 0);
             if (inv.length) L.push(`• 24H 輸入電壓：平均 ${avg(inv).toFixed(1)}V / 最高 ${Math.max(...inv)}V / 最低 ${Math.min(...inv)}V`);
             const loads = ups24.map(p => p.load).filter(v => v != null);
             if (loads.length) L.push(`• 24H 負載：平均 ${avg(loads).toFixed(1)}% / 峰值 ${Math.max(...loads)}%`);
             // 斷電事件明細
-            const outages = upsEvents.filter(e => Date.parse(e.start) >= dayAgo);
+            const outages = historyDb.listUpsEvents().filter(e => Date.parse(e.start) >= dayAgo);
             if (outages.length) {
                 L.push(`• 24H 斷電事件：${outages.length} 次`);
                 outages.slice(0, 3).forEach(e => L.push(`  ${new Date(e.start).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Taipei' })} ${e.end ? `持續 ${fmtDur(e.durationSec)}，最低電池 ${e.minBattery ?? '?'}%` : '⚡ 進行中'}`));
             } else L.push('• 24H 斷電事件：無');
         }
-    } catch { }
+    } catch (error) {
+        logRecoverableFailure('report.ups', error, { module: 'report.builder', function: 'appendUpsStatus', code: ERROR_CODES.EXT_UPS_FAILED });
+    }
 
     // ── AdGuard DNS ──
     if (adgConfigured()) {
@@ -2125,14 +2312,14 @@ async function buildReport() {
             L.push(`• CPU：${d.cpuUsage}% / ${d.cpuTemp ?? '--'}°C　記憶體：${d.memUsagePct}% (${d.memStr})`);
             L.push(`• 磁碟：${d.diskUsagePct}% (${d.diskStr})　負載 ${d.load ? d.load.join(' / ') : '--'}`);
             L.push(`• 運行時間：${d.uptime}`);
-            const lnx24 = sliceSince(linuxHistory, dayAgo);
+            const lnx24 = historyDb.getSince('linux', dayAgo);
             const lt = lnx24.map(p => p.temp).filter(v => v != null);
             if (lt.length) L.push(`• 24H 溫度：平均 ${avg(lt).toFixed(1)}°C / 最高 ${Math.max(...lt)}°C`);
         } catch { L.push('\n━━ 🖥️ Linux 小主機 ━━\n• SSH 無法連線'); }
     }
 
     // ── WiiM ──
-    const wiim24h = sliceSince(wiimHistory, dayAgo, p => p.ts * 1000);
+    const wiim24h = historyDb.getSince('wiim', dayAgo);
     if (wiim24h.length) {
         const cpus = wiim24h.map(h => h.cpu).filter(v => v !== null);
         const boards = wiim24h.map(h => h.board).filter(v => v !== null);
@@ -2171,7 +2358,7 @@ async function reportScheduler() {
     const freqLabel = { weekly: '每週', twice: '每日兩次', every6h: '每 6 小時' }[f] || '每日';
     await notify(`📊 SmartHub ${freqLabel}報表`, body);
 }
-setInterval(reportScheduler, 60 * 1000);
+setInterval(() => runSerialJob('reportScheduler', reportScheduler), 60 * 1000);
 
 // 立即產生報表 (預覽 + 若已啟用推播則送出)
 app.post('/api/reports/run', async (req, res) => {
@@ -2200,18 +2387,13 @@ self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.
 self.addEventListener('fetch',e=>{
   if(e.request.method!=='GET')return;
   const u=new URL(e.request.url);
-  if(u.pathname.startsWith('/api/')||u.pathname==='/healthz')return; // API 不快取
+  if(u.pathname.startsWith('/api/')||u.pathname.startsWith('/health'))return; // API / health 不快取
   e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));
 });`);
 });
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---
 let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
-// 溫度歷史持久化 (先前只存記憶體，重啟即遺失)；與其他歷史相同的節流落盤機制
-const WIIM_HISTORY_FILE = path.join(DATA_DIR, 'wiim-history.json');
-let wiimHistory = (() => { try { return JSON.parse(fs.readFileSync(WIIM_HISTORY_FILE, 'utf8')); } catch { return []; } })();
-const wiimFlush = registerFlushable(WIIM_HISTORY_FILE, () => wiimHistory);
-
 const wiimCache = {};
 
 async function wiimGet(command) {
@@ -2269,21 +2451,26 @@ async function pollWiimTemp() {
         const d = JSON.parse(raw);
         cpu = parseFloat(d.temperature_cpu);
         board = parseFloat(d.temperature_tmp102);
-    } catch { }
+    } catch (error) {
+        logRecoverableFailure('sampler.wiim.parse', error, { module: 'scheduler.wiim', function: 'parseTemperature', code: ERROR_CODES.EXT_WIIM_FAILED });
+    }
     if (isNaN(cpu) && isNaN(board)) { sysLog('WiiM Poll', 'getStatusEx 回應中無溫度欄位，跳過本次取樣', true); return; }
     const ts = Math.floor(Date.now() / 1000);
-    wiimHistory.push({ ts, cpu: isNaN(cpu) ? null : cpu, board: isNaN(board) ? null : board });
-    pruneHistory(wiimHistory, p => p.ts * 1000);
-    wiimFlush.markDirty();
+    historyDb.insertPoint('wiim', { ts, cpu: isNaN(cpu) ? null : cpu, board: isNaN(board) ? null : board }, {
+        keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP
+    });
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
 // 自適應排程：有人瀏覽時每 10 秒取樣，閒置時降為 trendIdleSec (與趨勢取樣器同一套活躍判定)
 let lastWiimPollTs = 0;
-setInterval(async () => {
+setInterval(() => {
     const now = Date.now();
     const active = (now - lastClientActivity) < appSettings.activeWindowSec * 1000;
     const gap = active ? 10000 : appSettings.trendIdleSec * 1000;
-    if (now - lastWiimPollTs >= gap) { lastWiimPollTs = now; await pollWiimTemp(); }
+    if (now - lastWiimPollTs >= gap) {
+        lastWiimPollTs = now;
+        runSerialJob('wiimTemperature', pollWiimTemp);
+    }
 }, 1000);
 
 app.get('/api/wiim/history', (req, res) => {
@@ -2291,7 +2478,7 @@ app.get('/api/wiim/history', (req, res) => {
         interval: 10,
         cpu_alert: appSettings.wiimCpuAlert ?? 70,
         board_alert: appSettings.wiimBoardAlert ?? 60,
-        data: wiimHistory
+        data: historyDb.getSince('wiim', 0)
     });
 });
 
@@ -2327,7 +2514,9 @@ app.get('/api/wiim/status', async (req, res) => {
 
 app.get('/api/wiim/cmd', async (req, res) => {
     const command = req.query.command || '';
-    if (!command) return res.status(400).json({ error: 'No command' });
+    if (!command) return apiError(res, new Error('No command'), {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'No command', module: 'api.wiim', function: 'command'
+    });
     const raw = await wiimGet(command);
     res.json({ result: raw || "OK" });
 });
@@ -2370,8 +2559,7 @@ app.get('/api/wiim/art', async (req, res) => {
 });
 
 app.get('/api/wiim/clear', (req, res) => {
-    wiimHistory = [];
-    wiimFlush.markDirty(true); // 立即落盤，避免重啟後舊資料復活
+    historyDb.deleteSeries('wiim');
     res.json({ ok: true });
 });
 
@@ -2379,7 +2567,7 @@ app.get('/api/wiim/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=wiim_temp_log.csv');
     let csv = 'timestamp,iso_time,cpu_c,board_tmp102_c\n';
-    for (const h of wiimHistory) {
+    for (const h of historyDb.getSince('wiim', 0)) {
         // 使用 ISO 格式時間
         const iso = new Date(h.ts * 1000).toISOString();
         csv += `${h.ts},${iso},${h.cpu !== null && h.cpu !== undefined ? h.cpu : ''},${h.board !== null && h.board !== undefined ? h.board : ''}\n`;
@@ -2392,23 +2580,16 @@ app.get('/api/wiim/csv', (req, res) => {
 //   1) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 建議方案 (brew install nut)
 //   2) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
 //   3) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
-// 電壓歷史與斷電事件「持久化」於 DATA_DIR (斷電紀錄不可因重啟遺失)。
+// 電壓歷史與斷電事件持久化於 SQLite (斷電紀錄不可因重啟遺失)。
 // 呼叫時讀取 env，設定頁修改後即時生效
 const UPS_SOURCE = () => process.env.UPS_SOURCE || 'auto';
 const NUT_HOST = () => process.env.NUT_HOST || 'localhost';
 const NUT_UPS_NAME = () => process.env.NUT_UPS_NAME || 'cyberpower';
 const PWRSTAT_PATH = () => process.env.PWRSTAT_PATH || 'pwrstat';
-const UPS_HISTORY_FILE = path.join(DATA_DIR, 'ups-history.json');
-const UPS_EVENTS_FILE = path.join(DATA_DIR, 'ups-events.json');
-
-let upsHistory = (() => { try { return JSON.parse(fs.readFileSync(UPS_HISTORY_FILE, 'utf8')); } catch { return []; } })();
-let upsEvents = (() => { try { return JSON.parse(fs.readFileSync(UPS_EVENTS_FILE, 'utf8')); } catch { return []; } })();
-const upsHistFlush = registerFlushable(UPS_HISTORY_FILE, () => upsHistory);
-const upsEventsFlush = registerFlushable(UPS_EVENTS_FILE, () => upsEvents);
 let upsLastLive = null;     // 最近一次成功讀取 (含 source)
 // 重啟接續：若最新事件尚未結束 (重啟前正在斷電)，視為仍在電池供電，
 // 下次取樣時若市電已恢復會正常補上結束時間，不會再開一筆重複事件
-let upsWasOnBattery = !!(upsEvents[0] && !upsEvents[0].end);
+let upsWasOnBattery = !!historyDb.getOpenUpsEvent();
 
 function execCmd(cmd, timeoutMs = 5000) {
     return new Promise(resolve => exec(cmd, { timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout)));
@@ -2533,7 +2714,7 @@ app.get('/api/ups/ppb-events', async (req, res) => {
         }));
         res.json({ events, source: 'ppb' });
     } catch (error) {
-        res.status(500).json({ events: [], error: error.message });
+        apiError(res, error, { code: ERROR_CODES.EXT_UPS_FAILED, module: 'api.ups', function: 'getPpbEvents', logMessage: 'Failed to fetch PowerPanel events' });
     }
 });
 
@@ -2585,34 +2766,35 @@ async function sampleUps() {
     const live = await readUpsLive();
     if (!live) { sysLog('UPS', '所有來源皆不可用，跳過本次取樣', true); upsLastLive = null; return; }
     upsLastLive = { ...live, ts: Date.now() };
-    upsHistory.push({ t: new Date().toISOString(), inV: live.inputV, outV: live.outputV, batt: live.battery, load: live.loadPct, rt: live.runtimeSec, ob: live.onBattery ? 1 : 0 });
-    pruneHistory(upsHistory);
-    // 平時節流落盤；電池供電中每筆都強制寫檔 (斷電期間隨時可能失電，不能等節流)
-    upsHistFlush.markDirty(live.onBattery);
+    historyDb.insertPoint('ups', {
+        t: new Date().toISOString(), inV: live.inputV, outV: live.outputV,
+        batt: live.battery, load: live.loadPct, rt: live.runtimeSec, ob: live.onBattery ? 1 : 0
+    }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
 
     // 斷電事件：市電斷 → 開新事件；恢復 → 補上結束時間與時長
     if (live.onBattery && !upsWasOnBattery) {
-        upsEvents.unshift({ start: new Date().toISOString(), end: null, durationSec: null, minBattery: live.battery, startVoltage: live.inputV });
+        historyDb.insertUpsEvent({ start: new Date().toISOString(), minBattery: live.battery, startVoltage: live.inputV });
         sysLog('UPS', `⚡ 偵測到斷電！事件已記錄 (電池 ${live.battery}%)`, true);
         const ns = loadNotifSettings();
         if (ns.enabled && ns.triggerUpsOutage !== false) await notify('⚡ UPS 斷電！', `市電中斷，UPS 供電中 (電池 ${live.battery ?? '?'}%)`);
         upsLowBattNotified = false;
-    } else if (!live.onBattery && upsWasOnBattery && upsEvents[0] && !upsEvents[0].end) {
-        upsEvents[0].end = new Date().toISOString();
-        upsEvents[0].durationSec = Math.round((Date.now() - new Date(upsEvents[0].start).getTime()) / 1000);
-        sysLog('UPS', `✅ 市電恢復，斷電持續 ${upsEvents[0].durationSec} 秒`);
+    } else if (!live.onBattery && upsWasOnBattery && historyDb.getOpenUpsEvent()) {
+        const open = historyDb.getOpenUpsEvent();
+        const end = new Date().toISOString();
+        const durationSec = Math.round((Date.now() - new Date(open.start).getTime()) / 1000);
+        historyDb.closeOpenUpsEvent(end, durationSec);
+        sysLog('UPS', `✅ 市電恢復，斷電持續 ${durationSec} 秒`);
         const ns = loadNotifSettings();
-        if (ns.enabled && ns.triggerUpsOutage !== false) await notify('✅ 市電恢復', `斷電持續 ${upsEvents[0].durationSec} 秒，最低電池 ${upsEvents[0].minBattery ?? '?'}%`);
-    } else if (live.onBattery && upsEvents[0] && !upsEvents[0].end) {
-        if (live.battery != null) upsEvents[0].minBattery = Math.min(upsEvents[0].minBattery ?? 100, live.battery);
+        if (ns.enabled && ns.triggerUpsOutage !== false) await notify('✅ 市電恢復', `斷電持續 ${durationSec} 秒，最低電池 ${open.minBattery ?? '?'}%`);
+    } else if (live.onBattery && historyDb.getOpenUpsEvent()) {
+        const open = historyDb.getOpenUpsEvent();
+        if (live.battery != null) historyDb.updateOpenUpsMinBattery(Math.min(open.minBattery ?? 100, live.battery));
         if (live.battery != null && live.battery <= 20 && !upsLowBattNotified) {
             upsLowBattNotified = true;
             const ns = loadNotifSettings();
             if (ns.enabled && ns.triggerUpsLowBatt !== false) await notify('🪫 UPS 電池電量低', `僅剩 ${live.battery}%，請儘快處理或準備關機`);
         }
     }
-    upsEvents = upsEvents.slice(0, 200);
-    upsEventsFlush.markDirty(true); // 事件檔很小 (≤200 筆) 且是核心紀錄，一律立即寫檔
     upsWasOnBattery = live.onBattery;
 
     // 負載過高 (30 分鐘冷卻)
@@ -2642,9 +2824,12 @@ let lastUpsHighLoadTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null;
 // UPS 取樣「不做閒置降頻」：斷電/電壓紀錄是核心需求，無人看網頁也要持續記錄 (本地指令，成本低)
 let upsLowBattNotified = false;
 let lastUpsSampleTs = 0;
-setInterval(async () => {
+setInterval(() => {
     const gap = (appSettings.upsSampleSec || 30) * 1000;
-    if (Date.now() - lastUpsSampleTs >= gap) { lastUpsSampleTs = Date.now(); await sampleUps(); }
+    if (Date.now() - lastUpsSampleTs >= gap) {
+        lastUpsSampleTs = Date.now();
+        runSerialJob('upsSample', sampleUps);
+    }
 }, 1000);
 
 app.get('/api/ups/status', async (req, res) => {
@@ -2658,16 +2843,16 @@ app.get('/api/ups/status', async (req, res) => {
 app.get('/api/ups/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
     const cutoff = Date.now() - hours * 3600000;
-    res.json({ history: sliceSince(upsHistory, cutoff) });
+    res.json({ history: historyDb.getSince('ups', cutoff) });
 });
 
-app.get('/api/ups/events', (req, res) => res.json({ events: upsEvents }));
+app.get('/api/ups/events', (req, res) => res.json({ events: historyDb.listUpsEvents() }));
 
 app.get('/api/ups/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');
     let csv = 'time,input_v,output_v,battery_pct,load_pct,runtime_sec,on_battery\n';
-    for (const h of upsHistory) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
+    for (const h of historyDb.getSince('ups', 0)) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
     res.send(csv);
 });
 
@@ -2686,7 +2871,10 @@ app.get('/api/adguard/overview', async (req, res) => {
     try {
         const [status, stats] = await Promise.all([adgReq('/control/status'), adgReq('/control/stats')]);
         res.json({ status, stats, source: 'adguard' });
-    } catch (e) { res.json({ source: 'error', error: e.message }); }
+    } catch (e) {
+        logRecoverableFailure('adguard.overview', e, { module: 'api.adguard', function: 'getOverview', code: ERROR_CODES.EXT_ADGUARD_FAILED });
+        res.json({ source: 'error', error: publicError(e) });
+    }
 });
 // 即時查詢日誌 (簡化欄位)
 app.get('/api/adguard/querylog', async (req, res) => {
@@ -2704,15 +2892,20 @@ app.get('/api/adguard/querylog', async (req, res) => {
             elapsedMs: e.elapsedMs ? parseFloat(e.elapsedMs).toFixed(1) : null
         }));
         res.json({ entries, source: 'adguard' });
-    } catch (e) { res.json({ entries: [], source: 'error', error: e.message }); }
+    } catch (e) {
+        logRecoverableFailure('adguard.querylog', e, { module: 'api.adguard', function: 'getQueryLog', code: ERROR_CODES.EXT_ADGUARD_FAILED });
+        res.json({ entries: [], source: 'error', error: publicError(e) });
+    }
 });
 // 保護開關
 app.post('/api/adguard/protection', async (req, res) => {
-    if (!adgConfigured()) return res.status(503).json({ error: 'not_configured' });
+    if (!adgConfigured()) return apiError(res, new Error('AdGuard is not configured'), {
+        status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'not_configured', module: 'api.adguard', function: 'setProtection'
+    });
     try {
         await adgReq('/control/protection', 'post', { enabled: !!req.body.enabled });
         res.json({ ok: true, enabled: !!req.body.enabled });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { apiError(res, e, { code: ERROR_CODES.EXT_ADGUARD_FAILED, module: 'api.adguard', function: 'setProtection', logMessage: 'Failed to update AdGuard protection' }); }
 });
 
 /* ===================== Linux 小主機監控 (SSH，比照 UCG 模式) ===================== */
@@ -2782,29 +2975,30 @@ async function getLinuxCached() {
 app.get('/api/linux/stats', async (req, res) => {
     if (!linuxConfigured()) return res.json({ source: 'not_configured' });
     try { res.json({ ...(await getLinuxCached()), source: 'ssh' }); }
-    catch (e) { res.json({ source: 'error', error: e.message }); }
+    catch (e) {
+        logRecoverableFailure('linux.stats', e, { module: 'api.linux', function: 'getStats', code: ERROR_CODES.EXT_LINUX_FAILED });
+        res.json({ source: 'error', error: publicError(e) });
+    }
 });
 // 歷史取樣 (自適應：活躍 60s / 閒置 10min)，與其他歷史相同的節流落盤
-const LINUX_HISTORY_FILE = path.join(DATA_DIR, 'linux-history.json');
-let linuxHistory = (() => { try { return JSON.parse(fs.readFileSync(LINUX_HISTORY_FILE, 'utf8')); } catch { return []; } })();
-const linuxFlush = registerFlushable(LINUX_HISTORY_FILE, () => linuxHistory);
 let lastLinuxSampleTs = 0;
-setInterval(async () => {
+setInterval(() => {
     if (!linuxConfigured()) return;
     const active = (Date.now() - lastClientActivity) < appSettings.activeWindowSec * 1000;
     const gap = (active ? 60 : 600) * 1000;
     if (Date.now() - lastLinuxSampleTs < gap) return;
     lastLinuxSampleTs = Date.now();
-    try {
+    runSerialJob('linuxHistory', async () => {
         const d = await getLinuxCached();
-        linuxHistory.push({ t: new Date().toISOString(), cpu: d.cpuUsage, temp: d.cpuTemp, mem: d.memUsagePct, load: d.load && d.load[0] });
-        pruneHistory(linuxHistory);
-        linuxFlush.markDirty();
-    } catch { }
+        historyDb.insertPoint('linux', {
+            t: new Date().toISOString(), cpu: d.cpuUsage, temp: d.cpuTemp,
+            mem: d.memUsagePct, load: d.load && d.load[0]
+        }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+    });
 }, 5000);
 app.get('/api/linux/history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
-    res.json({ data: sliceSince(linuxHistory, Date.now() - hours * 3600000) });
+    res.json({ data: historyDb.getSince('linux', Date.now() - hours * 3600000) });
 });
 
 /* ===================== 連線狀態一覽 (設定頁 📡 面板) =====================
@@ -2844,13 +3038,14 @@ app.get('/api/connections/status', async (req, res) => {
    id 含事件起始時間，前端點擊關閉後記住 id；同一事件不再彈出，新事件會重新出現。 */
 app.get('/api/alerts/critical', (req, res) => {
     const alerts = [];
+    const openUpsEvent = historyDb.getOpenUpsEvent();
     // UPS 斷電進行中
-    if (upsEvents[0] && !upsEvents[0].end) {
-        alerts.push({ id: 'ups-outage-' + upsEvents[0].start, level: 'critical', msg: `UPS 斷電中！市電中斷 (電池 ${upsLastLive?.battery ?? '?'}%，可撐約 ${upsLastLive?.runtimeSec ? Math.round(upsLastLive.runtimeSec / 60) + ' 分' : '--'})` });
+    if (openUpsEvent) {
+        alerts.push({ id: 'ups-outage-' + openUpsEvent.start, level: 'critical', msg: `UPS 斷電中！市電中斷 (電池 ${upsLastLive?.battery ?? '?'}%，可撐約 ${upsLastLive?.runtimeSec ? Math.round(upsLastLive.runtimeSec / 60) + ' 分' : '--'})` });
     }
     // UPS 電池低 (斷電中或充電異常皆適用)
     if (upsLastLive && upsLastLive.battery != null && upsLastLive.battery <= 20) {
-        alerts.push({ id: 'ups-lowbatt-' + (upsEvents[0]?.start || 'now'), level: 'critical', msg: `UPS 電池僅剩 ${upsLastLive.battery}%，請儘快處理` });
+        alerts.push({ id: 'ups-lowbatt-' + (openUpsEvent?.start || 'now'), level: 'critical', msg: `UPS 電池僅剩 ${upsLastLive.battery}%，請儘快處理` });
     }
     // UPS 完全失聯 (連續取樣失敗)
     if (upsLastReason && !upsLastLive) {
@@ -2866,8 +3061,8 @@ app.get('/api/alerts/critical', (req, res) => {
     res.json({ alerts });
 });
 
-// 健康檢查端點 (供 Docker healthcheck / 反向代理使用)
-app.get('/healthz', (req, res) => res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() }));
+// Liveness / readiness / 完整 diagnostics；/api/system/status 會沿用上方 Basic Auth。
+registerHealthRoutes(app, { monitor: systemMonitor, db: historyDb, taskTracker, version: APP_VERSION });
 
 /* ===================== 啟動連線自我診斷 =====================
    開機時逐一測試每個設備連線並輸出 ✅/❌ + 具體原因與修復提示，
@@ -2942,9 +3137,97 @@ async function startupDiagnostics() {
     sysLog('Diag', '━━ 啟動連線診斷完成 ━━');
 }
 
+app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    return apiError(res, new Error(`Route not found: ${req.method} ${req.path}`), {
+        status: 404, code: ERROR_CODES.API_NOT_FOUND, publicMessage: 'API endpoint not found',
+        module: 'api.router', function: 'notFound'
+    });
+});
+
+app.use((error, req, res, _next) => {
+    if (res.headersSent) return _next(error);
+    const isJsonError = error && (error.type === 'entity.parse.failed' || error instanceof SyntaxError);
+    apiError(res, error, {
+        status: isJsonError ? 400 : 500,
+        code: isJsonError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+        publicMessage: isJsonError ? 'Invalid JSON request body' : 'Internal server error',
+        module: 'api.middleware', function: 'errorHandler', fields: { method: req.method, path: req.path }
+    });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Production Server listening on port ${PORT}`);
+let shuttingDown = false;
+let httpServer;
+
+function gracefulShutdown(signal, exitCode = 0) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info({
+        module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.SYS_SHUTDOWN,
+        message: 'SmartHub shutdown started', fields: { signal, exit_code: exitCode }
+    });
+    systemMonitor.stop();
+    Object.values(jobTimers).forEach(clearInterval);
+    const finish = () => {
+        try { historyDb.close(); }
+        catch (error) {
+            logger.error({ module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.DB_CLOSE, message: 'SQLite close failed during shutdown', error });
+        }
+        process.exit(exitCode);
+    };
+    if (httpServer && httpServer.listening) httpServer.close(finish);
+    else finish();
+    setTimeout(finish, 5000).unref();
+}
+
+httpServer = app.listen(PORT, () => {
+    systemMonitor.ensureSample().then(status => {
+        logger.info({
+            module: 'app.lifecycle', function: 'listen', code: ERROR_CODES.SYS_READY,
+            message: 'SYSTEM READY', fields: {
+                port: Number(PORT),
+                startup_ms: Date.now() - APP_STARTED_AT,
+                database: status.database.status,
+                database_latency_ms: status.database.latency_ms,
+                storage_free_gb: status.disk.free_bytes == null ? null : Number((status.disk.free_bytes / 1073741824).toFixed(2)),
+                worker: status.worker.status
+            }
+        });
+    }).catch(error => logger.error({
+        module: 'app.lifecycle', function: 'listen', code: ERROR_CODES.SYS_MONITOR_FAILED,
+        message: 'Server is listening but initial resource diagnostics failed', error
+    }));
     // 延遲數秒再診斷，避開啟動瞬間的排程尖峰
-    setTimeout(() => startupDiagnostics().catch(e => sysLog('Diag', `診斷流程異常: ${e.message}`, true)), 3000);
+    setTimeout(() => startupDiagnostics().catch(error => logger.error({
+        module: 'startup.diagnostics', function: 'startupDiagnostics', code: ERROR_CODES.SYS_CONFIG_INVALID,
+        message: 'External service startup diagnostics failed', error
+    })), 3000);
+});
+
+httpServer.on('error', error => {
+    logger.critical({
+        module: 'app.lifecycle', function: 'listen', code: ERROR_CODES.SYS_START_FAILED,
+        message: 'STARTUP FAILED: HTTP server could not listen', error,
+        fields: { port: Number(PORT), suggested_check: error.code === 'EADDRINUSE' ? `Check which process already uses port ${PORT}.` : 'Check port and container network configuration.' }
+    });
+    gracefulShutdown('listen-error', 1);
+});
+
+process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.once('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('uncaughtException', error => {
+    logger.critical({
+        module: 'app.lifecycle', function: 'uncaughtException', code: ERROR_CODES.SYS_UNCAUGHT_EXCEPTION,
+        message: 'Uncaught exception; shutting down', error
+    });
+    gracefulShutdown('uncaughtException', 1);
+});
+process.on('unhandledRejection', reason => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    logger.critical({
+        module: 'app.lifecycle', function: 'unhandledRejection', code: ERROR_CODES.SYS_UNHANDLED_REJECTION,
+        message: 'Unhandled promise rejection', error
+    });
+    gracefulShutdown('unhandledRejection', 1);
 });

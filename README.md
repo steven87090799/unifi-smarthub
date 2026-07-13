@@ -6,7 +6,7 @@
 - **後端**:`server.js`(Express,port 3000)— 資料來源:SSH×2、UniFi 本地 API、Site Manager 雲端 API、UGOS API、LinkPlay HTTP API、NUT/PowerPanel Business、AdGuard REST API
 - **開發預覽**:`node server-mock.js`(port 3005,純假資料免設定)
 
-主要功能:即時監控與歷史圖表(範圍 10 分鐘~7 天)、封鎖設備/關 WiFi/PoE 斷電、IPS 威脅戰情室與自動防禦、UPS 斷電事件記錄、硬碟休眠統計、客戶端自訂名稱、Discord/Telegram/Webhook 推播(20+ 種觸發條件)、定期報表(每日/每日兩次/每6小時/每週)、頂部重大事件閃爍警報、PWA 手機安裝。
+主要功能:即時監控與歷史圖表(範圍 10 分鐘~7 天)、封鎖設備/關 WiFi/PoE 斷電、IPS 威脅戰情室與自動防禦、UPS 斷電事件記錄、硬碟休眠統計、客戶端自訂名稱、Discord/Telegram/Webhook 推播(20+ 種觸發條件)、定期報表、Structured Logging、System Diagnostics、頂部重大事件閃爍警報、PWA 手機安裝。
 
 ---
 
@@ -89,8 +89,8 @@ services:
     mem_limit: 256m                   # ⚙️ 記憶體上限 (實測常駐 60-120MB，充裕)
     mem_reservation: 128m
 
-    healthcheck:                      # 容器自我健康檢查 (打 /healthz)
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+    healthcheck:                      # 容器自我健康檢查 (輕量 /health liveness)
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -128,15 +128,15 @@ volumes:
 
 ## 五、歷史資料與持久化
 
-**無資料庫,以 JSON 檔存於 volume `smarthub-data`**(規劃升級 SQLite,見 `SQLITE-MIGRATION.md`)。
+**統計資料使用 SQLite，資料庫檔 `smarthub.db` 存於 volume `smarthub-data`**。設定類資料仍使用 JSON，方便人工檢查與編輯。
 
 | 類別 | 檔案 | 說明 |
 | :--- | :--- | :--- |
-| 歷史序列 | `trend / ucg / nas / ups / wiim / linux -history.json` | 六組時間序列,**保存天數統一由設定頁控制(預設 30 天)**,超過自動汰舊 |
-| 事件 | `ups-events.json`, `block-history.json` | 斷電事件(每筆即時落盤)、封鎖時間軸(200 筆) |
+| 歷史序列 | `smarthub.db` 的 `history` table | 六組時間序列，WAL + 索引查詢，**保存天數統一由設定頁控制(預設 30 天)** |
+| 事件 | `smarthub.db` 的 `ups_events` / `block_history` | 斷電事件與封鎖時間軸，SQLite transaction 即時寫入 |
 | 設定 | `app-settings / security-settings / notification-settings / client-aliases .json` | 取樣間隔、報表、推播、客戶端別名 |
 
-**寫入策略**:歷史資料常駐記憶體,每 N 分鐘(設定頁「歷史資料落盤間隔」,預設 30)才批次寫檔一次——減少硬碟寫入、讓 NAS 硬碟能休眠;收到關機訊號會強制全部落盤,UPS 斷電期間改為每筆即寫。**最壞情況(直接斷電)損失最後一個落盤間隔的資料**。
+**寫入策略**:每筆歷史樣本以 SQLite transaction 寫入 WAL，避免重寫整個 JSON 大檔；資料庫每小時清理過期資料並執行增量 vacuum。SQLite WAL 可在程序被硬殺或主機重啟後復原最後完整 transaction。
 
 **取樣頻率是自適應的**:有人開著網頁時高頻(趨勢 5 秒),無人瀏覽時自動降頻(30 分鐘),不會在沒人看時持續轟炸上游 API。唯一例外是 **UPS 取樣不降頻**(斷電紀錄無人看也要記)。
 
@@ -146,11 +146,13 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
   tar czf /b/smarthub-backup.tar.gz -C /d .
 ```
 
+備份時需包含 `smarthub.db`、`smarthub.db-wal`、`smarthub.db-shm`（上述停止容器後備份的方式會完整包含）。若服務仍在執行，請先停止容器，或使用 SQLite 的 `VACUUM INTO` 產生一致性備份。
+
 ---
 
 ## 六、驗證部署成功
 
-1. **健康檢查**:`curl http://<主機IP>:3000/healthz` → `{"status":"ok",...}`;`docker compose ps` 的 STATUS 應為 `healthy`
+1. **健康檢查**:`curl http://<主機IP>:3000/health` → `{"status":"healthy",...}`；`curl http://<主機IP>:3000/health/ready` 會再檢查 SQLite/worker；`docker compose ps` 應為 `healthy`
 2. **啟動連線診斷**(最快的除錯方式):
    ```bash
    docker compose logs | grep Diag
@@ -163,7 +165,7 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
       Docker 環境 UPS 檢查清單：(1) UPS_SOURCE=nut + NUT_HOST=...
    ⚠️ NUT_HOST=localhost：容器內的 localhost 是容器自己，請改成實際 IP
    ```
-3. **網頁確認**:「設定 → 📡 目前連線狀態」列出全部 9 台設備的即時連線狀態與細節
+3. **網頁確認**:「設定 → System Diagnostics」顯示本服務 CPU/RAM/disk/SQLite/worker 與 Active Issues；「目前連線狀態」列出外部設備狀態
 
 ---
 
@@ -190,6 +192,9 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
 ```bash
 docker compose logs -f                # 追蹤日誌
 docker compose logs | grep Diag       # 只看啟動連線診斷
+docker compose logs unifi-smarthub | grep 'ERROR\|CRITICAL'
+docker compose logs unifi-smarthub | grep 'CODE=DB-'
+docker compose logs unifi-smarthub | grep 'TASK=8af32' # LOG_LEVEL=DEBUG 可見完整正常 lifecycle
 docker compose restart                # 重啟
 docker compose up -d --build          # 改程式後重建
 docker compose down                   # 停止 (歷史資料保留在 volume)
@@ -203,4 +208,5 @@ docker volume ls                      # 確認 smarthub-data 存在
 - `CLAUDE.md` — 完整架構、後端 API 端點對應表、變更紀錄
 - `ROADMAP.md` — 未使用 API 盤點與功能路線圖
 - `SQLITE-MIGRATION.md` — JSON → SQLite 遷移評估與步驟
+- `OBSERVABILITY.md` — Structured Logging、Status Code、Health/Diagnostics API、監控門檻與 Docker 除錯
 - `*-api.md` — UniFi / UGREEN / WiiM / CyberPower 各 API 規格參考
