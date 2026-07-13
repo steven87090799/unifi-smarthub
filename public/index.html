@@ -4759,9 +4759,9 @@
                 overview: [trendChart, ovHourlyChart],
                 security: [secHourlyChart],
                 ucg: [hwChart, ucgHistChart],
-                nas: [nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart],
+                nas: [nasHeroChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart],
                 wiim: [wiimChart],
-                ups: [upsVoltChart, upsLoadChart],
+                ups: [upsHeroChart, upsVoltChart, upsLoadChart],
                 linuxhost: [lnxChart]
             }[page] || [];
             const readyCharts = pageCharts.filter(chart => chartHasRenderableData(chart));
@@ -6299,7 +6299,7 @@
                     document.getElementById('nas-hero-dot').style.background = tempColor(cpuTemp);
                     nasHeroTempData.shift(); nasHeroTempData.push(cpuTemp || 0);
                     nasHeroUsageData.shift(); nasHeroUsageData.push(cpuUsage || 0);
-                    if (nasHeroChart) nasHeroChart.update('none');
+                    updateChartWithEntrance(nasHeroChart);
                 }
                 // 總覽雙設備體檢 — NAS 溫度/CPU + KPI
                 const ovNasTemp = document.getElementById('ov-nas-temp');
@@ -8225,7 +8225,7 @@
                         upsHeroBattData.shift(); upsHeroBattData.push(s.battery || 0);
                         upsHeroVoltData.shift(); upsHeroVoltData.push(s.outputV || 0);
                         upsHeroLabels.shift(); upsHeroLabels.push(new Date().toLocaleTimeString());
-                        if (upsHeroChart) upsHeroChart.update('none');
+                        updateChartWithEntrance(upsHeroChart);
                     }
                 }
             } catch (e) { dbg('UPS', '狀態讀取失敗', e); }
