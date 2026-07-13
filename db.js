@@ -32,6 +32,8 @@ function createHistoryDb(dataDir, options = {}) {
     const logger = typeof options === 'function' ? null : options.logger;
     const legacyLogger = typeof options === 'function' ? options : null;
     const slowQueryMs = Math.max(Number(options.slowQueryMs || process.env.DB_SLOW_QUERY_MS) || 1000, 1);
+    const maxPendingPoints = Math.max(Number(options.maxPendingPoints) || 1000, 1);
+    const maxPendingBytes = Math.max(Number(options.maxPendingBytes) || 1024 * 1024, 1024);
     const emit = (level, event) => {
         if (logger && typeof logger[level] === 'function') logger[level](event);
         else if (legacyLogger) legacyLogger(`[${event.code}] ${event.message}${event.error ? `: ${event.error.message}` : ''}`);
@@ -168,6 +170,23 @@ function createHistoryDb(dataDir, options = {}) {
     `);
     const listBlockStmt = db.prepare('SELECT * FROM block_history ORDER BY ts DESC, id DESC LIMIT 200');
     const healthStmt = db.prepare('SELECT 1 AS ok');
+    const insertPointsBatch = db.transaction(rows => {
+        for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
+    });
+
+    // Ordinary telemetry is intentionally buffered in memory and committed in one
+    // transaction. Critical events (UPS outages, block actions, reports) use their
+    // own tables below and remain immediately durable.
+    let pendingPoints = [];
+    let pendingBytes = 0;
+    let totalBufferedPoints = 0;
+    let totalFlushedPoints = 0;
+    let flushCount = 0;
+    let lastFlushAt = null;
+
+    function recalculatePendingBytes() {
+        pendingBytes = pendingPoints.reduce((sum, row) => sum + Buffer.byteLength(row.data) + 32, 0);
+    }
 
     function decodePoint(row, series) {
         let data;
@@ -178,28 +197,51 @@ function createHistoryDb(dataDir, options = {}) {
     }
 
     function getSince(series, cutoffMs = 0) {
-        return measure('getSince', 'history', () =>
-            getSinceStmt.all(series, Math.max(0, Number(cutoffMs) || 0)).map(row => decodePoint(row, series)));
+        return measure('getSince', 'history', () => {
+            const cutoff = Math.max(0, Number(cutoffMs) || 0);
+            const rows = getSinceStmt.all(series, cutoff)
+                .concat(pendingPoints.filter(row => row.series === series && row.ts >= cutoff))
+                .sort((a, b) => a.ts - b.ts);
+            return rows.map(row => decodePoint(row, series));
+        });
     }
 
     function getLatest(series) {
         return measure('getLatest', 'history', () => {
-            const row = getLatestStmt.get(series);
+            let row = getLatestStmt.get(series);
+            for (const pending of pendingPoints) {
+                if (pending.series === series && (!row || pending.ts >= row.ts)) row = pending;
+            }
             return row ? decodePoint(row, series) : null;
         });
     }
 
-    function insertPoint(series, point, { keepDays = 30, hardCap = 100000 } = {}) {
+    function flush() {
+        if (!pendingPoints.length) return { flushed: 0, pending: 0, pending_bytes: 0 };
+        const batch = pendingPoints;
+        return measure('flushPoints', 'history', () => {
+            insertPointsBatch(batch);
+            pendingPoints = [];
+            pendingBytes = 0;
+            totalFlushedPoints += batch.length;
+            flushCount += 1;
+            lastFlushAt = new Date().toISOString();
+            return { flushed: batch.length, pending: 0, pending_bytes: 0 };
+        }, { transaction: true });
+    }
+
+    function insertPoint(series, point) {
         const ts = pointTimestamp(point, series);
         if (!Number.isFinite(ts)) return false;
-        return measure('insertPoint', 'history', () => {
-            const payload = { ...point };
-            delete payload.t;
-            delete payload.ts;
-            insertPointStmt.run(series, ts, JSON.stringify(payload));
-            pruneRaw(series, keepDays, hardCap);
-            return true;
-        });
+        const payload = { ...point };
+        delete payload.t;
+        delete payload.ts;
+        const data = JSON.stringify(payload);
+        pendingPoints.push({ series, ts, data });
+        pendingBytes += Buffer.byteLength(data) + 32;
+        totalBufferedPoints += 1;
+        if (pendingPoints.length >= maxPendingPoints || pendingBytes >= maxPendingBytes) flush();
+        return true;
     }
 
     function pruneRaw(series, keepDays = 30, hardCap = 100000) {
@@ -211,6 +253,7 @@ function createHistoryDb(dataDir, options = {}) {
     }
 
     function prune(series, keepDays = 30, hardCap = 100000) {
+        flush();
         return measure('prune', 'history', db.transaction(() => pruneRaw(series, keepDays, hardCap)), { transaction: true });
     }
 
@@ -346,9 +389,14 @@ function createHistoryDb(dataDir, options = {}) {
     return {
         file,
         insertPoint,
+        flush,
         getSince,
         getLatest,
-        deleteSeries(series) { return measure('deleteSeries', 'history', () => deleteSeriesStmt.run(series)); },
+        deleteSeries(series) {
+            pendingPoints = pendingPoints.filter(row => row.series !== series);
+            recalculatePendingBytes();
+            return measure('deleteSeries', 'history', () => deleteSeriesStmt.run(series));
+        },
         prune,
         insertUpsEvent(event) {
             const startTs = eventTimestamp(event.start);
@@ -431,10 +479,15 @@ function createHistoryDb(dataDir, options = {}) {
                     ...(row.reason ? { reason: row.reason } : {})
                 })));
         },
-        cleanup(keepDays = 30) {
+        cleanup(keepDays = 30, hardCap = 100000) {
+            flush();
             const cutoff = Date.now() - Math.max(Number(keepDays) || 1, 1) * 86400000;
             const cleanup = db.transaction(() => {
-                for (const series of HISTORY_SERIES) deleteBeforeStmt.run(series, cutoff);
+                for (const series of HISTORY_SERIES) {
+                    deleteBeforeStmt.run(series, cutoff);
+                    const excess = countPointsStmt.get(series).count - Math.max(Number(hardCap) || 1, 1);
+                    if (excess > 0) deleteOldestStmt.run(series, excess);
+                }
             });
             measure('cleanup', 'history', cleanup, { transaction: true });
             try { db.pragma('incremental_vacuum(200)'); } catch { }
@@ -452,7 +505,17 @@ function createHistoryDb(dataDir, options = {}) {
                     slow_queries: slowQueries,
                     failed_queries: failedQueries,
                     last_query_latency_ms: lastQueryLatencyMs,
-                    last_error: lastError
+                    last_error: lastError,
+                    write_buffer: {
+                        pending_points: pendingPoints.length,
+                        pending_bytes: pendingBytes,
+                        max_points: maxPendingPoints,
+                        max_bytes: maxPendingBytes,
+                        total_buffered_points: totalBufferedPoints,
+                        total_flushed_points: totalFlushedPoints,
+                        flush_count: flushCount,
+                        last_flush_at: lastFlushAt
+                    }
                 };
             } catch (error) {
                 failedQueries += 1;
@@ -470,6 +533,7 @@ function createHistoryDb(dataDir, options = {}) {
         },
         close() {
             if (closed) return;
+            flush();
             try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { }
             db.close();
             closed = true;
