@@ -1,60 +1,32 @@
-# SmartHub AI Context Guide
+# SmartHub Context Guide
 
-這份文件是給 AI/開發者的「低 token 入口」。先讀這裡，再決定要不要讀大檔。
+目標：每次對話只送入任務所需的最小內容。`AGENTS.md` 是唯一常駐工作規則；本檔是唯一預設閱讀文件。
 
-## 先讀順序
+## 讀取分級
 
-1. 一般任務：讀本檔即可判斷下一步。
-2. 後端任務：讀 `SERVER-MAP.md`，再用 `rg` 找 `server.js` 相關區段。
-3. 前端任務：讀 `FRONTEND-MAP.md`，再用 `rg` 找 `public/index.html` 相關區段。
-4. 部署/使用者操作：讀 `README.md`。
-5. 架構/API 全貌：讀 `AGENTS.md` 或 `spec.md`。
-6. 未來功能規劃：讀 `ROADMAP.md`。
-
-## 預設不要讀
-
-完整清單見 `EXCLUDE-FILES.md`。重點是：
-
-- `public/index.html` 很大，只在 UI/前端 JS/CSS 任務讀片段。
-- `data/*.json` 是歷史資料，通常不提供結構知識。
-- `.env` 含密碼、token、內網 IP；除非 debug 必要，不應自動載入上下文。
-- `*-api.md` / `*_spec.md` 是上游 API 參考；只有對應整合需要查規格時才讀。
-- `node_modules/`、`package-lock.json`、`.git/` 不需要預設讀。
-
-## 常見任務讀檔路線
-
-| 任務 | 先讀 | 必要時再讀 |
+| 分級 | 檔案 | 使用時機 |
 |---|---|---|
-| 新增/修後端 API | `SERVER-MAP.md` | `server.js` 相關 endpoint 區段 |
-| 修 UI、圖表、輪詢 | `FRONTEND-MAP.md` | `public/index.html` 相關 section/function |
-| 修 Docker/部署 | `README.md`, `docker-compose.yml`, `Dockerfile` | `.env.example` |
-| 修 NAS/UniFi/WiiM/UPS 串接 | `SERVER-MAP.md` | 對應 `*-api.md` / `*_spec.md` |
-| Debug 實機連線 | `SERVER-MAP.md`, `.env.example` | 只檢查 `.env` 的必要欄位或請使用者提供遮罩值 |
-| 調整歷史資料策略 | `SQLITE-MIGRATION.md`, `SERVER-MAP.md` | 只抽樣 `data/*.json` 的前幾行或欄位 |
+| 常駐 | `AGENTS.md` | 工具/安全/讀檔規則；已壓縮為短入口 |
+| 預設 | `CONTEXT.md` | 每次任務先讀本檔 |
+| 任務索引 | `SERVER-MAP.md`, `FRONTEND-MAP.md` | 分別處理後端或前端才讀 |
+| 條件文件 | `README.md`, `.env.example`, `OBSERVABILITY.md`, `REVIEW-TODO.md` | 部署、設定、診斷、待辦才讀 |
+| Lazy-read | 程式大檔、規格、規劃、runtime 資料 | 先搜尋符號，再讀小片段 |
 
-## `.env` 原則
+## 任務路線
 
-排除 `.env` 不是表示永遠不能 debug，而是避免密碼/token 每次自動進上下文。
+| 任務 | 先讀 | 接著精準讀 |
+|---|---|---|
+| 後端 API／排程／SQLite | `SERVER-MAP.md` | `server.js`、`db.js` 相關符號 |
+| UI／圖表／輪詢 | `FRONTEND-MAP.md` | `public/index.html` 的 section/function |
+| Docker／部署 | `README.md` | `docker-compose.yml`、`Dockerfile`、`.env.example` |
+| 裝置整合 | `SERVER-MAP.md` | 對應 API 規格與後端局部 |
+| 診斷 | `OBSERVABILITY.md` | `observability/`、相關 route 局部 |
 
-需要 debug 時優先做這幾件事：
+## 預設排除（必要時可精準讀）
 
-- 看 `.env.example` 確認欄位名稱。
-- 用 `rg '^FIELD=' .env` 或只讀特定欄位是否存在。
-- 需要看值時，盡量只看遮罩後的值、host/port 類低敏資訊，密碼/token 由使用者確認後再處理。
+- 大型程式：`server.js`、`public/index.html`、`server-mock.js`、`db.js`。
+- runtime／機密：`data/`、`.env`、`*.log`。
+- 依賴／產物：`node_modules/`、`package-lock.json`、`.git/`。
+- 低頻文件：`spec.md`、`ROADMAP.md`、`*-api.md`、`*_spec.md`、`OBSERVABILITY.md`、`REVIEW-TODO.md`。
 
-## 精準讀檔範例
-
-```bash
-rg -n "app.get\\('/api/ups/status'|readUpsLive|sampleUps" server.js
-sed -n '2390,2668p' server.js
-
-rg -n "page-ups|fetchUps|initUpsCharts|POLL_JOBS" public/index.html
-sed -n '3554,3660p' public/index.html
-```
-
-## 壓縮上下文原則
-
-- 優先用本檔、`SERVER-MAP.md`、`FRONTEND-MAP.md` 這類索引，不把大檔全文送進上下文。
-- 用 `rg` 找符號、endpoint、id、function 名，再用 `sed -n` 讀附近小區段。
-- API 規格、Roadmap、SQLite 遷移文件都採 lazy-read：任務沒碰到就不讀。
-- 不用刻意把內容壓成難懂代碼；過度壓縮會增加誤解成本。最佳做法是短表格、固定縮寫、精準行號。
+完整清單與例外見 `EXCLUDE-FILES.md`。排除是「預設不送入」，不是禁止 debug；先用 `rg` 找符號或欄位，再用 `sed -n` 讀窄範圍。

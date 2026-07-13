@@ -11,10 +11,13 @@ package-lock.json
 data/
 
 # ── 超大前端單檔（需要前端任務時再用 rg/sed 精準讀片段）─────────────
+server.js
 public/index.html
 
 # ── 大型但低頻使用檔案 ─────────────────────────────────────
 server-mock.js
+db.js
+observability/
 ppb-i18n-zh.json
 unifi-network-api.md
 ugreen-nas-api.md
@@ -22,7 +25,9 @@ wiim_spec.md
 wiim-amp-api.md
 cyberpower-ups-api.md
 ROADMAP.md
-SQLITE-MIGRATION.md
+REVIEW-TODO.md
+OBSERVABILITY.md
+spec.md
 
 # ── Git 內部資料 ──────────────────────────────────────────
 .git/

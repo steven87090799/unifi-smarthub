@@ -14,7 +14,7 @@ unifi-smarthub/
 ├── .env                          # 本地開發與正式環境環境變數設定檔 (機密金鑰，如 SSH 密碼、API Key 不進 Git)
 ├── .env.example                  # 環境變數範本檔，明列 UniFi、UGREEN 及 WiiM 所需變數與連接 IP 預設值
 ├── .gitignore                    # Git 忽略設定，強制排除 node_modules、.env 與本地 data JSON
-├── CLAUDE.md                     # 專案簡要架構、端點對照與快速變更指令紀錄
+├── AGENTS.md / CLAUDE.md          # 精簡 AI 工作入口與讀檔路由
 ├── Dockerfile                    # 使用 node:20-alpine 輕量映像檔，採非 root 安全執行與 tini 監護 (健康檢查 /healthz)
 ├── README.md                     # 使用者導向的專案介紹、部署步驟、Docker Compose 安裝與故障排除指引
 ├── cyberpower-ups-api.md         # CyberPower UPS 狀態監控與 IOKit 診斷協定參考文件
@@ -158,11 +158,11 @@ unifi-smarthub/
 未來的 AI 工具如果要修改此專案，請按照以下經典場景的標準工作流操作：
 
 ### 場景 A：新增一個後端 API 與前端卡片
-1. **在 [server.js](file:///Users/steven/Desktop/unifi/unifi-smarthub/server.js) 新增路由**：
+1. **在 `server.js` 新增路由**：
    * 在 API 路由宣告區域（約第 1320 行起）插入新的端點，包含必要的 Error Catch 與 Mock 降級機制。
-2. **同步至 [server-mock.js](file:///Users/steven/Desktop/unifi/unifi-smarthub/server-mock.js)**：
+2. **同步至 `server-mock.js`**：
    * 實作完全相同的路徑與請求參數，返回結構對齊的靜態 Mock 物件。
-3. **在 [public/index.html](file:///Users/steven/Desktop/unifi/unifi-smarthub/public/index.html) 新增卡片**：
+3. **在 `public/index.html` 新增卡片**：
    * 尋找目標分頁的 HTML 結構，插入對應的 Tailwind 樣式網格卡片。
 4. **編寫前端拉取與渲染邏輯**：
    * 在前端 JavaScript 區塊編寫 `fetchMyNewAPI()`，取得數據後使用 `document.getElementById('...').textContent` 或 class 切換渲染至 DOM。
