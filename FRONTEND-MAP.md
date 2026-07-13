@@ -1,60 +1,73 @@
 # SmartHub Frontend Map
 
-`public/index.html` 是巨型單檔 SPA，約 7520 行。前端任務先用這份索引定位，再讀小區段。
+`public/index.html` 是巨型單檔 SPA，約 8290 行。前端任務先用這份索引定位，再讀小區段。
 
 ## Page Sections
 
 | 行號約略 | section id | 頁面 |
 |---:|---|---|
-| 791 | `page-overview` | 總覽 |
-| 1119 | `page-ucg` | UCG 硬體 |
-| 1246 | `page-clients` | 客戶端 |
-| 1303 | `page-security` | 資安 |
-| 1650 | `page-wifi` | WiFi |
-| 1680 | `page-cloud` | 雲端站點 |
-| 1764 | `page-nas` | NAS |
-| 2066 | `page-adguard` | AdGuard |
-| 2127 | `page-linuxhost` | Linux 小主機 |
-| 2181 | `page-tools` | 工具 |
-| 2277 | `page-notify` | 通知推播 |
-| 2485 | `page-settings` | 設定 |
-| 2878 | `page-wiim` | WiiM |
-| 3585 | `page-ups` | UPS |
+| 1093 | `page-overview` | 總覽 |
+| 1421 | `page-ucg` | UCG 硬體 |
+| 1548 | `page-clients` | 客戶端 |
+| 1605 | `page-security` | 資安 |
+| 1952 | `page-wifi` | WiFi |
+| 1982 | `page-cloud` | 雲端站點 |
+| 2066 | `page-nas` | NAS |
+| 2368 | `page-adguard` | AdGuard |
+| 2429 | `page-linuxhost` | Linux 小主機 |
+| 2483 | `page-tools` | 工具 |
+| 2579 | `page-notify` | 通知推播 |
+| 2830 | `page-settings` | 設定 |
+| 3232 | `page-wiim` | WiiM |
+| 3939 | `page-ups` | UPS |
+
+## Shared UI / Chart System
+
+| 行號約略 | 名稱 | 用途 |
+|---:|---|---|
+| 588 | `SmartHub UI System 2026` | Design tokens、卡片/表單/表格/狀態/Loading/Empty/Error/Responsive/Reduced Motion |
+| 4463 | `downsampleRows()` | 桌面 180、手機 72 點的多欄位峰值保留視覺降採樣；統計仍用原始資料 |
+| 4497 | `uiExternalTooltip()` | 共用分組 Tooltip，最多顯示 4 列摘要 |
+| 4542 | `showChartDetail()` | 點擊資料點後固定顯示完整明細 |
+| 4561 | `renderHtmlChartLegend()` | 可鍵盤操作的 HTML Legend Toggle |
+| 4594 | `smartChartUxPlugin` | Crosshair、Active Point、ARIA、動態 Tick、Chart loading |
+| 4678 | `updateChartWithEntrance()` | 首次載入、時間範圍切換與重新進入頁面時播放漸進式圖表動畫；背景輪詢不動畫 |
+| 4767 | `initUiSystem()` | 表格捲動、互動卡鍵盤操作、Loading/Empty/Error observer、Modal Escape |
 
 ## Script Anchors
 
 | 行號約略 | 名稱 | 用途 |
 |---:|---|---|
-| 4010 | `renderPinned()` | 總覽釘選區 |
-| 4090 | `initNasHeroChart()` | NAS hero 圖表 |
-| 4107 | `initUpsHeroChart()` | UPS hero 圖表 |
-| 4241 | `POLL_JOBS` | 全站前端輪詢設定（含 System Diagnostics） |
-| 4269 | `applyPolling()` | 套用輪詢 interval |
-| 4348 | `initChart()` | UCG 即時硬體圖 |
-| 4385 | `initTrendChart()` | 趨勢圖 |
-| 4439 | `fetchTrends()` | 趨勢資料 |
-| 4522 | `fetchHardware()` | UCG 硬體 |
-| 4645 | `fetchClients()` | 客戶端 |
-| 4863 | `fetchWiFiNetworks()` | WiFi |
-| 4868-4979 | `fetchCloud*()` | Site Manager |
-| 5023 | `renderThreatTable()` | 資安事件表 |
-| 5123 | `updateSecurityAnalytics()` | 資安分析/評分 |
-| 5228 | `fetchThreats()` | 威脅事件 |
-| 5329 | `fetchNas()` | NAS 基本資訊 |
-| 5549 | `initNasCharts()` | NAS 圖表初始化 |
-| 5596-5843 | `fetchNas*()` | NAS 進階/告警/Docker |
-| 5984 | `fetchNotifSettings()` | 通知設定 |
-| 6213 | `fetchSystemStatus()` | 設定頁 System Diagnostics / Active Issues |
-| 6263 | `renderPollConfig()` | 設定頁輪詢表 |
-| 6283 | `fetchAppSettings()` | 後端設定 |
-| 6353 | `fetchConnections()` | 連線設定 |
-| 6471 | `initWiimPage()` | WiiM 頁初始化 |
-| 6530 | `fetchWiimPlayback()` | WiiM 播放狀態 |
-| 6619 | `fetchWiimSystem()` | WiiM 系統資訊 |
-| 7160 | `fetchUcgHist()` | UCG 歷史與 spikes |
-| 7255 | `fetchUps*()` | UPS 圖表/事件 |
-| 7395 | `fetchAdguard*()` | AdGuard |
-| 7456 | `fetchLinux*()` | Linux 小主機 |
+| 4364 | `renderPinned()` | 總覽釘選區；非總覽或背景分頁停止同步 |
+| 4913 | `POLL_JOBS` | 全站前端輪詢設定（含 System Diagnostics） |
+| 4942 | `applyPolling()` | 套用輪詢 interval |
+| 5021 | `initChart()` | UCG 即時硬體圖 |
+| 5164 | `initTrendChart()` | 趨勢圖；短暫來源缺值可跨點連續呈現 |
+| 5219 | `fetchTrends()` | 趨勢資料 + 降採樣；略過不完整合併樣本並顯示資料品質提示 |
+| 5196 | `fetchHardware()` | UCG 硬體 |
+| 5319 | `fetchClients()` | 客戶端；表格列含鍵盤/ARIA 操作 |
+| 5550 | `fetchWiFiNetworks()` | WiFi |
+| 5604-5695 | `fetchCloud*()` | Site Manager |
+| 5759 | `renderThreatTable()` | 資安事件表 |
+| 5859 | `updateSecurityAnalytics()` | 資安分析/評分 |
+| 5964 | `fetchThreats()` | 威脅事件 |
+| 6065 | `fetchNas()` | NAS 基本資訊 |
+| 6296 | `initNasCharts()` | NAS 圖表初始化 |
+| 6343-6754 | `fetchNas*()` | NAS 進階/告警/Docker |
+| 6754 | `fetchNotifSettings()` | 通知設定 |
+| 6940 | `fetchSystemStatus()` | 設定頁 System Diagnostics / Active Issues |
+| 6990 | `renderPollConfig()` | 設定頁輪詢表 |
+| 7010 | `fetchAppSettings()` | 後端設定 |
+| 7080 | `fetchConnections()` | 連線設定 |
+| 7228 | `initWiimPage()` | WiiM 頁初始化 |
+| 7287 | `fetchWiimPlayback()` | WiiM 播放狀態 |
+| 7376 | `fetchWiimSystem()` | WiiM 系統資訊 |
+| 7553 | `renderWiimChart()` | WiiM 圖表、平滑與降採樣 |
+| 7920 | `fetchUcgHist()` | UCG 歷史與 spikes |
+| 7992 | `initUpsCharts()` | UPS 圖表 |
+| 8016 | `fetchUps()` | UPS 狀態/歷史/事件 + 降採樣 |
+| 8158 | `fetchAdguard*()` | AdGuard |
+| 8219 | `fetchLinux*()` | Linux 小主機 |
 
 ## 常用定位
 

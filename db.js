@@ -87,6 +87,17 @@ function createHistoryDb(dataDir, options = {}) {
             reason TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_block_history_ts ON block_history(ts);
+        CREATE TABLE IF NOT EXISTS report_runs (
+            id INTEGER PRIMARY KEY,
+            ts INTEGER NOT NULL,
+            trigger TEXT NOT NULL,
+            title TEXT NOT NULL,
+            delivery_status TEXT NOT NULL,
+            channel TEXT,
+            delivery_error TEXT,
+            body TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_report_runs_ts ON report_runs(ts DESC);
     `);
     emit('info', {
         module: 'database.sqlite', function: 'createHistoryDb', code: ERROR_CODES.DB_CONNECT_SUCCESS,
@@ -169,6 +180,19 @@ function createHistoryDb(dataDir, options = {}) {
         VALUES (@ts, @mac, @name, @action, @source, @reason)
     `);
     const listBlockStmt = db.prepare('SELECT * FROM block_history ORDER BY ts DESC, id DESC LIMIT 200');
+    const insertReportRunStmt = db.prepare(`
+        INSERT INTO report_runs (ts, trigger, title, delivery_status, channel, delivery_error, body)
+        VALUES (@ts, @trigger, @title, @delivery_status, @channel, @delivery_error, @body)
+    `);
+    const listReportRunsStmt = db.prepare(`
+        SELECT id, ts, trigger, title, delivery_status, channel, delivery_error, body
+        FROM report_runs ORDER BY ts DESC, id DESC LIMIT ?
+    `);
+    const deleteOldReportRunsStmt = db.prepare(`
+        DELETE FROM report_runs WHERE id IN (
+            SELECT id FROM report_runs ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 50
+        )
+    `);
     const healthStmt = db.prepare('SELECT 1 AS ok');
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
@@ -471,13 +495,41 @@ function createHistoryDb(dataDir, options = {}) {
         },
         listBlockHistory() {
             return measure('listBlockHistory', 'block_history', () => listBlockStmt.all().map(row => ({
-                    datetime: new Date(row.ts).toISOString(),
+                datetime: new Date(row.ts).toISOString(),
                     mac: row.mac,
                     name: row.name,
                     action: row.action,
                     source: row.source,
-                    ...(row.reason ? { reason: row.reason } : {})
-                })));
+                ...(row.reason ? { reason: row.reason } : {})
+            })));
+        },
+        insertReportRun(entry) {
+            return measure('insertReportRun', 'report_runs', db.transaction(() => {
+                const result = insertReportRunStmt.run({
+                    ts: eventTimestamp(entry.ts) || Date.now(),
+                    trigger: String(entry.trigger || 'manual').slice(0, 40),
+                    title: String(entry.title || 'SmartHub report').slice(0, 200),
+                    delivery_status: String(entry.deliveryStatus || 'generated').slice(0, 40),
+                    channel: entry.channel == null ? null : String(entry.channel).slice(0, 40),
+                    delivery_error: entry.deliveryError == null ? null : String(entry.deliveryError).slice(0, 500),
+                    body: String(entry.body || '').slice(0, 50000)
+                });
+                deleteOldReportRunsStmt.run();
+                return result.lastInsertRowid;
+            }), { transaction: true });
+        },
+        listReportRuns(limit = 20) {
+            const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
+            return measure('listReportRuns', 'report_runs', () => listReportRunsStmt.all(safeLimit).map(row => ({
+                id: row.id,
+                ts: new Date(row.ts).toISOString(),
+                trigger: row.trigger,
+                title: row.title,
+                deliveryStatus: row.delivery_status,
+                channel: row.channel,
+                deliveryError: row.delivery_error,
+                body: row.body
+            })));
         },
         cleanup(keepDays = 30, hardCap = 100000) {
             flush();

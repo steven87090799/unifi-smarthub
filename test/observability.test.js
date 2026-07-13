@@ -103,6 +103,25 @@ test('SQLite diagnostics reports connection, latency and single-connection seman
     assert.ok(diagnostics.latency_ms >= 0);
 });
 
+test('report run log persists delivery outcomes and keeps the newest entries first', t => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-report-test-'));
+    const db = createHistoryDb(dir, { slowQueryMs: 10000 });
+    t.after(() => { db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+    db.insertReportRun({
+        ts: '2026-07-13T00:00:00.000Z', trigger: 'scheduled', title: 'Scheduled report',
+        deliveryStatus: 'sent', channel: 'discord', body: 'first report'
+    });
+    db.insertReportRun({
+        ts: '2026-07-13T01:00:00.000Z', trigger: 'manual', title: 'Manual report',
+        deliveryStatus: 'skipped:disabled', body: 'second report'
+    });
+    const runs = db.listReportRuns();
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0].trigger, 'manual');
+    assert.equal(runs[0].deliveryStatus, 'skipped:disabled');
+    assert.equal(runs[1].channel, 'discord');
+});
+
 test('health, readiness and diagnostics APIs return expected status without secrets', async t => {
     const app = express();
     const systemStatus = {
