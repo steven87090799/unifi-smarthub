@@ -1336,7 +1336,7 @@
                             <!-- 安全評分環 -->
                             <div
                                 class="lg:col-span-3 flex flex-col items-center justify-center bg-slate-950/60 rounded-xl border border-slate-800/60 p-5">
-                                <div class="relative w-32 h-32">
+                                <div class="relative w-36 h-36 sm:w-40 sm:h-40 shrink-0">
                                     <svg viewBox="0 0 110 110" class="w-full h-full -rotate-90">
                                         <circle cx="55" cy="55" r="45" fill="none" stroke="#1e293b" stroke-width="9" />
                                         <circle cx="55" cy="55" r="45" fill="none" stroke="#10b981" stroke-width="9"
@@ -1344,10 +1344,9 @@
                                             style="transition: stroke-dashoffset 1s ease, stroke .5s;"
                                             id="sec-score-ring" />
                                     </svg>
-                                    <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                        <span class="text-3xl font-black mono text-slate-100" id="sec-score">--</span>
-                                        <span
-                                            class="text-[9px] text-slate-500 uppercase font-bold tracking-widest">Security
+                                    <div class="absolute inset-0 flex flex-col items-center justify-center px-2">
+                                        <span class="text-4xl leading-none font-black mono text-slate-100" id="sec-score">--</span>
+                                        <span class="mt-1 text-[8px] leading-none text-slate-500 uppercase font-bold tracking-[0.13em] whitespace-nowrap">Security
                                             Score</span>
                                     </div>
                                 </div>
@@ -1388,7 +1387,7 @@
                             <div>
                                 <h3 class="text-sm font-bold text-white tracking-wider">歷史數據趨勢</h3>
                                 <p class="text-[9px] text-slate-500">線上客戶端 / 24H 威脅數 / ISP 延遲 — 有人瀏覽時每 5 秒取樣、閒置時每 30
-                                    分鐘一次</p>
+                                    分鐘一次 <span id="trend-data-quality" class="text-slate-600"></span></p>
                             </div>
                             <div
                                 class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px]">
@@ -4673,6 +4672,59 @@
         if (Chart.defaults.scales?.linear?.ticks) Chart.defaults.scales.linear.ticks.callback = value => compactNumber(value);
         Chart.register(smartChartUxPlugin);
 
+        // 歷史圖只在首次顯示、切換範圍或重新進入頁面時播放進場動畫。
+        // 背景輪詢仍使用無動畫更新，避免畫面反覆跳動與不必要的繪製負擔。
+        function chartHasRenderableData(chart) {
+            return chart?.data?.datasets?.some(dataset => Array.isArray(dataset.data) && dataset.data.some(value => value != null));
+        }
+
+        function requestChartReplay(...charts) {
+            charts.filter(Boolean).forEach(chart => { chart.$uiReplayNext = true; });
+        }
+
+        function updateChartWithEntrance(chart) {
+            if (!chart) return;
+            const hasData = chartHasRenderableData(chart);
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            const shouldAnimate = hasData && !reduceMotion && (!chart.$uiEntrancePlayed || chart.$uiReplayNext);
+            if (!shouldAnimate) {
+                chart.update('none');
+                return;
+            }
+
+            chart.$uiReplayNext = false;
+            chart.$uiEntrancePlayed = true;
+            chart.options.animation = {
+                duration: 720,
+                easing: 'easeOutQuart',
+                delay(context) {
+                    if (context.type !== 'data' || context.dataIndex == null) return 0;
+                    const pointCount = Math.max(context.chart.data.labels?.length || 1, 1);
+                    return Math.min((context.dataIndex / pointCount) * 380, 380);
+                }
+            };
+            // 動態 dataset（例如 NAS 硬碟清單）要先建立對應 controller，
+            // 否則 Chart.js 在 reset 階段可能遇到尚未初始化的 meta。
+            chart.update('none');
+            chart.reset();
+            chart.update();
+        }
+
+        function replayPageChartEntrances(page) {
+            const pageCharts = {
+                overview: [trendChart, ovHourlyChart],
+                security: [secHourlyChart],
+                ucg: [ucgHistChart],
+                nas: [nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart],
+                wiim: [wiimChart],
+                ups: [upsVoltChart, upsLoadChart],
+                linuxhost: [lnxChart]
+            }[page] || [];
+            const readyCharts = pageCharts.filter(chart => chartHasRenderableData(chart));
+            requestChartReplay(...readyCharts);
+            readyCharts.forEach(updateChartWithEntrance);
+        }
+
         function syncLoadingState(element) {
             if (!(element instanceof HTMLElement) || !element.matches('main p')) return;
             const text = element.textContent.trim();
@@ -4871,7 +4923,10 @@
             if (page === 'overview') syncPinned();
             applyPolling(true);
             sendHeartbeat();
-            requestAnimationFrame(() => { [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize()); });
+            requestAnimationFrame(() => {
+                [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
+                replayPageChartEntrances(page);
+            });
             window.scrollTo({ top: 0 });
         }
 
@@ -5112,9 +5167,9 @@
                 data: {
                     labels: [],
                     datasets: [
-                        { label: '線上客戶端', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)', fill: true, tension: 0.3, pointRadius: 0, yAxisID: 'yCount' },
-                        { label: '24H 威脅數', data: [], borderColor: '#ef4444', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yCount' },
-                        { label: 'ISP 延遲 (ms)', data: [], borderColor: '#10b981', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'yMs' }
+                        { label: '線上客戶端', data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)', fill: true, tension: 0.3, pointRadius: 0, spanGaps: true, yAxisID: 'yCount' },
+                        { label: '24H 威脅數', data: [], borderColor: '#ef4444', fill: false, tension: 0.3, pointRadius: 0, spanGaps: true, yAxisID: 'yCount' },
+                        { label: 'ISP 延遲 (ms)', data: [], borderColor: '#10b981', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true, yAxisID: 'yMs' }
                     ]
                 },
                 options: {
@@ -5157,6 +5212,7 @@
             trendHours = hours;
             document.getElementById('btn-trend-24').className = `px-2.5 py-1 rounded-md font-bold transition ${hours === 24 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
             document.getElementById('btn-trend-168').className = `px-2.5 py-1 rounded-md font-bold transition ${hours === 168 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
+            requestChartReplay(trendChart);
             fetchTrends();
         }
 
@@ -5165,7 +5221,15 @@
                 const res = await fetch('/api/history?hours=' + trendHours);
                 if (!res.ok) throw new Error();
                 const rawHistory = (await res.json()).history || [];
-                const hist = downsampleRows(rawHistory, ['clients', 'threats24h', 'latency']);
+                const trendKeys = ['clients', 'threats24h', 'latency'];
+                const hasFiniteTrendValue = (point, key) => point?.[key] != null && point[key] !== '' && Number.isFinite(Number(point[key]));
+                // 一筆 trend 會合併多個來源；任一來源短暫失敗時保留在歷史供診斷，
+                // 但不讓 null 成為圖上的斷線或被視覺化成虛構數值。
+                const completeHistory = rawHistory.filter(point => trendKeys.every(key => hasFiniteTrendValue(point, key)));
+                const omitted = rawHistory.length - completeHistory.length;
+                const hist = downsampleRows(completeHistory, trendKeys);
+                const quality = document.getElementById('trend-data-quality');
+                if (quality) quality.textContent = omitted ? `· 已略過 ${omitted} 筆不完整樣本` : '· 資料完整';
                 const fmt = trendHours > 24
                     ? p => new Date(p.t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit' })
                     : p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
@@ -5173,7 +5237,7 @@
                 trendChart.data.datasets[0].data = hist.map(p => p.clients);
                 trendChart.data.datasets[1].data = hist.map(p => p.threats24h);
                 trendChart.data.datasets[2].data = hist.map(p => p.latency);
-                trendChart.update('none');
+                updateChartWithEntrance(trendChart);
             } catch (e) { console.error('Trends fetch failed'); }
         }
 
@@ -5978,12 +6042,12 @@
             if (ovHourlyChart) {
                 ovHourlyChart.data.labels = hourLabels;
                 ovHourlyChart.data.datasets[0].data = hourBuckets.map(b => Object.values(b.byCat).reduce((a, c) => a + c, 0));
-                ovHourlyChart.update('none');
+                updateChartWithEntrance(ovHourlyChart);
             }
             if (secHourlyChart) {
                 secHourlyChart.data.labels = hourLabels;
                 THREAT_CATS.forEach((cat, i) => { secHourlyChart.data.datasets[i].data = hourBuckets.map(b => b.byCat[cat] || 0); });
-                secHourlyChart.update('none');
+                updateChartWithEntrance(secHourlyChart);
             }
 
             // 最新事件流 (總覽)
@@ -6417,6 +6481,7 @@
             nasHistWinMin = minutes;
             document.querySelectorAll('.nas-hist-win-btn').forEach(b => b.className = 'nas-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95 text-[10px]');
             if (btn) btn.className = 'nas-hist-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold active:scale-95 text-[10px]';
+            requestChartReplay(nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart);
             fetchNasCharts();
         }
         async function fetchNasCharts() {
@@ -6433,7 +6498,7 @@
                 nasSystemChart.data.datasets[1].data = sys.map(p => p.memory);
                 nasSystemChart.data.datasets[2].data = sys.map(p => p.temperature);
                 nasSystemChart.data.datasets[3].data = sys.map(p => p.fan_rpm);
-                nasSystemChart.update('none');
+                updateChartWithEntrance(nasSystemChart);
                 document.getElementById('nas-sys-cnt') && (document.getElementById('nas-sys-cnt').textContent = rawSys.length > sys.length ? `${rawSys.length} 點 · 繪製 ${sys.length}` : `${sys.length} 點`);
 
                 const rawTraffic = (await (await fetch(`/api/nas/traffic-history?hours=${hrs}`)).json()).data || [];
@@ -6441,13 +6506,13 @@
                 nasTrafficChart.data.labels = fmtH(tr);
                 nasTrafficChart.data.datasets[0].data = tr.map(p => p.download_mbps);
                 nasTrafficChart.data.datasets[1].data = tr.map(p => p.upload_mbps);
-                nasTrafficChart.update('none');
+                updateChartWithEntrance(nasTrafficChart);
 
                 const rawStorage = (await (await fetch('/api/nas/storage-history?hours=720')).json()).data || [];
                 const st = downsampleRows(rawStorage, ['used_gb']);
                 nasStorageChart.data.labels = fmtD(st);
                 nasStorageChart.data.datasets[0].data = st.map(p => p.used_gb);
-                nasStorageChart.update('none');
+                updateChartWithEntrance(nasStorageChart);
 
                 const tpRes = await (await fetch(`/api/nas/temperature-history?hours=${hrs}`)).json();
                 const rawTemps = tpRes.data || [];
@@ -6461,7 +6526,7 @@
                     data: tp.map(p => (p.disks || {})[name] ?? null),
                     borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
                 }));
-                nasTempChart.update('none');
+                updateChartWithEntrance(nasTempChart);
 
                 // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
                 const note = document.getElementById('nas-charts-note');
@@ -7639,7 +7704,7 @@
             wiimChart.data.datasets[0].pointRadius = showDots ? 2.5 : 0;
             wiimChart.data.datasets[1].pointRadius = showDots ? 2.5 : 0;
 
-            wiimChart.update('none');
+            updateChartWithEntrance(wiimChart);
 
             // 更新圖表上方區間與點數說明 (卡片標題右側的範圍標籤一併同步)
             const rangeText = wiimChartWindowMinutes > 0
@@ -7988,7 +8053,7 @@
             ucgHistChart.data.datasets[0].data = plotted.map(p => p.cpuTemp);
             ucgHistChart.data.datasets[1].data = plotted.map(p => p.cpuUsage);
             ucgHistChart.data.datasets[2].data = plotted.map(p => p.memUsagePct);
-            ucgHistChart.update('none');
+            updateChartWithEntrance(ucgHistChart);
             const rangeText = ucgHistWinMin > 0 ? (ucgHistWinMin >= 60 ? `近 ${ucgHistWinMin / 60} 小時` : `近 ${ucgHistWinMin} 分`) : '全部記錄';
             const lbl = document.getElementById('ucg-rangelbl'); if (lbl) lbl.textContent = rangeText;
             document.getElementById('ucg-h-cnt').textContent = pts.length > plotted.length ? `${pts.length} / ${plotted.length}` : pts.length;
@@ -8006,6 +8071,7 @@
             ucgHistWinMin = minutes;
             document.querySelectorAll('.ucg-hist-win-btn').forEach(b => b.className = 'ucg-hist-win-btn px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition active:scale-95');
             if (btn) btn.className = 'ucg-hist-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold active:scale-95';
+            requestChartReplay(ucgHistChart);
             fetchUcgHist();
         }
         function downloadUcgHistCsv() {
@@ -8130,7 +8196,7 @@
                 upsVoltChart.data.labels = plottedVolt.map(fmt);
                 upsVoltChart.data.datasets[0].data = plottedVolt.map(p => p.inV);
                 upsVoltChart.data.datasets[1].data = plottedVolt.map(p => p.outV);
-                upsVoltChart.update('none');
+                updateChartWithEntrance(upsVoltChart);
                 const vstat = (key, prefix) => {
                     const vals = h.map(p => p[key]).filter(v => v != null && v > 0);
                     const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
@@ -8150,7 +8216,7 @@
                 upsLoadChart.data.labels = plottedLoad.map(fmtL);
                 upsLoadChart.data.datasets[0].data = plottedLoad.map(p => p.batt);
                 upsLoadChart.data.datasets[1].data = plottedLoad.map(p => p.load);
-                upsLoadChart.update('none');
+                updateChartWithEntrance(upsLoadChart);
             } catch (e) { dbg('UPS', '歷史讀取失敗', e); }
             try {
                 const evs = (await (await fetch('/api/ups/events')).json()).events || [];
@@ -8171,12 +8237,14 @@
             document.querySelectorAll('.ups-range-btn').forEach(b => b.className = 'ups-range-btn px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition');
             btn.className = 'ups-range-btn px-2.5 py-1 rounded-md font-bold bg-blue-600 text-white transition';
             dbg('UPS', '切換範圍', hours + 'h');
+            requestChartReplay(upsVoltChart);
             fetchUps();
         }
         function setUpsLoadRange(hours, btn) {
             upsLoadRangeHours = hours;
             document.querySelectorAll('.ups-load-range-btn').forEach(b => b.className = 'ups-load-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition');
             btn.className = 'ups-load-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition';
+            requestChartReplay(upsLoadChart);
             fetchUps();
         }
         function downloadUpsCsv() { window.location.href = '/api/ups/csv'; }
@@ -8316,13 +8384,14 @@
                 lnxChart.data.datasets[0].data = plotted.map(p => p.cpu);
                 lnxChart.data.datasets[1].data = plotted.map(p => p.temp);
                 lnxChart.data.datasets[2].data = plotted.map(p => p.mem);
-                lnxChart.update('none');
+                updateChartWithEntrance(lnxChart);
             } catch { }
         }
         function setLnxRange(hours, btn) {
             lnxRangeHours = hours;
             document.querySelectorAll('.lnx-range-btn').forEach(b => b.className = 'lnx-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition');
             btn.className = 'lnx-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition';
+            requestChartReplay(lnxChart);
             fetchLnxChart();
         }
 
@@ -8333,6 +8402,7 @@
             });
             btn.className = 'wiim-win-btn px-2.5 py-1 bg-blue-600/20 border border-blue-500/30 text-blue-400 rounded-lg transition font-bold';
             wiimChartWindowMinutes = minutes;
+            requestChartReplay(wiimChart);
             renderWiimChart();
         }
     </script>

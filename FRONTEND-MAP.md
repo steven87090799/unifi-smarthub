@@ -31,7 +31,8 @@
 | 4542 | `showChartDetail()` | 點擊資料點後固定顯示完整明細 |
 | 4561 | `renderHtmlChartLegend()` | 可鍵盤操作的 HTML Legend Toggle |
 | 4594 | `smartChartUxPlugin` | Crosshair、Active Point、ARIA、動態 Tick、Chart loading |
-| 4688 | `initUiSystem()` | 表格捲動、互動卡鍵盤操作、Loading/Empty/Error observer、Modal Escape |
+| 4678 | `updateChartWithEntrance()` | 首次載入、時間範圍切換與重新進入頁面時播放漸進式圖表動畫；背景輪詢不動畫 |
+| 4767 | `initUiSystem()` | 表格捲動、互動卡鍵盤操作、Loading/Empty/Error observer、Modal Escape |
 
 ## Script Anchors
 
@@ -41,8 +42,8 @@
 | 4913 | `POLL_JOBS` | 全站前端輪詢設定（含 System Diagnostics） |
 | 4942 | `applyPolling()` | 套用輪詢 interval |
 | 5021 | `initChart()` | UCG 即時硬體圖 |
-| 5058 | `initTrendChart()` | 趨勢圖 |
-| 5112 | `fetchTrends()` | 趨勢資料 + 降採樣 |
+| 5164 | `initTrendChart()` | 趨勢圖；短暫來源缺值可跨點連續呈現 |
+| 5219 | `fetchTrends()` | 趨勢資料 + 降採樣；略過不完整合併樣本並顯示資料品質提示 |
 | 5196 | `fetchHardware()` | UCG 硬體 |
 | 5319 | `fetchClients()` | 客戶端；表格列含鍵盤/ARIA 操作 |
 | 5550 | `fetchWiFiNetworks()` | WiFi |
