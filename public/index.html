@@ -4874,12 +4874,28 @@
         let hwChart = null, threatChart = null, trendChart = null, ovHourlyChart = null, secHourlyChart = null;
         let nasSystemChart = null, nasTrafficChart = null, nasStorageChart = null, nasTempChart = null;
         let nasDiskMeta = {};
-        let nasHeroChart = null, nasHeroTempData = Array(12).fill(0), nasHeroUsageData = Array(12).fill(0);
-        let upsHeroChart = null, upsHeroBattData = Array(12).fill(0), upsHeroVoltData = Array(12).fill(0), upsHeroLabels = Array(12).fill('');
+        let nasHeroChart = null, nasHeroLabels = [], nasHeroTempData = [], nasHeroUsageData = [];
+        let upsHeroChart = null, upsHeroBattData = [], upsHeroVoltData = [], upsHeroLabels = [];
+
+        // Hero 圖只用真實歷史樣本預填，避免以 0 佔位而產生右側突然跳起的假曲線。
+        function seedHeroChart(chart, labels, seriesList, rows, valueFns) {
+            if (!chart || chart.$realHistorySeeded || !Array.isArray(rows)) return false;
+            const usable = rows.filter(row => valueFns.every(getValue => {
+                const value = getValue(row);
+                return value != null && Number.isFinite(Number(value));
+            })).slice(-12);
+            if (usable.length < 2) return false;
+            labels.splice(0, labels.length, ...usable.map(row => new Date(row.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })));
+            seriesList.forEach((series, index) => series.splice(0, series.length, ...usable.map(row => Number(valueFns[index](row)))));
+            chart.$realHistorySeeded = true;
+            requestChartReplay(chart);
+            updateChartWithEntrance(chart);
+            return true;
+        }
         function initNasHeroChart() {
             const c = document.getElementById('nasHeroChart'); if (!c) return;
             nasHeroChart = new Chart(c, {
-                type: 'line', data: { labels: Array(12).fill(''), datasets: [
+                type: 'line', data: { labels: nasHeroLabels, datasets: [
                     { label: '溫度 °C', data: nasHeroTempData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.05)', fill: true, yAxisID: 'yTemp', tension: 0.3, pointRadius: 0 },
                     { label: '負載 %', data: nasHeroUsageData, borderColor: '#64748b', borderDash: [3, 3], fill: false, yAxisID: 'yUsage', tension: 0.3, pointRadius: 0 }
                 ] },
@@ -4924,9 +4940,9 @@
         let autoDefenseOn = false;
         const THREAT_CATS = ['Web Exploit', 'Brute Force', 'Scanner', 'Malware', 'DoS', 'Manual Block'];
         const CAT_COLORS = { 'Web Exploit': '#ef4444', 'Brute Force': '#f59e0b', 'Scanner': '#3b82f6', 'Malware': '#10b981', 'DoS': '#8b5cf6', 'Manual Block': '#ec4899' };
-        let chartLabels = Array(12).fill('');
-        let tempChartData = Array(12).fill(0);
-        let usageChartData = Array(12).fill(0);
+        let chartLabels = [];
+        let tempChartData = [];
+        let usageChartData = [];
 
         const PAGE_META = {
             overview: ['總覽 Overview', '全系統健康狀態一覽'],
@@ -5423,10 +5439,13 @@
                     }
                 }
 
-                tempChartData.shift(); tempChartData.push(data.cpuTemp || 0);
-                usageChartData.shift(); usageChartData.push(data.cpuUsage || 0);
-                chartLabels.shift(); chartLabels.push(new Date().toLocaleTimeString());
-                updateChartWithEntrance(hwChart);
+                if (data.cpuTemp != null && data.cpuUsage != null) {
+                    if (tempChartData.length >= 12) { tempChartData.shift(); usageChartData.shift(); chartLabels.shift(); }
+                    tempChartData.push(data.cpuTemp);
+                    usageChartData.push(data.cpuUsage);
+                    chartLabels.push(new Date().toLocaleTimeString());
+                    updateChartWithEntrance(hwChart);
+                }
             } catch (e) {
                 document.getElementById('side-ucg-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
                 const ucgBadge = document.getElementById('ov-ucg-badge');
@@ -6297,9 +6316,13 @@
                     document.getElementById('nas-hero-usage').textContent = (cpuUsage != null ? Math.round(cpuUsage) : '--') + '%';
                     document.getElementById('nas-hero-temp-status').textContent = tempLabel(cpuTemp);
                     document.getElementById('nas-hero-dot').style.background = tempColor(cpuTemp);
-                    nasHeroTempData.shift(); nasHeroTempData.push(cpuTemp || 0);
-                    nasHeroUsageData.shift(); nasHeroUsageData.push(cpuUsage || 0);
-                    updateChartWithEntrance(nasHeroChart);
+                    if (cpuTemp != null && cpuUsage != null) {
+                        if (nasHeroTempData.length >= 12) { nasHeroTempData.shift(); nasHeroUsageData.shift(); nasHeroLabels.shift(); }
+                        nasHeroTempData.push(cpuTemp);
+                        nasHeroUsageData.push(cpuUsage);
+                        nasHeroLabels.push(new Date().toLocaleTimeString());
+                        updateChartWithEntrance(nasHeroChart);
+                    }
                 }
                 // 總覽雙設備體檢 — NAS 溫度/CPU + KPI
                 const ovNasTemp = document.getElementById('ov-nas-temp');
@@ -6536,6 +6559,9 @@
             if (rangeLbl) rangeLbl.textContent = nasHistWinMin >= 60 ? `近 ${nasHistWinMin / 60} 小時` : `近 ${nasHistWinMin} 分`;
             try {
                 const rawSys = (await (await fetch(`/api/nas/system-history?hours=${hrs}`)).json()).data || [];
+                seedHeroChart(nasHeroChart, nasHeroLabels, [nasHeroTempData, nasHeroUsageData], rawSys, [
+                    point => point.temperature, point => point.cpu
+                ]);
                 const sys = downsampleRows(rawSys, ['cpu', 'memory', 'temperature', 'fan_rpm']);
                 nasSystemChart.data.labels = fmtH(sys);
                 nasSystemChart.data.datasets[0].data = sys.map(p => p.cpu);
@@ -8085,6 +8111,9 @@
                 const hours = ucgHistWinMin > 0 ? ucgHistWinMin / 60 : 720;
                 const r = await (await fetch(`/api/hardware/history?hours=${hours}`)).json();
                 ucgHistRaw = r.data || [];
+                seedHeroChart(hwChart, chartLabels, [tempChartData, usageChartData], ucgHistRaw, [
+                    point => point.cpuTemp, point => point.cpuUsage
+                ]);
                 renderUcgHistChart();
             } catch (e) { console.error('UCG history fetch failed', e); }
         }
@@ -8222,10 +8251,13 @@
                         document.getElementById('ups-hero-inv').textContent = (s.inputV ?? '--') + 'V';
                         document.getElementById('ups-hero-rt').textContent = (s.runtimeSec != null ? Math.round(s.runtimeSec / 60) : '--') + ' 分';
                         document.getElementById('ups-hero-src').textContent = s.source.toUpperCase();
-                        upsHeroBattData.shift(); upsHeroBattData.push(s.battery || 0);
-                        upsHeroVoltData.shift(); upsHeroVoltData.push(s.outputV || 0);
-                        upsHeroLabels.shift(); upsHeroLabels.push(new Date().toLocaleTimeString());
-                        updateChartWithEntrance(upsHeroChart);
+                        if (s.battery != null && s.outputV != null) {
+                            if (upsHeroBattData.length >= 12) { upsHeroBattData.shift(); upsHeroVoltData.shift(); upsHeroLabels.shift(); }
+                            upsHeroBattData.push(s.battery);
+                            upsHeroVoltData.push(s.outputV);
+                            upsHeroLabels.push(new Date().toLocaleTimeString());
+                            updateChartWithEntrance(upsHeroChart);
+                        }
                     }
                 }
             } catch (e) { dbg('UPS', '狀態讀取失敗', e); }
@@ -8233,6 +8265,9 @@
             try {
                 const h = (await (await fetch(`/api/ups/history?hours=${upsRangeHours}`)).json()).history || [];
                 dbg('UPS', `歷史 ${upsRangeHours}h →`, h.length, '點');
+                seedHeroChart(upsHeroChart, upsHeroLabels, [upsHeroBattData, upsHeroVoltData], h, [
+                    point => point.batt, point => point.outV
+                ]);
                 const fmt = upsRangeHours > 24
                     ? p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit' })
                     : p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
