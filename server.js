@@ -22,6 +22,7 @@ const { registerHealthRoutes } = require('./observability/health-routes');
 const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
 const { TelegramCommandBot } = require('./telegram-command-bot');
+const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 const APP_STARTED_AT = Date.now();
@@ -103,23 +104,37 @@ logger.info({
 
 const app = express();
 // 前端與後端同源 (由本伺服器託管)，不需要 CORS；移除全開 cors() 以避免跨站請求濫用
+const trustedProxies = parseTrustedProxies(process.env.PANEL_TRUSTED_PROXIES);
+if (trustedProxies) app.set('trust proxy', trustedProxies);
 app.use(logger.requestMiddleware());
-app.use(express.json());
-
-// 可選的整站 Basic Auth：liveness/readiness 不擋，完整 diagnostics 仍受保護。
-app.use((req, res, next) => {
-    const pw = process.env.PANEL_PASSWORD;
-    if (!pw || ['/health', '/healthz', '/health/ready'].includes(req.path)) return next();
-    const hdr = req.headers.authorization || '';
-    const decoded = hdr.startsWith('Basic ') ? Buffer.from(hdr.slice(6), 'base64').toString('utf8') : '';
-    if (decoded.split(':').slice(1).join(':') === pw) return next();
-    logger.warning({
-        module: 'api.auth', function: 'basicAuth', code: ERROR_CODES.API_AUTH_FAILED,
-        http_status: 401, message: 'Panel authentication failed', fields: { method: req.method, path: req.path }
-    });
-    res.set('WWW-Authenticate', 'Basic realm="SmartHub"');
-    res.status(401).json({ error: 'Authentication required', code: ERROR_CODES.API_AUTH_FAILED, request_id: logger.getContext().request_id });
+const panelSecurity = createPanelSecurity({
+    adminPassword: process.env.PANEL_PASSWORD,
+    readonlyPassword: process.env.PANEL_READONLY_PASSWORD,
+    readonlyUsername: process.env.PANEL_READONLY_USERNAME || 'readonly',
+    requireAdminPassword: process.env.NODE_ENV === 'production',
+    allowedOrigins: process.env.PANEL_ALLOWED_ORIGINS,
+    maxFailures: Number(process.env.PANEL_AUTH_MAX_FAILURES) || 5,
+    failureWindowMs: (Number(process.env.PANEL_AUTH_WINDOW_SECONDS) || 300) * 1000,
+    cooldownMs: (Number(process.env.PANEL_AUTH_COOLDOWN_SECONDS) || 300) * 1000,
+    maxTrackedClients: Number(process.env.PANEL_AUTH_MAX_CLIENTS) || 1000,
+    getRequestId: () => logger.getContext().request_id,
+    authCode: ERROR_CODES.API_AUTH_FAILED,
+    rateLimitCode: ERROR_CODES.API_AUTH_RATE_LIMITED,
+    authorizationCode: ERROR_CODES.API_AUTHORIZATION_FAILED,
+    csrfCode: ERROR_CODES.API_CSRF_FAILED,
+    originCode: ERROR_CODES.API_ORIGIN_FAILED,
+    onEvent: ({ type, ...fields }) => logger.warning({
+        module: 'api.security', function: type,
+        code: type.startsWith('auth_') ? ERROR_CODES.API_AUTH_FAILED
+            : type === 'authorization_denied' ? ERROR_CODES.API_AUTHORIZATION_FAILED
+                : type === 'origin_denied' ? ERROR_CODES.API_ORIGIN_FAILED : ERROR_CODES.API_CSRF_FAILED,
+        message: 'Panel security request denied', fields
+    })
 });
+app.use(panelSecurity.authenticate);
+app.get('/api/security/csrf', panelSecurity.csrf);
+app.use(panelSecurity.protectWrites);
+app.use(express.json({ limit: '256kb', strict: true }));
 
 // 託管前端靜態網頁
 app.use(express.static(path.join(__dirname, 'public')));

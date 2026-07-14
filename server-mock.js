@@ -1,14 +1,17 @@
 const express = require('express');
-const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { version: APP_VERSION } = require('./package.json');
 const { ERROR_CODES } = require('./observability/error-codes');
+const { createPanelSecurity } = require('./server/middleware/panel-security');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+const mockSecurity = createPanelSecurity();
+app.use(mockSecurity.authenticate);
+app.get('/api/security/csrf', mockSecurity.csrf);
+app.use(mockSecurity.protectWrites);
+app.use(express.json({ limit: '256kb', strict: true }));
 
 // 託管前端靜態網頁
 app.use(express.static(path.join(__dirname, 'public')));

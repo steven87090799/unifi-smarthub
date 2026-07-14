@@ -171,6 +171,7 @@ function createLogger(options = {}) {
                             request_id: requestId, trace_id: traceId
                         };
                         if (res.statusCode >= 500) write('ERROR', event);
+                        else if (res.locals.panelSecurityDenial) write('DEBUG', event);
                         else if (res.statusCode >= 400) write('WARNING', event);
                         else write('DEBUG', event);
                     });

@@ -4452,6 +4452,47 @@
     </div>
 
     <script>
+        /* ==================== API security boundary ==================== */
+        const nativeFetch = window.fetch.bind(window);
+        let panelSecurityContextPromise = null;
+        async function loadPanelSecurityContext(force = false) {
+            if (force) panelSecurityContextPromise = null;
+            if (!panelSecurityContextPromise) {
+                panelSecurityContextPromise = nativeFetch('/api/security/csrf', {
+                    credentials: 'same-origin', cache: 'no-store'
+                }).then(async response => {
+                    if (!response.ok) throw new Error(`Security bootstrap failed (${response.status})`);
+                    const context = await response.json();
+                    document.documentElement.dataset.panelRole = context.role || 'unknown';
+                    return context;
+                }).catch(error => {
+                    panelSecurityContextPromise = null;
+                    throw error;
+                });
+            }
+            return panelSecurityContextPromise;
+        }
+        window.fetch = async function secureFetch(input, init = {}) {
+            const request = input instanceof Request ? input : null;
+            const url = new URL(request ? request.url : String(input), window.location.href);
+            const method = String(init.method || request?.method || 'GET').toUpperCase();
+            const protectedWrite = url.origin === window.location.origin && url.pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+            if (!protectedWrite) return nativeFetch(input, init);
+            const send = async forceRefresh => {
+                const security = await loadPanelSecurityContext(forceRefresh);
+                const headers = new Headers(request?.headers || undefined);
+                new Headers(init.headers || undefined).forEach((value, key) => headers.set(key, value));
+                headers.set('X-SmartHub-CSRF', security.csrfToken);
+                return nativeFetch(input, { ...init, method, headers, credentials: init.credentials || 'same-origin' });
+            };
+            let response = await send(false);
+            if (response.status === 403) {
+                const failure = await response.clone().json().catch(() => ({}));
+                if (failure.code === 'API-CSRF-001') response = await send(true);
+            }
+            return response;
+        };
+
         /* ==================== Debug 工具 ==================== */
         // 前端除錯日誌：localStorage.debug='0' 可關閉。統一格式方便過濾: [HH:MM:SS][模組] 訊息
         function dbg(module, ...args) {
