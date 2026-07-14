@@ -5415,7 +5415,9 @@
                 });
                 ch.addEventListener('dragend', e => {
                     e.stopPropagation(); wiimDragChip = null;
-                    localStorage.setItem('wiimSrcOrder.v1', JSON.stringify([...wrap.querySelectorAll('.wiim-src-chip')].map(x => x.dataset.src)));
+                    const order = [...wrap.querySelectorAll('.wiim-src-chip')].map(x => x.dataset.src);
+                    localStorage.setItem('wiimSrcOrder.v1', JSON.stringify(order));
+                    persistUiPreference('wiimSrcOrder.v1', order);
                 });
             });
         }
@@ -7366,10 +7368,18 @@
 
         /* ==================== PoE ==================== */
         async function triggerPoECycle() {
-            const mac = document.getElementById('p-mac').value, port = document.getElementById('p-port').value;
-            if (!mac || !port) return showToast('請輸入 MAC 與 Port', true);
+            const mac = document.getElementById('p-mac').value.trim();
+            const port = document.getElementById('p-port').value.trim();
+            const portIndex = Number(port);
+            if (!mac || !Number.isInteger(portIndex) || portIndex < 1 || portIndex > 128) {
+                return showToast('請輸入 MAC 與 1–128 的 Port', true);
+            }
             try {
-                await fetch('/api/poe/power-cycle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ switchMac: mac, portIndex: port }) });
+                const response = await fetch('/api/poe/power-cycle', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ switchMac: mac, portIndex })
+                });
+                if (!response.ok) throw new Error('PoE command rejected');
                 showToast(`已向 ${mac} Port ${port} 發送重啟脈衝`);
             } catch (e) { showToast('發送失敗', true); }
         }
@@ -7854,7 +7864,7 @@
                 if (!response.ok) throw new Error(r.error || '報表產生失敗');
                 const pre = document.getElementById('report-preview');
                 pre.classList.remove('hidden');
-                pre.innerText = r.report + (r.delivery && r.delivery.ok ? '\n\n✅ 已透過推播送出' : r.delivery && r.delivery.skipped ? `\n\n（未送出：${r.delivery.skipped}）` : r.delivery?.error ? `\n\n⚠️ 推播失敗：${r.delivery.error}` : '');
+                pre.innerText = r.report + (r.delivery && r.delivery.ok ? '\n\n✅ 已透過推播送出' : r.delivery?.partial ? `\n\n⚠️ 僅部分送出（${r.delivery.sentParts}/${r.delivery.totalParts}），為避免重複不會自動重送：${r.delivery.error || ''}` : r.delivery && r.delivery.skipped ? `\n\n（未送出：${r.delivery.skipped}）` : r.delivery?.error ? `\n\n⚠️ 推播失敗：${r.delivery.error}` : '');
                 fetchReportLog();
             } catch (e) { showToast('產生失敗: ' + e.message, true); }
         }
@@ -7867,6 +7877,8 @@
                 if (!runs.length) { el.innerHTML = '<p class="text-[10px] text-slate-500 text-center py-3">尚無報表執行紀錄</p>'; return; }
                 const statusMeta = status => status === 'sent'
                     ? ['✅ 已送出', 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5']
+                    : status === 'partial'
+                        ? ['⚠️ 部分送出', 'text-orange-400 border-orange-500/20 bg-orange-500/5']
                     : status?.startsWith('skipped')
                         ? ['◌ 僅產生', 'text-amber-400 border-amber-500/20 bg-amber-500/5']
                         : ['⚠️ 失敗', 'text-red-400 border-red-500/20 bg-red-500/5'];

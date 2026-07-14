@@ -1,10 +1,24 @@
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('node:crypto');
 const Database = require('better-sqlite3');
 const { performance } = require('perf_hooks');
 const { ERROR_CODES } = require('./observability/error-codes');
 
 const HISTORY_SERIES = ['trend', 'ucg', 'nas', 'ups', 'wiim', 'linux'];
+const REPORT_CLAIM_RETRY_AFTER_MS = 60 * 1000;
+const REPORT_CLAIM_STALE_MS = 5 * 60 * 1000;
+const REPORT_MAX_ATTEMPTS = 3;
+const REPORT_RUN_RETENTION = 50;
+// Durable terminal identities are deliberately finite. At the highest supported
+// cadence (every six hours), 512 keys cover roughly 128 days. Active/retryable
+// work is excluded so retention cannot reopen an in-flight schedule slot.
+const REPORT_SCHEDULE_KEY_RETENTION = 512;
+const SQLITE_STARTUP_LOCK_RETRY_MS = 5000;
+const SQLITE_STARTUP_LOCK_POLL_MS = 25;
+const STARTUP_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+const MIN_REPORT_TIMESTAMP = Date.UTC(2000, 0, 1);
+const MAX_REPORT_TIMESTAMP = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
 const JSON_HISTORY_FILES = {
     trend: 'trend-history.json',
     ucg: 'ucg-history.json',
@@ -26,6 +40,64 @@ function pointTimestamp(point, series) {
 function eventTimestamp(value) {
     const timestamp = Date.parse(value);
     return Number.isFinite(timestamp) ? timestamp : NaN;
+}
+
+function reportTimestamp(value) {
+    const timestamp = value instanceof Date
+        ? value.getTime()
+        : (typeof value === 'number' ? value : Date.parse(value));
+    if (!Number.isFinite(timestamp)) return NaN;
+    const normalized = Math.trunc(timestamp);
+    return normalized >= MIN_REPORT_TIMESTAMP && normalized <= MAX_REPORT_TIMESTAMP ? normalized : NaN;
+}
+
+function reportTimestampIso(value) {
+    const timestamp = reportTimestamp(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function normalizeScheduleKey(value) {
+    if (typeof value !== 'string' || value.length > 64) return null;
+    const match = /^scheduled:(\d{4})-(\d{2})-(\d{2}):(\d{2})$/.exec(value);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    if (year < 2000 || year > 9999 || month < 1 || month > 12 || hour < 0 || hour > 23) return null;
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return day >= 1 && day <= daysInMonth ? value : null;
+}
+
+function boundedRequiredString(value, maxLength, field) {
+    if (typeof value !== 'string' || value.trim().length === 0 || value.length > maxLength) {
+        throw new TypeError(`${field} must be a non-empty string of at most ${maxLength} characters`);
+    }
+    return value;
+}
+
+function isSqliteLockError(error) {
+    return error?.code === 'SQLITE_BUSY'
+        || error?.code === 'SQLITE_LOCKED'
+        || /database (?:is )?locked/i.test(error?.message || '');
+}
+
+function pragmaWithBusyRetry(db, statement) {
+    const deadline = Date.now() + SQLITE_STARTUP_LOCK_RETRY_MS;
+    for (;;) {
+        try { return db.pragma(statement); }
+        catch (error) {
+            if (!isSqliteLockError(error) || Date.now() >= deadline) throw error;
+            Atomics.wait(STARTUP_WAIT_BUFFER, 0, 0, Math.min(SQLITE_STARTUP_LOCK_POLL_MS, deadline - Date.now()));
+        }
+    }
+}
+
+function normalizeClaimToken(value) {
+    return typeof value === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+        ? value
+        : null;
 }
 
 function createHistoryDb(dataDir, options = {}) {
@@ -53,13 +125,16 @@ function createHistoryDb(dataDir, options = {}) {
         });
         throw error;
     }
+    // Configure lock waiting before any pragma that may itself need a database
+    // lock. Concurrent container starts/migrations must wait instead of failing
+    // immediately at journal_mode or auto_vacuum negotiation.
+    db.pragma('busy_timeout = 5000');
 
     // auto_vacuum must be configured before tables are created. Existing DBs keep
     // their current mode, which is safe; new databases use incremental vacuum.
     try { db.pragma('auto_vacuum = INCREMENTAL'); } catch { }
-    db.pragma('journal_mode = WAL');
+    pragmaWithBusyRetry(db, 'journal_mode = WAL');
     db.pragma('synchronous = NORMAL');
-    db.pragma('busy_timeout = 5000');
     db.exec(`
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY,
@@ -95,10 +170,134 @@ function createHistoryDb(dataDir, options = {}) {
             delivery_status TEXT NOT NULL,
             channel TEXT,
             delivery_error TEXT,
-            body TEXT NOT NULL
+            body TEXT NOT NULL,
+            schedule_key TEXT,
+            run_status TEXT NOT NULL DEFAULT 'completed',
+            claimed_ts INTEGER,
+            completed_ts INTEGER,
+            attempt_count INTEGER NOT NULL DEFAULT 1,
+            claim_token TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_report_runs_ts ON report_runs(ts DESC);
     `);
+
+    // report_runs predates durable scheduler claims. ALTER only missing columns
+    // so an existing installation upgrades in place without rebuilding history.
+    const reportRunMigrations = [
+        ['schedule_key', 'ALTER TABLE report_runs ADD COLUMN schedule_key TEXT'],
+        ['run_status', "ALTER TABLE report_runs ADD COLUMN run_status TEXT NOT NULL DEFAULT 'completed'"],
+        ['claimed_ts', 'ALTER TABLE report_runs ADD COLUMN claimed_ts INTEGER'],
+        ['completed_ts', 'ALTER TABLE report_runs ADD COLUMN completed_ts INTEGER'],
+        ['attempt_count', 'ALTER TABLE report_runs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1'],
+        ['claim_token', 'ALTER TABLE report_runs ADD COLUMN claim_token TEXT']
+    ];
+    const migrateReportRuns = db.transaction(() => {
+        const migrationTimestamp = Date.now();
+        const reportRunColumns = new Set(db.pragma('table_info(report_runs)').map(column => column.name));
+        for (const [column, statement] of reportRunMigrations) {
+            if (!reportRunColumns.has(column)) db.exec(statement);
+        }
+        db.exec(`
+            UPDATE report_runs
+            SET ts = ${migrationTimestamp}
+            WHERE typeof(ts) <> 'integer'
+               OR ts < ${MIN_REPORT_TIMESTAMP}
+               OR ts > ${MAX_REPORT_TIMESTAMP};
+            UPDATE report_runs
+            SET attempt_count = CASE
+                WHEN typeof(attempt_count) = 'integer'
+                 AND attempt_count BETWEEN 1 AND ${REPORT_MAX_ATTEMPTS}
+                THEN attempt_count
+                ELSE 1
+            END;
+            UPDATE report_runs
+            SET run_status = CASE
+                WHEN delivery_status = 'claimed' THEN 'claimed'
+                WHEN delivery_status = 'failed' AND attempt_count >= ${REPORT_MAX_ATTEMPTS} THEN 'exhausted'
+                WHEN delivery_status = 'failed' THEN 'failed'
+                WHEN run_status = 'claimed' THEN 'claimed'
+                WHEN run_status IN ('failed', 'exhausted') AND attempt_count >= ${REPORT_MAX_ATTEMPTS} THEN 'exhausted'
+                WHEN run_status IN ('failed', 'exhausted') THEN 'failed'
+                ELSE 'completed'
+            END;
+            UPDATE report_runs
+            SET completed_ts = ts
+            WHERE run_status IN ('completed', 'failed', 'exhausted')
+              AND (
+                  typeof(completed_ts) <> 'integer'
+                  OR completed_ts < ${MIN_REPORT_TIMESTAMP}
+                  OR completed_ts > ${MAX_REPORT_TIMESTAMP}
+              );
+            UPDATE report_runs
+            SET claimed_ts = ts
+            WHERE schedule_key IS NOT NULL
+              AND (
+                  typeof(claimed_ts) <> 'integer'
+                  OR claimed_ts < ${MIN_REPORT_TIMESTAMP}
+                  OR claimed_ts > ${MAX_REPORT_TIMESTAMP}
+              );
+            UPDATE report_runs
+            SET completed_ts = NULL
+            WHERE run_status = 'claimed';
+            UPDATE report_runs
+            SET claim_token = NULL
+            WHERE run_status <> 'claimed';
+            UPDATE report_runs
+            SET schedule_key = NULL, claim_token = NULL
+            WHERE schedule_key IS NOT NULL AND trigger <> 'scheduled';
+        `);
+        const detachInvalidScheduleIdentity = db.prepare(`
+            UPDATE report_runs SET schedule_key = NULL, claim_token = NULL WHERE id = ?
+        `);
+        for (const row of db.prepare(`
+            SELECT id, schedule_key FROM report_runs
+            WHERE schedule_key IS NOT NULL AND trigger = 'scheduled'
+        `).all()) {
+            if (!normalizeScheduleKey(row.schedule_key)) detachInvalidScheduleIdentity.run(row.id);
+        }
+        const index = db.pragma('index_list(report_runs)')
+            .find(candidate => candidate.name === 'idx_report_runs_schedule_key');
+        const indexColumns = index ? db.pragma('index_info(idx_report_runs_schedule_key)') : [];
+        const validUniqueIndex = index?.unique === 1
+            && index.partial === 0
+            && indexColumns.length === 1
+            && indexColumns[0].name === 'schedule_key';
+        if (!validUniqueIndex) {
+            // A partially deployed schema may contain duplicate keys without its
+            // unique index. Preserve all history, but retain identity on one row.
+            db.exec(`
+                DROP INDEX IF EXISTS idx_report_runs_schedule_key;
+                UPDATE report_runs
+                SET schedule_key = NULL
+                WHERE schedule_key IS NOT NULL
+                  AND id NOT IN (
+                      SELECT id FROM (
+                          SELECT id,
+                                 ROW_NUMBER() OVER (
+                                     PARTITION BY schedule_key
+                                     ORDER BY
+                                         CASE
+                                             WHEN run_status = 'completed' AND delivery_status = 'sent' THEN 0
+                                             WHEN run_status = 'completed' THEN 1
+                                             WHEN run_status = 'exhausted' THEN 2
+                                             WHEN run_status = 'failed' THEN 3
+                                             WHEN run_status = 'claimed' THEN 4
+                                             ELSE 5
+                                         END,
+                                         COALESCE(completed_ts, ts) DESC,
+                                         id DESC
+                                 ) AS identity_rank
+                          FROM report_runs
+                          WHERE schedule_key IS NOT NULL
+                      ) ranked
+                      WHERE identity_rank = 1
+                  );
+                CREATE UNIQUE INDEX idx_report_runs_schedule_key
+                ON report_runs(schedule_key);
+            `);
+        }
+    });
+    migrateReportRuns.immediate();
     emit('info', {
         module: 'database.sqlite', function: 'createHistoryDb', code: ERROR_CODES.DB_CONNECT_SUCCESS,
         message: 'SQLite database connected', fields: { file: path.basename(file), journal_mode: 'WAL', slow_query_ms: slowQueryMs }
@@ -181,21 +380,205 @@ function createHistoryDb(dataDir, options = {}) {
     `);
     const listBlockStmt = db.prepare('SELECT * FROM block_history ORDER BY ts DESC, id DESC LIMIT 200');
     const insertReportRunStmt = db.prepare(`
-        INSERT INTO report_runs (ts, trigger, title, delivery_status, channel, delivery_error, body)
-        VALUES (@ts, @trigger, @title, @delivery_status, @channel, @delivery_error, @body)
+        INSERT INTO report_runs (
+            ts, trigger, title, delivery_status, channel, delivery_error, body,
+            schedule_key, run_status, claimed_ts, completed_ts, attempt_count, claim_token
+        ) VALUES (
+            @ts, @trigger, @title, @delivery_status, @channel, @delivery_error, @body,
+            @schedule_key, @run_status, @claimed_ts, @completed_ts, @attempt_count, @claim_token
+        )
+    `);
+    const claimScheduledReportStmt = db.prepare(`
+        INSERT INTO report_runs (
+            ts, trigger, title, delivery_status, channel, delivery_error, body,
+            schedule_key, run_status, claimed_ts, completed_ts, attempt_count, claim_token
+        ) VALUES (
+            @ts, 'scheduled', @title, 'claimed', NULL, NULL, '',
+            @schedule_key, 'claimed', @claimed_ts, NULL, 1, @claim_token
+        )
+        ON CONFLICT(schedule_key) DO NOTHING
+    `);
+    const getScheduledReportClaimStmt = db.prepare(`
+        SELECT id, schedule_key, title, run_status, attempt_count, claimed_ts, completed_ts
+        FROM report_runs WHERE schedule_key = ?
+    `);
+    const reclaimScheduledReportStmt = db.prepare(`
+        UPDATE report_runs
+        SET ts = @ts,
+            title = @title,
+            delivery_status = 'claimed',
+            channel = NULL,
+            delivery_error = NULL,
+            body = '',
+            run_status = 'claimed',
+            claimed_ts = @claimed_ts,
+            completed_ts = NULL,
+            claim_token = @claim_token,
+            attempt_count = attempt_count + 1
+        WHERE schedule_key = @schedule_key
+          AND trigger = 'scheduled'
+          AND attempt_count < @max_attempts
+          AND (
+              (run_status = 'failed' AND completed_ts <= @retry_before)
+              OR (run_status = 'claimed' AND claimed_ts <= @stale_before)
+          )
+    `);
+    const completeScheduledReportStmt = db.prepare(`
+        UPDATE report_runs
+        SET ts = @ts,
+            title = COALESCE(@title, title),
+            delivery_status = @delivery_status,
+            channel = @channel,
+            delivery_error = @delivery_error,
+            body = @body,
+            run_status = @run_status,
+            completed_ts = @completed_ts,
+            claim_token = NULL
+        WHERE schedule_key = @schedule_key
+          AND trigger = 'scheduled'
+          AND run_status = 'claimed'
+          AND attempt_count = @attempt_count
+          AND claim_token = @claim_token
+          AND @completed_ts >= claimed_ts
+    `);
+    const renewScheduledReportClaimStmt = db.prepare(`
+        UPDATE report_runs
+        SET claimed_ts = @ts
+        WHERE schedule_key = @schedule_key
+          AND run_status = 'claimed'
+          AND attempt_count = @attempt_count
+          AND claim_token = @claim_token
+          AND @ts >= claimed_ts
+    `);
+    const selectRetryableScheduledReportStmt = db.prepare(`
+        SELECT id, schedule_key, title
+        FROM report_runs
+        WHERE schedule_key IS NOT NULL
+          AND trigger = 'scheduled'
+          AND attempt_count < @max_attempts
+          AND (
+              (run_status = 'failed' AND completed_ts <= @retry_before)
+              OR (run_status = 'claimed' AND claimed_ts <= @stale_before)
+          )
+        ORDER BY COALESCE(completed_ts, claimed_ts, ts) ASC, id ASC
+        LIMIT 1
+    `);
+    const exhaustScheduledReportClaimsStmt = db.prepare(`
+        UPDATE report_runs
+        SET delivery_status = 'failed',
+            delivery_error = COALESCE(delivery_error, 'scheduled_report_attempts_exhausted'),
+            run_status = 'exhausted',
+            completed_ts = CASE
+                WHEN run_status = 'claimed' THEN @now
+                ELSE COALESCE(completed_ts, @now)
+            END,
+            claim_token = NULL
+        WHERE attempt_count >= @max_attempts
+          AND schedule_key IS NOT NULL
+          AND trigger = 'scheduled'
+          AND (
+              run_status = 'failed'
+              OR (run_status = 'claimed' AND claimed_ts <= @stale_before)
+          )
+    `);
+    const detachInvalidReportScheduleIdentityStmt = db.prepare(`
+        UPDATE report_runs
+        SET schedule_key = NULL, claim_token = NULL
+        WHERE id = @id AND schedule_key = @schedule_key
     `);
     const listReportRunsStmt = db.prepare(`
-        SELECT id, ts, trigger, title, delivery_status, channel, delivery_error, body
+        SELECT id, ts, trigger, title, delivery_status, channel, delivery_error, body,
+               schedule_key, run_status, claimed_ts, completed_ts, attempt_count
         FROM report_runs ORDER BY ts DESC, id DESC LIMIT ?
     `);
     const deleteOldReportRunsStmt = db.prepare(`
-        DELETE FROM report_runs WHERE id IN (
-            SELECT id FROM report_runs ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 50
+        DELETE FROM report_runs
+        WHERE id IN (
+            SELECT id FROM report_runs
+            WHERE schedule_key IS NULL
+            ORDER BY ts DESC, id DESC LIMIT -1 OFFSET ${REPORT_RUN_RETENTION}
+        ) OR id IN (
+            SELECT id FROM report_runs
+            WHERE schedule_key IS NOT NULL AND run_status IN ('completed', 'exhausted')
+            ORDER BY ts DESC, id DESC LIMIT -1 OFFSET ${REPORT_SCHEDULE_KEY_RETENTION}
         )
     `);
     const healthStmt = db.prepare('SELECT 1 AS ok');
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
+    });
+    function claimExistingOrInsert(row, { allowInsert = true } = {}) {
+        const result = allowInsert ? claimScheduledReportStmt.run(row) : { changes: 0 };
+        if (result.changes === 1) {
+            deleteOldReportRunsStmt.run();
+            return {
+                claimed: true,
+                id: Number(result.lastInsertRowid),
+                scheduleKey: row.schedule_key,
+                title: row.title,
+                status: 'claimed',
+                attemptCount: 1,
+                claimToken: row.claim_token,
+                recovered: false
+            };
+        }
+        const reclaimed = reclaimScheduledReportStmt.run({
+            ...row,
+            max_attempts: REPORT_MAX_ATTEMPTS,
+            retry_before: row.ts - REPORT_CLAIM_RETRY_AFTER_MS,
+            stale_before: row.ts - REPORT_CLAIM_STALE_MS
+        });
+        if (reclaimed.changes === 1) deleteOldReportRunsStmt.run();
+        const existing = getScheduledReportClaimStmt.get(row.schedule_key);
+        return {
+            claimed: reclaimed.changes === 1,
+            id: existing ? existing.id : null,
+            scheduleKey: row.schedule_key,
+            title: existing ? existing.title : row.title,
+            status: existing ? existing.run_status : null,
+            attemptCount: existing ? existing.attempt_count : null,
+            claimToken: reclaimed.changes === 1 ? row.claim_token : null,
+            recovered: reclaimed.changes === 1
+        };
+    }
+    function exhaustFinishedClaims(now) {
+        const result = exhaustScheduledReportClaimsStmt.run({
+            now,
+            max_attempts: REPORT_MAX_ATTEMPTS,
+            stale_before: now - REPORT_CLAIM_STALE_MS
+        });
+        if (result.changes > 0) deleteOldReportRunsStmt.run();
+        return result.changes;
+    }
+    const claimScheduledReportTransaction = db.transaction(row => {
+        exhaustFinishedClaims(row.ts);
+        return claimExistingOrInsert(row);
+    });
+    const claimNextScheduledReportTransaction = db.transaction(row => {
+        exhaustFinishedClaims(row.ts);
+        let candidate;
+        for (;;) {
+            candidate = selectRetryableScheduledReportStmt.get({
+                max_attempts: REPORT_MAX_ATTEMPTS,
+                retry_before: row.ts - REPORT_CLAIM_RETRY_AFTER_MS,
+                stale_before: row.ts - REPORT_CLAIM_STALE_MS
+            });
+            if (!candidate) return null;
+            if (normalizeScheduleKey(candidate.schedule_key)) break;
+            detachInvalidReportScheduleIdentityStmt.run(candidate);
+            deleteOldReportRunsStmt.run();
+        }
+        return claimExistingOrInsert({
+            ...row,
+            schedule_key: candidate.schedule_key,
+            title: candidate.title
+        }, { allowInsert: false });
+    });
+    const completeScheduledReportTransaction = db.transaction(row => {
+        const result = completeScheduledReportStmt.run(row);
+        if (result.changes !== 1) return false;
+        deleteOldReportRunsStmt.run();
+        return true;
     });
 
     // Ordinary telemetry is intentionally buffered in memory and committed in one
@@ -505,30 +888,130 @@ function createHistoryDb(dataDir, options = {}) {
         },
         insertReportRun(entry) {
             return measure('insertReportRun', 'report_runs', db.transaction(() => {
+                const trigger = String(entry.trigger || 'manual').slice(0, 40);
+                let scheduleKey = null;
+                if (trigger === 'scheduled' && entry.scheduleKey != null) {
+                    scheduleKey = normalizeScheduleKey(entry.scheduleKey);
+                    if (!scheduleKey) throw new TypeError('scheduleKey must use scheduled:YYYY-MM-DD:HH format');
+                }
+                const ts = reportTimestamp(entry.ts);
+                const completedTs = Number.isFinite(ts) ? ts : Date.now();
                 const result = insertReportRunStmt.run({
-                    ts: eventTimestamp(entry.ts) || Date.now(),
-                    trigger: String(entry.trigger || 'manual').slice(0, 40),
+                    ts: completedTs,
+                    trigger,
                     title: String(entry.title || 'SmartHub report').slice(0, 200),
                     delivery_status: String(entry.deliveryStatus || 'generated').slice(0, 40),
                     channel: entry.channel == null ? null : String(entry.channel).slice(0, 40),
                     delivery_error: entry.deliveryError == null ? null : String(entry.deliveryError).slice(0, 500),
-                    body: String(entry.body || '').slice(0, 50000)
+                    body: String(entry.body || '').slice(0, 50000),
+                    schedule_key: scheduleKey,
+                    run_status: entry.deliveryStatus === 'failed' ? 'failed' : 'completed',
+                    claimed_ts: scheduleKey ? completedTs : null,
+                    completed_ts: completedTs,
+                    attempt_count: 1,
+                    claim_token: null
                 });
                 deleteOldReportRunsStmt.run();
                 return result.lastInsertRowid;
+            }), { transaction: true });
+        },
+        claimScheduledReport(entry) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new TypeError('scheduled report claim must be an object');
+            }
+            const scheduleKey = normalizeScheduleKey(entry.scheduleKey);
+            if (!scheduleKey) throw new TypeError('scheduleKey must use scheduled:YYYY-MM-DD:HH format');
+            const ts = reportTimestamp(entry.ts);
+            if (!Number.isFinite(ts)) throw new TypeError('scheduled report claim ts must be a finite timestamp');
+            const title = boundedRequiredString(entry.title, 200, 'scheduled report claim title');
+            return measure('claimScheduledReport', 'report_runs', () => claimScheduledReportTransaction.immediate({
+                schedule_key: scheduleKey,
+                ts,
+                claimed_ts: ts,
+                title,
+                claim_token: randomUUID()
+            }), { transaction: true });
+        },
+        claimNextScheduledReport(entry) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new TypeError('scheduled report recovery claim must be an object');
+            }
+            const ts = reportTimestamp(entry.ts);
+            if (!Number.isFinite(ts)) throw new TypeError('scheduled report recovery claim ts must be a finite timestamp');
+            return measure('claimNextScheduledReport', 'report_runs', () => claimNextScheduledReportTransaction.immediate({
+                ts,
+                claimed_ts: ts,
+                claim_token: randomUUID()
+            }), { transaction: true });
+        },
+        renewScheduledReportClaim(scheduleKeyInput, entry) {
+            const scheduleKey = normalizeScheduleKey(scheduleKeyInput);
+            if (!scheduleKey) throw new TypeError('scheduleKey must use scheduled:YYYY-MM-DD:HH format');
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new TypeError('scheduled report renewal must be an object');
+            }
+            const ts = reportTimestamp(entry.ts);
+            if (!Number.isFinite(ts)) throw new TypeError('scheduled report renewal ts must be a finite timestamp');
+            if (!Number.isInteger(entry.attemptCount) || entry.attemptCount < 1 || entry.attemptCount > REPORT_MAX_ATTEMPTS) {
+                throw new TypeError(`scheduled report renewal attemptCount must be an integer from 1 through ${REPORT_MAX_ATTEMPTS}`);
+            }
+            const claimToken = normalizeClaimToken(entry.claimToken);
+            if (!claimToken) throw new TypeError('scheduled report renewal claimToken must be a UUID');
+            return measure('renewScheduledReportClaim', 'report_runs', () => renewScheduledReportClaimStmt.run({
+                schedule_key: scheduleKey,
+                ts,
+                attempt_count: entry.attemptCount,
+                claim_token: claimToken
+            }).changes === 1);
+        },
+        completeScheduledReport(scheduleKeyInput, entry) {
+            const scheduleKey = normalizeScheduleKey(scheduleKeyInput);
+            if (!scheduleKey) throw new TypeError('scheduleKey must use scheduled:YYYY-MM-DD:HH format');
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new TypeError('scheduled report completion must be an object');
+            }
+            const ts = reportTimestamp(entry.ts);
+            if (!Number.isFinite(ts)) throw new TypeError('scheduled report completion ts must be a finite timestamp');
+            if (!Number.isInteger(entry.attemptCount) || entry.attemptCount < 1 || entry.attemptCount > REPORT_MAX_ATTEMPTS) {
+                throw new TypeError(`scheduled report completion attemptCount must be an integer from 1 through ${REPORT_MAX_ATTEMPTS}`);
+            }
+            const claimToken = normalizeClaimToken(entry.claimToken);
+            if (!claimToken) throw new TypeError('scheduled report completion claimToken must be a UUID');
+            const title = entry.title == null ? null : boundedRequiredString(entry.title, 200, 'scheduled report completion title');
+            const deliveryStatus = String(entry.deliveryStatus || 'generated').slice(0, 40);
+            const runStatus = deliveryStatus === 'failed'
+                ? (entry.attemptCount >= REPORT_MAX_ATTEMPTS ? 'exhausted' : 'failed')
+                : 'completed';
+            return measure('completeScheduledReport', 'report_runs', () => completeScheduledReportTransaction.immediate({
+                schedule_key: scheduleKey,
+                attempt_count: entry.attemptCount,
+                claim_token: claimToken,
+                ts,
+                title,
+                delivery_status: deliveryStatus,
+                channel: entry.channel == null ? null : String(entry.channel).slice(0, 40),
+                delivery_error: entry.deliveryError == null ? null : String(entry.deliveryError).slice(0, 500),
+                body: String(entry.body || '').slice(0, 50000),
+                run_status: runStatus,
+                completed_ts: ts
             }), { transaction: true });
         },
         listReportRuns(limit = 20) {
             const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
             return measure('listReportRuns', 'report_runs', () => listReportRunsStmt.all(safeLimit).map(row => ({
                 id: row.id,
-                ts: new Date(row.ts).toISOString(),
+                ts: reportTimestampIso(row.ts),
                 trigger: row.trigger,
                 title: row.title,
                 deliveryStatus: row.delivery_status,
                 channel: row.channel,
                 deliveryError: row.delivery_error,
-                body: row.body
+                body: row.body,
+                scheduleKey: row.schedule_key,
+                runStatus: row.run_status,
+                claimedAt: reportTimestampIso(row.claimed_ts),
+                completedAt: reportTimestampIso(row.completed_ts),
+                attemptCount: row.attempt_count
             })));
         },
         cleanup(keepDays = 30, hardCap = 100000) {
@@ -597,4 +1080,11 @@ function createHistoryDb(dataDir, options = {}) {
     };
 }
 
-module.exports = { createHistoryDb };
+module.exports = {
+    REPORT_CLAIM_RETRY_AFTER_MS,
+    REPORT_CLAIM_STALE_MS,
+    REPORT_MAX_ATTEMPTS,
+    REPORT_RUN_RETENTION,
+    REPORT_SCHEDULE_KEY_RETENTION,
+    createHistoryDb
+};

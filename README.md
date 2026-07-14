@@ -48,7 +48,7 @@ open http://<主機IP>:3000
 | **4. UGREEN NAS** | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` | UGOS 管理員帳密(遙測 API 需管理員)。**密碼不可含 `#` `*` `§`**。`NAS_PORT`/`NAS_SCHEME` 預設 9443/https |
 | **5. NAS Monitor 中介層** | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY` | 選配的 Flask 中介層,啟用 Docker 管理/警報閾值/SSE 即時推送 |
 | **6. WiiM 音響** | `WIIM_IP` | WiiM Amp 的區網 IP |
-| **7. CyberPower UPS** | `UPS_SOURCE` | `auto`(依序試 PPB→NUT→pwrstat→pmset)或指定。**Docker 部署建議 `nut`,見下方第四節** |
+| **7. CyberPower UPS** | `UPS_SOURCE` | `auto`(依序試 PPB→NUT→pwrstat→pmset)或指定。**目前 Docker 已驗證路徑是 `ppb`,見下方第四節** |
 | | `NUT_HOST`, `NUT_UPS_NAME` | NUT server 位置(容器內**不可**用 localhost) |
 | **8. PowerPanel Business** | `PPB_HOST`, `PPB_PORT`, `PPB_USER`, `PPB_PASSWORD` | PPB 跑在哪台就填哪台的 IP(容器內不可 127.0.0.1) |
 | **9. AdGuard Home** | `ADGUARD_HOST`, `ADGUARD_PORT`, `ADGUARD_USER`, `ADGUARD_PASSWORD` | AdGuard 管理帳密,啟用 DNS 防護頁 |
@@ -115,14 +115,15 @@ volumes:
 
 `UPS_SOURCE=auto` 的四個來源中,**pwrstat 與 pmset 在容器內不存在**,只剩兩條路:
 
-**方案 A — NUT(建議,UPS USB 接 NAS 時)**
+**方案 A — PowerPanel Business(目前 Docker 已驗證路徑)**
+1. 宿主機跑 CyberPower PowerPanel Business，REST discovery port 使用預設 `3052`
+2. `.env` 設:`UPS_SOURCE=ppb`、`PPB_HOST=host.docker.internal`、`PPB_PORT=3052`，並填 `PPB_USER`/`PPB_PASSWORD`
+3. Docker Desktop/OrbStack 可直接解析 `host.docker.internal`；純 Linux Engine 若無此名稱，需在 compose 加 `host-gateway` mapping。不要在容器內改用 `pwrstat`
+
+**方案 B — NUT(UPS USB 接 NAS 且已有 NUT server 時)**
 1. 在跑 Docker 的主機(NAS)上安裝並設定 NUT server,UPS USB 接這台
 2. 容器已內建 `upsc` 客戶端(Dockerfile 已裝 `nut`)
 3. `.env` 設:`UPS_SOURCE=nut`、`NUT_HOST=<NAS 的區網 IP>`(不能 localhost)、`NUT_UPS_NAME=<ups.conf 裡的名稱>`
-
-**方案 B — PowerPanel Business(UPS USB 接其他電腦時)**
-1. 那台電腦跑 CyberPower PowerPanel Business
-2. `.env` 設:`PPB_HOST=<那台電腦的 IP>`、`PPB_USER`/`PPB_PASSWORD`
 
 啟動後看 `docker compose logs | grep Diag`,UPS 那行會直接告訴你連上了沒、失敗原因為何。
 
@@ -174,7 +175,7 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
    ✅ UCG SSH (192.168.0.1:22)：CPU 54°C，正常
    ✅ UniFi 控制器：登入成功
    ❌ UPS：所有來源皆無法讀取 (已嘗試: ppb, nut, ...)
-      Docker 環境 UPS 檢查清單：(1) UPS_SOURCE=nut + NUT_HOST=...
+      Docker 環境 UPS 檢查清單：(1) UPS_SOURCE=ppb + PPB_HOST=host.docker.internal + PPB_PORT=3052
    ⚠️ NUT_HOST=localhost：容器內的 localhost 是容器自己，請改成實際 IP
    ```
 3. **網頁確認**:「設定 → System Diagnostics」顯示本服務 CPU/RAM/disk/SQLite/worker 與 Active Issues；「目前連線狀態」列出外部設備狀態

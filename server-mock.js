@@ -2,17 +2,51 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { randomUUID } = require('node:crypto');
 const { version: APP_VERSION } = require('./package.json');
 const { ERROR_CODES } = require('./observability/error-codes');
 const { createPanelSecurity } = require('./server/middleware/panel-security');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
+const writeInput = require('./server/policies/write-input-policy');
+const queryInput = require('./server/policies/query-input-policy');
 
 const app = express();
+app.use((_req, res, next) => {
+    const requestId = randomUUID();
+    res.locals.requestId = requestId;
+    res.setHeader('X-Request-ID', requestId);
+    next();
+});
 const mockSecurity = createPanelSecurity();
 app.use(mockSecurity.authenticate);
 app.get('/api/security/csrf', mockSecurity.csrf);
 app.use(mockSecurity.protectWrites);
 app.use(express.json({ limit: '256kb', strict: true }));
+
+function mockApiError(res, error, {
+    status = 500,
+    code = status === 400 ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+    publicMessage = status >= 500 ? 'Internal server error' : (error?.message || String(error))
+} = {}) {
+    return res.status(status).json({
+        error: publicMessage,
+        code,
+        request_id: res.locals.requestId
+    });
+}
+
+function validatedInput(res, parse) {
+    try { return parse(); }
+    catch (error) {
+        if (!(error instanceof writeInput.InputValidationError)) throw error;
+        mockApiError(res, error, {
+            status: error.httpStatus,
+            code: ERROR_CODES.API_VALIDATION_FAILED,
+            publicMessage: error.message
+        });
+        return null;
+    }
+}
 
 // 託管前端靜態網頁
 app.use(express.static(path.join(__dirname, 'public')));
@@ -23,6 +57,8 @@ let mockClients = [
     { mac: "aa:bb:cc:dd:ee:ff", name: "Living Room Apple TV", ip: "192.168.1.102", is_wifi: false, wifi_signal: null, rx_bytes: 4194304000, tx_bytes: 104857600, blocked: false },
     { mac: "11:22:33:44:55:66", name: "Suspicious IoT Bulb", ip: "192.168.1.199", is_wifi: true, wifi_signal: -78, rx_bytes: 500000, tx_bytes: 120000, blocked: true }
 ];
+let mockClientAliases = {};
+let mockUiPreferences = {};
 
 let mockWiFi = [
     { _id: "wifi-1", name: "UniFi_Main_5G", enabled: true },
@@ -222,8 +258,9 @@ const mockHardwareHistory = (() => {
     return points;
 })();
 app.get('/api/hardware/history', (req, res) => {
-    const hours = Number.parseFloat(req.query.hours || '24');
-    const cutoff = Date.now() - (Number.isFinite(hours) ? hours : 24) * 3600000;
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const cutoff = Date.now() - query.hours * 3600000;
     res.json({ data: mockHardwareHistory.filter(point => new Date(point.t).getTime() >= cutoff), source: 'mock' });
 });
 
@@ -236,7 +273,17 @@ app.get('/api/clients', (req, res) => {
             c.tx_bytes += Math.floor(Math.random() * 200000);
         }
     });
-    res.json({ clients: mockClients });
+    res.json({
+        clients: mockClients.map(client => {
+            const alias = mockClientAliases[client.mac.toLowerCase()];
+            return {
+                ...client,
+                name: alias || client.name,
+                aliased: !!alias,
+                original_name: client.name
+            };
+        })
+    });
 });
 
 app.get('/api/network/switches', (_req, res) => res.json({
@@ -256,6 +303,23 @@ app.get('/api/network/switches', (_req, res) => res.json({
     }]
 }));
 
+app.get('/api/ui-preferences', (_req, res) => res.json({ preferences: mockUiPreferences }));
+app.post('/api/ui-preferences', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseUiPreferences(req.body));
+    if (!input) return;
+    Object.assign(mockUiPreferences, input);
+    res.json({ ok: true, preferences: mockUiPreferences });
+});
+
+app.get('/api/client-aliases', (_req, res) => res.json({ aliases: mockClientAliases }));
+app.post('/api/client-aliases', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseAlias(req.body));
+    if (!input) return;
+    if (input.name) mockClientAliases[input.mac] = input.name;
+    else delete mockClientAliases[input.mac];
+    res.json({ ok: true, aliases: mockClientAliases });
+});
+
 // 3. 獲取 SSID 列表
 app.get('/api/wifi-networks', (req, res) => {
     res.json({ networks: mockWiFi });
@@ -263,9 +327,11 @@ app.get('/api/wifi-networks', (req, res) => {
 
 // 4. 控制 SSID 狀態
 app.put('/api/wifi-networks/:id', (req, res) => {
-    const net = mockWiFi.find(n => n._id === req.params.id);
+    const input = validatedInput(res, () => writeInput.parseWifiUpdate(req.params.id, req.body));
+    if (!input) return;
+    const net = mockWiFi.find(n => n._id === input.id);
     if (net) {
-        net.enabled = req.body.enabled;
+        net.enabled = input.enabled;
     }
     res.json({ success: true });
 });
@@ -312,15 +378,17 @@ let mockBlockHistory = [
 
 // 6. 客戶端限速/阻斷控制
 app.put('/api/device/restrict', (req, res) => {
-    const client = mockClients.find(c => c.mac === req.body.deviceId);
+    const input = validatedInput(res, () => writeInput.parseDeviceRestriction(req.body));
+    if (!input) return;
+    const client = mockClients.find(c => c.mac === input.deviceId);
     if (client) {
-        client.blocked = req.body.blockState;
+        client.blocked = input.blockState;
     }
     mockBlockHistory.unshift({
         datetime: new Date().toISOString(),
-        mac: req.body.deviceId,
-        name: req.body.deviceName || (client && client.name) || 'Unknown Device',
-        action: req.body.blockState ? 'block' : 'unblock',
+        mac: input.deviceId,
+        name: input.deviceName || (client && client.name) || 'Unknown Device',
+        action: input.blockState ? 'block' : 'unblock',
         source: 'manual'
     });
     res.json({ success: true });
@@ -333,12 +401,16 @@ app.get('/api/block-history', (req, res) => {
 
 // 7. PoE Port 斷電重啟
 app.post('/api/poe/power-cycle', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parsePoePowerCycle(req.body));
+    if (!input) return;
     res.json({ success: true });
 });
 
 // 8. 觸發測速 (模擬：8 秒後產生結果)
 let mockSpeedtestStart = 0;
 app.post('/api/speedtest', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseEmptyBody(req.body));
+    if (!input) return;
     mockSpeedtestStart = Date.now();
     res.json({ success: true });
 });
@@ -395,7 +467,9 @@ app.get('/api/cloud/sdwan', (req, res) => {
 let mockSecSettings = { autoDefense: false };
 app.get('/api/security/settings', (req, res) => res.json(mockSecSettings));
 app.post('/api/security/settings', (req, res) => {
-    if (typeof req.body.autoDefense === 'boolean') mockSecSettings.autoDefense = req.body.autoDefense;
+    const input = validatedInput(res, () => writeInput.parseSingleBoolean(req.body, 'autoDefense'));
+    if (!input) return;
+    mockSecSettings.autoDefense = input.autoDefense;
     res.json(mockSecSettings);
 });
 
@@ -440,9 +514,9 @@ let mockTrendHistory = (() => {
     return points;
 })();
 
-// 自適應取樣：有前端活躍時每 5 秒、閒置時每小時 (與正式後端行為一致)
+// 自適應取樣：依正式後端預設值，有前端活躍時每 30 秒、閒置時每 30 分鐘。
 let lastClientActivity = 0, lastSampleTs = 0;
-let ACTIVE_SAMPLE_MS = 5000, IDLE_SAMPLE_MS = 30 * 60 * 1000, ACTIVE_WINDOW_MS = 30000;
+let ACTIVE_SAMPLE_MS = 30000, IDLE_SAMPLE_MS = 30 * 60 * 1000, ACTIVE_WINDOW_MS = 30000;
 setInterval(() => {
     const now = Date.now();
     const active = (now - lastClientActivity) < ACTIVE_WINDOW_MS;
@@ -454,15 +528,18 @@ setInterval(() => {
 }, 1000);
 
 app.get('/api/history', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
     lastClientActivity = Date.now();
-    const hours = parseInt(req.query.hours || '24', 10);
-    const cutoff = Date.now() - hours * 3600000;
+    const cutoff = Date.now() - query.hours * 3600000;
     res.json({ history: mockTrendHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
 });
 
 app.get('/api/heartbeat', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHeartbeatQuery(req.query));
+    if (!query) return;
     lastClientActivity = Date.now();
-    res.json({ ok: true, mode: 'active' });
+    res.json({ ok: true, mode: 'active', activeScopes: query.scopes, promptScopes: [] });
 });
 
 // 15-18. UGREEN NAS 模擬端點
@@ -524,47 +601,107 @@ let mockAlerts = [
     { id: 'al-2', datetime: new Date(Date.now() - 6 * 3600000).toISOString(), metric: 'cpu_usage', level: 'info', message: 'CPU 使用率短暫達 82% (備份任務)', acknowledged: true },
     { id: 'al-3', datetime: new Date(Date.now() - 26 * 3600000).toISOString(), metric: 'volume_usage', level: 'critical', message: '存儲空間 1 使用率超過 85%', acknowledged: false }
 ];
+let mockAlertConfig = [
+    { metric: 'disk_temperature', threshold: 50, condition: 'above', enabled: true },
+    { metric: 'volume_usage', threshold: 85, condition: 'above', enabled: true }
+];
 app.get('/api/nas/docker', (req, res) => {
     mockDocker.forEach(c => { if (c.state === 'running') { c.cpu_percent = +(Math.random() * 5).toFixed(1); } });
     res.json({ containers: mockDocker, source: 'fallback' });
 });
 app.post('/api/nas/docker/:id/:action', (req, res) => {
-    const { id, action } = req.params;
-    const c = mockDocker.find(x => x.id === id || x.name === id);
+    const input = validatedInput(res, () => ({
+        id: writeInput.identifierValue(req.params.id, { field: 'id', max: 128 }),
+        action: writeInput.enumValue(req.params.action, ['start', 'stop', 'restart'], 'action'),
+        ...writeInput.parseEmptyBody(req.body)
+    }));
+    if (!input) return;
+    const c = mockDocker.find(x => x.id === input.id || x.name === input.id);
     if (c) {
-        c.state = action === 'stop' ? 'exited' : 'running';
-        c.status = action === 'stop' ? 'Exited (0) just now' : 'Up 1 second';
-        if (action === 'stop') { c.cpu_percent = 0; c.mem_usage_mb = 0; } else if (!c.mem_usage_mb) c.mem_usage_mb = 128;
+        c.state = input.action === 'stop' ? 'exited' : 'running';
+        c.status = input.action === 'stop' ? 'Exited (0) just now' : 'Up 1 second';
+        if (input.action === 'stop') { c.cpu_percent = 0; c.mem_usage_mb = 0; } else if (!c.mem_usage_mb) c.mem_usage_mb = 128;
     }
     res.json({ success: true, source: 'fallback' });
 });
 app.get('/api/nas/docker/:id/logs', (req, res) => {
-    res.json({ logs: `[demo] ${req.params.id} 日誌\n` + Array.from({ length: 14 }, (_, i) => `${new Date(Date.now() - i * 5000).toISOString()}  INFO  service tick #${1000 - i}`).join('\n'), source: 'fallback' });
+    const input = validatedInput(res, () => ({
+        id: queryInput.safePathIdentifierValue(req.params.id, { field: 'id', max: 128 }),
+        ...queryInput.parseDockerLogsQuery(req.query)
+    }));
+    if (!input) return;
+    const count = Math.min(input.lines, 100);
+    res.json({ logs: `[demo] ${input.id} 日誌\n` + Array.from({ length: count }, (_, i) => `${new Date(Date.now() - i * 5000).toISOString()}  INFO  service tick #${1000 - i}`).join('\n'), source: 'fallback' });
 });
 app.get('/api/nas/traffic-summary', (req, res) => res.json({ data: { today_gb: 42.6, week_gb: 318.2, month_gb: 1240.7, today_up_gb: 8.1, today_down_gb: 34.5 }, source: 'fallback' }));
 app.get('/api/nas/traffic-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const { hours } = query;
     res.json({ data: mSeries(hours, 30, d => { const f = Math.sin((d.getHours() - 6) / 24 * Math.PI * 2) * 0.5 + 0.5; return { t: d.toISOString(), upload_mbps: +(2 + f * 12 + Math.random() * 3).toFixed(1), download_mbps: +(5 + f * 40 + Math.random() * 8).toFixed(1) }; }), source: 'fallback' });
 });
 app.get('/api/nas/system-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const { hours } = query;
     res.json({ data: mSeries(hours, 30, d => { const f = Math.sin((d.getHours() - 6) / 24 * Math.PI * 2) * 0.5 + 0.5; return { t: d.toISOString(), cpu: Math.round(8 + f * 30 + Math.random() * 6), memory: Math.round(34 + f * 10 + Math.random() * 4), temperature: Math.round(40 + f * 6 + Math.random() * 2) }; }), source: 'fallback' });
 });
 app.get('/api/nas/temperature-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const { hours } = query;
     res.json({ data: mSeries(hours, 30, d => { const f = Math.sin((d.getHours() - 6) / 24 * Math.PI * 2) * 0.5 + 0.5; return { t: d.toISOString(), fan_rpm: Math.round(900 + f * 500), disk1: Math.round(36 + f * 4), disk2: Math.round(37 + f * 4), disk3: Math.round(39 + f * 5) }; }), source: 'fallback' });
 });
 app.get('/api/nas/storage-history', (req, res) => {
-    const hours = parseInt(req.query.hours || '720', 10);
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query, { defaultValue: 720 }));
+    if (!query) return;
+    const { hours } = query;
     res.json({ data: mSeries(hours, 720, (d, i) => ({ t: d.toISOString(), used_gb: Math.round(3120 - i * 6 + Math.random() * 4), total_gb: 7451 })), source: 'fallback' });
 });
-app.get('/api/nas/storage-forecast', (req, res) => res.json({ data: { days_until_full: 512, daily_growth_gb: 6.2, projected_full_date: new Date(Date.now() + 512 * 86400000).toISOString().slice(0, 10), current_used_percent: 42 }, source: 'fallback' }));
-app.get('/api/nas/downtime', (req, res) => res.json({ data: { uptime_percent: 99.97, downtime_events: 1, last_downtime: new Date(Date.now() - 12 * 86400000).toISOString(), total_downtime_min: 13 }, source: 'fallback' }));
-app.get('/api/nas/alerts', (req, res) => res.json({ events: mockAlerts, source: 'fallback' }));
+app.get('/api/nas/storage-forecast', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryDaysQuery(req.query));
+    if (!query) return;
+    res.json({ data: { days_until_full: 512, daily_growth_gb: 6.2, projected_full_date: new Date(Date.now() + 512 * 86400000).toISOString().slice(0, 10), current_used_percent: 42 }, source: 'fallback' });
+});
+app.get('/api/nas/downtime', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryDaysQuery(req.query));
+    if (!query) return;
+    res.json({ data: { uptime_percent: 99.97, downtime_events: 1, last_downtime: new Date(Date.now() - 12 * 86400000).toISOString(), total_downtime_min: 13 }, source: 'fallback' });
+});
+app.get('/api/nas/alerts', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseNasAlertsQuery(req.query));
+    if (!query) return;
+    res.json({ events: mockAlerts, source: 'fallback' });
+});
 app.post('/api/nas/alerts/:id/ack', (req, res) => {
-    const a = mockAlerts.find(x => x.id === req.params.id);
+    const input = validatedInput(res, () => ({
+        id: writeInput.identifierValue(req.params.id, { field: 'id', max: 128 }),
+        ...writeInput.parseEmptyBody(req.body)
+    }));
+    if (!input) return;
+    const a = mockAlerts.find(x => x.id === input.id);
     if (a) a.acknowledged = true;
     res.json({ success: true, source: 'fallback' });
+});
+app.get('/api/nas/alerts/config', (_req, res) => res.json({ config: mockAlertConfig, source: 'fallback' }));
+app.post('/api/nas/alerts/config', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseAlertConfig(req.body));
+    if (!input) return;
+    const index = mockAlertConfig.findIndex(config => config.metric === input.metric);
+    if (index >= 0) mockAlertConfig[index] = input;
+    else mockAlertConfig.push(input);
+    res.json({ ok: true, data: input, source: 'fallback' });
+});
+app.delete('/api/nas/alerts/config/:metric', (req, res) => {
+    const input = validatedInput(res, () => ({
+        metric: writeInput.identifierValue(req.params.metric, {
+            field: 'metric', max: 64, pattern: /^[A-Za-z][A-Za-z0-9._:-]*$/u
+        }),
+        ...writeInput.parseEmptyBody(req.body)
+    }));
+    if (!input) return;
+    mockAlertConfig = mockAlertConfig.filter(config => config.metric !== input.metric);
+    res.json({ ok: true, source: 'fallback' });
 });
 
 /* ===== 通知推播中心 (模擬) ===== */
@@ -590,20 +727,14 @@ app.get('/api/notifications/settings', (req, res) => {
     res.json({ ...safe, webhookUrlSet: !!webhookUrl, botTokenSet: !!botToken });
 });
 app.post('/api/notifications/settings', (req, res) => {
-    const b = req.body || {};
-    Object.keys(mockNotif).forEach(key => {
-        if (typeof mockNotif[key] === 'boolean' && typeof b[key] === 'boolean') mockNotif[key] = b[key];
-        if (typeof mockNotif[key] === 'number' && typeof b[key] === 'number' && b[key] > 0) mockNotif[key] = b[key];
-    });
-    if (b.channel) mockNotif.channel = b.channel;
-    if (typeof b.chatId === 'string') mockNotif.chatId = b.chatId;
-    if (typeof b.triggerThreats === 'boolean') mockNotif.triggerThreats = b.triggerThreats;
-    if (typeof b.triggerNasAlerts === 'boolean') mockNotif.triggerNasAlerts = b.triggerNasAlerts;
-    if (b.webhookUrl) mockNotif.webhookUrl = b.webhookUrl;
-    if (b.botToken) mockNotif.botToken = b.botToken;
+    const input = validatedInput(res, () => writeInput.parseNotificationSettings(req.body));
+    if (!input) return;
+    Object.assign(mockNotif, input);
     res.json({ ok: true });
 });
 app.post('/api/notifications/test', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseEmptyBody(req.body));
+    if (!input) return;
     // 展示模式：模擬送出成功 (需先啟用且已填目標)
     if (!mockNotif.enabled) return res.json({ skipped: 'disabled' });
     const configured = mockNotif.channel === 'telegram' ? (mockNotif.botToken && mockNotif.chatId) : mockNotif.webhookUrl;
@@ -622,13 +753,23 @@ setInterval(() => {
 }, 25000);
 
 /* ===== 應用程式設定 (模擬) ===== */
-let mockAppSettings = { trendActiveSec: 5, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20, autoDefenseSec: 30, reportEnabled: true, reportFreq: 'daily', reportHour: 8, reportHour2: 20 };
+const MOCK_APP_SETTING_RANGES = {
+    trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600],
+    watcherSec: [5, 3600], autoDefenseSec: [5, 3600], reportHour: [0, 23], reportHour2: [0, 23],
+    upsSampleSec: [5, 3600], wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
+    toastSec: [1, 60], historyFlushMin: [1, 60], historyKeepDays: [1, 365]
+};
+let mockAppSettings = {
+    trendActiveSec: 30, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20,
+    toastSec: 10, autoDefenseSec: 30, reportEnabled: true, reportFreq: 'daily',
+    reportHour: 8, reportHour2: 20, upsSampleSec: 30, wiimCpuAlert: 70,
+    wiimBoardAlert: 60, historyFlushMin: 10, historyKeepDays: 30
+};
 app.get('/api/settings', (req, res) => res.json(mockAppSettings));
 app.post('/api/settings', (req, res) => {
-    const b = req.body || {};
-    ['trendActiveSec', 'trendIdleSec', 'activeWindowSec', 'watcherSec', 'autoDefenseSec', 'reportHour', 'reportHour2'].forEach(k => { if (typeof b[k] === 'number' && b[k] >= 0) mockAppSettings[k] = b[k]; });
-    if (typeof b.reportEnabled === 'boolean') mockAppSettings.reportEnabled = b.reportEnabled;
-    if (['daily', 'twice', 'every6h', 'weekly'].includes(b.reportFreq)) mockAppSettings.reportFreq = b.reportFreq;
+    const input = validatedInput(res, () => writeInput.parseAppSettings(req.body, MOCK_APP_SETTING_RANGES));
+    if (!input) return;
+    Object.assign(mockAppSettings, input);
     // 套用新的趨勢取樣間隔
     ACTIVE_SAMPLE_MS = mockAppSettings.trendActiveSec * 1000;
     IDLE_SAMPLE_MS = mockAppSettings.trendIdleSec * 1000;
@@ -639,6 +780,8 @@ app.post('/api/settings', (req, res) => {
 let mockReportLog = [];
 function pushMockReport(entry) { mockReportLog.unshift(entry); mockReportLog = mockReportLog.slice(0, 20); }
 app.post('/api/reports/run', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseEmptyBody(req.body));
+    if (!input) return;
     const cpus = mockWiimHistory.map(h => h.cpu).filter(v => v !== null);
     const boards = mockWiimHistory.map(h => h.board).filter(v => v !== null);
     let wiimLine = '';
@@ -655,7 +798,11 @@ app.post('/api/reports/run', (req, res) => {
     pushMockReport({ id: Date.now(), ts: new Date().toISOString(), trigger: 'manual', title: '📊 SmartHub 報表 (手動觸發)', deliveryStatus: delivery.ok ? 'sent' : 'skipped:disabled', channel: delivery.ok ? mockNotif.channel : null, body });
     res.json({ report: body, delivery });
 });
-app.get('/api/reports/log', (req, res) => res.json({ runs: mockReportLog }));
+app.get('/api/reports/log', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseReportLogQuery(req.query));
+    if (!query) return;
+    res.json({ runs: mockReportLog.slice(0, query.limit) });
+});
 
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');
 app.get('/manifest.webmanifest', (req, res) => res.json({
@@ -692,7 +839,9 @@ app.get('/api/wiim/history', (req, res) => {
 });
 
 app.get('/api/wiim/status', (req, res) => {
-    const type = req.query.type || 'all';
+    const query = validatedInput(res, () => queryInput.parseWiimStatusQuery(req.query));
+    if (!query) return;
+    const { type } = query;
     const out = {};
     if (type === 'all' || type === 'play') {
         out.player = {
@@ -728,6 +877,12 @@ app.get('/api/wiim/status', (req, res) => {
     });
 });
 
+app.get('/api/wiim/art', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseWiimArtQuery(req.query));
+    if (!query) return;
+    res.status(404).end();
+});
+
 // 查詢型指令回擬真 JSON，其餘回 OK；production/mock 共用同一 allowlist 與 method contract。
 const mockWiimCommandResults = {
         getStatusEx: { DeviceName: 'WiiM Amp Testbed', firmware: '4.8.618254', hardware: 'AmlogicA113', project: 'WiiM_Amp', PCB_version: '2', MAC: '00:22:6C:AA:BB:CC', uuid: 'FF31F09E-MOCK', netstat: 2, date: '2026:07:10', time: '09:30:00' },
@@ -748,6 +903,8 @@ registerWiimCommandRoutes(app, {
 });
 
 app.delete('/api/wiim/history', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseEmptyBody(req.body));
+    if (!input) return;
     mockWiimHistory = [];
     res.json({ ok: true });
 });
@@ -791,8 +948,9 @@ app.get('/api/ups/status', (req, res) => res.json({
     battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 30
 }));
 app.get('/api/ups/history', (req, res) => {
-    const hours = parseInt(req.query.hours || '24', 10);
-    const cutoff = Date.now() - hours * 3600000;
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const cutoff = Date.now() - query.hours * 3600000;
     res.json({ history: mockUpsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
 });
 app.get('/api/ups/events', (req, res) => res.json({ events: mockUpsEvents }));
@@ -805,18 +963,99 @@ app.get('/api/ups/csv', (req, res) => {
     res.send(csv);
 });
 
+const mockLinuxHistory = Array.from({ length: 96 }, (_, index) => ({
+    t: new Date(Date.now() - (95 - index) * 15 * 60 * 1000).toISOString(),
+    cpu: 12 + (index % 9),
+    temp: 43 + (index % 5),
+    mem: 38 + (index % 4),
+    load: Number((0.2 + (index % 6) / 10).toFixed(1))
+}));
+app.get('/api/linux/stats', (_req, res) => res.json({
+    hostname: 'smarthub-mock-linux', cpuUsage: 18, cpuTemp: 45, memUsagePct: 40,
+    diskUsagePct: 31, load: [0.4, 0.3, 0.2], uptime: 'up 14d 3h', source: 'mock'
+}));
+app.get('/api/linux/history', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const cutoff = Date.now() - query.hours * 3600000;
+    res.json({ data: mockLinuxHistory.filter(point => Date.parse(point.t) >= cutoff), source: 'mock' });
+});
+
+/* ===== AdGuard Home (模擬) ===== */
+let mockAdguardProtection = true;
+const mockAdguardQueryLog = Array.from({ length: 40 }, (_, index) => {
+    const blocked = index % 3 === 0;
+    return {
+        time: new Date(Date.now() - index * 45_000).toISOString(),
+        domain: blocked ? `tracker-${index}.example` : `service-${index}.example`,
+        type: 'A',
+        client: `192.168.1.${100 + (index % 20)}`,
+        blocked,
+        reason: blocked ? 'FilteredBlackList' : 'NotFilteredNotFound',
+        elapsedMs: Number((0.3 + (index % 7) * 0.1).toFixed(1))
+    };
+});
+app.get('/api/adguard/overview', (_req, res) => res.json({
+    status: { version: 'v0.107.55-mock', protection_enabled: mockAdguardProtection },
+    stats: {
+        num_dns_queries: 12_480,
+        num_blocked_filtering: 2_147,
+        avg_processing_time: 0.00082,
+        top_blocked_domains: [{ 'telemetry.example': 312 }, { 'ads.example': 184 }],
+        top_clients: [{ '192.168.1.100': 3_214 }, { '192.168.1.102': 2_401 }]
+    },
+    source: 'adguard'
+}));
+app.get('/api/adguard/querylog', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseAdGuardQueryLogQuery(req.query));
+    if (!query) return;
+    const entries = query.filtered
+        ? mockAdguardQueryLog.filter(entry => entry.blocked)
+        : mockAdguardQueryLog;
+    res.json({ entries: entries.slice(0, query.limit), source: 'adguard' });
+});
+app.post('/api/adguard/protection', (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseSingleBoolean(req.body, 'enabled'));
+    if (!input) return;
+    mockAdguardProtection = input.enabled;
+    res.json({ ok: true, enabled: mockAdguardProtection });
+});
+
 /* ===== 連線設定 (模擬) ===== */
-const MOCK_CONNECTION_FILE = path.join(__dirname, 'data', 'mock-connections.json');
-const mockConnDefaults = { UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4', UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo', NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '', NAS_MONITOR_URL: '', WIIM_IP: '192.168.0.170', UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '' };
-const mockSecretDefaults = { SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false, NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false };
+const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'mock-connections.json');
+const mockConnDefaults = {
+    UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
+    UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo',
+    NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '',
+    NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '192.168.0.170',
+    UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
+    PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
+    ADGUARD_HOST: '', ADGUARD_PORT: '80', ADGUARD_USER: '',
+    LINUX_HOST: '', LINUX_SSH_PORT: '22', LINUX_SSH_USER: ''
+};
+const mockSecretDefaults = {
+    SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false,
+    NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false, PPB_PASSWORD: false,
+    ADGUARD_PASSWORD: false, LINUX_SSH_PASSWORD: false
+};
+const MOCK_CONN_FIELDS = [
+    ...Object.keys(mockConnDefaults).map(key => ({ key })),
+    ...Object.keys(mockSecretDefaults).map(key => ({ key, secret: true }))
+];
 
 // Mock Server 也保留「已填過」的連線狀態，重啟開發伺服器時不用重填；密碼本身不會寫入。
 function loadMockConnections() {
     try {
         const saved = JSON.parse(fs.readFileSync(MOCK_CONNECTION_FILE, 'utf8'));
+        const savedFields = writeInput.isPlainObject(saved.fields) ? saved.fields : {};
+        const savedSecrets = writeInput.isPlainObject(saved.secretsSet) ? saved.secretsSet : {};
         return {
-            fields: { ...mockConnDefaults, ...(saved.fields || {}) },
-            secretsSet: { ...mockSecretDefaults, ...(saved.secretsSet || {}) }
+            fields: Object.fromEntries(Object.entries(mockConnDefaults).map(([key, fallback]) => [
+                key, typeof savedFields[key] === 'string' ? savedFields[key] : fallback
+            ])),
+            secretsSet: Object.fromEntries(Object.keys(mockSecretDefaults).map(key => [
+                key, savedSecrets[key] === true
+            ]))
         };
     } catch { return { fields: { ...mockConnDefaults }, secretsSet: { ...mockSecretDefaults } }; }
 }
@@ -843,14 +1082,15 @@ app.get('/api/connections/status', (_req, res) => res.json({
     ]
 }));
 app.post('/api/connections', (req, res) => {
-    let n = 0;
-    for (const [k, v] of Object.entries(req.body || {})) {
-        if (typeof v !== 'string' || !v.trim()) continue;
-        if (k in mockConnSecrets) mockConnSecrets[k] = true; else if (k in mockConn) mockConn[k] = v.trim();
-        n++;
+    const updates = validatedInput(res, () => writeInput.parseConnectionUpdates(req.body, MOCK_CONN_FIELDS));
+    if (!updates) return;
+    for (const [key, value] of Object.entries(updates)) {
+        if (Object.hasOwn(mockConnSecrets, key)) mockConnSecrets[key] = true;
+        else mockConn[key] = value;
     }
-    if (n) saveMockConnections();
-    res.json({ ok: true, changed: n });
+    const changed = Object.keys(updates).length;
+    if (changed) saveMockConnections();
+    res.json({ ok: true, changed });
 });
 
 app.get('/api/alerts/critical', (_req, res) => res.json({ alerts: [], source: 'mock' }));
@@ -893,5 +1133,26 @@ app.get('/api/system/status', (_req, res) => {
     });
 });
 
-const PORT = 3005;
+app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    return mockApiError(res, new Error(`Route not found: ${req.method} ${req.path}`), {
+        status: 404,
+        code: ERROR_CODES.API_NOT_FOUND,
+        publicMessage: 'API endpoint not found'
+    });
+});
+
+app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+    const isTooLarge = error && (error.type === 'entity.too.large' || error.status === 413);
+    const isJsonError = error && (error.type === 'entity.parse.failed' || error instanceof SyntaxError);
+    return mockApiError(res, error, {
+        status: isTooLarge ? 413 : isJsonError ? 400 : 500,
+        code: isTooLarge || isJsonError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+        publicMessage: isTooLarge ? 'JSON request body exceeds 256 KiB'
+            : isJsonError ? 'Invalid JSON request body' : 'Internal server error'
+    });
+});
+
+const PORT = process.env.PORT || 3005;
 app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));
