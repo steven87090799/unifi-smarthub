@@ -21,6 +21,7 @@ const { SystemMonitor } = require('./observability/system-monitor');
 const { registerHealthRoutes } = require('./observability/health-routes');
 const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
+const { TelegramCommandBot } = require('./telegram-command-bot');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 const APP_STARTED_AT = Date.now();
@@ -1016,17 +1017,17 @@ async function readDockerLogFindings(containers, { lines = 120, maxContainers = 
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
 const NOTIF_DEFAULTS = {
-    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '',
+    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', telegramCommandsEnabled: false,
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
-    triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, clientSignalAlert: 75,
+    triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
-    triggerWiimOffline: false, triggerWiimHighVolume: false, wiimVolumeAlert: 80, triggerBlockAction: true,
+    triggerWiimOffline: false, triggerWiimHighVolume: false, triggerWiimPlaybackChange: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85,
     triggerNasDiskHealth: true, triggerNasOffline: false,
     triggerNasHighCpu: false, nasCpuAlert: 90, triggerNasHighMemory: false, nasMemoryAlert: 90,
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,
     triggerWanDown: false, triggerWanLatency: false, wanLatencyAlert: 100,
-    triggerUnifiOffline: false, triggerNasLog: true,
+    triggerUnifiOffline: false, triggerNasLog: true, triggerNasSleepWake: false,
     triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerUpsOffline: true,
     triggerAdgProtection: true, triggerAdgOffline: false, triggerAdgHighBlockRate: false, adgBlockRateAlert: 50,
     triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90, triggerLinuxHighCpu: false, linuxCpuAlert: 90, triggerLinuxHighMemory: false, linuxMemoryAlert: 90, triggerLinuxHighLoad: false, linuxLoadAlert: 4,
@@ -1142,19 +1143,19 @@ async function notify(title, body) {
 app.get('/api/notifications/settings', (req, res) => {
     const s = loadNotifSettings();
     res.json({
-        enabled: s.enabled, channel: s.channel, chatId: s.chatId,
+        enabled: s.enabled, channel: s.channel, chatId: s.chatId, telegramCommandsEnabled: !!s.telegramCommandsEnabled,
         triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts, triggerWiimTemp: s.triggerWiimTemp !== false,
         triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
-        triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerClientWeakSignal: !!s.triggerClientWeakSignal, clientSignalAlert: s.clientSignalAlert ?? 75,
+        triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerClientWeakSignal: !!s.triggerClientWeakSignal, triggerClientConnectivity: !!s.triggerClientConnectivity, clientSignalAlert: s.clientSignalAlert ?? 75,
         triggerNetworkDeviceOffline: !!s.triggerNetworkDeviceOffline, triggerWifiSsidChange: !!s.triggerWifiSsidChange, triggerUnifiUpgrade: !!s.triggerUnifiUpgrade, triggerCloudOffline: !!s.triggerCloudOffline,
-        triggerWiimOffline: !!s.triggerWiimOffline, triggerWiimHighVolume: !!s.triggerWiimHighVolume, wiimVolumeAlert: s.wiimVolumeAlert ?? 80, triggerBlockAction: s.triggerBlockAction !== false,
+        triggerWiimOffline: !!s.triggerWiimOffline, triggerWiimHighVolume: !!s.triggerWiimHighVolume, triggerWiimPlaybackChange: !!s.triggerWiimPlaybackChange, wiimVolumeAlert: s.wiimVolumeAlert ?? 80, triggerBlockAction: s.triggerBlockAction !== false,
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
         triggerNasDiskHealth: s.triggerNasDiskHealth !== false, triggerNasOffline: !!s.triggerNasOffline,
         triggerNasHighCpu: !!s.triggerNasHighCpu, nasCpuAlert: s.nasCpuAlert ?? 90, triggerNasHighMemory: !!s.triggerNasHighMemory, nasMemoryAlert: s.nasMemoryAlert ?? 90,
         triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75,
         triggerUcgHighCpu: !!s.triggerUcgHighCpu, ucgCpuAlert: s.ucgCpuAlert ?? 90, triggerUcgHighMemory: !!s.triggerUcgHighMemory, ucgMemoryAlert: s.ucgMemoryAlert ?? 90, triggerUcgDisk: !!s.triggerUcgDisk, ucgDiskAlert: s.ucgDiskAlert ?? 85,
-        triggerWanDown: !!s.triggerWanDown, triggerWanLatency: !!s.triggerWanLatency, wanLatencyAlert: s.wanLatencyAlert ?? 100, triggerUnifiOffline: !!s.triggerUnifiOffline, triggerNasLog: !!s.triggerNasLog,
+        triggerWanDown: !!s.triggerWanDown, triggerWanLatency: !!s.triggerWanLatency, wanLatencyAlert: s.wanLatencyAlert ?? 100, triggerUnifiOffline: !!s.triggerUnifiOffline, triggerNasLog: !!s.triggerNasLog, triggerNasSleepWake: !!s.triggerNasSleepWake,
         triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsLowRuntime: !!s.triggerUpsLowRuntime, upsRuntimeAlertMin: s.upsRuntimeAlertMin ?? 10, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange, triggerUpsOffline: s.triggerUpsOffline !== false,
         triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline, triggerAdgHighBlockRate: !!s.triggerAdgHighBlockRate, adgBlockRateAlert: s.adgBlockRateAlert ?? 50,
         triggerLinuxTemp: s.triggerLinuxTemp !== false, linuxTempAlert: s.linuxTempAlert ?? 70,
@@ -1172,12 +1173,13 @@ app.post('/api/notifications/settings', (req, res) => {
     const s = loadNotifSettings();
     const b = req.body || {};
     if (typeof b.enabled === 'boolean') s.enabled = b.enabled;
+    if (typeof b.telegramCommandsEnabled === 'boolean') s.telegramCommandsEnabled = b.telegramCommandsEnabled;
     if (b.channel) s.channel = b.channel;
     if (typeof b.chatId === 'string') s.chatId = b.chatId;
     if (typeof b.triggerThreats === 'boolean') s.triggerThreats = b.triggerThreats;
     if (typeof b.triggerNasAlerts === 'boolean') s.triggerNasAlerts = b.triggerNasAlerts;
     if (typeof b.triggerWiimTemp === 'boolean') s.triggerWiimTemp = b.triggerWiimTemp;
-    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange', 'triggerClientWeakSignal', 'triggerNetworkDeviceOffline', 'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerWiimOffline', 'triggerWiimHighVolume', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerNasHighCpu', 'triggerNasHighMemory', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerUcgHighMemory', 'triggerUcgDisk', 'triggerWanDown', 'triggerWanLatency', 'triggerUnifiOffline', 'triggerNasLog', 'triggerUpsHighLoad', 'triggerUpsLowRuntime', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerUpsOffline', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerAdgHighBlockRate', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerLinuxHighCpu', 'triggerLinuxHighMemory', 'triggerLinuxHighLoad', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHealth', 'triggerDockerRestart', 'triggerDockerInventory', 'triggerDockerOom', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery', 'triggerSystemStartup'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
+    ['triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange', 'triggerClientWeakSignal', 'triggerClientConnectivity', 'triggerNetworkDeviceOffline', 'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerWiimOffline', 'triggerWiimHighVolume', 'triggerWiimPlaybackChange', 'triggerBlockAction', 'triggerNasDiskTemp', 'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerNasHighCpu', 'triggerNasHighMemory', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerUcgHighMemory', 'triggerUcgDisk', 'triggerWanDown', 'triggerWanLatency', 'triggerUnifiOffline', 'triggerNasLog', 'triggerNasSleepWake', 'triggerUpsHighLoad', 'triggerUpsLowRuntime', 'triggerUpsVoltAbnormal', 'triggerUpsSourceChange', 'triggerUpsOffline', 'triggerAdgProtection', 'triggerAdgOffline', 'triggerAdgHighBlockRate', 'triggerLinuxTemp', 'triggerLinuxOffline', 'triggerLinuxDisk', 'triggerLinuxHighCpu', 'triggerLinuxHighMemory', 'triggerLinuxHighLoad', 'triggerDockerCriticalLog', 'triggerDockerErrorLog', 'triggerDockerState', 'triggerDockerHealth', 'triggerDockerRestart', 'triggerDockerInventory', 'triggerDockerOom', 'triggerDockerHighCpu', 'triggerDockerHighMemory', 'triggerSystemCritical', 'triggerSystemWarning', 'triggerSystemRecovery', 'triggerSystemStartup'].forEach(k => { if (typeof b[k] === 'boolean') s[k] = b[k]; });
     ['clientSignalAlert', 'wiimVolumeAlert', 'nasDiskTempAlert', 'nasSpaceAlert', 'nasCpuAlert', 'nasMemoryAlert', 'ucgTempAlert', 'ucgCpuAlert', 'ucgMemoryAlert', 'ucgDiskAlert', 'wanLatencyAlert', 'upsLoadAlert', 'upsRuntimeAlertMin', 'upsVoltDeviationPct', 'adgBlockRateAlert', 'linuxTempAlert', 'linuxDiskAlert', 'linuxCpuAlert', 'linuxMemoryAlert', 'linuxLoadAlert', 'dockerCpuAlert', 'dockerMemoryAlert'].forEach(k => { if (typeof b[k] === 'number' && b[k] > 0) s[k] = b[k]; });
     if (b.webhookUrl) s.webhookUrl = b.webhookUrl;   // 留空不覆寫
     if (b.botToken) s.botToken = b.botToken;
@@ -1415,7 +1417,7 @@ async function notificationWatcher() {
         }
     }
     // NAS 嚴重警報
-    if (s.triggerNasAlerts && nasMonConfigured()) {
+    if (s.triggerNasAlerts && nasMonAdvancedConfigured()) {
         try {
             const data = await nasMonGet('/api/alerts/events', { hours: 24 });
             const events = Array.isArray(data) ? data : (data.events || data.data || []);
@@ -1452,14 +1454,21 @@ async function notificationWatcher() {
         }
     }
     // 新設備加入網路：只在 UniFi 已配發 IP 後通知，避免收到「取得中」且錯過後續 IP。
-    if (s.triggerNewClient || s.triggerClientIpChange || s.triggerClientWeakSignal) {
+    if (s.triggerNewClient || s.triggerClientIpChange || s.triggerClientWeakSignal || s.triggerClientConnectivity) {
         try {
             const cookie = await getLocalSession();
             const sta = await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } });
+            const seenClients = new Set();
             for (const c of (sta.data.data || [])) {
                 if (!c.mac) continue;
+                seenClients.add(c.mac);
                 const ip = String(c.ip || '').trim();
                 const rssi = Number(c.rssi);
+                const presence = clientPresenceStates.get(c.mac);
+                if (s.triggerClientConnectivity && notifBootstrapped && presence && presence.online === false) {
+                    await notify('✅ 網路設備已重新連線', `${c.name || c.hostname || c.mac}\nIP ${ip || '尚未取得'} · ${c.is_wired ? '有線' : 'WiFi'}`);
+                }
+                clientPresenceStates.set(c.mac, { online: true, misses: 0, name: c.name || c.hostname || c.mac, ip });
                 if (s.triggerClientWeakSignal && !c.is_wired && Number.isFinite(rssi) && rssi <= -(s.clientSignalAlert ?? 75)
                     && Date.now() - (clientSignalAlertTs.get(c.mac) || 0) > 30 * 60 * 1000) {
                     clientSignalAlertTs.set(c.mac, Date.now());
@@ -1484,6 +1493,15 @@ async function notificationWatcher() {
                 clientIpByMac.set(c.mac, ip);
                 if (s.triggerNewClient) await notify('📱 新設備連上網路', `${c.name || c.hostname || c.mac}\nIP ${ip} · ${c.is_wired ? '有線' : 'WiFi'}`);
             }
+            if (s.triggerClientConnectivity) {
+                for (const [mac, presence] of clientPresenceStates) {
+                    if (seenClients.has(mac) || presence.online === false) continue;
+                    presence.misses = Number(presence.misses || 0) + 1;
+                    if (presence.misses < 2) continue; // 連續兩輪缺席才視為離線，避免單次漏報造成誤警報
+                    presence.online = false;
+                    if (notifBootstrapped) await notify('📴 網路設備已離線', `${presence.name || mac}\n最後 IP ${presence.ip || '--'} · 連續兩次未出現在 UniFi 活躍客戶端清單`);
+                }
+            }
         } catch (error) {
             logRecoverableFailure('watcher.newClients', error, { module: 'watcher.notifications', function: 'scanNewClients', code: ERROR_CODES.EXT_UNIFI_FAILED });
         }
@@ -1501,7 +1519,7 @@ async function notificationWatcher() {
         }
         wiimWasOnline = ok;
     }
-    if (s.triggerWiimHighVolume) {
+    if (s.triggerWiimHighVolume || s.triggerWiimPlaybackChange) {
         try {
             const raw = await wiimGet('getPlayerStatus');
             const status = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {});
@@ -1511,6 +1529,14 @@ async function notificationWatcher() {
                 lastWiimVolumeTs = Date.now();
                 await notify('🔊 WiiM 音量過高', `播放中音量 ${volume}% (門檻 ${s.wiimVolumeAlert ?? 80}%)`);
             }
+            const playback = { status: String(status.status || 'unknown'), mode: String(status.mode || '') };
+            if (s.triggerWiimPlaybackChange && wiimPlaybackState && notifBootstrapped
+                && (playback.status !== wiimPlaybackState.status || playback.mode !== wiimPlaybackState.mode)) {
+                const stateLabels = { play: '開始播放', pause: '暫停播放', stop: '停止播放', loading: '載入中' };
+                const modeLabels = { '1': 'AirPlay', '2': 'DLNA', '10': 'WiFi 串流', '11': 'USB', '31': 'Spotify Connect', '32': 'TIDAL Connect', '40': 'Line-In', '41': '藍牙', '43': '光纖', '47': 'Line-In 2', '51': '同軸' };
+                await notify('🎵 WiiM 播放狀態變更', `${stateLabels[playback.status] || playback.status}\n訊源 ${modeLabels[playback.mode] || playback.mode || '未知'} · 音量 ${Number.isFinite(volume) ? volume + '%' : '--'}`);
+            }
+            wiimPlaybackState = playback;
         } catch (error) {
             logRecoverableFailure('watcher.wiimVolume', error, { module: 'watcher.notifications', function: 'checkWiimVolume', code: ERROR_CODES.EXT_WIIM_FAILED });
         }
@@ -1547,16 +1573,31 @@ async function notificationWatcher() {
             logRecoverableFailure('watcher.nasCapacity', error, { module: 'watcher.notifications', function: 'checkNasCapacity', code: ERROR_CODES.EXT_NAS_FAILED });
         }
     }
-    // NAS 系統日誌 — 推播 UGOS 日誌中心所有事件（與前端 NAS 頁「系統日誌與警報」區塊同步）
-    if (s.triggerNasLog && nasConfigured()) {
+    // NAS 系統日誌；可只訂閱硬碟休眠/喚醒，或訂閱其餘所有事件。
+    if ((s.triggerNasLog || s.triggerNasSleepWake) && nasConfigured()) {
         try {
             const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 50, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
+            const logs = data.log_list || [];
+            if (s.triggerNasSleepWake) {
+                const sleepLogs = logs.filter(log => /sleeping/i.test(String(log.content || '')));
+                for (const log of sleepLogs) {
+                    const id = log.id || log.log_id || `${log.create_time}:${log.content}`;
+                    if (notifiedNasSleepWakeIds.has(id)) continue;
+                    notifiedNasSleepWakeIds.add(id);
+                    if (!notifBootstrapped) continue;
+                    const drive = (String(log.content || '').match(/Hard Drive (\d+)/i) || [])[1];
+                    const woke = /stopped/i.test(String(log.content || ''));
+                    await notify(woke ? '💽 NAS 硬碟已喚醒' : '💤 NAS 硬碟進入休眠', `硬碟${drive || '?'}\n${new Date(Number(log.create_time) * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`);
+                }
+            }
             // NAS 事件一旦進入 SmartHub 就立即呼叫手機推播，不經過歷史資料的記憶體緩衝。
-            await forwardNasLogs(data.log_list || [], {
-                knownIds: notifiedNasLogIds,
-                bootstrapped: notifBootstrapped,
-                notify
-            });
+            if (s.triggerNasLog) {
+                await forwardNasLogs(s.triggerNasSleepWake ? logs.filter(log => !/sleeping/i.test(String(log.content || ''))) : logs, {
+                    knownIds: notifiedNasLogIds,
+                    bootstrapped: notifBootstrapped,
+                    notify
+                });
+            }
         } catch (error) {
             logRecoverableFailure('watcher.nasLogs', error, { module: 'watcher.notifications', function: 'scanNasLogs', code: ERROR_CODES.EXT_NAS_FAILED });
         }
@@ -1701,8 +1742,8 @@ async function notificationWatcher() {
         }
     }
     // 去重 Set 上限維護 (防長期運行無限成長；iOS 隨機 MAC 會讓 knownClientMacs 持續累積)
-    capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(knownClientMacs, 4000);
-    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000);
+    capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(notifiedNasSleepWakeIds); capSet(knownClientMacs, 4000);
+    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(clientPresenceStates, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000);
     notifBootstrapped = true;
 }
 const UCG_CPU_ALERT_SAMPLES = 3;
@@ -1710,12 +1751,15 @@ let lastNasDiskTempTs = 0, lastNasSpaceTs = 0, lastNasDiskHealthCheckTs = 0, las
 const knownClientMacs = new Set();
 const clientIpByMac = new Map();
 const clientSignalAlertTs = new Map();
+const clientPresenceStates = new Map();
 const networkDeviceStates = new Map();
 const wifiSsidStates = new Map();
 const unifiUpgradeAlertTs = new Map();
 const notifiedNasLogIds = new Set();
+const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0, lastWiimVolumeTs = 0;
+let wiimPlaybackState = null;
 let adgWasOn = null, lastAdgBlockRateTs = 0, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0, lastLinuxCpuTs = 0, lastLinuxMemoryTs = 0, lastLinuxLoadTs = 0;
 let nasWasOnline = null, unifiWasOnline = null;
 let cloudLastOnline = null;
@@ -2138,6 +2182,8 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
             .map(l => ({ t: l.create_time, drive: (l.content.match(/Hard Drive (\d+)/) || [])[1], action: /stopped/i.test(l.content) ? 'wake' : 'sleep' }))
             .filter(e => e.drive).sort((a, b) => a.t - b.t);
         const open = {};   // drive → 開始休眠的 epoch
+        const awakeOpen = {}; // drive → 最近一次喚醒 epoch，用下一次 sleep 算出實際運轉時段
+        const awakeSessions = [];
         const byDay = {};  // 'YYYY-MM-DD' → { driveN: { sec, n } }
         const wakeEvents = {}; // day → [{drive, t}]
         // 日期鍵必須零填補 (YYYY-MM-DD)：原本 zh-TW 格式 '2026/7/12' 用字串排序會排在 '2026/7/2' 前面，
@@ -2145,7 +2191,13 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
         const dayKey = ts => new Date(ts * 1000).toLocaleDateString('en-CA', { timeZone: 'Asia/Taipei' });
         const ensure = (d, drv) => { byDay[d] = byDay[d] || {}; byDay[d][drv] = byDay[d][drv] || { sec: 0, n: 0, longest: 0 }; return byDay[d][drv]; };
         for (const e of sw) {
-            if (e.action === 'sleep') open[e.drive] = e.t;
+            if (e.action === 'sleep') {
+                if (awakeOpen[e.drive] && e.t > awakeOpen[e.drive]) {
+                    awakeSessions.push({ drive: '硬碟' + e.drive, start: awakeOpen[e.drive], end: e.t, durationMin: Math.round((e.t - awakeOpen[e.drive]) / 60), ongoing: false });
+                    awakeOpen[e.drive] = null;
+                }
+                open[e.drive] = e.t;
+            }
             else if (e.action === 'wake') {
                 const day = dayKey(e.t);
                 (wakeEvents[day] = wakeEvents[day] || []).push({ drive: '硬碟' + e.drive, t: e.t * 1000 });
@@ -2165,8 +2217,13 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
                     rec0.n++; rec0.longest = Math.max(rec0.longest, totalDur);
                     open[e.drive] = null;
                 }
+                awakeOpen[e.drive] = e.t;
             }
         }
+        const nowSec = Math.floor(Date.now() / 1000);
+        Object.entries(awakeOpen).forEach(([drive, start]) => {
+            if (start && nowSec > start) awakeSessions.push({ drive: '硬碟' + drive, start, end: nowSec, durationMin: Math.round((nowSec - start) / 60), ongoing: true });
+        });
         const days = Object.keys(byDay).sort().reverse().slice(0, 14).map(day => ({
             day,
             drives: Object.entries(byDay[day]).map(([name, v]) => ({
@@ -2175,9 +2232,9 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
                 longestMin: Math.round(v.longest / 60),
                 sleepPct: Math.min(100, Math.round(v.sec / 86400 * 100))
             })).sort((a, b) => a.name.localeCompare(b.name)),
-            wakes: (wakeEvents[day] || []).map(w => ({ drive: w.drive, time: new Date(w.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Taipei' }) }))
+            wakes: (wakeEvents[day] || []).map(w => ({ drive: w.drive, time: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Taipei' }).format(new Date(w.t)) }))
         }));
-        res.json({ days, source: 'nas_api' });
+        res.json({ days, awakeSessions: awakeSessions.sort((a, b) => b.start - a.start).slice(0, 200), source: 'nas_api' });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_NAS_FAILED, module: 'api.nas', function: 'getNasSleepStats', logMessage: 'Failed to fetch NAS sleep statistics' });
     }
@@ -2333,13 +2390,16 @@ function buildNasMonClient() {
 }
 let { url: NASMON_URL, client: nasMonClient } = buildNasMonClient();
 function nasMonConfigured() { return !!NASMON_URL; }
+function nasMonAdvancedConfigured() {
+    return nasMonConfigured() && String(process.env.NAS_MONITOR_MODE || 'full').toLowerCase() !== 'docker_only';
+}
 async function nasMonGet(p, params) { const r = await nasMonClient.get(p, { params }); return r.data; }
 
 // 通用代理：優先呼叫系統 B，失敗或未設定時回退 fallback
 async function nasMonProxy(res, path, params, fallback) {
     // 誠實模式：未設定就回空殼 (保留欄位結構、陣列清空)，絕不回傳模擬數據
     const emptyLike = v => Array.isArray(v) ? [] : (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, emptyLike(x)])) : null);
-    if (!nasMonConfigured()) return res.json({ ...emptyLike(fallback), source: 'not_configured' });
+    if (!nasMonAdvancedConfigured()) return res.json({ ...emptyLike(fallback), source: 'not_configured' });
     try {
         const data = await nasMonGet(path, params);
         res.json({ data, source: 'nas_monitor' });
@@ -2398,7 +2458,7 @@ app.get('/api/nas/traffic-summary', (req, res) => nasMonProxy(res, '/api/traffic
 // 23. 流量歷史 — 優先系統 B；否則用自建 NAS 取樣歷史
 app.get('/api/nas/traffic-history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
-    if (nasMonConfigured()) return nasMonProxy(res, '/api/traffic/history', { hours }, { data: [] });
+    if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/traffic/history', { hours }, { data: [] });
     const data = nasHistorySince(hours).map(p => ({ t: p.t, upload_mbps: p.up_mbps, download_mbps: p.down_mbps }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
@@ -2406,7 +2466,7 @@ app.get('/api/nas/traffic-history', (req, res) => {
 // 24. 系統歷史 (CPU / 記憶體 / 溫度)
 app.get('/api/nas/system-history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
-    if (nasMonConfigured()) return nasMonProxy(res, '/api/system/history', { hours }, { data: [] });
+    if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/system/history', { hours }, { data: [] });
     const data = nasHistorySince(hours).map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature, fan_rpm: p.fan_rpm ?? null }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
@@ -2414,7 +2474,7 @@ app.get('/api/nas/system-history', (req, res) => {
 // 25. 溫度歷史 (各硬碟溫度；此機型 API 無風扇轉速)
 app.get('/api/nas/temperature-history', (req, res) => {
     const hours = parseFloat(req.query.hours || '24');
-    if (nasMonConfigured()) return nasMonProxy(res, '/api/temperature/history', { hours }, { data: [] });
+    if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/temperature/history', { hours }, { data: [] });
     const pts = nasHistorySince(hours);
     // 收集所有出現過的硬碟名稱，供前端動態畫線
     const diskNames = [...new Set(pts.flatMap(p => Object.keys(p.disks || {})))];
@@ -2425,7 +2485,7 @@ app.get('/api/nas/temperature-history', (req, res) => {
 // 26. 儲存容量歷史
 app.get('/api/nas/storage-history', (req, res) => {
     const hours = parseFloat(req.query.hours || '720');
-    if (nasMonConfigured()) return nasMonProxy(res, '/api/storage/history', { hours }, { data: [] });
+    if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/storage/history', { hours }, { data: [] });
     const data = nasHistorySince(hours).filter(p => p.used_gb != null).map(p => ({ t: p.t, used_gb: p.used_gb, total_gb: p.total_gb }));
     res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
@@ -2446,7 +2506,7 @@ app.get('/api/nas/downtime', (req, res) => {
 
 // 29. 警報事件
 app.get('/api/nas/alerts', async (req, res) => {
-    if (!nasMonConfigured()) return res.json({ events: [], source: 'not_configured' });
+    if (!nasMonAdvancedConfigured()) return res.json({ events: [], source: 'not_configured' });
     try {
         const data = await nasMonGet('/api/alerts/events', { hours: req.query.hours || 24 });
         res.json({ events: Array.isArray(data) ? data : (data.events || data.data || []), source: 'nas_monitor' });
@@ -2458,7 +2518,7 @@ app.get('/api/nas/alerts', async (req, res) => {
 
 // 30. 確認 (清除) 警報
 app.post('/api/nas/alerts/:id/ack', async (req, res) => {
-    if (!nasMonConfigured()) {
+    if (!nasMonAdvancedConfigured()) {
         return apiError(res, new Error('NAS Monitor is not configured'), {
             status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'ackAlert'
         });
@@ -2473,7 +2533,7 @@ app.post('/api/nas/alerts/:id/ack', async (req, res) => {
 
 // 31. 警報閾值設定 (系統 B)：面板直接管理各指標的觸發門檻，取代目前「只能看不能改」
 app.get('/api/nas/alerts/config', async (req, res) => {
-    if (!nasMonConfigured()) return res.json({ config: [], source: 'not_configured' });
+    if (!nasMonAdvancedConfigured()) return res.json({ config: [], source: 'not_configured' });
     try {
         const data = await nasMonGet('/api/alerts/config');
         res.json({ config: Array.isArray(data) ? data : (data.config || data.data || []), source: 'nas_monitor' });
@@ -2483,7 +2543,7 @@ app.get('/api/nas/alerts/config', async (req, res) => {
     }
 });
 app.post('/api/nas/alerts/config', async (req, res) => {
-    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+    if (!nasMonAdvancedConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
         status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'saveAlertConfig'
     });
     try {
@@ -2494,7 +2554,7 @@ app.post('/api/nas/alerts/config', async (req, res) => {
     }
 });
 app.delete('/api/nas/alerts/config/:metric', async (req, res) => {
-    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+    if (!nasMonAdvancedConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
         status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'deleteAlertConfig'
     });
     try {
@@ -2512,7 +2572,7 @@ app.delete('/api/nas/alerts/config/:metric', async (req, res) => {
 const sseClients = new Set();
 let sseUpstreamReq = null, sseReconnectTimer = null;
 function sseConnectUpstream() {
-    if (!nasMonConfigured() || sseUpstreamReq || sseClients.size === 0) return;
+    if (!nasMonAdvancedConfigured() || sseUpstreamReq || sseClients.size === 0) return;
     const base = NASMON_URL.replace(/\/$/, '');
     const key = process.env.NAS_MONITOR_API_KEY || '';
     axios.get(`${base}/api/stream`, {
@@ -2531,7 +2591,7 @@ function scheduleSseReconnect() {
     sseReconnectTimer = setTimeout(() => { sseReconnectTimer = null; sseConnectUpstream(); }, 10000);
 }
 app.get('/api/nas/stream', (req, res) => {
-    if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
+    if (!nasMonAdvancedConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
         status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'stream'
     });
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -2566,7 +2626,7 @@ const CONN_FIELDS = [
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
-    { key: 'NAS_MONITOR_URL' }, { key: 'NAS_MONITOR_API_KEY', secret: true },
+    { key: 'NAS_MONITOR_URL' }, { key: 'NAS_MONITOR_API_KEY', secret: true }, { key: 'NAS_MONITOR_MODE' },
     { key: 'WIIM_IP' },
     { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
@@ -2932,6 +2992,146 @@ app.post('/api/reports/run', async (req, res) => {
     catch (error) { apiError(res, error, { code: ERROR_CODES.API_INTERNAL_ERROR, module: 'api.reports', function: 'runNow', logMessage: 'Manual report generation failed' }); }
 });
 app.get('/api/reports/log', (req, res) => res.json({ runs: historyDb.listReportRuns(req.query.limit) }));
+
+/* ===================== Telegram 指令中心 ===================== */
+const fmtBotPct = value => value == null || !Number.isFinite(Number(value)) ? '--' : `${Number(value).toFixed(1)}%`;
+const fmtBotBytes = value => {
+    const bytes = Number(value) || 0;
+    return bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(2)} GB` : `${(bytes / 1048576).toFixed(1)} MB`;
+};
+async function telegramNetworkSummary() {
+    const cookie = await getLocalSession();
+    const [staRes, healthRes, wlanRes] = await Promise.all([
+        unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { Cookie: cookie } }),
+        unifiClient.get('/proxy/network/api/s/default/stat/health', { headers: { Cookie: cookie } }),
+        unifiClient.get('/proxy/network/api/s/default/rest/wlanconf', { headers: { Cookie: cookie } }).catch(() => ({ data: { data: [] } }))
+    ]);
+    const clients = staRes.data.data || [];
+    const wan = (healthRes.data.data || []).find(x => x.subsystem === 'www') || {};
+    const wlans = wlanRes.data.data || [];
+    return [
+        '🌐 網路即時狀態',
+        `• WAN：${wan.status === 'ok' ? '🟢 正常' : `⚠️ ${wan.status || '未知'}`} · 延遲 ${wan.latency ?? '--'} ms`,
+        `• 線上設備：${clients.length} 台（有線 ${clients.filter(c => c.is_wired).length} / WiFi ${clients.filter(c => !c.is_wired).length}）`,
+        `• WiFi：${wlans.filter(w => w.enabled).length}/${wlans.length} 個 SSID 啟用`,
+        `• 累計流量：↓ ${fmtBotBytes(clients.reduce((n, c) => n + (c.rx_bytes || 0), 0))} / ↑ ${fmtBotBytes(clients.reduce((n, c) => n + (c.tx_bytes || 0), 0))}`,
+        wan.xput_down != null ? `• 最近測速：↓ ${wan.xput_down} / ↑ ${wan.xput_up} Mbps · ping ${wan.speedtest_ping ?? '--'} ms` : '• 最近測速：無資料'
+    ].join('\n');
+}
+async function telegramClientsSummary(args) {
+    const cookie = await getLocalSession();
+    let clients = (await unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { Cookie: cookie } })).data.data || [];
+    const query = args.join(' ').trim().toLowerCase();
+    if (query) clients = clients.filter(c => `${clientAliases[String(c.mac || '').toLowerCase()] || ''} ${c.name || ''} ${c.hostname || ''} ${c.ip || ''} ${c.mac || ''}`.toLowerCase().includes(query));
+    clients.sort((a, b) => ((b.rx_bytes || 0) + (b.tx_bytes || 0)) - ((a.rx_bytes || 0) + (a.tx_bytes || 0)));
+    const lines = [`📱 ${query ? `設備搜尋「${query}」` : '線上設備 Top 15'} · ${clients.length} 台`];
+    clients.slice(0, 15).forEach((c, i) => lines.push(`${i + 1}. ${clientAliases[String(c.mac || '').toLowerCase()] || c.name || c.hostname || c.mac}\n   ${c.ip || '--'} · ${c.is_wired ? '有線' : `WiFi ${c.rssi ?? '--'} dBm`} · ${fmtBotBytes((c.rx_bytes || 0) + (c.tx_bytes || 0))}`));
+    if (!clients.length) lines.push('沒有符合的線上設備。');
+    if (clients.length > 15) lines.push(`…其餘 ${clients.length - 15} 台請用 /clients 關鍵字縮小範圍`);
+    return lines.join('\n');
+}
+async function telegramThreatSummary() {
+    const cookie = await getLocalSession();
+    const dayAgo = Date.now() - 86400000;
+    const alarms = (await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { Cookie: cookie } })).data.data || [];
+    const threats = alarms.filter(a => isIpsAlarm(a) && Number(a.time || Date.parse(a.datetime)) >= dayAgo);
+    const lines = [`🛡️ 最近 24 小時威脅：${threats.length} 件`];
+    threats.slice(0, 10).forEach((t, i) => lines.push(`${i + 1}. ${t.msg || t.key || '安全事件'}\n   ${t.src_ip || '?'} → ${t.dest_ip || '?'} · ${new Date(Number(t.time) || Date.parse(t.datetime)).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`));
+    if (!threats.length) lines.push('✅ 沒有偵測到威脅。');
+    return lines.join('\n');
+}
+async function telegramNasSummary() {
+    if (!nasConfigured()) return '💾 NAS 尚未設定。';
+    const raw = await nasGet('/ugreen/v1/taskmgr/stat/get_all');
+    const cpu = raw?.cpu?.series?.[0] || {};
+    const mem = raw?.mem?.series?.[0] || {};
+    const disks = (raw?.disk?.series || []).filter(d => d.name !== 'overview');
+    return [
+        '💾 NAS 即時狀態',
+        `• CPU：${fmtBotPct(cpu.used_percent)} · ${cpu.temp ?? '--'}°C`,
+        `• 記憶體：${fmtBotPct(mem.used_percent)}`,
+        `• 硬碟：${disks.length ? disks.map(d => `${d.label || d.name} ${d.temperature ?? '--'}°C`).join('、') : '無資料'}`
+    ].join('\n');
+}
+async function telegramDockerSummary(args) {
+    if (!nasMonConfigured()) return '🐳 NAS Docker Monitor 尚未設定。';
+    const data = await nasMonGet('/api/docker/containers');
+    let containers = Array.isArray(data) ? data : (data.containers || data.data || []);
+    const query = args.join(' ').trim().toLowerCase();
+    if (query) containers = containers.filter(c => `${c.name || ''} ${c.id || ''}`.toLowerCase().includes(query));
+    const lines = [`🐳 Docker 容器 · ${containers.filter(c => String(c.state).toLowerCase() === 'running').length}/${containers.length} 運行中`];
+    containers.slice(0, 20).forEach(c => lines.push(`${String(c.state).toLowerCase() === 'running' ? '🟢' : '🔴'} ${c.name || c.id} · ${c.status || c.state || '--'} · CPU ${fmtBotPct(c.cpu_percent)} · RAM ${c.mem_usage_mb != null ? `${c.mem_usage_mb} MB` : '--'}`));
+    if (!containers.length) lines.push('沒有符合的容器。');
+    return lines.join('\n');
+}
+async function telegramUpsSummary() {
+    const ups = await readUpsLive();
+    if (!ups) return `🔌 UPS 無法讀取\n${upsLastReason}`;
+    return ['🔋 UPS 即時狀態', `• ${ups.onBattery ? '⚡ 電池供電中' : '🟢 市電正常'} · ${(ups.actualSource || ups.source || '').toUpperCase()}`, `• 電池 ${ups.battery ?? '--'}% · 負載 ${ups.loadPct ?? '--'}% · 續航 ${ups.runtimeSec == null ? '--' : `${Math.round(ups.runtimeSec / 60)} 分`}`, `• 輸入 ${ups.inputV ?? '--'}V · 輸出 ${ups.outputV ?? '--'}V`].join('\n');
+}
+async function telegramWiimSummary() {
+    const raw = await wiimGet('getPlayerStatus');
+    if (!raw) return '🔊 WiiM 無法連線。';
+    const status = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    const labels = { play: '▶️ 播放中', pause: '⏸️ 暫停', stop: '⏹️ 停止', loading: '⏳ 載入中' };
+    return ['🔊 WiiM 即時狀態', `• ${labels[status.status] || status.status || '未知'} · 音量 ${status.vol ?? '--'}%`, `• 靜音：${String(status.mute) === '1' ? '是' : '否'} · 模式 ${status.mode ?? '--'}`, status.Title || status.title ? `• 曲目：${status.Title || status.title}` : null].filter(Boolean).join('\n');
+}
+
+const telegramCommands = {
+    help: { description: '顯示完整指令說明', run: async () => '' },
+    status: { description: '產生完整 24 小時系統報表', run: async () => buildReport() },
+    health: { description: '快速檢查 SmartHub 本身健康', run: async () => {
+        const d = await systemMonitor.ensureSample();
+        const issues = d.active_issues || [];
+        return [`${issues.length ? '⚠️' : '✅'} SmartHub ${issues.length ? '需要注意' : '運作正常'}`, `• CPU ${d.cpu?.usage_percent ?? '--'}% · RAM ${d.memory?.usage_percent ?? '--'}% · Disk ${d.disk?.usage_percent ?? '--'}%`, `• SQLite ${d.database?.status || '--'} (${d.database?.latency_ms ?? '--'} ms)`, `• 背景工作 ${d.worker?.status || '--'} · 失敗 ${d.worker?.failed_tasks ?? 0}`, `• 運行時間 ${Math.round(process.uptime() / 60)} 分鐘`, issues.length ? `• Issues：${issues.slice(0, 5).map(i => `[${i.severity}] ${i.code || i.message}`).join('、')}` : '• Active Issues：無'].join('\n');
+    } },
+    network: { description: 'WAN、WiFi、設備與最近測速摘要', run: telegramNetworkSummary },
+    clients: { description: '列出或搜尋線上設備', usage: '[名稱/IP/MAC]', run: telegramClientsSummary },
+    threats: { description: '列出最近 24 小時安全威脅', run: telegramThreatSummary },
+    nas: { description: '查看 NAS 即時負載與硬碟溫度', run: telegramNasSummary },
+    docker: { description: '列出或搜尋 Docker 容器', usage: '[容器名稱]', run: telegramDockerSummary },
+    ups: { description: '查看市電、電池、負載與續航', run: telegramUpsSummary },
+    wiim: { description: '查看 WiiM 播放與音量', run: telegramWiimSummary },
+    alerts: { description: '查看系統問題與近期推播', run: async () => {
+        const d = await systemMonitor.ensureSample();
+        const issues = d.active_issues || [];
+        const lines = [`🚨 Active Issues：${issues.length} 件`];
+        issues.slice(0, 10).forEach(i => lines.push(`• [${i.severity}] ${i.code || i.message}`));
+        lines.push('', '🔔 最近推播：');
+        notifLog.slice(0, 5).forEach(n => lines.push(`• ${n.ok ? '✅' : '❌'} ${n.title} · ${new Date(n.ts).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`));
+        if (!issues.length) lines.splice(1, 0, '✅ 無待處理系統問題');
+        if (!notifLog.length) lines.push('尚無紀錄');
+        return lines.join('\n');
+    } },
+    speedtest: { description: '啟動 UniFi WAN 測速', mutating: true, prepare: async () => ({ confirmation: '即將啟動 WAN Speedtest，測試期間可能佔用頻寬。', execute: async () => {
+        const cookie = await getLocalSession();
+        await unifiClient.post('/proxy/network/api/s/default/cmd/devmgr', { cmd: 'speedtest' }, { headers: { Cookie: cookie } });
+        return 'UniFi 已開始測速；稍後用 /network 查看結果。';
+    } }) },
+    docker_restart: { description: '重新啟動指定 Docker 容器', usage: '<容器名稱>', mutating: true, prepare: async args => {
+        const query = args.join(' ').trim().toLowerCase();
+        if (!query) throw new Error('用法：/docker_restart <容器名稱>');
+        if (!nasMonConfigured()) throw new Error('NAS Docker Monitor 尚未設定');
+        const data = await nasMonGet('/api/docker/containers');
+        const containers = Array.isArray(data) ? data : (data.containers || data.data || []);
+        const exact = containers.filter(c => String(c.name || '').toLowerCase() === query || String(c.id || '').toLowerCase() === query);
+        const matches = exact.length ? exact : containers.filter(c => String(c.name || '').toLowerCase().includes(query));
+        if (matches.length !== 1) throw new Error(matches.length ? `找到 ${matches.length} 個容器，請輸入更完整名稱` : '找不到指定容器');
+        const container = matches[0];
+        return { confirmation: `即將重新啟動 Docker 容器「${container.name || container.id}」。`, execute: async () => {
+            await nasMonClient.post(`/api/docker/containers/${encodeURIComponent(container.id)}/restart`);
+            return `${container.name || container.id} 已送出重新啟動指令。`;
+        } };
+    } },
+    wiim_toggle: { description: '切換 WiiM 播放/暫停', mutating: true, prepare: async () => ({ confirmation: '即將切換 WiiM 播放/暫停狀態。', execute: async () => { if (!await wiimGet('setPlayerCmd:onepause')) throw new Error('WiiM 無回應'); return 'WiiM 播放狀態已切換。'; } }) },
+    wiim_stop: { description: '停止 WiiM 播放', mutating: true, prepare: async () => ({ confirmation: '即將停止 WiiM 播放。', execute: async () => { if (!await wiimGet('setPlayerCmd:stop')) throw new Error('WiiM 無回應'); return 'WiiM 已停止播放。'; } }) },
+    wiim_volume: { description: '設定 WiiM 音量', usage: '<0-100>', mutating: true, prepare: async args => {
+        const volume = Number(args[0]);
+        if (!Number.isInteger(volume) || volume < 0 || volume > 100) throw new Error('用法：/wiim_volume <0-100>');
+        return { confirmation: `即將把 WiiM 音量設為 ${volume}%${volume >= 80 ? '（高音量）' : ''}。`, execute: async () => { if (!await wiimGet(`setPlayerCmd:vol:${volume}`)) throw new Error('WiiM 無回應'); return `WiiM 音量已設為 ${volume}%。`; } };
+    } }
+};
+const telegramCommandBot = new TelegramCommandBot({ axios, getSettings: loadNotifSettings, commands: telegramCommands, logger, formatError: publicError });
 
 /* ===================== PWA (manifest + service worker) ===================== */
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');
@@ -3616,7 +3816,7 @@ app.get('/api/connections/status', async (req, res) => {
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
-            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? '已設定' : '' },
+            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
             { name: 'WiiM Amp', configured: true, ok: fresh(wiimHit && wiimHit.timestamp, 120), detail: wiimHit ? '有回應' : '無快取' },
             { name: 'CyberPower UPS', configured: true, ok: !!upsLastLive && fresh(upsLastLive.ts, 180), detail: upsLastLive ? `${(upsLastLive.actualSource || '').toUpperCase()} · 電池 ${upsLastLive.battery ?? '--'}%` : (upsLastReason ? '所有來源失聯' : '尚無資料') },
             { name: 'AdGuard Home', configured: adgConfigured(), ok: fresh(adgLastOkTs, 180), detail: adgLastOkTs ? '有回應' : '尚無資料' },
@@ -3707,7 +3907,10 @@ async function startupDiagnostics() {
     // 5. NAS Monitor (系統 B)
     if (nasMonConfigured()) {
         warnIfLocalhost('NAS_MONITOR_URL', (NASMON_URL || '').replace(/^https?:\/\//, '').split(/[:/]/)[0]);
-        try { await nasMonGet('/api/downtime', { days: 1 }); sysLog('Diag', `✅ NAS Monitor (${NASMON_URL})：正常`); }
+        try {
+            await nasMonGet(nasMonAdvancedConfigured() ? '/api/downtime' : '/health', nasMonAdvancedConfigured() ? { days: 1 } : undefined);
+            sysLog('Diag', `✅ NAS Monitor (${NASMON_URL})：${nasMonAdvancedConfigured() ? '完整模式正常' : 'Docker only 正常'}`);
+        }
         catch (e) { sysLog('Diag', `❌ NAS Monitor：${e.response ? `HTTP ${e.response.status}${e.response.status === 401 ? ' (API Key 錯誤)' : ''}` : connHint(e, NASMON_URL)}`, true); }
     } else sysLog('Diag', '⏭️ NAS Monitor：未設定，略過');
 
@@ -3718,9 +3921,10 @@ async function startupDiagnostics() {
     else sysLog('Diag', `❌ WiiM Amp (${wiimIP})：HTTPS/HTTP 皆無回應 — 檢查 IP 是否正確、裝置是否開機、容器可否達該網段 (新韌體須帶 User-Agent，已內建)`, true);
 
     // 7. UPS
-    warnIfLocalhost('NUT_HOST', NUT_HOST());
     warnIfLocalhost('PPB_HOST', PPB_HOST());
     const ups = await readUpsLive();
+    // PPB 已成功供應資料時，未設定的 NUT 回退值與目前 UPS 無關，不應誤報為設定錯誤。
+    if (!ups || ups.actualSource === 'nut') warnIfLocalhost('NUT_HOST', NUT_HOST());
     if (ups) sysLog('Diag', `✅ UPS：來源 ${ups.actualSource.toUpperCase()}，${ups.status}，電池 ${ups.battery ?? '--'}%`);
     else {
         sysLog('Diag', `❌ UPS：${upsLastReason}`, true);
@@ -3759,6 +3963,7 @@ function gracefulShutdown(signal, exitCode = 0) {
         module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.SYS_SHUTDOWN,
         message: 'SmartHub shutdown started', fields: { signal, exit_code: exitCode }
     });
+    telegramCommandBot.stop();
     systemMonitor.stop();
     Object.values(jobTimers).forEach(clearInterval);
     const finish = () => {
@@ -3774,6 +3979,7 @@ function gracefulShutdown(signal, exitCode = 0) {
 }
 
 httpServer = app.listen(PORT, () => {
+    telegramCommandBot.start();
     systemMonitor.ensureSample().then(status => {
         logger.info({
             module: 'app.lifecycle', function: 'listen', code: ERROR_CODES.SYS_READY,

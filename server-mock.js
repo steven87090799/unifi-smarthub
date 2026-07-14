@@ -473,6 +473,10 @@ app.get('/api/nas/overview', (req, res) => {
         source: 'fallback'
     });
 });
+
+app.get('/api/nas/sleep-stats', (req, res) => {
+    res.json({ days: [], awakeSessions: [], source: 'mock' });
+});
 app.get('/api/nas/disks', (req, res) => {
     res.json({
         disks: [
@@ -561,14 +565,14 @@ app.post('/api/nas/alerts/:id/ack', (req, res) => {
 
 /* ===== 通知推播中心 (模擬) ===== */
 let mockNotif = {
-    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '',
+    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', telegramCommandsEnabled: false,
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
-    triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, clientSignalAlert: 75,
+    triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
-    triggerWiimOffline: false, triggerWiimHighVolume: false, wiimVolumeAlert: 80, triggerBlockAction: true,
+    triggerWiimOffline: false, triggerWiimHighVolume: false, triggerWiimPlaybackChange: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerNasDiskHealth: true, triggerNasOffline: false, triggerNasHighCpu: false, nasCpuAlert: 90, triggerNasHighMemory: false, nasMemoryAlert: 90,
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,
-    triggerWanDown: false, triggerWanLatency: false, wanLatencyAlert: 100, triggerUnifiOffline: false, triggerNasLog: true,
+    triggerWanDown: false, triggerWanLatency: false, wanLatencyAlert: 100, triggerUnifiOffline: false, triggerNasLog: true, triggerNasSleepWake: false,
     triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerUpsOffline: true,
     triggerAdgProtection: true, triggerAdgOffline: false, triggerAdgHighBlockRate: false, adgBlockRateAlert: 50,
     triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90, triggerLinuxHighCpu: false, linuxCpuAlert: 90, triggerLinuxHighMemory: false, linuxMemoryAlert: 90, triggerLinuxHighLoad: false, linuxLoadAlert: 4,

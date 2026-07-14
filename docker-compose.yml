@@ -11,6 +11,10 @@ services:
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
+      # 內建 Docker Monitor：部署在哪台 Docker 主機，就讀哪台主機的真實容器。
+      - NAS_MONITOR_URL=${NAS_MONITOR_URL:-http://nas-monitor:8000}
+      - NAS_MONITOR_API_KEY=${NAS_MONITOR_API_KEY:-smarthub-local-monitor}
+      - NAS_MONITOR_MODE=${NAS_MONITOR_MODE:-docker_only}
       # 時區：報表排程 (reportHour)、日誌時間戳、UPS 事件時間皆依此；容器預設 UTC 會差 8 小時
       - TZ=Asia/Taipei
     volumes:
@@ -19,6 +23,9 @@ services:
       # bind mount .env：讓「設定 → 連線設定」網頁修改的連線資訊寫回宿主機，容器重建不遺失
       # (.dockerignore 排除了 .env，若不掛載，網頁上改的設定會在重建後消失)
       - ./.env:/app/.env
+    depends_on:
+      nas-monitor:
+        condition: service_healthy
     # 記憶體限制：此服務為輕量 Node 程序，256MB 足夠；預留下限確保排程穩定
     mem_limit: 256m
     mem_reservation: 128m
@@ -28,6 +35,22 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  nas-monitor:
+    build: ./nas-monitor
+    image: unifi-smarthub-nas-monitor:latest
+    container_name: unifi-smarthub-nas-monitor
+    restart: unless-stopped
+    environment:
+      - PORT=8000
+      - NAS_MONITOR_API_KEY=${NAS_MONITOR_API_KEY:-smarthub-local-monitor}
+      - DOCKER_SOCKET=/var/run/docker.sock
+      - TZ=Asia/Taipei
+    volumes:
+      # 具有啟停/重啟容器權限；只應部署於可信任的內網 Docker 主機。
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 96m
+    mem_reservation: 32m
 
 volumes:
   smarthub-data:

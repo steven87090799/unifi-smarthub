@@ -662,7 +662,8 @@
             border-radius: var(--ui-radius-card) !important;
             background: linear-gradient(155deg, rgba(25, 38, 61, .78), rgba(10, 18, 32, .88)) !important;
             border-color: var(--ui-border) !important;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,.055), var(--ui-shadow-card) !important;
+            /* 不使用白色內框高光，避免每個區塊看起來都有一圈白邊。 */
+            box-shadow: var(--ui-shadow-card) !important;
             transform: none;
         }
 
@@ -676,8 +677,13 @@
         main .rounded-2xl .rounded-xl {
             border-radius: 14px !important;
             background-color: rgba(6, 13, 25, .5) !important;
-            border-color: rgba(148, 163, 184, .13) !important;
+            border-color: transparent !important;
         }
+
+        /* 主卡片與內層資訊區塊保持分層，但不再以外框切割畫面。 */
+        main .rounded-2xl { border-color: transparent !important; }
+        main .rounded-2xl:hover { border-color: transparent !important; }
+        .nas-event-row, .ppb-event-row { border-color: transparent !important; }
 
         main [class*="text-[8px]"],
         main [class*="text-[9px]"],
@@ -1171,8 +1177,8 @@
                                     </svg>
                                     <h3 class="text-sm font-bold text-white tracking-wider">UCG-Ultra 閘道器</h3>
                                 </div>
-                                <span id="ov-ucg-badge"
-                                    class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">連線中</span>
+                                <span id="ov-ucg-badge" title="連線中" aria-label="連線中"
+                                    class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
                             </div>
                             <div class="flex items-center gap-5">
                                 <div class="text-center shrink-0 w-20">
@@ -1224,8 +1230,8 @@
                                     </svg>
                                     <h3 class="text-sm font-bold text-white tracking-wider">UGREEN NAS</h3>
                                 </div>
-                                <span id="ov-nas-badge"
-                                    class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">連線中</span>
+                                <span id="ov-nas-badge" title="連線中" aria-label="連線中"
+                                    class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
                             </div>
                             <div class="flex items-center gap-5">
                                 <div class="text-center shrink-0 w-20">
@@ -1277,15 +1283,15 @@
                                     </svg>
                                     <h3 class="text-sm font-bold text-white tracking-wider">WiiM Amp</h3>
                                 </div>
-                                <span id="ov-wiim-badge"
-                                    class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-slate-700/30 text-slate-400 border-slate-700/40">連線中</span>
+                                <span id="ov-wiim-badge" title="連線中" aria-label="連線中"
+                                    class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
                             </div>
                             <div class="flex items-center gap-5">
                                 <div class="text-center shrink-0 w-20">
                                     <p class="text-[9px] text-slate-500 uppercase font-bold tracking-wider">CPU 溫度</p>
-                                    <p class="mono leading-none mt-1"><span class="text-4xl font-black"
+                                    <p class="mono leading-none mt-1 inline-flex items-end justify-center whitespace-nowrap"><span class="text-4xl font-black"
                                             id="ov-wiim-temp" style="color:#8b5cf6">--</span><span
-                                            class="text-sm text-slate-500">°C</span></p>
+                                            class="text-sm text-slate-500 ml-0.5 mb-0.5">°C</span></p>
                                     <p class="text-[9px] mt-1" id="ov-wiim-temp-status">--</p>
                                 </div>
                                 <div class="flex-grow space-y-2.5 min-w-0">
@@ -1299,14 +1305,19 @@
                                                 id="ov-wiim-board-bar" style="width:0%"></div>
                                         </div>
                                     </div>
-                                    <div class="text-[10px] text-slate-400 truncate flex items-center gap-1"><svg class="w-3 h-3 inline -mt-0.5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span id="ov-wiim-track"
-                                            class="text-slate-300">--</span></div>
+                                    <div>
+                                        <div class="text-[10px] text-slate-400 truncate flex items-center gap-1.5"><svg class="w-3 h-3 shrink-0 text-violet-400" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1" y="6" width="2" height="5" rx="1"/><rect x="5" y="3" width="2" height="10" rx="1"/><rect x="9" y="5" width="2" height="6" rx="1"/><rect x="13" y="2" width="2" height="12" rx="1"/></svg><span id="ov-wiim-track"
+                                            class="text-slate-300 truncate">--</span></div>
+                                        <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden mt-1.5">
+                                            <div class="bg-blue-500 h-full rounded-full transition-all duration-500" id="ov-wiim-progress" style="width:0%"></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800/60 text-[10px]">
-                                <div class="flex justify-between"><span class="text-slate-500">播放狀態</span><span
+                            <div class="flex items-center gap-5 mt-4 pt-3 border-t border-slate-800/60 text-[10px]">
+                                <div class="flex items-center gap-2"><span class="text-slate-500">播放狀態</span><span
                                         class="text-slate-300 mono" id="ov-wiim-play">--</span></div>
-                                <div class="flex justify-between"><span class="text-slate-500">音量</span><span
+                                <div class="flex items-center gap-2 ml-auto"><span class="text-slate-500">音量</span><span
                                         class="text-slate-300 mono" id="ov-wiim-vol">--</span></div>
                             </div>
                         </div>
@@ -1419,13 +1430,13 @@
                                     分鐘一次 <span id="trend-data-quality" class="text-slate-600"></span></p>
                             </div>
                             <div
-                                class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px]">
-                                <button onclick="setTrendRange(24)" id="btn-trend-24"
-                                    class="px-2.5 py-1 rounded-md font-bold bg-blue-600 text-white transition">24
-                                    小時</button>
-                                <button onclick="setTrendRange(168)" id="btn-trend-168"
-                                    class="px-2.5 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">7
-                                    天</button>
+                                class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-[10px] overflow-x-auto max-w-full">
+                                <button onclick="setTrendRange(1)" data-trend-hours="1" class="trend-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">1 小時</button>
+                                <button onclick="setTrendRange(6)" data-trend-hours="6" class="trend-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">6 小時</button>
+                                <button onclick="setTrendRange(24)" data-trend-hours="24" class="trend-range-btn px-2 py-1 rounded-md font-bold bg-blue-600 text-white transition">24 小時</button>
+                                <button onclick="setTrendRange(72)" data-trend-hours="72" class="trend-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">3 天</button>
+                                <button onclick="setTrendRange(168)" data-trend-hours="168" class="trend-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">7 天</button>
+                                <button onclick="setTrendRange(720)" data-trend-hours="720" class="trend-range-btn px-2 py-1 rounded-md font-bold text-slate-400 hover:text-slate-200 transition">30 天</button>
                             </div>
                         </div>
                         <div class="h-64"><canvas id="trendChart"></canvas></div>
@@ -1581,9 +1592,14 @@
                                 <h3 class="text-lg font-bold text-white flex items-center gap-2">活躍客戶端管理中心 <span
                                         class="text-xs bg-slate-800 text-slate-400 px-2.5 py-0.5 rounded-full border border-slate-850 mono"
                                         id="client-count">0</span></h3>
-                                <input type="text" id="clientSearch" oninput="filterClients()"
-                                    placeholder="搜尋設備名稱或 IP..."
-                                    class="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-300 w-full sm:w-64 focus:outline-none focus:border-blue-500">
+                                <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                                    <div class="px-2.5 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 text-[9px] text-slate-500 whitespace-nowrap">
+                                        <span id="client-refresh-interval">更新頻率：30 秒</span><span class="mx-1.5 text-slate-700">·</span><span id="client-last-updated">上次更新：等待中</span>
+                                    </div>
+                                    <input type="text" id="clientSearch" oninput="filterClients()"
+                                        placeholder="搜尋設備名稱或 IP..."
+                                        class="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-300 w-full sm:w-64 focus:outline-none focus:border-blue-500">
+                                </div>
                             </div>
                             <div class="overflow-x-auto">
                                 <table class="w-full text-left text-xs">
@@ -1605,7 +1621,7 @@
                             class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md flex flex-col">
                             <h3 class="text-xs font-bold text-slate-400 mb-1 tracking-wider uppercase">全部設備流量排行 <span
                                     class="mono text-slate-600" id="traffic-rank-count"></span></h3>
-                            <p class="text-[9px] text-slate-500 mb-4">依累計 Rx + Tx 總量排序，全部裝置</p>
+                            <p class="text-[9px] text-slate-500 mb-4">依 UniFi 回報的累計 Rx + Tx 總量排序；與客戶端清單同步，<span id="traffic-refresh-interval">每 30 秒更新</span></p>
                             <div class="space-y-4 overflow-y-auto pr-1 flex-1 min-h-[200px]" id="traffic-top5">
                                 <p class="text-xs text-slate-500 text-center py-4">載入中...</p>
                             </div>
@@ -2022,19 +2038,15 @@
                         <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
                             <div
                                 class="lg:col-span-7 bg-slate-950/80 p-5 rounded-xl border border-slate-800/60 shadow-lg flex flex-col min-h-[250px]">
-                                <div class="flex border-b border-slate-850 pb-2 mb-3 gap-2 overflow-x-auto">
+                                <div class="flex p-1 mb-4 gap-1 bg-slate-900/70 rounded-xl overflow-x-auto" role="tablist" aria-label="雲端資料分類">
                                     <button id="tab-sites" onclick="switchCloudTab('sites')"
-                                        class="text-[10px] font-bold pb-1 border-b-2 border-blue-500 text-blue-400 whitespace-nowrap transition">站點
-                                        (Sites)</button>
+                                        class="cloud-tab px-3 py-2 rounded-lg bg-blue-600 text-white text-[10px] font-bold whitespace-nowrap transition" role="tab" aria-selected="true">站點 <span class="opacity-60 font-normal">Sites</span></button>
                                     <button id="tab-devices" onclick="switchCloudTab('devices')"
-                                        class="text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition">設備
-                                        (Devices)</button>
+                                        class="cloud-tab px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 text-[10px] font-bold whitespace-nowrap transition" role="tab" aria-selected="false">設備 <span class="opacity-60 font-normal">Devices</span></button>
                                     <button id="tab-hosts" onclick="switchCloudTab('hosts')"
-                                        class="text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition">主機
-                                        (Hosts)</button>
+                                        class="cloud-tab px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 text-[10px] font-bold whitespace-nowrap transition" role="tab" aria-selected="false">主機 <span class="opacity-60 font-normal">Hosts</span></button>
                                     <button id="tab-sdwan" onclick="switchCloudTab('sdwan')"
-                                        class="text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition">VPN
-                                        (SD-WAN)</button>
+                                        class="cloud-tab px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 text-[10px] font-bold whitespace-nowrap transition" role="tab" aria-selected="false">VPN <span class="opacity-60 font-normal">SD-WAN</span></button>
                                 </div>
                                 <div id="cloud-sites-content"
                                     class="space-y-2 flex-grow overflow-y-auto max-h-[220px] terminal-scroll">
@@ -2321,8 +2333,9 @@
                                             class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
                                             <th class="pb-2.5">容器 / 映像</th>
                                             <th class="pb-2.5">狀態</th>
-                                            <th class="pb-2.5">CPU</th>
+                                            <th class="pb-2.5">CPU / PID</th>
                                             <th class="pb-2.5">記憶體</th>
+                                            <th class="pb-2.5">網路 / 磁碟 I/O</th>
                                             <th class="pb-2.5 text-right">操作</th>
                                         </tr>
                                     </thead>
@@ -2404,8 +2417,15 @@
                                 </h3>
                                 <p class="text-[9px] text-slate-500 mt-0.5" id="adg-sub">全網 DNS 廣告與追蹤攔截統計</p>
                             </div>
-                            <button id="adg-toggle" onclick="toggleAdgProtection()"
-                                class="px-4 py-1.5 rounded-full text-[10px] font-bold border transition hidden">--</button>
+                            <div class="flex items-center gap-2">
+                                <button id="adg-refresh" type="button" onclick="refreshAdguardNow()"
+                                    title="立即更新 AdGuard 資料" aria-label="立即更新 AdGuard 資料"
+                                    class="w-8 h-8 inline-flex items-center justify-center rounded-full text-slate-500 hover:text-blue-400 hover:bg-slate-800/60 transition">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5M5.6 15a7 7 0 0011.7 2.6L20 15M4 9l2.7-2.6A7 7 0 0118.4 9"/></svg>
+                                </button>
+                                <button id="adg-toggle" onclick="toggleAdgProtection()"
+                                    class="px-4 py-1.5 rounded-full text-[10px] font-bold border transition hidden">--</button>
+                            </div>
                         </div>
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5" data-drag data-drag-key="adg-kpis">
                             <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
@@ -2487,8 +2507,9 @@
                                 <p class="text-[8px] text-slate-500 mono" id="lnx-disk-str"></p>
                             </div>
                             <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
-                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">負載 (1m)</p>
+                                <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider" title="最近 1 分鐘平均有多少工作正在執行或等待 CPU；不是百分比。">系統負載（近 1 分鐘）</p>
                                 <p class="text-xl font-black mono text-white mt-1" id="lnx-load">--</p>
+                                <p class="text-[8px] text-slate-600 mt-0.5">執行中＋等待 CPU 的工作量</p>
                             </div>
                             <div class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-3.5">
                                 <p class="text-[9px] font-bold text-slate-500 uppercase tracking-wider">運行時間</p>
@@ -2671,6 +2692,13 @@
                                     <p class="text-[9px] text-slate-600 mt-1.5 leading-relaxed">步驟：① 向 @BotFather 建立 bot
                                         取得 Token 並填上方儲存 → ② 在 Telegram 搜尋你的 bot 並傳送任一訊息 → ③ 按「偵測 Chat ID」自動填入。</p>
                                 </div>
+                                <div class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 space-y-2">
+                                    <label class="flex items-center gap-2.5 text-xs text-blue-100 cursor-pointer">
+                                        <input type="checkbox" id="notif-telegram-commands" class="accent-blue-500 w-4 h-4">
+                                        <span class="font-bold">啟用 Telegram 指令中心</span>
+                                    </label>
+                                    <p class="text-[9px] text-slate-500 leading-relaxed">只接受上方 Chat ID；控制操作另需 60 秒一次性確認碼。啟用後可傳送 <span class="font-mono text-blue-300">/help</span>、<span class="font-mono text-blue-300">/status</span>、<span class="font-mono text-blue-300">/network</span>、<span class="font-mono text-blue-300">/nas</span>、<span class="font-mono text-blue-300">/docker</span>、<span class="font-mono text-blue-300">/ups</span>、<span class="font-mono text-blue-300">/wiim</span> 等指令。</p>
+                                </div>
                             </div>
 
                             <div>
@@ -2707,6 +2735,10 @@
                                             class="accent-blue-500 w-4 h-4"> 已知設備 IP 位址變更（DHCP 重新配發）
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-client-connectivity"
+                                            class="accent-blue-500 w-4 h-4"> 已知設備離線 / 重新連線（連續兩輪確認）
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-client-signal" class="accent-blue-500 w-4 h-4">
                                         WiFi 設備訊號弱於
                                         <span class="text-slate-500">−</span><input type="number" id="notif-client-signal" min="50" max="95"
@@ -2739,6 +2771,10 @@
                                         <input type="number" id="notif-wiim-volume" min="10" max="100"
                                             class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             onclick="event.preventDefault()"> %
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-wiim-playback" class="accent-blue-500 w-4 h-4">
+                                        WiiM 播放 / 暫停 / 停止或輸入訊源變更
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-block" class="accent-blue-500 w-4 h-4">
@@ -2788,6 +2824,10 @@
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-naslog" class="accent-blue-500 w-4 h-4">
                                         NAS 系統日誌事件 (所有級別)
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-nas-sleep-wake" class="accent-blue-500 w-4 h-4">
+                                        NAS 機械硬碟進入休眠 / 被喚醒
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-upsload" class="accent-blue-500 w-4 h-4">
@@ -3150,8 +3190,14 @@
                             <!-- NAS Monitor -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
                                 <p class="text-[11px] font-bold text-emerald-400">📊 NAS Monitor 中介層 (選填)</p>
-                                <p class="text-[9px] text-slate-500 leading-relaxed">另行部署的 Flask 服務，提供 Docker 管理與進階歷史圖
-                                </p>
+                                <p class="text-[9px] text-slate-500 leading-relaxed">內建 Docker Monitor 可讀取部署主機的真實容器；完整外部服務另提供警報與進階歷史。操作方式見 <span class="mono text-blue-400">NAS-DOCKER-MONITOR-SETUP.md</span></p>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">模式</label><select
+                                        id="conn-NAS_MONITOR_MODE"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        <option value="docker_only">docker_only（內建，只管理 Docker）</option>
+                                        <option value="full">full（完整外部 NAS Monitor）</option>
+                                    </select>
+                                </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">服務網址</label><input
                                         id="conn-NAS_MONITOR_URL" placeholder="http://192.168.0.x:8000"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
@@ -3372,16 +3418,16 @@
                 <section id="page-wiim" class="space-y-6 hidden">
                     <!-- 頂部 Hero 播放卡片 -->
                     <div
-                        class="relative overflow-hidden bg-slate-900/60 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        class="relative overflow-hidden bg-slate-900/60 border border-slate-800/80 rounded-2xl px-8 py-7 shadow-xl backdrop-blur-md">
                         <div class="absolute inset-0 bg-cover bg-center filter blur-3xl opacity-30 transition-all duration-700"
                             id="wiim-hero-bg" style="background-image: none;"></div>
-                        <div class="relative flex flex-col md:flex-row gap-6 items-center z-10">
+                        <div class="relative flex flex-col md:flex-row gap-7 items-center z-10 md:pl-4">
                             <!-- 專輯封面 -->
-                            <div class="w-28 h-28 rounded-xl shrink-0 flex items-center justify-center text-5xl bg-slate-850 text-slate-500 border border-slate-700 shadow-md font-mono"
+                            <div class="w-36 h-36 rounded-2xl shrink-0 flex items-center justify-center text-5xl bg-slate-850 text-slate-500 border border-slate-700 shadow-xl font-mono"
                                 id="wiim-art"><svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
 
                             <!-- 曲目資訊與進度條 -->
-                            <div class="flex-grow min-w-0 w-full space-y-4">
+                            <div class="flex-grow min-w-0 w-full space-y-4 md:ml-2">
                                 <div>
                                     <h3 class="text-xl font-black text-white tracking-wide truncate" id="wiim-htitle">
                                         載入中...</h3>
@@ -3392,12 +3438,25 @@
                                 <!-- 進度條 (可點擊跳轉 setPlayerCmd:seek) -->
                                 <div class="flex items-center gap-3 text-[10px] text-slate-500 mono">
                                     <span id="wiim-pcur">0:00</span>
-                                    <div class="flex-grow h-2.5 py-1 cursor-pointer group" id="wiim-pwrap"
-                                        onclick="wiimSeek(event)" title="點擊跳轉播放位置">
+                                    <div class="relative flex-grow h-5 py-1.5 cursor-pointer group touch-none select-none" id="wiim-pwrap"
+                                        role="slider" aria-label="播放進度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+                                        onpointerdown="wiimSeekStart(event)" onpointermove="wiimSeekMove(event)" onpointerup="wiimSeekEnd(event)" onpointercancel="wiimSeekCancel(event)"
+                                        ondblclick="toggleWiimCat(event)"
+                                        title="點擊或拖曳調整播放位置">
                                         <div
                                             class="h-1.5 bg-slate-950 border border-slate-800 rounded-full overflow-hidden group-hover:border-blue-500/50 transition">
                                             <div class="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
                                                 id="wiim-pbar" style="width: 0%"></div>
+                                        </div>
+                                        <div id="wiim-progress-cat" class="hidden pointer-events-none absolute z-10 -top-2.5 -translate-x-1/2 transition-[left] duration-300" style="left:0%" aria-hidden="true">
+                                            <svg class="w-7 h-7 drop-shadow-lg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                                                <path d="M7.2 12.2 6.5 4.8l6 4A13 13 0 0 1 16 8.3c1.2 0 2.4.2 3.5.5l6-4-.7 7.4a11.2 11.2 0 1 1-17.6 0Z" fill="#fffaf5" stroke="#4c3b58" stroke-width="1.6" stroke-linejoin="round"/>
+                                                <path d="m8.1 7.5 3.1 2.1-3 1.2-.1-3.3Zm15.8 0-3.1 2.1 3 1.2.1-3.3Z" fill="#f9a8b8"/>
+                                                <path d="M11.2 17.1c.8.8 1.7.8 2.5 0m4.6 0c.8.8 1.7.8 2.5 0" stroke="#4c3b58" stroke-width="1.6" stroke-linecap="round"/>
+                                                <path d="m14.6 19.2 1.4 1.1 1.4-1.1" fill="#f472b6" stroke="#4c3b58" stroke-width="1" stroke-linejoin="round"/>
+                                                <path d="M16 20.4v1.2m0 0c-1 .9-2 .9-2.8.3m2.8-.3c1 .9 2 .9 2.8.3M10.8 20.2 5.5 19m5.1 3.2-5.2.5m15.8-2.5 5.3-1.2m-5.1 3.2 5.2.5" stroke="#4c3b58" stroke-width="1.1" stroke-linecap="round"/>
+                                                <circle cx="9.6" cy="20" r="1.6" fill="#fda4af" opacity=".55"/><circle cx="22.4" cy="20" r="1.6" fill="#fda4af" opacity=".55"/>
+                                            </svg>
                                         </div>
                                     </div>
                                     <span id="wiim-ptot">0:00</span>
@@ -3429,13 +3488,13 @@
                                                 <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
                                                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
                                             </svg></span>
-                                        <button onclick="wiimCmd('setPlayerCmd:vol--')"
+                                        <button onclick="wiimStepVolume(-1)"
                                             class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">−</button>
                                         <input type="range" id="wiim-vol" min="0" max="100"
                                             class="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                            oninput="document.getElementById('wiim-volval').textContent = this.value"
-                                            onchange="wiimCmd('setPlayerCmd:vol:' + this.value)">
-                                        <button onclick="wiimCmd('setPlayerCmd:vol++')"
+                                            oninput="previewWiimVolume(this.value)"
+                                            onchange="commitWiimVolume(this.value)">
+                                        <button onclick="wiimStepVolume(1)"
                                             class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">＋</button>
                                         <span id="wiim-volval"
                                             class="text-xs text-slate-400 mono w-8 text-right">--</span>
@@ -3696,22 +3755,22 @@
                                 class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                                 <!-- 分頁標籤 -->
                                 <div
-                                    class="flex border-b border-slate-800 mb-6 overflow-x-auto terminal-scroll pb-1 gap-2">
+                                    class="flex mb-6 overflow-x-auto terminal-scroll gap-1 rounded-xl bg-slate-950/45 p-1">
                                     <button onclick="switchWiimSubTab('audio', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-blue-500 border-b-2 border-blue-500 transition shrink-0">音訊
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-sm shadow-blue-500/20 transition shrink-0 whitespace-nowrap">音訊
                                         DSP</button>
                                     <button onclick="switchWiimSubTab('eq', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">均衡器</button>
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">均衡器</button>
                                     <button onclick="switchWiimSubTab('source', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">輸入源</button>
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">輸入源</button>
                                     <button onclick="switchWiimSubTab('bt', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">藍牙</button>
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">藍牙</button>
                                     <button onclick="switchWiimSubTab('stream', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">串流/群組</button>
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">串流/群組</button>
                                     <button onclick="switchWiimSubTab('sys', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">運維系統</button>
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">運維系統</button>
                                     <button onclick="switchWiimSubTab('raw', this)"
-                                        class="wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0">原始指令</button>
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">原始指令</button>
                                 </div>
 
                                 <!-- 1. 音訊 DSP 設定 -->
@@ -4022,7 +4081,13 @@
                             <!-- 遙控器與週邊狀態 (獨立區塊，平衡左右欄高度) -->
                             <div
                                 class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                                <h3 class="text-sm font-bold text-white tracking-wider mb-4 flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg> 語音遙控器與週邊配件</h3>
+                                <div class="flex items-center justify-between gap-3 mb-4">
+                                    <h3 class="text-sm font-bold text-white tracking-wider flex items-center gap-1.5"><svg class="w-4 h-4 inline -mt-0.5 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg> 語音遙控器與週邊配件</h3>
+                                    <button type="button" onclick="refreshWiimAccessories(this)" title="立即重新整理遙控器與配件狀態" aria-label="立即重新整理遙控器與配件狀態"
+                                        class="w-7 h-7 inline-flex items-center justify-center rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition">
+                                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg>
+                                    </button>
+                                </div>
                                 <div class="grid grid-cols-2 gap-4">
                                     <div
                                         class="bg-slate-950/40 border border-slate-800/60 rounded-xl p-4 flex items-center justify-between">
@@ -4368,8 +4433,12 @@
         <div class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
             <div class="flex justify-between items-center px-4 py-3 border-b border-slate-800">
                 <span class="text-xs font-bold text-slate-200 mono" id="docker-log-title">容器日誌</span>
-                <button aria-label="關閉容器日誌" onclick="closeDockerLog()"
-                    class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="copyDockerLog()"
+                        class="px-2.5 py-1.5 rounded-lg bg-blue-600/15 border border-blue-500/25 text-blue-300 hover:bg-blue-600/25 text-[10px] font-bold transition">複製全部</button>
+                    <button aria-label="關閉容器日誌" onclick="closeDockerLog()"
+                        class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
+                </div>
             </div>
             <pre class="p-4 text-[10px] text-emerald-400 mono overflow-auto flex-grow terminal-scroll"
                 id="docker-log-body">載入中...</pre>
@@ -5192,8 +5261,8 @@
             fetchNasSleepStats();
             fetchNasDocker();
             fetchNasAlerts();
-            fetchAlertConfig();
-            connectNasSse();
+            // NAS Monitor 為選配；未設定時不要建立 EventSource，避免每次載入留下 503 錯誤。
+            fetchAlertConfig().then(configured => { if (configured) connectNasSse(); });
             fetchNotifSettings();
             fetchNotifLog();
             fetchAppSettings();
@@ -5444,8 +5513,10 @@
         /* ==================== 歷史趨勢 ==================== */
         function setTrendRange(hours) {
             trendHours = hours;
-            document.getElementById('btn-trend-24').className = `px-2.5 py-1 rounded-md font-bold transition ${hours === 24 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
-            document.getElementById('btn-trend-168').className = `px-2.5 py-1 rounded-md font-bold transition ${hours === 168 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
+            document.querySelectorAll('.trend-range-btn').forEach(button => {
+                const selected = Number(button.dataset.trendHours) === hours;
+                button.className = `trend-range-btn shrink-0 whitespace-nowrap px-2 py-1 rounded-md font-bold transition ${selected ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`;
+            });
             requestChartReplay(trendChart);
             fetchTrends();
         }
@@ -5582,8 +5653,7 @@
                 setV('ov-ucg-cpu', (data.cpuUsage != null ? data.cpuUsage : '--') + '%');
                 setBar('ov-ucg-cpu-bar', data.cpuUsage);
                 if (data.memUsagePct != null) { setV('ov-ucg-mem', data.memUsagePct + '%'); setBar('ov-ucg-mem-bar', data.memUsagePct); }
-                const ucgBadge = document.getElementById('ov-ucg-badge');
-                if (ucgBadge) { ucgBadge.innerText = '● 連線正常'; ucgBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-emerald-500/10 text-emerald-400 border-emerald-500/20'; }
+                setOverviewStatusDot('ov-ucg-badge', 'ok', '連線正常');
 
                 document.getElementById('cpu-usage').innerText = data.cpuUsage + '%';
                 if (data.cores && data.cores.length) {
@@ -5622,8 +5692,7 @@
                 }
             } catch (e) {
                 document.getElementById('side-ucg-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
-                const ucgBadge = document.getElementById('ov-ucg-badge');
-                if (ucgBadge) { ucgBadge.innerText = '● 連線失敗'; ucgBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-red-500/10 text-red-400 border-red-500/20'; }
+                setOverviewStatusDot('ov-ucg-badge', 'error', '連線失敗');
                 console.error('Hardware fetch failed', e);
             }
         }
@@ -5666,6 +5735,15 @@
         // 溫度配色與標籤 (共用於總覽雙設備體檢)
         function tempColor(t) { return t == null ? '#64748b' : t >= 75 ? '#ef4444' : t >= 65 ? '#f59e0b' : t >= 55 ? '#3b82f6' : '#10b981'; }
         function tempLabel(t) { return t == null ? '--' : t >= 75 ? '過熱' : t >= 65 ? '偏高' : t >= 55 ? '正常' : '涼爽'; }
+        function setOverviewStatusDot(id, state, label) {
+            const dot = document.getElementById(id);
+            if (!dot) return;
+            const color = state === 'ok' ? 'bg-emerald-400' : state === 'error' ? 'bg-red-500' : 'bg-amber-400';
+            dot.className = `w-2.5 h-2.5 rounded-full shrink-0 ${color}`;
+            dot.title = label;
+            dot.setAttribute('aria-label', label);
+            dot.textContent = '';
+        }
 
         /* ==================== 客戶端 ==================== */
         async function fetchClients() {
@@ -5673,6 +5751,15 @@
                 const res = await fetch('/api/clients');
                 if (!res.ok) throw new Error();
                 allClients = (await res.json()).clients || [];
+                const refreshSeconds = getPollSec('clients');
+                const updatedAt = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+                const intervalText = refreshSeconds < 60 ? `${refreshSeconds} 秒` : `${refreshSeconds / 60} 分鐘`;
+                const refreshEl = document.getElementById('client-refresh-interval');
+                const trafficRefreshEl = document.getElementById('traffic-refresh-interval');
+                const updatedEl = document.getElementById('client-last-updated');
+                if (refreshEl) refreshEl.textContent = `更新頻率：${intervalText}`;
+                if (trafficRefreshEl) trafficRefreshEl.textContent = `每 ${intervalText}更新`;
+                if (updatedEl) updatedEl.textContent = `上次更新：${updatedAt}`;
                 filterClients();
                 renderTrafficTop5();
                 const blockedCount = allClients.filter(c => c.blocked).length;
@@ -5944,10 +6031,12 @@
                 const btn = document.getElementById(`tab-${t}`);
                 const content = document.getElementById(`cloud-${t}-content`);
                 if (t === tab) {
-                    btn.className = 'text-[10px] font-bold pb-1 border-b-2 border-blue-500 text-blue-400 whitespace-nowrap transition';
+                    btn.className = 'cloud-tab px-3 py-2 rounded-lg bg-blue-600 text-white text-[10px] font-bold whitespace-nowrap transition';
+                    btn.setAttribute('aria-selected', 'true');
                     content.classList.remove('hidden');
                 } else {
-                    btn.className = 'text-[10px] font-bold pb-1 border-b-2 border-transparent text-slate-450 hover:text-slate-300 whitespace-nowrap transition';
+                    btn.className = 'cloud-tab px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 text-[10px] font-bold whitespace-nowrap transition';
+                    btn.setAttribute('aria-selected', 'false');
                     content.classList.add('hidden');
                 }
             });
@@ -5998,20 +6087,31 @@
             try {
                 const res = await fetch('/api/cloud/devices');
                 if (!res.ok) throw new Error();
-                const devices = (await res.json()).data || [];
+                const result = await res.json();
+                const groups = result.data || [];
+                const devices = groups.flatMap(group => Array.isArray(group.devices)
+                    ? group.devices.map(device => ({ ...device, hostName: group.hostName || '' }))
+                    : [group]
+                ).filter(device => device && (device.name || device.model || device.ip || device.mac));
                 const container = document.getElementById('cloud-devices-content');
-                container.innerHTML = devices.length ? '' : '<p class="text-[10px] text-amber-400/80 text-center py-4">未設定 Site Manager API Key — 於 設定 → 設備連線設定 填入後啟用</p>';
+                container.innerHTML = devices.length ? '' : result.source === 'not_configured'
+                    ? '<p class="text-[10px] text-amber-400/80 text-center py-6">尚未設定 Site Manager API Key</p>'
+                    : result.source === 'error'
+                        ? '<p class="text-[10px] text-red-400/80 text-center py-6">設備資料暫時無法取得</p>'
+                        : '<p class="text-[10px] text-slate-500 text-center py-6">API 已連線，目前沒有託管設備</p>';
                 devices.forEach(dev => {
                     const isOnline = dev.status === 'online';
+                    const modelVersion = [dev.model, dev.version ? `v${dev.version}` : null].filter(Boolean).join(' · ');
                     container.innerHTML += `
-                    <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
-                        <div>
-                            <p class="font-bold text-slate-200">${escapeHtml(dev.name || dev.model)}</p>
-                            <p class="text-[9px] text-slate-500 font-mono">${escapeHtml(dev.model)} | v${escapeHtml(dev.version)}</p>
+                    <div class="p-3 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center gap-4 text-[10px]">
+                        <div class="min-w-0">
+                            <p class="font-bold text-slate-200 truncate">${escapeHtml(dev.name || dev.model || '未命名設備')}</p>
+                            <p class="text-[9px] text-slate-500 font-mono truncate">${escapeHtml(modelVersion || dev.mac || '')}</p>
+                            ${dev.hostName ? `<p class="text-[9px] text-slate-600 mt-0.5">控制主機：${escapeHtml(dev.hostName)}</p>` : ''}
                         </div>
-                        <div class="text-right">
-                            <p class="font-mono text-slate-300">${escapeHtml(dev.ip || 'DHCP')}</p>
-                            <p class="text-[9px] ${isOnline ? 'text-emerald-400' : 'text-red-400'} font-bold uppercase tracking-wider">${escapeHtml(dev.status)}</p>
+                        <div class="text-right shrink-0">
+                            <p class="font-mono text-slate-300">${escapeHtml(dev.ip || '尚未取得 IP')}</p>
+                            <p class="text-[9px] ${isOnline ? 'text-emerald-400' : 'text-red-400'} font-bold uppercase tracking-wider">${escapeHtml(dev.status || 'unknown')}</p>
                         </div>
                     </div>`;
                 });
@@ -6048,9 +6148,14 @@
             try {
                 const res = await fetch('/api/cloud/sdwan');
                 if (!res.ok) throw new Error();
-                const configs = (await res.json()).data || [];
+                const result = await res.json();
+                const configs = result.data || [];
                 const container = document.getElementById('cloud-sdwan-content');
-                container.innerHTML = configs.length ? '' : '<p class="text-[10px] text-amber-400/80 text-center py-4">未設定 Site Manager API Key — 於 設定 → 設備連線設定 填入後啟用</p>';
+                container.innerHTML = configs.length ? '' : result.source === 'not_configured'
+                    ? '<p class="text-[10px] text-amber-400/80 text-center py-6">尚未設定 Site Manager API Key</p>'
+                    : result.source === 'error'
+                        ? '<p class="text-[10px] text-red-400/80 text-center py-6">SD-WAN 資料暫時無法取得</p>'
+                        : '<div class="text-center py-6"><p class="text-xs font-bold text-slate-300">目前沒有 SD-WAN VPN</p><p class="text-[9px] text-slate-500 mt-1">Site Manager API 已連線；尚未建立 SD-WAN 設定</p></div>';
                 configs.forEach(cfg => {
                     container.innerHTML += `
                     <div class="p-2 bg-slate-900/40 border border-slate-800/40 rounded-lg flex justify-between items-center text-[10px]">
@@ -6069,12 +6174,16 @@
                 const res = await fetch('/api/cloud/isp-metrics');
                 if (!res.ok) throw new Error();
                 const metrics = (await res.json()).data || {};
-                document.getElementById('isp-name').innerText = metrics.ispName || 'Unknown ISP';
+                const ispName = metrics.ispName || 'Unknown ISP';
+                const ispDisplayName = /chunghwa/i.test(ispName) && !/中華電信/.test(ispName)
+                    ? `${ispName}（中華電信）`
+                    : ispName;
+                document.getElementById('isp-name').innerText = ispDisplayName;
                 document.getElementById('isp-latency').innerText = (metrics.latency || '--') + ' ms';
                 document.getElementById('isp-loss').innerText = (metrics.packetLoss != null ? metrics.packetLoss.toFixed(2) : '--') + ' %';
                 document.getElementById('isp-speed-down').innerText = (metrics.downloadSpeedMbps || '--') + ' Mbps';
                 document.getElementById('isp-speed-up').innerText = (metrics.uploadSpeedMbps || '--') + ' Mbps';
-                document.getElementById('kpi-wan-sub').innerText = `延遲 ${metrics.latency || '--'} ms · ${metrics.ispName || ''}`;
+                document.getElementById('kpi-wan-sub').innerText = `延遲 ${metrics.latency || '--'} ms · ${ispDisplayName}`;
             } catch (e) { console.error('Fetch ISP metrics failed', e); }
         }
 
@@ -6414,6 +6523,18 @@
         }
 
         let nasDiskStatic = null; // disk/list 的靜態資訊 (型號/容量/通電時數/dev_name)
+        function getNasVolumeAliases() {
+            try { return JSON.parse(localStorage.getItem('nasVolumeAliases.v1')) || {}; } catch { return {}; }
+        }
+        function saveNasVolumeAlias(key, value) {
+            const aliases = getNasVolumeAliases();
+            const name = String(value || '').trim().slice(0, 30);
+            if (name) aliases[key] = name;
+            else delete aliases[key];
+            localStorage.setItem('nasVolumeAliases.v1', JSON.stringify(aliases));
+            showToast(name ? `已儲存名稱「${name}」` : '已清除自訂名稱');
+        }
+
         async function fetchNas() {
             try {
                 const [ovRes, diskRes, volRes, upsRes] = await Promise.all([
@@ -6452,11 +6573,7 @@
                 badge.className = `px-3 py-1 rounded-full text-xs font-bold mono uppercase tracking-wider border ${cls}`;
                 document.getElementById('side-nas-dot').className = `w-1.5 h-1.5 rounded-full ${isReal ? 'bg-emerald-500' : isOffline ? 'bg-red-500' : 'bg-amber-500'}`;
                 document.getElementById('side-nas-state').innerText = isReal ? 'online' : isOffline ? '離線' : '未設定';
-                const ovNasBadge = document.getElementById('ov-nas-badge');
-                if (ovNasBadge) {
-                    ovNasBadge.innerText = isReal ? '● 連線正常' : isOffline ? '● 離線' : '● 未設定';
-                    ovNasBadge.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${cls}`;
-                }
+                setOverviewStatusDot('ov-nas-badge', isReal ? 'ok' : isOffline ? 'error' : 'warning', label);
 
                 // 總覽雙設備體檢 — NAS 硬碟健康 + 儲存使用率
                 const goodDisks = disks.filter(d => { const h = String(nFind(d, ['status', 'health', 'health_status']) || '').toLowerCase(); return h.includes('good') || h === 'normal' || h === 'ok'; }).length;
@@ -6615,9 +6732,14 @@
 
                 // 儲存區
                 const volList = document.getElementById('nas-volume-list');
-                volList.innerHTML = vols.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無儲存區資料</p>';
-                vols.forEach(v => {
+                const editingVolumeAlias = volList.contains(document.activeElement) && document.activeElement.matches('[data-volume-alias-key]');
+                if (!editingVolumeAlias) {
+                    volList.innerHTML = vols.length ? '' : '<p class="text-xs text-slate-500 text-center py-4">無儲存區資料</p>';
+                    const volumeAliases = getNasVolumeAliases();
+                    vols.forEach(v => {
                     const name = nFind(v, ['name', 'label']) || 'Volume';
+                    const volumeKey = String(name);
+                    const customName = volumeAliases[volumeKey] || '';
                     const raid = nFind(v, ['raid', 'raid_type', 'level']) || '';
                     const fsType = nFind(v, ['fs', 'fs_type', 'filesystem']) || '';
                     let total = asNum(nFind(v, ['total_gb', 'total', 'size', 'total_size']));
@@ -6627,23 +6749,32 @@
                     const pct = total && used != null ? Math.round(used / total * 100) : 0;
                     volList.innerHTML += `
                     <div>
-                        <div class="flex justify-between text-[11px] mb-1.5">
-                            <span class="font-bold text-slate-200">${escapeHtml(name)} <span class="text-[9px] text-slate-500 mono">${escapeHtml(raid)} ${escapeHtml(fsType)}</span></span>
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px] mb-1.5">
+                            <span class="font-bold text-slate-200 flex items-center gap-2 min-w-0">${escapeHtml(name)}
+                                <input type="text" maxlength="30" data-volume-alias-key="${escapeHtml(volumeKey)}" value="${escapeHtml(customName)}" placeholder="自訂名稱"
+                                    class="w-28 px-2 py-1 rounded-md bg-slate-900/80 border border-slate-700/70 text-[9px] font-normal text-blue-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                                    aria-label="${escapeHtml(name)} 自訂名稱">
+                                <span class="text-[9px] text-slate-500 mono">${escapeHtml(raid)} ${escapeHtml(fsType)}</span>
+                            </span>
                             <span class="mono text-slate-400">${used != null ? used.toFixed(0) : '--'} GB / ${total ? total.toFixed(0) : '--'} GB (${pct}%)</span>
                         </div>
                         <div class="w-full bg-slate-950 h-2.5 rounded-full overflow-hidden border border-slate-800 p-0.5">
                             <div class="${pct >= 90 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-emerald-500'} h-full rounded-full transition-all duration-700" style="width: ${pct}%;"></div>
                         </div>
                     </div>`;
-                });
+                    });
+                    volList.querySelectorAll('[data-volume-alias-key]').forEach(input => {
+                        input.addEventListener('change', () => saveNasVolumeAlias(input.dataset.volumeAliasKey, input.value));
+                        input.addEventListener('keydown', event => { if (event.key === 'Enter') input.blur(); });
+                    });
+                }
 
                 // 原始資料
                 document.getElementById('nas-raw').innerText = JSON.stringify({ overview: ov, disks, volumes: vols, ups }, null, 2);
             } catch (e) {
                 document.getElementById('side-nas-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
                 document.getElementById('side-nas-state').innerText = 'error';
-                const ovNasBadge = document.getElementById('ov-nas-badge');
-                if (ovNasBadge) { ovNasBadge.innerText = '● 連線失敗'; ovNasBadge.className = 'px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border bg-red-500/10 text-red-400 border-red-500/20'; }
+                setOverviewStatusDot('ov-nas-badge', 'error', '連線失敗');
                 console.error('NAS fetch failed', e);
             }
         }
@@ -6695,6 +6826,7 @@
             });
         }
         const NAS_DISK_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#eab308'];
+        const hiddenTempDisks = new Set();
 
         async function fetchNasAdvanced() {
             try {
@@ -6759,17 +6891,28 @@
                 updateChartWithEntrance(nasStorageChart);
 
                 const tpRes = await (await fetch(`/api/nas/temperature-history?hours=${hrs}`)).json();
-                const rawTemps = tpRes.data || [];
+                const rawTemps = (tpRes.data || []).slice().sort((a, b) => new Date(a.t) - new Date(b.t));
                 const diskNames = tpRes.diskNames || [];
+                // Chart.js 在替換 datasets 時會忘記 legend toggle 的狀態；以硬碟名稱保存，下一輪輪詢也不會復活。
+                nasTempChart.data.datasets.forEach((dataset, index) => {
+                    if (!dataset.$diskName) return;
+                    if (nasTempChart.isDatasetVisible(index)) hiddenTempDisks.delete(dataset.$diskName);
+                    else hiddenTempDisks.add(dataset.$diskName);
+                });
                 const tempKeys = diskNames.map((_, index) => `__disk${index}`);
                 const tempRows = rawTemps.map(point => ({ ...point, ...Object.fromEntries(diskNames.map((name, index) => [tempKeys[index], (point.disks || {})[name] ?? null])) }));
                 const tp = downsampleRows(tempRows, tempKeys);
                 nasTempChart.data.labels = fmtH(tp);
                 nasTempChart.data.datasets = diskNames.map((name, i) => ({
+                    $diskName: name,
                     label: nasDiskMeta[name] ? `${name} (${nasDiskMeta[name]})` : name,
                     data: tp.map(p => (p.disks || {})[name] ?? null),
-                    borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: true
+                    borderColor: NAS_DISK_COLORS[i % NAS_DISK_COLORS.length], fill: false, tension: 0.3, pointRadius: 0, spanGaps: false,
+                    hidden: hiddenTempDisks.has(name)
                 }));
+                nasTempChart.data.datasets.forEach((dataset, index) => {
+                    nasTempChart.setDatasetVisibility(index, !hiddenTempDisks.has(dataset.$diskName));
+                });
                 updateChartWithEntrance(nasTempChart);
 
                 // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
@@ -6780,24 +6923,40 @@
 
         async function fetchNasDocker() {
             try {
-                const containers = (await (await fetch('/api/nas/docker')).json()).containers || [];
+                const response = await fetch('/api/nas/docker');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const payload = await response.json();
+                const containers = payload.containers || [];
                 const running = containers.filter(c => c.state === 'running').length;
                 document.getElementById('nas-docker-running').innerText = running;
                 document.getElementById('nas-docker-sub').innerText = `共 ${containers.length} 個容器`;
                 document.getElementById('nas-docker-count').innerText = `— ${running}/${containers.length} 運行中`;
                 const tbody = document.getElementById('nas-docker-list');
+                const emptyMessage = payload.source === 'not_configured'
+                    ? '尚未設定 Docker Monitor；請依 NAS-DOCKER-MONITOR-SETUP.md 部署'
+                    : '目前沒有容器';
                 tbody.innerHTML = containers.length ? containers.map((c, index) => {
                     const on = c.state === 'running';
                     const cpuPct = Number.isFinite(Number(c.cpu_percent)) ? Number(c.cpu_percent) : 0;
                     const memUsage = Number.isFinite(Number(c.mem_usage_mb)) ? Number(c.mem_usage_mb) : 0;
                     const memLimit = Number.isFinite(Number(c.mem_limit_mb)) ? Number(c.mem_limit_mb) : 0;
                     const memPct = memLimit > 0 ? Math.round(memUsage / memLimit * 100) : 0;
+                    const pids = Number(c.pids || 0);
+                    const health = c.health || (/\(([^)]+)\)/.exec(c.status || '')?.[1] || '');
+                    const fmtDate = value => {
+                        const date = value ? new Date(value) : null;
+                        return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('zh-TW', { hour12: false }) : '--';
+                    };
+                    const networks = (c.networks || []).map(n => `${n.name}${n.ip_address ? ` ${n.ip_address}` : ''}`).join(' · ') || '--';
+                    const ports = (c.ports || []).map(p => p.host ? `${p.host} → ${p.container}` : p.container).join(' · ') || '無公開連接埠';
+                    const mounts = (c.mounts || []).map(m => `${m.destination}${m.read_write ? '' : ' (唯讀)'}`).join(' · ') || '無掛載';
                     return `
                     <tr class="hover:bg-slate-900/30">
-                        <td class="py-2.5"><p class="font-bold text-slate-200">${escapeHtml(c.name)}</p><p class="text-[9px] text-slate-500 mono truncate max-w-[180px]">${escapeHtml(c.image)}</p></td>
-                        <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[9px] border font-bold ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-500 border-slate-700/40'}">${on ? '運行中' : '已停止'}</span><p class="text-[8px] text-slate-600 mt-0.5">${escapeHtml(c.status)}</p></td>
-                        <td class="py-2.5 mono text-[11px] text-slate-300">${on ? cpuPct + '%' : '-'}</td>
-                        <td class="py-2.5 mono text-[11px] text-slate-300">${on ? `${memUsage}MB <span class="text-slate-600">(${memPct}%)</span>` : '-'}</td>
+                        <td class="py-2.5 pr-3"><p class="font-bold text-slate-200">${escapeHtml(c.name)}</p><p class="text-[9px] text-slate-500 mono truncate max-w-[220px]">${escapeHtml(c.image)}</p><p class="text-[8px] text-slate-700 mono">ID ${escapeHtml(String(c.id || '').slice(0, 12))}${c.compose_service ? ` · ${escapeHtml(c.compose_service)}` : ''}</p></td>
+                        <td class="py-2.5 pr-3"><span class="px-2 py-0.5 rounded text-[9px] border font-bold ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-500 border-slate-700/40'}">${on ? '運行中' : '已停止'}</span>${health ? `<span class="ml-1 text-[8px] ${health === 'healthy' ? 'text-emerald-400' : health === 'unhealthy' ? 'text-red-400' : 'text-slate-500'}">${escapeHtml(health)}</span>` : ''}<p class="text-[8px] text-slate-600 mt-0.5">重啟 ${Number(c.restart_count || 0)} 次 · ${c.oom_killed ? '<span class="text-red-400">OOM</span>' : '無 OOM'}</p></td>
+                        <td class="py-2.5 pr-3 mono text-[10px] text-slate-300">${on ? `${cpuPct}%<p class="text-[8px] text-slate-600 mt-0.5">${pids} PID</p>` : '-'}</td>
+                        <td class="py-2.5 pr-3 mono text-[10px] text-slate-300">${on ? `${memUsage} / ${memLimit} MB <span class="text-slate-600">(${memPct}%)</span>` : '-'} </td>
+                        <td class="py-2.5 pr-3 mono text-[9px] text-slate-400"><p>↓ ${diagBytes(c.network_rx_bytes)} · ↑ ${diagBytes(c.network_tx_bytes)}</p><p class="text-slate-600 mt-0.5">讀 ${diagBytes(c.block_read_bytes)} · 寫 ${diagBytes(c.block_write_bytes)}</p></td>
                         <td class="py-2.5 text-right whitespace-nowrap">
                             ${on
                             ? `<button type="button" data-docker-index="${index}" data-docker-action="restart" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded">重啟</button>
@@ -6805,8 +6964,20 @@
                             : `<button type="button" data-docker-index="${index}" data-docker-action="start" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded">啟動</button>`}
                             <button type="button" data-docker-index="${index}" data-docker-action="logs" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded ml-1">日誌</button>
                         </td>
+                    </tr>
+                    <tr class="text-[8px] text-slate-600 bg-slate-950/20">
+                        <td colspan="6" class="pb-2.5 pt-1 px-2">
+                            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-5 gap-y-1">
+                                <span>建立：<span class="mono text-slate-500">${escapeHtml(fmtDate(c.created_at))}</span></span>
+                                <span>啟動：<span class="mono text-slate-500">${escapeHtml(fmtDate(c.started_at))}</span></span>
+                                <span>重啟策略：<span class="mono text-slate-500">${escapeHtml(c.restart_policy || 'no')}</span></span>
+                                <span class="truncate" title="${escapeHtml(networks)}">網路：<span class="mono text-slate-500">${escapeHtml(networks)}</span></span>
+                                <span class="truncate" title="${escapeHtml(ports)}">連接埠：<span class="mono text-slate-500">${escapeHtml(ports)}</span></span>
+                                <span class="truncate" title="${escapeHtml(mounts)}">掛載：<span class="mono text-slate-500">${escapeHtml(mounts)}</span></span>
+                            </div>
+                        </td>
                     </tr>`;
-                }).join('') : '<tr><td colspan="5" class="text-center py-4 text-slate-500">無容器</td></tr>';
+                }).join('') : `<tr><td colspan="6" class="text-center py-4 text-slate-500">${emptyMessage}</td></tr>`;
                 tbody.querySelectorAll('[data-docker-index]').forEach(button => {
                     button.addEventListener('click', () => {
                         const c = containers[Number(button.dataset.dockerIndex)];
@@ -6835,9 +7006,24 @@
             document.getElementById('docker-log-modal').classList.add('flex');
             setDialogState('docker-log-modal', true);
             try {
-                const data = await (await fetch(`/api/nas/docker/${encodeURIComponent(id)}/logs?lines=200`)).json();
+                const data = await (await fetch(`/api/nas/docker/${encodeURIComponent(id)}/logs?lines=1000`)).json();
                 document.getElementById('docker-log-body').innerText = data.logs || '(無日誌)';
             } catch (e) { document.getElementById('docker-log-body').innerText = '日誌讀取失敗'; }
+        }
+        async function copyDockerLog() {
+            const text = document.getElementById('docker-log-body')?.innerText || '';
+            if (!text || text === '載入中...') return showToast('日誌尚未載入', true);
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(`已複製全部 ${text.split('\n').length} 行日誌`);
+            } catch {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed'; textarea.style.opacity = '0';
+                document.body.appendChild(textarea); textarea.select();
+                const copied = document.execCommand('copy'); textarea.remove();
+                showToast(copied ? '已複製全部日誌' : '複製失敗', !copied);
+            }
         }
         function closeDockerLog() {
             document.getElementById('docker-log-modal').classList.add('hidden');
@@ -6902,8 +7088,8 @@
                     const severe = l.level !== 'info';
                     const mod = NAS_LOG_MODULE_LABEL[l.module] || l.module;
                     list.innerHTML += `
-                    <div class="flex items-center gap-3 p-2.5 rounded-lg border ${cls}">
-                        <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-14 ${severe ? '' : 'opacity-60'}">${icon[l.level] || ''}${escapeHtml(l.level)}</span>
+                    <div class="nas-event-row grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3 p-2.5 rounded-lg border ${cls}">
+                        <span class="text-[9px] font-black uppercase tracking-wider whitespace-nowrap ${severe ? '' : 'opacity-60'}">${icon[l.level] || ''}${escapeHtml(l.level)}</span>
                         <div class="flex-grow min-w-0">
                             <p class="text-[11px] ${severe ? 'font-bold' : ''} text-slate-200 truncate" title="${escapeHtml(l.content)}">${escapeHtml(l.content)}</p>
                             <p class="text-[9px] text-slate-500 mono">${escapeHtml(mod)} · ${escapeHtml(l.operator)} · ${escapeHtml(new Date(l.ts).toLocaleString('zh-TW'))}</p>
@@ -6921,7 +7107,7 @@
             const card = document.getElementById('nas-alert-config-card');
             try {
                 const d = await (await fetch('/api/nas/alerts/config')).json();
-                if (d.source === 'not_configured') { card.classList.add('hidden'); return; }
+                if (d.source === 'not_configured') { card.classList.add('hidden'); return false; }
                 card.classList.remove('hidden');
                 const rows = d.config || [];
                 document.getElementById('nas-alert-config-list').innerHTML = rows.length ? rows.map(c => `
@@ -6934,7 +7120,8 @@
                             <button onclick="deleteAlertConfig('${c.metric}')" class="text-slate-500 hover:text-red-400 transition" title="刪除"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
                         </span>
                     </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-2">尚無自訂閾值，全部使用系統預設值</p>';
-            } catch { card.classList.add('hidden'); }
+                return true;
+            } catch { card.classList.add('hidden'); return false; }
         }
         async function saveAlertConfig() {
             const metric = document.getElementById('nac-metric').value.trim();
@@ -6976,12 +7163,84 @@
             try {
                 const r = await (await fetch('/api/nas/sleep-stats')).json();
                 const days = r.days || [];
+                const awakeSessions = r.awakeSessions || [];
                 if (!days.length) { el.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">尚無休眠紀錄（機械碟近期可能持續運轉，或日誌不足）</p>'; return; }
                 const bar = pct => {
                     const c = pct >= 60 ? 'bg-emerald-500' : pct >= 30 ? 'bg-amber-500' : 'bg-red-500';
                     return `<div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="${c} h-full" style="width:${pct}%"></div></div>`;
                 };
-                el.innerHTML = days.map(d => `
+                const today = new Date().toLocaleDateString('en-CA');
+                const completeDays = days.filter(day => day.day !== today);
+                const recent = completeDays.slice(0, 7);
+                const previous = completeDays.slice(7, 14);
+                const aggregate = period => {
+                    const drives = {}, wakeMoments = new Set(), hourCounts = Array(24).fill(0), timeCounts = {};
+                    period.forEach(day => {
+                        day.drives.forEach(drive => {
+                            const row = drives[drive.name] ||= { name: drive.name, sleepHours: 0, monitoredDays: 0, sessions: 0, longestMin: 0 };
+                            row.sleepHours += Number(drive.sleepHours || 0); row.monitoredDays++; row.sessions += Number(drive.sessions || 0); row.longestMin = Math.max(row.longestMin, Number(drive.longestMin || 0));
+                        });
+                        day.wakes.forEach(wake => wakeMoments.add(`${day.day} ${wake.time}`));
+                    });
+                    wakeMoments.forEach(moment => {
+                        const time = moment.slice(-5), hour = Number(time.slice(0, 2));
+                        if (Number.isInteger(hour) && hour >= 0 && hour < 24) hourCounts[hour]++;
+                        timeCounts[time] = (timeCounts[time] || 0) + 1;
+                    });
+                    const rows = Object.values(drives).map(row => ({
+                        ...row,
+                        awakeHours: Math.max(0, row.monitoredDays * 24 - row.sleepHours),
+                        sleepPct: row.monitoredDays ? Math.round(row.sleepHours / (row.monitoredDays * 24) * 100) : 0,
+                        avgSessionMin: row.sessions ? Math.round(row.sleepHours * 60 / row.sessions) : 0
+                    }));
+                    const totalSleep = rows.reduce((sum, row) => sum + row.sleepHours, 0);
+                    const driveDays = rows.reduce((sum, row) => sum + row.monitoredDays, 0);
+                    return {
+                        rows, totalSleep, totalAwake: rows.reduce((sum, row) => sum + row.awakeHours, 0),
+                        avgSleepPerDriveDay: driveDays ? totalSleep / driveDays : 0,
+                        wakeIncidents: wakeMoments.size, hourCounts, timeCounts
+                    };
+                };
+                const current = aggregate(recent.length ? recent : days.slice(0, 1));
+                const prior = aggregate(previous);
+                const delta = prior.avgSleepPerDriveDay ? current.avgSleepPerDriveDay - prior.avgSleepPerDriveDay : null;
+                const peakHour = current.hourCounts.reduce((best, count, hour) => count > best.count ? { hour, count } : best, { hour: 0, count: 0 });
+                const topTimes = Object.entries(current.timeCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+                const recentDaySet = new Set((recent.length ? recent : days.slice(0, 1)).map(day => day.day));
+                const periodAwakeSessions = awakeSessions.filter(session => recentDaySet.has(new Date(session.start * 1000).toLocaleDateString('en-CA')));
+                const longestAwake = periodAwakeSessions.reduce((best, row) => Number(row.durationMin || 0) > Number(best?.durationMin || 0) ? row : best, null);
+                const fmtMin = minutes => minutes >= 60 ? `${Math.floor(minutes / 60)}時${minutes % 60}分` : `${minutes}分`;
+                const hourMax = Math.max(1, ...current.hourCounts);
+                const periodLabel = `近 ${recent.length || 1} 個完整日`;
+                const summary = `
+                    <div class="mb-5 p-4 rounded-xl bg-slate-900/45 border border-slate-800/60">
+                        <div class="flex flex-wrap justify-between items-end gap-2 mb-3">
+                            <div><p class="text-[11px] font-bold text-slate-200">跨日統計摘要</p><p class="text-[8px] text-slate-600 mt-0.5">${periodLabel}；今日尚未結束，不納入週期比較</p></div>
+                            <p class="text-[8px] text-slate-600">資料涵蓋 ${days[days.length - 1].day} ～ ${days[0].day}</p>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
+                            <div class="p-3 rounded-lg bg-slate-950/50"><p class="text-[8px] text-slate-500">硬碟合計休眠</p><p class="text-sm font-black mono text-emerald-400 mt-1">${current.totalSleep.toFixed(1)} 小時</p></div>
+                            <div class="p-3 rounded-lg bg-slate-950/50"><p class="text-[8px] text-slate-500">硬碟合計運轉</p><p class="text-sm font-black mono text-amber-400 mt-1">${current.totalAwake.toFixed(1)} 小時</p></div>
+                            <div class="p-3 rounded-lg bg-slate-950/50"><p class="text-[8px] text-slate-500">獨立喚醒時刻</p><p class="text-sm font-black mono text-blue-400 mt-1">${current.wakeIncidents} 次</p><p class="text-[8px] text-slate-600">平均 ${(current.wakeIncidents / Math.max(1, recent.length)).toFixed(1)} 次/日</p></div>
+                            <div class="p-3 rounded-lg bg-slate-950/50"><p class="text-[8px] text-slate-500">與前期比較</p><p class="text-sm font-black mono ${delta == null ? 'text-slate-500' : delta >= 0 ? 'text-emerald-400' : 'text-amber-400'} mt-1">${delta == null ? '資料不足' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} 小時/日`}</p><p class="text-[8px] text-slate-600">平均每顆休眠 · 前期 ${previous.length} 日</p></div>
+                            <div class="p-3 rounded-lg bg-slate-950/50"><p class="text-[8px] text-slate-500">最常喚醒時段</p><p class="text-sm font-black mono text-violet-400 mt-1">${String(peakHour.hour).padStart(2, '0')}:00–${String(peakHour.hour).padStart(2, '0')}:59</p><p class="text-[8px] text-slate-600">${peakHour.count} 個獨立時刻</p></div>
+                            <div class="p-3 rounded-lg bg-slate-950/50"><p class="text-[8px] text-slate-500">最長連續運轉</p><p class="text-sm font-black mono text-rose-400 mt-1">${longestAwake ? fmtMin(longestAwake.durationMin) : '--'}</p><p class="text-[8px] text-slate-600">${longestAwake ? `${escapeHtml(longestAwake.drive)}${longestAwake.ongoing ? ' · 目前仍運轉' : ''}` : '尚無完整配對'}</p></div>
+                        </div>
+                        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <div>
+                                <p class="text-[9px] font-bold text-slate-400 mb-2">各硬碟週期統計</p>
+                                <div class="space-y-2">${current.rows.map(row => `<div class="p-2.5 rounded-lg bg-slate-950/40"><div class="flex justify-between gap-3"><span class="font-bold text-[10px] text-slate-300">${escapeHtml(row.name)}</span><span class="mono text-[9px] text-slate-400">休眠 ${row.sleepHours.toFixed(1)}h · 運轉 ${row.awakeHours.toFixed(1)}h · ${row.sleepPct}%</span></div><p class="text-[8px] text-slate-600 mt-1">休眠 ${row.sessions} 次 · 平均 ${fmtMin(row.avgSessionMin)} · 最長 ${fmtMin(row.longestMin)}</p><div class="mt-1.5">${bar(row.sleepPct)}</div></div>`).join('')}</div>
+                            </div>
+                            <div>
+                                <p class="text-[9px] font-bold text-slate-400 mb-2">每小時喚醒分布</p>
+                                <div class="h-20 flex items-end gap-1 px-1 border-b border-slate-800">${current.hourCounts.map((count, hour) => `<div class="flex-1 bg-blue-500/70 hover:bg-blue-400 rounded-t-sm min-h-[2px]" style="height:${Math.max(2, count / hourMax * 100)}%" title="${String(hour).padStart(2, '0')}:00 · ${count} 次"></div>`).join('')}</div>
+                                <div class="flex justify-between text-[7px] text-slate-700 mt-1"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+                                <p class="text-[8px] text-slate-600 mt-2">常見精確時刻：${topTimes.length ? topTimes.map(([time, count]) => `${time}（${count}天）`).join(' · ') : '尚無資料'}</p>
+                                <div class="mt-3"><p class="text-[9px] font-bold text-slate-400 mb-1.5">最近運轉區段</p><div class="space-y-1 max-h-24 overflow-y-auto terminal-scroll">${periodAwakeSessions.slice(0, 8).map(session => `<div class="flex justify-between gap-3 text-[8px]"><span class="text-slate-500">${escapeHtml(session.drive)} · ${new Date(session.start * 1000).toLocaleString('zh-TW', { hour12: false })}</span><span class="mono ${session.ongoing ? 'text-amber-400' : 'text-slate-400'}">${fmtMin(session.durationMin)}${session.ongoing ? ' · 進行中' : ''}</span></div>`).join('') || '<p class="text-[8px] text-slate-600">尚無可配對的喚醒→休眠區段</p>'}</div></div>
+                            </div>
+                        </div>
+                    </div>`;
+                el.innerHTML = summary + days.map(d => `
                     <div class="mb-3 pb-3 border-b border-slate-800/50 last:border-0">
                         <p class="text-[11px] font-bold text-slate-300 mb-1.5">${d.day} <span class="text-slate-600 font-normal">· 喚醒 ${d.wakes.length} 次</span></p>
                         <div class="space-y-1.5">
@@ -7120,10 +7379,12 @@
                 document.getElementById('notif-trig-nas').checked = !!s.triggerNasAlerts;
                 const tw = document.getElementById('notif-trig-wiim'); if (tw) tw.checked = s.triggerWiimTemp !== false;
                 const setCk = (id, v) => { const e = document.getElementById(id); if (e) e.checked = v; };
+                setCk('notif-telegram-commands', !!s.telegramCommandsEnabled);
                 setCk('notif-trig-ups-outage', s.triggerUpsOutage !== false);
                 setCk('notif-trig-ups-lowbatt', s.triggerUpsLowBatt !== false);
                 setCk('notif-trig-newclient', !!s.triggerNewClient);
                 setCk('notif-trig-client-ip-change', !!s.triggerClientIpChange);
+                setCk('notif-trig-client-connectivity', !!s.triggerClientConnectivity);
                 setCk('notif-trig-client-signal', !!s.triggerClientWeakSignal);
                 setCk('notif-trig-network-device-offline', !!s.triggerNetworkDeviceOffline);
                 setCk('notif-trig-wifi-ssid', !!s.triggerWifiSsidChange);
@@ -7131,6 +7392,7 @@
                 setCk('notif-trig-cloud-offline', !!s.triggerCloudOffline);
                 setCk('notif-trig-wiim-offline', !!s.triggerWiimOffline);
                 setCk('notif-trig-wiim-volume', !!s.triggerWiimHighVolume);
+                setCk('notif-trig-wiim-playback', !!s.triggerWiimPlaybackChange);
                 setCk('notif-trig-block', s.triggerBlockAction !== false);
                 setCk('notif-trig-nasdisk', !!s.triggerNasDiskTemp);
                 setCk('notif-trig-nasspace', !!s.triggerNasSpace);
@@ -7146,6 +7408,7 @@
                 setCk('notif-trig-wan-latency', !!s.triggerWanLatency);
                 setCk('notif-trig-unifi-offline', !!s.triggerUnifiOffline);
                 setCk('notif-trig-naslog', !!s.triggerNasLog);
+                setCk('notif-trig-nas-sleep-wake', !!s.triggerNasSleepWake);
                 setCk('notif-trig-upsload', !!s.triggerUpsHighLoad);
                 setCk('notif-trig-ups-runtime', !!s.triggerUpsLowRuntime);
                 setCk('notif-trig-upsvolt', !!s.triggerUpsVoltAbnormal);
@@ -7204,6 +7467,7 @@
                 enabled: document.getElementById('notif-enabled').checked,
                 channel: notifChannel,
                 chatId: document.getElementById('notif-chatid').value.trim(),
+                telegramCommandsEnabled: document.getElementById('notif-telegram-commands')?.checked ?? false,
                 triggerThreats: document.getElementById('notif-trig-threats').checked,
                 triggerNasAlerts: document.getElementById('notif-trig-nas').checked,
                 triggerWiimTemp: document.getElementById('notif-trig-wiim') ? document.getElementById('notif-trig-wiim').checked : true,
@@ -7211,6 +7475,7 @@
                 triggerUpsLowBatt: document.getElementById('notif-trig-ups-lowbatt')?.checked ?? true,
                 triggerNewClient: document.getElementById('notif-trig-newclient')?.checked ?? false,
                 triggerClientIpChange: document.getElementById('notif-trig-client-ip-change')?.checked ?? false,
+                triggerClientConnectivity: document.getElementById('notif-trig-client-connectivity')?.checked ?? false,
                 triggerClientWeakSignal: document.getElementById('notif-trig-client-signal')?.checked ?? false,
                 clientSignalAlert: parseInt(document.getElementById('notif-client-signal')?.value, 10) || 75,
                 triggerNetworkDeviceOffline: document.getElementById('notif-trig-network-device-offline')?.checked ?? false,
@@ -7219,6 +7484,7 @@
                 triggerCloudOffline: document.getElementById('notif-trig-cloud-offline')?.checked ?? false,
                 triggerWiimOffline: document.getElementById('notif-trig-wiim-offline')?.checked ?? false,
                 triggerWiimHighVolume: document.getElementById('notif-trig-wiim-volume')?.checked ?? false,
+                triggerWiimPlaybackChange: document.getElementById('notif-trig-wiim-playback')?.checked ?? false,
                 wiimVolumeAlert: parseInt(document.getElementById('notif-wiim-volume')?.value, 10) || 80,
                 triggerBlockAction: document.getElementById('notif-trig-block')?.checked ?? true,
                 triggerNasDiskTemp: document.getElementById('notif-trig-nasdisk')?.checked ?? false,
@@ -7236,6 +7502,7 @@
                 wanLatencyAlert: parseInt(document.getElementById('notif-wan-latency')?.value, 10) || 100,
                 triggerUnifiOffline: document.getElementById('notif-trig-unifi-offline')?.checked ?? false,
                 triggerNasLog: document.getElementById('notif-trig-naslog')?.checked ?? false,
+                triggerNasSleepWake: document.getElementById('notif-trig-nas-sleep-wake')?.checked ?? false,
                 triggerUpsHighLoad: document.getElementById('notif-trig-upsload')?.checked ?? false,
                 triggerUpsLowRuntime: document.getElementById('notif-trig-ups-runtime')?.checked ?? false,
                 triggerUpsVoltAbnormal: document.getElementById('notif-trig-upsvolt')?.checked ?? false,
@@ -7649,7 +7916,7 @@
             const active = wiimModeToSrcKey(mode);
             document.querySelectorAll('.wiim-src-chip').forEach(b => {
                 const on = b.dataset.src === active;
-                b.className = `wiim-src-chip px-3 py-1.5 rounded-full text-[10px] font-bold border transition ${on ? 'bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-500/20' : 'bg-slate-900/60 text-slate-400 border-slate-700/60 hover:text-slate-200 hover:border-slate-600'}`;
+                b.className = `wiim-src-chip inline-flex items-center justify-center gap-1.5 min-w-[62px] h-9 px-3 rounded-full text-[10px] leading-none font-bold border transition ${on ? 'bg-blue-600 text-white border-blue-400 shadow-lg shadow-blue-500/20' : 'bg-slate-900/60 text-slate-400 border-slate-700/60 hover:text-slate-200 hover:border-slate-600'}`;
             });
         }
         // LinkPlay 無資料時回 "unknow"/"un_known" 等字串，一律視為空值
@@ -7747,7 +8014,11 @@
                 // 播放器狀態 — 進度防抖動：輪詢回報常比本地秒針慢半拍，直接覆蓋會前進→倒退跳動。
                 // 差距 <3 秒視為輪詢誤差取較大值 (時間軸永不倒退)；>3 秒視為使用者 seek 或換曲，採用裝置值。
                 const dev = normalizeWiimPlayer(data.player);
-                if (dev && wiimPlayerState && dev.status === 'play' && wiimPlayerState.status === 'play'
+                if (dev && wiimPlayerState && Date.now() < wiimSeekPendingUntil
+                    && dev.totlen === wiimPlayerState.totlen) {
+                    // Seek 指令送出後裝置可能短暫回傳舊位置；保留本地拖曳結果直到裝置完成跳轉。
+                    dev.curpos = wiimPlayerState.curpos;
+                } else if (dev && wiimPlayerState && dev.status === 'play' && wiimPlayerState.status === 'play'
                     && dev.totlen === wiimPlayerState.totlen
                     && Math.abs((dev.curpos || 0) - (wiimPlayerState.curpos || 0)) < 3000) {
                     dev.curpos = Math.max(dev.curpos || 0, wiimPlayerState.curpos || 0);
@@ -7766,8 +8037,7 @@
                     document.getElementById('wiim-vico').innerHTML = wiimIsMuted
                         ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>'
                         : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
-                    document.getElementById('wiim-vol').value = wiimPlayerState.vol;
-                    document.getElementById('wiim-volval').textContent = wiimPlayerState.vol;
+                    syncWiimVolumeFromDevice(wiimPlayerState.vol);
                     document.getElementById('wiim-play-btn').innerHTML = wiimPlayerState.status === 'play'
                         ? '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>'
                         : '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
@@ -7800,13 +8070,25 @@
                     const bgEl = document.getElementById('wiim-hero-bg');
                     if (!wiimBadVal(meta.albumArtURI) && /^https?:/i.test(meta.albumArtURI)) {
                         // 走後端代理：WiiM 的封面網址常是裝置自簽 HTTPS，瀏覽器直連會被擋
-                        const artUrl = '/api/wiim/art?u=' + encodeURIComponent(meta.albumArtURI) + '&v=' + encodeURIComponent(meta.title || '');
-                        artEl.style.backgroundImage = `url('${artUrl}')`;
-                        artEl.style.backgroundSize = 'cover';
-                        artEl.style.backgroundPosition = 'center';
-                        artEl.textContent = '';
+                        const artVersion = [meta.title, meta.artist, meta.album].filter(Boolean).join('|');
+                        const artUrl = '/api/wiim/art?u=' + encodeURIComponent(meta.albumArtURI) + '&v=' + encodeURIComponent(artVersion);
+                        if (artEl.dataset.artUrl !== artUrl) {
+                            artEl.dataset.artUrl = artUrl;
+                            artEl.style.backgroundImage = 'none';
+                            artEl.innerHTML = '';
+                            const image = document.createElement('img');
+                            image.src = artUrl;
+                            image.alt = `${title} 專輯封面`;
+                            image.className = 'w-full h-full object-cover rounded-2xl';
+                            image.onerror = () => {
+                                artEl.dataset.artUrl = '';
+                                artEl.innerHTML = '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+                            };
+                            artEl.appendChild(image);
+                        }
                         bgEl.style.backgroundImage = `url('${artUrl}')`;
                     } else {
+                        artEl.dataset.artUrl = '';
                         artEl.style.backgroundImage = 'none';
                         artEl.innerHTML = '<svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
                         bgEl.style.backgroundImage = 'none';
@@ -7815,6 +8097,19 @@
                 updateWiimProgUI();
             } catch (e) {
                 console.error('WiiM playback fetch failed', e);
+            }
+        }
+
+        async function refreshWiimAccessories(button) {
+            const icon = button?.querySelector('svg');
+            button && (button.disabled = true);
+            icon?.classList.add('animate-spin');
+            try {
+                await fetchWiimSystem();
+                showToast('已重新整理 WiiM 遙控器與配件');
+            } finally {
+                button && (button.disabled = false);
+                icon?.classList.remove('animate-spin');
             }
         }
 
@@ -7836,11 +8131,7 @@
                 const swState = document.getElementById('side-wiim-state');
                 if (swDot) swDot.className = `w-1.5 h-1.5 rounded-full ${reachable ? 'bg-emerald-500' : 'bg-red-500'}`;
                 if (swState) swState.textContent = reachable ? 'online' : 'offline';
-                const ovWb = document.getElementById('ov-wiim-badge');
-                if (ovWb) {
-                    ovWb.textContent = reachable ? '● 連線正常' : '● 無法連線';
-                    ovWb.className = `px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${reachable ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`;
-                }
+                setOverviewStatusDot('ov-wiim-badge', reachable ? 'ok' : 'error', reachable ? '連線正常' : '無法連線');
 
                 // 遙控器與配件狀態動態讀取
                 const statusObj = data.status;
@@ -7852,7 +8143,7 @@
                     const wBoard = parseFloat(statusObj.temperature_tmp102);
                     if (!isNaN(wTemp)) {
                         const e1 = document.getElementById('ov-wiim-temp');
-                        if (e1) { e1.textContent = wTemp.toFixed(1); e1.style.color = tempColor(wTemp); }
+                        if (e1) { e1.textContent = Math.round(wTemp); e1.style.color = tempColor(wTemp); }
                         const e2 = document.getElementById('ov-wiim-temp-status');
                         if (e2) { e2.textContent = tempLabel(wTemp); e2.style.color = tempColor(wTemp); }
                         const e3 = document.getElementById('kpi-wiim-temp'); if (e3) e3.textContent = Math.round(wTemp);
@@ -8123,16 +8414,95 @@
         `).join('');
         }
 
+        let wiimSeekDragging = false;
+        let wiimSeekPendingUntil = 0;
+        let wiimCatVisible = false;
+        let wiimVolumeDragging = false;
+        let wiimVolumePending = null;
+        let wiimVolumePendingUntil = 0;
+
+        function renderWiimVolume(value) {
+            const volume = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+            const slider = document.getElementById('wiim-vol');
+            const label = document.getElementById('wiim-volval');
+            if (slider) slider.value = volume;
+            if (label) label.textContent = volume;
+            return volume;
+        }
+
+        function previewWiimVolume(value) {
+            wiimVolumeDragging = true;
+            renderWiimVolume(value);
+        }
+
+        function syncWiimVolumeFromDevice(value) {
+            const deviceVolume = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+            if (wiimVolumeDragging) return;
+            if (wiimVolumePending !== null) {
+                if (deviceVolume === wiimVolumePending || Date.now() >= wiimVolumePendingUntil) {
+                    wiimVolumePending = null;
+                    wiimVolumePendingUntil = 0;
+                } else {
+                    renderWiimVolume(wiimVolumePending);
+                    return;
+                }
+            }
+            renderWiimVolume(deviceVolume);
+        }
+
+        async function commitWiimVolume(value) {
+            const volume = renderWiimVolume(value);
+            wiimVolumeDragging = false;
+            wiimVolumePending = volume;
+            wiimVolumePendingUntil = Date.now() + 5000;
+            if (wiimPlayerState) wiimPlayerState.vol = volume;
+            const ok = await wiimCmd('setPlayerCmd:vol:' + volume);
+            if (!ok) {
+                wiimVolumePending = null;
+                wiimVolumePendingUntil = 0;
+                fetchWiimPlayback();
+            }
+        }
+
+        function wiimStepVolume(delta) {
+            const slider = document.getElementById('wiim-vol');
+            const current = Number(slider?.value ?? wiimPlayerState?.vol ?? 0);
+            commitWiimVolume(current + delta);
+        }
+        const wiimTimelineOwnedBySource = () => [1, 31, 32].includes(Number(wiimPlayerState?.mode));
+        function setWiimCatPosition(percent) {
+            const cat = document.getElementById('wiim-progress-cat');
+            if (cat) cat.style.left = `${Math.min(100, Math.max(0, Number(percent) || 0))}%`;
+        }
+        function toggleWiimCat(event) {
+            event?.preventDefault();
+            wiimCatVisible = !wiimCatVisible;
+            document.getElementById('wiim-progress-cat')?.classList.toggle('hidden', !wiimCatVisible);
+        }
         function updateWiimProgUI() {
+            if (wiimSeekDragging) return;
+            const overviewBar = document.getElementById('ov-wiim-progress');
+            const sourceOwnsTimeline = wiimTimelineOwnedBySource();
+            const seekWrap = document.getElementById('wiim-pwrap');
+            if (seekWrap) {
+                seekWrap.classList.toggle('cursor-pointer', !sourceOwnsTimeline);
+                seekWrap.classList.toggle('cursor-not-allowed', sourceOwnsTimeline);
+                seekWrap.title = sourceOwnsTimeline ? '此訊源的播放時間由來源 App 控制' : '點擊或拖曳調整播放位置；雙擊顯示／隱藏小貓';
+                seekWrap.setAttribute('aria-disabled', sourceOwnsTimeline ? 'true' : 'false');
+            }
             // 外部訊源 (Line-In/藍牙/光纖/同軸)：curpos/totlen 為裝置回報的無意義亂值，凍結為 LIVE 顯示
             if (wiimIsLive) {
                 document.getElementById('wiim-pbar').style.width = '100%';
+                setWiimCatPosition(100);
+                if (overviewBar) overviewBar.style.width = '100%';
                 document.getElementById('wiim-pcur').textContent = 'LIVE';
                 document.getElementById('wiim-ptot').textContent = '--:--';
                 return;
             }
             if (!wiimPlayerState || wiimPlayerState.totlen <= 0) {
                 document.getElementById('wiim-pbar').style.width = '0%';
+                setWiimCatPosition(0);
+                if (overviewBar) overviewBar.style.width = '0%';
                 document.getElementById('wiim-pcur').textContent = '0:00';
                 document.getElementById('wiim-ptot').textContent = '0:00';
                 return;
@@ -8142,12 +8512,16 @@
             const pct = Math.min(100, (cur / tot) * 100);
 
             document.getElementById('wiim-pbar').style.width = pct + '%';
+            setWiimCatPosition(pct);
+            if (overviewBar) overviewBar.style.width = pct + '%';
             document.getElementById('wiim-pcur').textContent = formatSec(cur);
             document.getElementById('wiim-ptot').textContent = formatSec(tot);
+            const slider = document.getElementById('wiim-pwrap');
+            if (slider) slider.setAttribute('aria-valuenow', String(Math.round(pct)));
         }
 
         function tickWiimProg() {
-            if (wiimIsLive) return; // LIVE 訊源無進度概念，不自走
+            if (wiimIsLive || wiimSeekDragging) return; // LIVE 訊源無進度概念；拖曳時不覆蓋預覽位置
             const currentMs = Number(wiimPlayerState?.curpos);
             const totalMs = Number(wiimPlayerState?.totlen);
             if (wiimPlayerState?.status === "play" && Number.isFinite(currentMs)
@@ -8166,9 +8540,9 @@
         function switchWiimSubTab(tab, btn) {
             const btns = document.querySelectorAll('.wiim-subtab-btn');
             btns.forEach(b => {
-                b.className = 'wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-slate-200 transition shrink-0';
+                b.className = 'wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap';
             });
-            btn.className = 'wiim-subtab-btn px-3 py-1.5 text-xs font-bold text-blue-500 border-b-2 border-blue-500 transition shrink-0';
+            btn.className = 'wiim-subtab-btn px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-sm shadow-blue-500/20 transition shrink-0 whitespace-nowrap';
 
             const subpages = document.querySelectorAll('.wiim-subpage');
             subpages.forEach(p => p.classList.add('hidden'));
@@ -8182,8 +8556,10 @@
                 if (!res.ok) throw new Error();
                 showToast('已發送 WiiM 指令: ' + command);
                 setTimeout(fetchWiimPlayback, 300);
+                return true;
             } catch (e) {
                 showToast('WiiM 指令發送失敗', true);
+                return false;
             }
         }
 
@@ -8265,17 +8641,46 @@
         }
 
         /* ==================== WiiM 進階功能 ==================== */
-        // 點擊進度條跳轉 (setPlayerCmd:seek:<絕對秒數>)
-        function wiimSeek(ev) {
+        // 點擊或拖曳進度條跳轉 (setPlayerCmd:seek:<絕對秒數>)
+        function wiimSeekPreview(ev) {
             if (wiimIsLive) return showToast('外部訊源 (LIVE) 模式無法跳轉進度', true);
-            if (!wiimPlayerState || !wiimPlayerState.totlen) return;
+            if (wiimTimelineOwnedBySource()) return null;
+            if (!wiimPlayerState || !wiimPlayerState.totlen) return null;
             const rect = document.getElementById('wiim-pwrap').getBoundingClientRect();
             const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
             const sec = Math.round(wiimPlayerState.totlen / 1000 * ratio);
+            document.getElementById('wiim-pbar').style.width = ratio * 100 + '%';
+            setWiimCatPosition(ratio * 100);
+            document.getElementById('wiim-pcur').textContent = formatSec(sec);
+            document.getElementById('wiim-pwrap').setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
+            return { sec, ratio };
+        }
+        function wiimSeekStart(ev) {
+            if (wiimIsLive || wiimTimelineOwnedBySource() || !wiimPlayerState?.totlen) return;
+            wiimSeekDragging = true;
+            ev.currentTarget.setPointerCapture?.(ev.pointerId);
+            wiimSeekPreview(ev);
+        }
+        function wiimSeekMove(ev) {
+            if (wiimSeekDragging) wiimSeekPreview(ev);
+        }
+        function wiimSeekEnd(ev) {
+            if (!wiimSeekDragging) return;
+            const target = wiimSeekPreview(ev);
+            wiimSeekDragging = false;
+            ev.currentTarget.releasePointerCapture?.(ev.pointerId);
+            if (!target) return updateWiimProgUI();
+            const { sec, ratio } = target;
             dbg('WiiM', `Seek 至 ${sec}s (${Math.round(ratio * 100)}%)`);
             wiimPlayerState.curpos = sec * 1000;
+            wiimSeekPendingUntil = Date.now() + 2500;
             updateWiimProgUI();
             wiimCmd('setPlayerCmd:seek:' + sec);
+        }
+        function wiimSeekCancel(ev) {
+            wiimSeekDragging = false;
+            ev.currentTarget.releasePointerCapture?.(ev.pointerId);
+            updateWiimProgUI();
         }
 
         // 播放 URL：.m3u/.asx 用 playlist 指令，其餘用 play
@@ -8605,7 +9010,7 @@
                     info: svgI('M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z', 'text-slate-400')
                 };
                 list.innerHTML = events.length ? events.map(e => `
-                    <div class="flex items-center gap-3 p-2 rounded-lg border text-[11px] ${cls[e.level] || cls.info}">
+                    <div class="ppb-event-row flex items-center gap-3 p-2 rounded-lg border text-[11px] ${cls[e.level] || cls.info}">
                         <span class="shrink-0">${icon[e.level] || icon.info}</span>
                         <span class="flex-grow text-slate-300">${e.desc}</span>
                         <span class="text-slate-500 mono shrink-0">${e.ts}</span>
@@ -8618,7 +9023,7 @@
         async function fetchAdguard() {
             try {
                 const d = await (await fetch('/api/adguard/overview')).json();
-                if (d.source !== 'adguard') return;
+                if (d.source !== 'adguard') return false;
                 const st = d.stats || {}, sts = d.status || {};
                 document.getElementById('adg-version').textContent = sts.version || '';
                 document.getElementById('adg-queries').textContent = (st.num_dns_queries ?? 0).toLocaleString();
@@ -8643,7 +9048,8 @@
                 const maxC = tc.length ? Object.values(tc[0])[0] : 1;
                 const aliasName = ip => { const c = allClients.find(x => x.ip === ip); return c ? `${c.name} (${ip})` : ip; };
                 document.getElementById('adg-top-clients').innerHTML = tc.slice(0, 10).map(o => { const [k, v] = Object.entries(o)[0]; return bar(0, maxC, aliasName(k), v, 'bg-blue-500'); }).join('') || '<p class="text-xs text-slate-500">無資料</p>';
-            } catch (e) { dbg('AdGuard', '讀取失敗', e); }
+                return true;
+            } catch (e) { dbg('AdGuard', '讀取失敗', e); return false; }
         }
         function renderAdgLogRows(entries) {
             return (entries || []).map(e => `
@@ -8662,7 +9068,26 @@
                 ]);
                 if (all.source === 'adguard') document.getElementById('adg-querylog').innerHTML = renderAdgLogRows(all.entries);
                 if (blocked.source === 'adguard') document.getElementById('adg-blockedlog').innerHTML = renderAdgLogRows((blocked.entries || []).map(e => ({ ...e, blocked: true })));
-            } catch { }
+                return all.source === 'adguard' && blocked.source === 'adguard';
+            } catch { return false; }
+        }
+        async function refreshAdguardNow() {
+            const button = document.getElementById('adg-refresh');
+            if (!button || button.disabled) return;
+            const icon = button.querySelector('svg');
+            button.disabled = true;
+            button.setAttribute('aria-label', 'AdGuard 資料更新中');
+            button.classList.add('opacity-60');
+            icon?.classList.add('animate-spin');
+            try {
+                const results = await Promise.all([fetchAdguard(), fetchAdgLog()]);
+                showToast(results.every(Boolean) ? 'AdGuard 資料已立即更新' : 'AdGuard 部分資料更新失敗', !results.every(Boolean));
+            } finally {
+                button.disabled = false;
+                button.setAttribute('aria-label', '立即更新 AdGuard 資料');
+                button.classList.remove('opacity-60');
+                icon?.classList.remove('animate-spin');
+            }
         }
         async function toggleAdgProtection() {
             if (adgProtectionOn === null) return;

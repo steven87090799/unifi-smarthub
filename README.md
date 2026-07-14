@@ -1,5 +1,7 @@
 # SmartHub — 家用網路/儲存/電源整合戰情室
 
+Docker 容器管理的部署方式請見 [`NAS-DOCKER-MONITOR-SETUP.md`](NAS-DOCKER-MONITOR-SETUP.md)。
+
 自架的全屋監控面板,把 **UniFi UCG-Ultra**(硬體/客戶端/WiFi/IPS 威脅/雲端)、**UGREEN UGOS Pro NAS**(CPU/硬碟/儲存/風扇/休眠)、**WiiM Amp** 串流音響、**CyberPower UPS** 電源、**AdGuard Home** DNS 防護與 **Linux 小主機** 整合到單一網頁。前後端分離,所有帳密金鑰僅存在後端 `.env`,前端不接觸任何上游 API。
 
 - **前端**:`public/index.html` — 側邊欄 SPA,13 個分頁:總覽 / 客戶端 / 資安 / WiFi / 雲端站點 / UCG 閘道器 / NAS 儲存 / WiiM 音響 / UPS 電源 / AdGuard DNS / Linux 小主機 / 工具 / 通知推播 / 設定
@@ -123,6 +125,16 @@ volumes:
 2. `.env` 設:`PPB_HOST=<那台電腦的 IP>`、`PPB_USER`/`PPB_PASSWORD`
 
 啟動後看 `docker compose logs | grep Diag`,UPS 那行會直接告訴你連上了沒、失敗原因為何。
+
+---
+
+## Telegram 指令中心
+
+到「通知推播」選擇 Telegram，填入 Bot Token 與 Chat ID 後勾選「啟用 Telegram 指令中心」。Bot 使用 long polling 主動連線 Telegram，不需要開放 webhook port。它只接受設定中的單一 Chat ID；控制指令還要在 60 秒內輸入一次性確認碼。
+
+常用查詢：`/status`（完整 24H 報表）、`/health`、`/network`、`/clients [關鍵字]`、`/threats`、`/nas`、`/docker [名稱]`、`/ups`、`/wiim`、`/alerts`。控制指令：`/speedtest`、`/docker_restart <名稱>`、`/wiim_toggle`、`/wiim_stop`、`/wiim_volume <0-100>`。傳送 `/help` 可在 Telegram 內查看完整清單。
+
+若同一個 Bot Token 被另一個程式或 webhook 同時接收更新，Telegram 的 `getUpdates` 會互相競爭；請讓 SmartHub 獨占該 Bot，或另外向 BotFather 建一個 Bot。
 
 ---
 
