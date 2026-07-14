@@ -3769,8 +3769,6 @@
                                         class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">串流/群組</button>
                                     <button onclick="switchWiimSubTab('sys', this)"
                                         class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">運維系統</button>
-                                    <button onclick="switchWiimSubTab('raw', this)"
-                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">原始指令</button>
                                 </div>
 
                                 <!-- 1. 音訊 DSP 設定 -->
@@ -4001,7 +3999,7 @@
                                 <!-- 6. 運維系統 -->
                                 <div id="wiim-subpage-sys" class="wiim-subpage hidden space-y-5">
                                     <div class="flex flex-wrap gap-2">
-                                        <button onclick="if(confirm('確定重啟 WiiM Amp 設備？')) wiimCmd('reboot')"
+                                        <button onclick="wiimCmd('reboot')"
                                             class="px-3 py-1.5 bg-red-950/40 hover:bg-red-900/30 border border-red-900/40 text-red-400 text-xs font-bold rounded-lg transition">🔄
                                             重新啟動</button>
                                         <button onclick="wiimSyncTime()"
@@ -4057,25 +4055,6 @@
                                     </div>
                                 </div>
 
-                                <!-- 6. 原始指令 -->
-                                <div id="wiim-subpage-raw" class="wiim-subpage hidden space-y-4">
-                                    <div>
-                                        <label
-                                            class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">原始
-                                            HTTP API 指令主控台</label>
-                                        <div class="flex gap-2">
-                                            <input type="text" id="wiim-raw-cmd"
-                                                placeholder="例如 getStatusEx 或 setPlayerCmd:vol:30"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
-                                            <button onclick="wiimRawSend()"
-                                                class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition shrink-0">發送</button>
-                                        </div>
-                                        <p class="text-[9px] text-slate-500 mt-2 font-mono">
-                                            傳送網址：http://&lt;WiiM-IP&gt;/httpapi.asp?command=...</p>
-                                    </div>
-                                    <pre id="wiim-raw-res"
-                                        class="hidden bg-slate-950/70 border border-slate-800/60 rounded-lg p-3 text-[10px] text-emerald-400 mono overflow-auto max-h-[200px]"></pre>
-                                </div>
                             </div>
 
                             <!-- 遙控器與週邊狀態 (獨立區塊，平衡左右欄高度) -->
@@ -8592,9 +8571,15 @@
         }
 
         async function wiimCmd(command) {
+            const highRisk = command === 'reboot' || command.startsWith('setShutdown:') || command.startsWith('ConnectMasterAp:');
+            if (highRisk && !confirm(`這是高風險 WiiM 操作：${command}\n確定繼續？`)) return false;
             try {
-                const res = await fetch('/api/wiim/cmd?command=' + encodeURIComponent(command));
-                if (!res.ok) throw new Error();
+                const res = await fetch('/api/wiim/cmd', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command, ...(highRisk ? { confirmation: command } : {}) })
+                });
+                if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
                 showToast('已發送 WiiM 指令: ' + command);
                 setTimeout(fetchWiimPlayback, 300);
                 return true;
@@ -8621,16 +8606,11 @@
             }
         }
 
-        async function wiimRawSend() {
-            const cmd = document.getElementById('wiim-raw-cmd').value.trim();
-            if (!cmd) return;
-            await wiimGetVal(cmd, 'wiim-raw-res');
-        }
-
         async function wiimClearHistory() {
             if (!confirm('確定要清空伺服器上記錄的溫度歷史資料嗎？')) return;
             try {
-                await fetch('/api/wiim/clear');
+                const response = await fetch('/api/wiim/history', { method: 'DELETE' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 wiimRawHistory = [];
                 renderWiimChart();
                 renderWiimLogTable();

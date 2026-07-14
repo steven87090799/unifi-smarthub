@@ -5,6 +5,7 @@ const os = require('os');
 const { version: APP_VERSION } = require('./package.json');
 const { ERROR_CODES } = require('./observability/error-codes');
 const { createPanelSecurity } = require('./server/middleware/panel-security');
+const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 
 const app = express();
 const mockSecurity = createPanelSecurity();
@@ -727,10 +728,8 @@ app.get('/api/wiim/status', (req, res) => {
     });
 });
 
-app.get('/api/wiim/cmd', (req, res) => {
-    const cmd = req.query.command || '';
-    // 查詢型指令回擬真 JSON，其餘回 OK
-    const canned = {
+// 查詢型指令回擬真 JSON，其餘回 OK；production/mock 共用同一 allowlist 與 method contract。
+const mockWiimCommandResults = {
         getStatusEx: { DeviceName: 'WiiM Amp Testbed', firmware: '4.8.618254', hardware: 'AmlogicA113', project: 'WiiM_Amp', PCB_version: '2', MAC: '00:22:6C:AA:BB:CC', uuid: 'FF31F09E-MOCK', netstat: 2, date: '2026:07:10', time: '09:30:00' },
         getStaticIpInfo: { wlanStaticIpEnable: 0, wlanStaticIp: '', wlanGateWay: '192.168.0.1', wlanDnsServer: '8.8.8.8' },
         EQGetStat: { EQStat: 'On' },
@@ -740,12 +739,15 @@ app.get('/api/wiim/cmd', (req, res) => {
         getbtpairstatus: { result: 3 },
         'Squeezelite:getState': { state: 'stopped', discover_list: [] },
         wlanGetConnectState: 'OK'
-    };
-    const hit = Object.keys(canned).find(k => cmd.startsWith(k));
-    res.json({ result: hit ? (typeof canned[hit] === 'string' ? canned[hit] : JSON.stringify(canned[hit])) : 'OK' });
+};
+registerWiimCommandRoutes(app, {
+    execute: async command => {
+        const value = mockWiimCommandResults[command];
+        return value == null ? 'OK' : (typeof value === 'string' ? value : JSON.stringify(value));
+    }
 });
 
-app.get('/api/wiim/clear', (req, res) => {
+app.delete('/api/wiim/history', (req, res) => {
     mockWiimHistory = [];
     res.json({ ok: true });
 });

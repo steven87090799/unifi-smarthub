@@ -23,6 +23,7 @@ const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
 const { TelegramCommandBot } = require('./telegram-command-bot');
 const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
+const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 const APP_STARTED_AT = Date.now();
@@ -3293,13 +3294,12 @@ app.get('/api/wiim/status', async (req, res) => {
     });
 });
 
-app.get('/api/wiim/cmd', async (req, res) => {
-    const command = req.query.command || '';
-    if (!command) return apiError(res, new Error('No command'), {
-        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'No command', module: 'api.wiim', function: 'command'
-    });
-    const raw = await wiimGet(command);
-    res.json({ result: raw || "OK" });
+registerWiimCommandRoutes(app, {
+    execute: command => wiimGet(command),
+    onUnexpectedError: (error, _req, res) => apiError(res, error, {
+        status: 502, code: ERROR_CODES.EXT_WIIM_FAILED, publicMessage: 'WiiM command transport failed',
+        module: 'api.wiim', function: 'command', logMessage: 'WiiM command transport failed'
+    })
 });
 
 // 專輯封面代理：WiiM 回的 albumArtURI 常是裝置自簽 HTTPS 或外部 CDN，瀏覽器直連會被擋
@@ -3339,7 +3339,7 @@ app.get('/api/wiim/art', async (req, res) => {
     }
 });
 
-app.get('/api/wiim/clear', (req, res) => {
+app.delete('/api/wiim/history', (req, res) => {
     historyDb.deleteSeries('wiim');
     res.json({ ok: true });
 });
