@@ -1,0 +1,1233 @@
+FINAL PRODUCTION MISSION
+
+Mission identity
+
+Selected branch: production-hardening-final
+
+You are executing the final production-hardening mission for this repository.
+
+The application is preparing for production deployment and is expected to run continuously in Docker or its intended production runtime 24 hours per day for months or years.
+
+The objective is to move the repository to the strongest evidence-backed production-readiness frontier achievable in the current repository and execution environment.
+
+This is not a superficial code review.
+
+Read source.
+Execute the application.
+Reproduce defects.
+Measure behavior.
+Attack assumptions.
+Repair demonstrated root causes.
+Validate repairs.
+Commit accepted changes.
+Continue searching.
+
+Never claim that the application is mathematically proven bug-free.
+
+The authoritative initial backlog is:
+
+INITIAL_REVIEW_FINDINGS.md
+
+Read it during bootstrap.
+
+Every P0 and P1 item must be investigated before mission completion.
+
+New capability and architecture items remain in scope and must be processed according to their priority rules.
+
+The initial backlog is a seed, not the complete search surface.
+
+Continue independent production-risk discovery after and during backlog execution.
+
+Unattended authority
+
+The user is unavailable during execution.
+
+Interactive questions and approval requests are forbidden for reversible engineering decisions.
+
+For reversible decisions:
+
+1. inspect repository evidence
+2. inspect tests and documentation
+3. inspect Git history where useful
+4. run a small experiment or reproduction where practical
+5. choose the smallest production-safe reversible default
+6. record material assumptions
+7. continue
+
+A single blocked item does not block the mission.
+
+Record blocked work and immediately choose another actionable in-scope risk.
+
+Only truly irreversible or external-authority actions may remain blocked.
+
+Not authorized:
+
+* push
+* merge
+* production deployment
+* public publishing
+* paid API or cloud spending
+* secret creation or rotation
+* destructive modification of external production data
+
+Authorized:
+
+* repository inspection
+* local source modification
+* local test execution
+* local builds
+* available Docker validation
+* local profiling
+* deterministic failure injection
+* test harness creation
+* local focused Git commits on the dedicated hardening branch
+
+Protect pre-existing user work.
+
+Never discard, reset, overwrite, amend, or rewrite changes whose ownership is uncertain.
+
+Never directly modify main or master.
+
+Active macro-iteration contract
+
+Treat each active runner invocation as one ACTIVE MACRO-ITERATION.
+
+One finding is not a macro-iteration.
+
+One fix is not a macro-iteration.
+
+One test is not a macro-iteration.
+
+One commit is not a macro-iteration.
+
+One audit category is not a macro-iteration.
+
+Within an active macro-iteration, perform as many immediately actionable evidence-backed engineering interventions as can be continuously executed in the current work context.
+
+These are NOT execution-yield boundaries:
+
+* reproducing one finding
+* fixing one bug
+* passing one targeted test
+* passing one regression group
+* closing one finding
+* creating one commit
+* reviewing one component
+* completing one audit category
+* temporarily exhausting the selected component
+
+After each local work unit, immediately select the next highest-yield admissible production-risk action and continue tool-driven engineering work.
+
+Continuous execution spine:
+
+OBSERVE
+→ SELECT EVIDENCE
+→ HYPOTHESIZE
+→ REPRODUCE OR MEASURE
+→ PROVE
+→ FIX
+→ TARGETED VALIDATION
+→ RELATED REGRESSION
+→ COMMIT ACCEPTED CHANGE
+→ SELECT NEXT EVIDENCE
+→ CONTINUE
+
+A focused commit is a durability transaction, not a runner-yield point.
+
+Do not voluntarily yield because a local work unit completed.
+
+Do not send checkpoint summaries or progress reports unless explicitly requested through a side/status interaction.
+
+Do not turn an internal phase boundary into mission completion.
+
+While execution remains permitted by the runner, continue legitimate engineering work while immediately actionable evidence-backed interventions remain.
+
+Do not attempt to bypass, deceive, manipulate or circumvent usage limits, fair-use limits, model controls, session limits or runner controls.
+
+Do not create artificial infinite loops, meaningless commands, sleep loops, filler work or fake tool activity to keep execution active.
+
+All activity must perform genuine repository engineering work.
+
+External runner ceilings are not repository completion.
+
+Git and branch contract
+
+The preparation task should already have created a dedicated production-hardening branch.
+
+At bootstrap:
+
+* verify repository root
+* verify current branch
+* inspect git status
+* inspect recent commits
+
+If currently on main or master, do not modify production source.
+
+Create or return to the dedicated hardening branch only after protecting all existing work.
+
+All accepted tracked-file repairs must use focused Conventional Commits.
+
+Examples:
+
+* fix: enforce write-route authorization and csrf
+* fix: restrict wiim command proxy
+* fix: validate state-changing api inputs
+* fix: debounce ups source failures
+* fix: persist scheduled report idempotency
+* test: cover production write api security boundaries
+* refactor: extract authentication middleware
+
+Do not push unless separately authorized.
+
+Durable execution state
+
+Create local execution state under:
+
+.production-verification/
+
+Ensure .production-verification/ is Git ignored.
+
+Maintain:
+
+* .production-verification/STATE.md
+* .production-verification/JOURNAL.jsonl
+* .production-verification/FINDINGS.md
+* .production-verification/EVIDENCE.md
+
+These files are local execution state.
+
+Durable final conclusions should graduate to committed code, tests, documentation and the final production readiness report.
+
+STATE.md
+
+STATE contains current live state only.
+
+Rewrite it in place.
+
+Never append historical narrative.
+
+Keep it approximately 50 lines or fewer.
+
+Maintain:
+
+MISSION
+BRANCH
+MACRO_ITERATION
+PHASE
+CURRENT_ANCHOR
+CURRENT_AXIS
+CURRENT_HYPOTHESIS
+SUCCESS_CRITERION
+ROLLBACK_CONDITION
+LAST_COMPLETED_CHECKPOINT
+LAST_COMMAND
+LAST_RESULT
+CURRENT_UNCOMMITTED_WORK
+NEXT_ACTION
+OPEN_CRITICAL
+OPEN_HIGH
+OPEN_MEDIUM
+BLOCKED_ITEMS
+LAST_COMMIT
+
+STATE is the authoritative crash-recovery pointer.
+
+Before a materially long-running, risky or multi-command investigation, persist:
+
+CURRENT_ANCHOR
+CURRENT_HYPOTHESIS
+NEXT_ACTION
+
+After resolution, update STATE.
+
+Do not update STATE after every trivial shell command.
+
+JOURNAL.jsonl
+
+JOURNAL is the only append-only execution history.
+
+Use compact typed one-line valid JSON records.
+
+Use ordinary ASCII JSON double quotes.
+
+Do not use typographic smart quotes.
+
+Store evidence pointers rather than large inline logs.
+
+Example records:
+
+{"t":"finding","id":"F-012","severity":"high","component":"scheduler","evidence":"evidence/F-012-repro.txt"}
+{"t":"attempt","anchor":"F-012","verdict":"reproduced","evidence":"evidence/F-012-repro.txt"}
+{"t":"fix","anchor":"F-012","verdict":"accepted","commit":"abc1234"}
+{"t":"revert","anchor":"F-018","reason":"latency-regression","evidence":"evidence/F-018-benchmark.txt"}
+{"t":"checkpoint","next":"database-hot-path-audit"}
+
+Normal rehydration reads only:
+
+tail -n 20 .production-verification/JOURNAL.jsonl
+
+Read older history with targeted queries by:
+
+* finding ID
+* anchor
+* component
+* record type
+
+Never reread the entire journal every macro-iteration for general context.
+
+FINDINGS.md
+
+Maintain a bounded live finding inventory and compact totals.
+
+Each live finding contains:
+
+ID
+STATUS
+SEVERITY
+AXIS
+COMPONENT
+EVIDENCE
+HYPOTHESIS
+VALIDATOR
+COMMIT
+
+Statuses:
+
+OPEN
+REPRODUCING
+CONFIRMED
+FIXING
+VALIDATING
+FIXED
+BLOCKED
+REJECTED
+
+FIXED requires evidence-backed validation.
+
+Code that only appears corrected is not FIXED.
+
+Archive old terminal findings if the live surface becomes expensive to read.
+
+Keep OPEN, REPRODUCING, CONFIRMED, FIXING and VALIDATING findings directly accessible.
+
+EVIDENCE.md
+
+Maintain an index of durable evidence locations.
+
+Include applicable:
+
+* test results
+* runtime traces
+* failure-injection output
+* profiler results
+* resource samples
+* benchmark results
+* query plans
+* Docker lifecycle evidence
+
+Do not inline huge logs.
+
+Write raw evidence to a local evidence file first.
+
+Then index and cite the evidence location.
+
+Evidence must exist before a journal record points to it.
+
+Production frontier axes
+
+Continuously evaluate:
+
+1. correctness-and-data-integrity
+2. concurrency-and-lifecycle-reliability
+3. memory-and-resource-boundedness
+4. performance-and-database-efficiency
+5. dependency-and-failure-recovery
+6. production-deployment-resilience
+7. security-and-trust-boundaries
+8. observability-and-failure-legibility
+9. frontend-and-critical-user-flow-reliability where applicable
+
+Do not spend consecutive interventions indefinitely on one axis while major production surfaces remain unexamined.
+
+Formatting, cosmetic cleanup, log wording, comments and documentation alone do not count as meaningful intervention diversity.
+
+Bootstrap and recovery
+
+Bootstrap is durable-state gated.
+
+If .production-verification/STATE.md records a valid initialized mission and the matching hardening branch exists:
+
+resume.
+
+Do not bootstrap again.
+
+Otherwise:
+
+1. inspect repository root
+2. inspect Git status
+3. verify hardening branch
+4. inspect recent Git history
+5. protect pre-existing changes
+6. create durable execution state
+7. read INITIAL_REVIEW_FINDINGS.md
+8. reconstruct production architecture
+9. discover actual validation commands
+10. establish baseline evidence
+
+On resume read:
+
+* FINAL_PRODUCTION_MISSION.md
+* .production-verification/STATE.md
+* live/current rows in .production-verification/FINDINGS.md
+* .production-verification/EVIDENCE.md
+* the final 20 JOURNAL records
+* current git status
+* current branch
+* recent relevant commits
+
+Do not restart the audit from the beginning after a runner interruption.
+
+Recover:
+
+CURRENT_ANCHOR
+CURRENT_HYPOTHESIS
+CURRENT_UNCOMMITTED_WORK
+NEXT_ACTION
+
+If partial work exists:
+
+1. inspect the diff
+2. reconstruct purpose from state and evidence
+3. validate the partial implementation
+4. safely complete or revert it
+5. continue the mission
+
+Repository reconstruction and baseline
+
+Read applicable:
+
+* README
+* AGENTS.md
+* project instructions
+* manifests
+* lock files
+* source entry points
+* frontend/backend source
+* Dockerfile
+* Compose definitions
+* environment examples
+* startup scripts
+* migrations
+* schemas
+* tests
+* CI
+* scheduler code
+* workers
+* queues
+* cache
+* database code
+* external integrations
+* logging
+* monitoring
+
+Identify:
+
+* process entry points
+* startup lifecycle
+* shutdown lifecycle
+* request flows
+* data flows
+* persistence flows
+* recurring jobs
+* background tasks
+* external dependency boundaries
+* critical user/system flows
+
+Do not write a large architecture essay instead of engineering.
+
+Build sufficient understanding and move immediately into evidence-producing work.
+
+Discover and run applicable repository-native validators:
+
+* environment/config validation
+* build/compile
+* type check
+* lint/static analysis
+* unit tests
+* integration tests
+* E2E tests
+* migration validation
+* Docker build
+* Compose validation
+* startup
+* health/readiness
+
+Independently reverify the historical npm test 19/19 and HTTP 200 observations.
+
+Record the current actual result.
+
+Identify false-green surfaces.
+
+A green suite is evidence.
+
+It is not production-readiness proof.
+
+After baseline, continue actionable production work within the same macro-iteration.
+
+Threat model
+
+Continuously search for:
+
+Correctness
+
+* invalid state transitions
+* boundaries
+* off-by-one failures
+* null/undefined assumptions
+* partial data
+* stale data
+* malformed input
+* duplicate processing
+* ordering errors
+* timezone/timestamp bugs
+* encoding assumptions
+* pagination defects
+* silent partial success
+* data loss
+* non-idempotent replay
+
+Concurrency and lifecycle
+
+* race conditions
+* lost updates
+* non-atomic read-modify-write
+* scheduler overlap
+* duplicate scheduler registration
+* double submit
+* duplicate execution
+* deadlocks
+* stale locks
+* transaction races
+* unsafe shared state
+
+For every recurring task ask:
+
+What happens when the previous execution has not completed before the next execution starts?
+
+For shared mutation ask:
+
+What happens when two callers observe the same old state?
+
+365-day resource safety
+
+Inventory applicable:
+
+* intervals
+* timeouts
+* cron
+* scheduler
+* event listeners
+* workers
+* queues
+* Maps
+* Sets
+* retained arrays/history
+* caches
+* streams
+* sockets
+* DB pools
+* HTTP clients
+* retry loops
+* background Promises
+
+For high-risk long-lived objects determine:
+
+creator
+owner
+creation frequency
+duplicate creation risk
+lifetime
+maximum growth
+cleanup owner
+shutdown cleanup
+failure cleanup
+restart behavior
+
+Ask:
+
+What happens if this process executes continuously for 365 days?
+
+Search for:
+
+* memory leak
+* retained closures
+* listener leak
+* timer leak
+* stream/socket leak
+* unbounded cache
+* unbounded history
+* queue accumulation
+* Promise accumulation
+* active handle accumulation
+* monotonic RSS/heap growth
+
+Use accelerated execution cycles where practical.
+
+Analyze measured trends.
+
+Do not pretend a short run proves 365-day safety.
+
+CPU and performance
+
+Search for:
+
+* busy loops
+* aggressive polling
+* blocking synchronous work
+* event-loop blocking
+* repeated serialization
+* repeated transformation
+* unnecessary sorting
+* quadratic work
+* redundant computation
+* pathological regular expressions
+* frontend render storms
+
+Measure before claiming an optimization.
+
+Never fabricate benchmark percentages.
+
+Database
+
+Inventory production query paths.
+
+Prioritize recurring and latency-sensitive paths.
+
+Investigate:
+
+* N+1
+* repeated queries
+* full scans
+* unbounded results
+* missing pagination
+* ineffective indexes
+* unsafe transaction boundaries
+* connection leaks
+* pool exhaustion
+* lock contention
+* retry amplification
+* transaction races
+* unsafe migrations
+
+Use query plans, timings, logs or concrete query-pattern evidence where supported.
+
+Do not add indexes based only on visual suspicion.
+
+External integrations
+
+Inventory actual network integrations.
+
+Validate applicable:
+
+* timeout
+* delayed response
+* connection refused
+* DNS/network failure
+* malformed response
+* empty response
+* 400
+* 401
+* 403
+* 404
+* 429
+* 500
+
+Validate:
+
+* bounded timeout
+* bounded retry
+* sane backoff
+* no retry storm
+* resource release
+* observable failure
+* defined recovery/fallback
+* side-effect safety
+
+Scheduler and background jobs
+
+Exhaustively inventory recurring production jobs.
+
+For each applicable job investigate:
+
+* duplicate registration
+* overlap
+* timeout
+* cancellation
+* exception handling
+* retry policy
+* shutdown
+* restart
+* partial execution
+* duplicate side effects
+* stale state
+
+Do not validate one scheduler and infer all jobs are safe.
+
+Docker and production lifecycle
+
+Inspect and execute where practical:
+
+* image build
+* Compose validation
+* startup ordering
+* dependency readiness
+* health checks
+* readiness
+* PID 1 behavior
+* SIGTERM
+* graceful shutdown
+* restart policy
+* filesystem permissions
+* volumes
+* persistence
+* configuration/secrets handling
+* log-growth risk
+
+Rehearse applicable restarts.
+
+Check:
+
+* duplicate scheduler registration
+* duplicate writes
+* migration collision
+* stale locks
+* persistence corruption
+
+Security
+
+Review applicable:
+
+* hardcoded secrets
+* sensitive logging
+* SQL injection
+* command injection
+* XSS
+* CSRF
+* SSRF
+* path traversal
+* authorization bypass
+* unsafe file access/upload
+* insecure deserialization
+* stack-trace exposure
+* dependency vulnerabilities
+
+Use ecosystem-appropriate security tools where available.
+
+Do not blindly perform major dependency upgrades based only on a scanner result.
+
+Analyze reachability, exposure, fixed versions and compatibility risk.
+
+Observability
+
+Assume a production engineer primarily has:
+
+* Docker/application logs
+* existing health/status surfaces
+
+Ask:
+
+Can a critical production failure’s root cause be determined after the incident without modifying the application?
+
+Improve observability only for demonstrated failure-legibility gaps.
+
+Use structured context where appropriate:
+
+component
+operation
+error code
+request/correlation/task identifier
+duration
+retry count
+
+Never log credentials, secrets or unnecessary sensitive payloads.
+
+Avoid repeated log storms.
+
+Do not turn this mission into another logging-only refactor.
+
+Frontend and critical flows
+
+Where UI exists, exercise applicable:
+
+* initial loading
+* success
+* empty state
+* error state
+* slow API
+* partial data
+* refresh
+* repeated refresh
+* duplicate click
+* repeated click
+* rapid navigation
+* filtering
+* sorting
+* pagination
+* charts
+* tooltips
+
+Inspect available browser/runtime errors.
+
+A rendered home page does not prove frontend correctness.
+
+Evidence-first repair law
+
+Every nontrivial accepted repair requires an evidence anchor.
+
+Valid anchors:
+
+* reproduced defect
+* failing test
+* runtime trace
+* measured suspicious resource trend
+* query-plan evidence
+* concrete static invariant violation with a reachable execution path
+* documented dependency-contract violation
+* demonstrated critical flow lacking effective validation
+
+Before editing define internally:
+
+HYPOTHESIS
+SUCCESS_CRITERION
+ROLLBACK_CONDITION
+
+Prefer:
+
+REPRODUCE
+→ PROVE FAILURE
+→ ADD REGRESSION PROTECTION
+→ REPAIR
+→ VALIDATE
+
+Where automatic testing is impractical, define and execute deterministic manual validation when the environment permits.
+
+“This should work” is not validation.
+
+Intervention transaction
+
+Prefer small reversible root-cause repairs.
+
+After a candidate:
+
+1. targeted validation
+2. inspect evidence
+3. related regression
+4. inspect new failures
+5. accept or reject
+
+Safely revert rejected isolated experiments.
+
+Do not mix abandoned experiments with accepted production repairs.
+
+For accepted tracked changes:
+
+1. persist evidence
+2. update FINDINGS
+3. update STATE
+4. inspect diff
+5. inspect Git status
+6. run required validation
+7. create one focused Conventional Commit
+8. immediately select another actionable evidence surface
+
+A commit does not end the macro-iteration.
+
+Regression strategy
+
+Use:
+
+targeted validation
+→ related regression
+→ grouped broader regression
+
+Run broader/full regression after:
+
+* critical lifecycle changes
+* scheduler/concurrency changes
+* database/persistence semantic changes
+* cross-module changes
+* security-sensitive changes
+* coherent batches of accepted repairs
+* final release gate
+
+Investigate intermittent failures.
+
+Do not rerun flaky tests until green and ignore earlier failures.
+
+Flakiness is evidence.
+
+Failure injection
+
+Perform architecture-relevant failure injection.
+
+Applicable scenarios may include:
+
+* timeout
+* 429
+* 500
+* connection refused
+* malformed response
+* empty response
+* delayed dependency
+* DB unavailable
+* cache unavailable
+* duplicate request
+* concurrent execution
+* repeated scheduler trigger
+* process restart
+* container restart
+* missing environment variable
+* invalid configuration
+* stale/corrupt non-authoritative state
+
+For each executed scenario evaluate:
+
+EXPECTED
+ACTUAL
+RECOVERY
+RESOURCE CLEANUP
+OBSERVABILITY
+SIDE EFFECT SAFETY
+
+A demonstrated defect becomes a finding.
+
+Repair.
+
+Validate.
+
+Commit.
+
+Continue.
+
+Accelerated endurance validation
+
+Where architecture permits, increase real execution cycles instead of merely sleeping.
+
+Examples:
+
+* scheduler cycles
+* collection cycles
+* API polling
+* dashboard refresh
+* DB operations
+* queue processing
+* timeout/recovery cycles
+
+Observe applicable:
+
+* RSS
+* heap
+* CPU
+* active handles
+* DB connections
+* queue depth
+* latency
+* error count
+
+Investigate:
+
+* monotonic growth
+* periodic growth without release
+* resource stair-stepping
+* latency degradation
+* connection accumulation
+* error growth correlated with execution count
+
+State exactly what was measured.
+
+Never claim a short accelerated run mathematically proves 365-day operation.
+
+Anti-tunnel-vision
+
+Track recent accepted interventions by frontier axis.
+
+When work repeatedly concentrates on one axis while significant production surfaces remain unexamined, deliberately inspect a neglected high-risk axis.
+
+Formatting, comments, documentation and log wording do not reset this concentration signal.
+
+Structural consolidation trigger
+
+Perform bounded root-model reassessment when:
+
+* the same scope survives two apparently correct fixes
+* an expected metric does not move
+* local validation passes while durable/runtime behavior disagrees
+* two observations cannot both be true
+* defensive code accumulates without reducing uncertainty
+* fixes oscillate between scopes
+
+Then:
+
+1. inspect related evidence together
+2. identify shared assumptions
+3. inspect the contract layer below edited code
+4. test ownership, authority, lifecycle and environment assumptions
+
+Examine applicable:
+
+* source/deployed identity
+* environment parity
+* DB transport
+* transaction semantics
+* pool behavior
+* queue ownership
+* scheduler ownership
+* persistence authority
+* external API authority
+
+Attack the lowest evidence-supported violated contract.
+
+Do not add a third superficial defensive patch when the architecture model is contradicted.
+
+Macro-iteration yield law
+
+Do not voluntarily yield after:
+
+* one finding
+* one fix
+* one validator
+* one commit
+* one component
+* one phase
+* one category
+
+Continue while an immediately actionable evidence-backed intervention can be selected from:
+
+* live findings
+* INITIAL_REVIEW_FINDINGS.md
+* production-risk surfaces
+* failed validators
+* failure injection
+* suspicious resource trends
+* uncovered critical flows
+* false-green evaluator surfaces
+* demonstrated observability gaps
+* neglected frontier axes
+
+Before a natural yield:
+
+1. flush durable state
+2. commit, safely revert or crash-checkpoint partial tracked work
+3. scan all live findings
+4. scan every frontier axis
+5. inspect blockers
+6. determine whether another immediately actionable intervention exists
+
+If another useful intervention exists:
+
+continue in the current active macro-iteration.
+
+Do not yield to provide a progress report.
+
+A platform/runner interruption is externally controlled.
+
+It is not mission completion.
+
+Documentation and final report
+
+Synchronize repository documentation after actual code behavior is established.
+
+Create:
+
+PRODUCTION_READINESS_REPORT.md
+
+This report is a committed final engineering artifact.
+
+Include:
+
+* Executive verdict
+* Architecture reviewed
+* Initial backlog disposition
+* Critical/High findings
+* Important Medium findings
+* Repairs
+* Security review
+* Reliability review
+* Performance measurements
+* Failure injection
+* Endurance/resource observations
+* Docker/release rehearsal
+* Testing commands and actual results
+* Blocked validations
+* Known remaining risks
+* Commit timeline
+
+Verdict must be exactly:
+
+READY
+
+or
+
+READY WITH KNOWN RISKS
+
+or
+
+NOT READY
+
+Never choose READY merely because tests are green.
+
+Never claim 100% absence of defects.
+
+Production release rehearsal
+
+Before mission completion, perform the strongest rehearsal supported by the environment.
+
+Validate applicable:
+
+* reproducible dependency setup
+* configuration validation
+* clean build
+* DB initialization/migrations
+* Docker build
+* startup
+* dependency readiness
+* health/readiness
+* critical user/system flows
+* recurring/background jobs
+* graceful shutdown
+* restart
+* persistence
+* smoke tests
+
+Ask:
+
+Could another engineer deploy the intended application from the current repository?
+
+Repair material reproducibility defects.
+
+Do not deploy to production.
+
+Final independent adversarial pass
+
+When the repository first appears production ready:
+
+DO NOT COMPLETE THE MISSION.
+
+Treat:
+
+“This system is ready for continuous production operation.”
+
+as a claim to disprove.
+
+Return to production source and runtime evidence.
+
+Do not use the previous findings list as the primary search source.
+
+Search again for:
+
+* crash paths
+* silent failures
+* data corruption
+* partial state
+* race conditions
+* duplicate execution
+* resource growth
+* timeout stalls
+* restart failures
+* retry amplification
+* false-green tests
+* unsafe assumptions
+* weak failure visibility
+
+Ask:
+
+Where could I place a defect that passes the current tests but fails after long production execution?
+
+Test the strongest realistic candidates.
+
+Any confirmed defect re-enters:
+
+PROVE
+→ FIX
+→ VALIDATE
+→ REGRESSION
+→ COMMIT
+→ CONTINUE
+
+Mission completion condition
+
+The mission may complete only after evidence shows:
+
+* architecture and lifecycle reconstructed
+* current baseline independently rerun
+* every P0 item in INITIAL_REVIEW_FINDINGS.md investigated
+* every P1 item in INITIAL_REVIEW_FINDINGS.md investigated
+* confirmed Critical and High findings repaired or objectively externally blocked
+* required security boundaries validated
+* recurring jobs reviewed
+* long-lived resource risks reviewed
+* concurrency risks investigated
+* external integration failure behavior investigated
+* critical DB paths investigated
+* memory/resource trends investigated
+* applicable failure injection executed
+* applicable accelerated endurance validation executed
+* Docker/deployment lifecycle investigated
+* startup validated
+* graceful shutdown validated
+* restart behavior validated
+* persistence behavior validated where applicable
+* security-sensitive surfaces reviewed
+* observability reviewed
+* frontend critical flows reviewed where applicable
+* initial required test expansion addressed
+* documentation synchronized
+* architecture decomposition performed to the strongest evidence-backed safe point
+* new capability backlog implemented or each remaining item explicitly documented as objectively blocked with evidence
+* broader regression passes
+* production release rehearsal runs
+* independent final adversarial pass runs
+* accepted production repairs are committed
+* working tree state is understood and safe
+* PRODUCTION_READINESS_REPORT.md is complete
+
+The following are NOT completion:
+
+* tests are green
+* one audit pass completed
+* the initial finding list is empty
+* all P0 findings are fixed but remaining mission surfaces are unreviewed
+* all P1 findings are fixed but remaining mission surfaces are unreviewed
+* a report exists
+* server.js became smaller
+* frontend files were split
+* the repository feels good enough
+
+Do not claim bug-free software.
+
+Mission completion means the complete evidence-backed contract was practically executed as far as the repository and available environment support.
+
+Final output
+
+Only after mission completion provide the final mission response.
+
+Report:
+
+* READY / READY WITH KNOWN RISKS / NOT READY
+* Critical and High findings
+* important Medium findings
+* P0/P1 disposition
+* new capabilities implemented
+* architecture changes
+* important repairs
+* validation executed
+* failure-injection results
+* endurance/resource observations
+* release-rehearsal outcome
+* blocked validation
+* remaining known risks
+* important commits
+
+Until the mission completion condition is genuinely satisfied:
+
+continue actual engineering work.

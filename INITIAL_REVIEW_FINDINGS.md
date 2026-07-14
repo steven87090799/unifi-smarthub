@@ -1,0 +1,819 @@
+INITIAL PRODUCTION REVIEW FINDINGS
+
+Current review evidence
+
+Previous review indicates that the repository already has a usable product prototype.
+
+Previously observed evidence:
+
+* npm test: 19/19 tests passed.
+* Primary API smoke testing returned HTTP 200.
+* Mock runtime was operational.
+
+These observations are historical input only.
+
+The production-hardening mission MUST rerun and independently verify the current baseline because repository state may have changed.
+
+A green baseline does not prove production readiness.
+
+Repository paths and line numbers listed below are historical anchors.
+
+Line numbers may drift after edits.
+
+Resolve findings using route names, symbols, functions, surrounding code and current source rather than blindly trusting historical line numbers.
+
+⸻
+
+Priority policy
+
+Work priority is:
+
+1. P0 security and dangerous control boundaries
+2. P1 correctness, validation, reliability and idempotency
+3. Regression and failure-path testing
+4. Production lifecycle and long-running reliability
+5. Documentation correctness
+6. Architecture decomposition
+7. New product capabilities
+
+A lower-priority cosmetic, documentation or refactor task MUST NOT displace an actionable Critical, High, P0 or P1 reliability/security finding.
+
+Architecture refactoring must preserve behavior and must be protected by tests before large file movement.
+
+⸻
+
+P0 — CSRF and Basic Auth brute-force protection
+
+Historical anchor:
+
+server.js, approximately line 108.
+
+Current authentication appears to rely primarily on Basic Auth.
+
+Investigate and harden the authentication and browser-origin security boundary.
+
+Known concerns:
+
+* no failed-login attempt limiting
+* no IP cooldown
+* insufficient CSRF protection
+* insufficient Origin / Referer validation
+* insufficient authorization separation between read-only and destructive operations
+
+Sensitive or write-capable APIs include, where currently applicable:
+
+* /api/connections
+* device blocking or restriction operations
+* PoE restart / power-cycle
+* AdGuard state-changing operations
+* Docker control operations
+* configuration mutations
+* other destructive or state-changing routes discovered during route inventory
+
+Required investigation and implementation:
+
+1. Inventory all read and write API routes.
+2. Classify routes by:
+    * public/static
+    * authenticated read
+    * authenticated write
+    * privileged/destructive
+3. Add evidence-backed CSRF protection for applicable browser state-changing routes.
+4. Validate request Origin and/or Referer where appropriate.
+5. Use CSRF tokens where required by the architecture.
+6. Add Basic Auth failure rate limiting.
+7. Add bounded failed-attempt tracking.
+8. Add IP cooldown or equivalent temporary lockout.
+9. Ensure the limiter itself has bounded memory and expiry cleanup.
+10. Prevent a spoofable proxy address from silently defeating IP-based throttling.
+11. Add authorization roles:
+    * readonly
+    * admin
+12. Read-only users may observe system state but cannot execute state-changing or destructive operations.
+13. Admin-only authorization must be enforced server-side.
+14. Hiding frontend buttons is not authorization.
+15. Protect authentication and authorization failures from log storms.
+16. Do not log passwords, Authorization headers, CSRF tokens or secrets.
+
+Required tests:
+
+* valid admin read
+* valid admin write
+* valid readonly read
+* readonly write denied
+* unauthenticated request denied
+* invalid CSRF token denied
+* missing CSRF token denied where applicable
+* invalid Origin denied
+* applicable same-origin request accepted
+* repeated Basic Auth failure throttled
+* cooldown recovery
+* successful authentication behavior after cooldown
+* bounded limiter state / expiry behavior
+* trusted proxy behavior where relevant
+
+Do not merely install a security package and claim completion.
+
+Exercise the actual middleware and sensitive endpoints.
+
+⸻
+
+P0 — Restrict /api/wiim/cmd
+
+Historical anchor:
+
+server.js, approximately line 2872.
+
+Current behavior historically allowed the frontend to send a WiiM command through:
+
+GET /api/wiim/cmd?command=...
+
+Investigate the current route.
+
+Treat a generic device-command proxy as a high-risk control boundary.
+
+Required:
+
+1. Inventory commands legitimately required by the current UI and product behavior.
+2. Create an explicit server-side allowlist.
+3. Reject unknown commands.
+4. Normalize command representation before allowlist comparison.
+5. Prevent encoding or whitespace variants from bypassing validation.
+6. Evaluate parameterized commands separately from fixed commands.
+7. Apply strict validation to parameters.
+8. Explicitly evaluate high-risk commands including:
+    * reboot
+    * shutdown
+    * network configuration
+    * device configuration reset
+    * firmware/update controls
+9. High-risk commands must not remain reachable merely because the WiiM backend supports them.
+10. Preserve current legitimate UI behavior.
+
+Add contract tests proving:
+
+* every legitimate current UI command remains functional
+* unknown commands are rejected
+* encoded bypass attempts are rejected
+* whitespace/case normalization cannot bypass policy
+* dangerous commands outside product scope are rejected
+
+Prefer POST for state-changing operations if current compatibility and architecture permit a safe migration.
+
+Do not break the frontend/backend contract without updating both sides and regression tests.
+
+⸻
+
+P1 — Unified write API input validation
+
+Historical anchors:
+
+* server.js, approximately line 713
+* server.js, approximately line 747
+* server.js, approximately line 2411
+
+Known historical concerns:
+
+* /api/device/restrict does not strictly validate MAC or blockState
+* /api/poe/power-cycle does not fully validate switch MAC and port ranges
+* /api/connections may accept newline/control characters capable of corrupting .env
+* NAS Docker IDs lack a unified format policy
+* alert IDs lack a unified format policy
+* query limits lack consistent maximum bounds
+
+Create a common validation layer.
+
+Do not create dozens of inconsistent route-local regular expressions when a coherent validator abstraction is appropriate.
+
+Validate applicable:
+
+* string type
+* trimmed form
+* minimum length
+* maximum length
+* control characters
+* CR/LF
+* NUL
+* enum values
+* integer type
+* finite numeric values
+* minimum bounds
+* maximum bounds
+* MAC address format
+* identifier format
+* query pagination or result limits
+
+Required validation policy:
+
+* reject control characters in configuration values
+* reject CR and LF in values written to .env
+* reject NUL
+* enforce explicit maximum string lengths
+* use strict enum validation
+* reject implicit unexpected coercion
+* place upper bounds on query/result limits
+* validate switch port ranges against realistic product constraints
+* validate MAC addresses consistently
+* do not silently truncate dangerous values
+
+Inventory all state-changing API bodies and queries.
+
+Do not limit review only to the three historical routes.
+
+Add boundary tests:
+
+* empty
+* minimum
+* maximum
+* maximum + 1
+* negative
+* zero where invalid
+* very large integer
+* floating point where integer required
+* NaN representation where applicable
+* newline
+* carriage return
+* NUL
+* oversized string
+* malformed MAC
+* lowercase/uppercase valid MAC
+* invalid enum
+* unknown fields where policy matters
+
+Specifically test malicious .env input and control-character injection.
+
+⸻
+
+P1 — UPS failure debounce and recovery state
+
+Historical anchor:
+
+server.js, approximately line 3018.
+
+Historical behavior may set upsLastLive = null after a single UPS read failure.
+
+Investigate the current implementation.
+
+A single transient timeout must not immediately become authoritative offline state unless the upstream contract proves that behavior correct.
+
+Required behavior:
+
+* retain last successful UPS data
+* retain last successful timestamp
+* separately track current fetch health
+* distinguish transient timeout/error from confirmed source offline
+* require a bounded consecutive failure threshold before confirmed offline
+* use a default threshold of 3 unless current repository evidence justifies another value
+* emit offline transition only once
+* emit recovery transition only after confirmed recovery
+* avoid repeated alert storms while continuously offline
+* reset consecutive failure state after successful recovery
+* clearly expose stale-data age where UI/API consumers need it
+
+Investigate multiple UPS data sources or fallback logic if present.
+
+Failure state must model:
+
+healthy
+→ degraded/transient failure
+→ confirmed offline
+→ recovered
+
+or an equivalent explicit state model.
+
+Required tests:
+
+* successful polling
+* one timeout
+* two consecutive failures
+* threshold reached
+* repeated failures after confirmed offline
+* success before threshold
+* recovery after confirmed offline
+* notification deduplication
+* stale-data retention
+* source fallback where applicable
+
+Perform deterministic failure injection.
+
+⸻
+
+P1 — Persist report scheduling deduplication
+
+Historical anchor:
+
+server.js, approximately line 2700.
+
+Historical behavior used an in-memory lastReportKey.
+
+This may permit duplicate scheduled reports after process or container restart.
+
+Investigate all scheduled report execution paths.
+
+Move scheduling idempotency to durable storage.
+
+Preferred design:
+
+SQLite-backed report_runs or the repository’s authoritative persistence layer.
+
+Use a durable schedule_key.
+
+Example:
+
+scheduled:2026-07-13:08
+
+Requirements:
+
+* deterministic schedule-key construction
+* unique constraint or equivalent atomic durable claim
+* restart-safe deduplication
+* concurrent execution safety
+* clear distinction between:
+    * claimed
+    * successfully sent
+    * failed
+* determine retry semantics for failed reports
+* do not permanently suppress a report solely because a process crashed before actual delivery unless that is an explicit documented contract
+* avoid duplicate delivery under concurrent scheduler triggers
+
+Investigate transactional semantics.
+
+Where practical use an atomic durable claim rather than:
+
+check
+→ send
+→ insert
+
+with a race window.
+
+Required tests:
+
+* first scheduled run
+* duplicate same-process run
+* process restart simulation
+* duplicate after restart
+* concurrent same-key execution
+* failed delivery
+* retry after failure
+* successful delivery state
+* next schedule key
+* migration from current database state
+
+⸻
+
+New capability — AdGuard service blocking and schedules
+
+Implement after P0/P1 production risks and regression protection are under control.
+
+Capability goals:
+
+* define service categories such as YouTube, TikTok and gaming services
+* support per-device policy
+* support scheduled activation/deactivation
+* preserve existing AdGuard integration behavior
+
+Requirements:
+
+* explicit device identity validation
+* explicit service policy model
+* persistent policy storage
+* deterministic schedule behavior
+* timezone handling
+* restart recovery
+* idempotent application
+* failure handling when AdGuard is unavailable
+* bounded retries
+* observable failure
+* policy reconciliation after recovery
+
+Do not hardcode a fragile list directly into route handlers.
+
+Create an architecture that permits controlled service-definition updates.
+
+Add tests for schedule boundaries and per-device policy isolation.
+
+⸻
+
+New capability — Read-only user mode
+
+Implement readonly and admin roles as part of the authentication/authorization hardening.
+
+Read-only users may inspect dashboards and status information.
+
+Read-only users MUST NOT:
+
+* block or restrict devices
+* change connections/configuration
+* restart or control Docker services
+* power-cycle PoE
+* execute WiiM control commands
+* mutate AdGuard policy
+* execute other state-changing APIs
+
+Server-side authorization is authoritative.
+
+Add authorization contract tests for every write-route category.
+
+⸻
+
+New capability — Configuration backup and restore
+
+Implement a safe backup/restore capability.
+
+Backup scope should investigate and include applicable:
+
+* SQLite database
+* application JSON configuration
+* non-secret configuration metadata
+* a masked representation of .env
+
+Never export live secrets in a plaintext downloadable backup by default.
+
+Requirements:
+
+* manifest/version metadata
+* schema/application version
+* created timestamp
+* integrity information where practical
+* validation before restore
+* reject malformed backup
+* reject unsupported version where migration is unavailable
+* safe restore sequencing
+* rollback or pre-restore backup
+* avoid partial restore state
+* clear handling of restart-required settings
+
+Test:
+
+* export
+* valid restore
+* malformed archive/data
+* incompatible version
+* partial/corrupt data
+* interrupted restore where practical
+* backup containing masked secret fields
+
+Do not restore into external production infrastructure during validation.
+
+⸻
+
+P1/P2 — Site Manager pagination and HTTP 429 retry
+
+Investigate current Site Manager integration.
+
+Historical review indicates missing nextToken handling and inconsistent rate-limit backoff.
+
+Required:
+
+* support pagination using the actual upstream pagination contract
+* detect and process nextToken or current equivalent
+* prevent infinite pagination loops
+* protect against repeated tokens
+* establish a maximum safety bound where appropriate
+* centralize applicable 429 handling
+* honor Retry-After where valid
+* use bounded retry
+* use exponential backoff where appropriate
+* add jitter where appropriate
+* prevent synchronized retry storms
+* expose terminal rate-limit failure
+
+Tests:
+
+* single page
+* multiple pages
+* empty final page
+* repeated token
+* malformed token response
+* 429 then success
+* repeated 429
+* invalid Retry-After
+* retry exhaustion
+* timeout during pagination
+
+⸻
+
+New capability — Threat source IP blocking
+
+Implement only after security boundary and authorization work is complete.
+
+Goal:
+
+permit adding an external malicious IP to an applicable UniFi traffic matching/block list.
+
+Safety requirements:
+
+* admin only
+* strict IP validation
+* IPv4/IPv6 behavior explicitly defined
+* secondary confirmation in the UI
+* server-side confirmation contract where practical
+* mandatory expiration time
+* automatic expiry/reconciliation
+* persistent audit record
+* idempotent add
+* safe duplicate behavior
+* safe removal
+* prevent private/local/gateway/management address blocking unless an explicitly safe product rule supports it
+* failure recovery when UniFi is unavailable
+
+Do not apply blocks to real external production infrastructure during tests unless explicit authorization exists.
+
+Use mocks/test harnesses for destructive validation.
+
+⸻
+
+New capability — Web Push
+
+The PWA already has foundational behavior.
+
+Investigate and add Web Push where architecture and environment support it.
+
+Requirements:
+
+* subscription lifecycle
+* permission-denied handling
+* expired subscription cleanup
+* duplicate subscription handling
+* persistent subscription storage
+* server-side sending abstraction
+* notification deduplication
+* secrets/private keys must not be committed
+* configuration validation
+* bounded retry
+* invalid endpoint cleanup
+* graceful fallback to current Discord/Telegram mechanisms
+
+Test using safe local/mocked push infrastructure where required.
+
+Do not spend paid external service budget.
+
+⸻
+
+Architecture — backend modularization
+
+Historical observation:
+
+server.js was approximately 3,596 lines.
+
+It historically combined:
+
+* API routes
+* UniFi client
+* NAS client
+* WiiM client
+* UPS client
+* scheduler
+* notifications
+* persistence
+* diagnostics
+
+Target structure should be evaluated toward:
+
+server/clients/
+server/routes/
+server/jobs/
+server/storage/
+server/middleware/
+server/validators/
+
+This is a progressive refactor.
+
+Do not begin by rewriting server.js.
+
+Before moving a subsystem:
+
+1. identify its public behavior
+2. identify hidden shared mutable state
+3. add or confirm regression coverage
+4. extract one coherent boundary
+5. run targeted tests
+6. run related regression
+7. commit
+8. continue with the next boundary only if evidence remains healthy
+
+Prioritize extraction boundaries that improve security, testing or lifecycle ownership.
+
+Likely high-value first extractions:
+
+* validators
+* authentication/authorization middleware
+* CSRF/origin middleware
+* WiiM client/control policy
+* UPS polling/state logic
+* report scheduling job
+* persistence repository
+
+Avoid architecture theater.
+
+A smaller file count or shorter server.js is not itself success.
+
+Success is clearer ownership, lower coupling and stronger testability without behavior regression.
+
+⸻
+
+Architecture — frontend decomposition
+
+Historical observation:
+
+the main frontend file was approximately 8,561 lines and 612 KB.
+
+Historical documentation may be stale.
+
+Potential module boundaries:
+
+public/js/polling.js
+public/js/api.js
+public/js/security.js
+public/js/nas.js
+public/js/wiim.js
+public/js/ups.js
+
+CSS and inline script may also be progressively extracted.
+
+Do not perform a blind mechanical split.
+
+Before extracting frontend behavior:
+
+* map global state
+* map DOM ownership
+* map polling lifecycle
+* map timers/listeners
+* map script ordering assumptions
+* map cross-feature function calls
+
+Add tests or browser/runtime validation around critical flows.
+
+Particularly protect:
+
+* polling
+* refresh
+* repeated refresh
+* charts
+* security actions
+* NAS controls
+* WiiM controls
+* UPS rendering
+
+Extract one coherent module at a time.
+
+Validate browser/runtime behavior after each accepted extraction.
+
+Avoid creating circular imports or replacing global coupling with undocumented module coupling.
+
+⸻
+
+Documentation synchronization
+
+Audit current:
+
+* ROADMAP
+* SERVER-MAP.md
+* FRONTEND-MAP.md
+* REVIEW-TODO.md
+* AGENTS.md
+* README/deployment documentation
+
+Historical inconsistencies:
+
+* ROADMAP may still describe SQLite as unfinished although SQLite is implemented
+* SERVER-MAP line counts are stale
+* FRONTEND-MAP line counts are stale
+* REVIEW-TODO validation status may be outdated
+
+Update documents based on the actual final repository.
+
+Do not manually preserve stale line numbers when a more stable symbol/module map is possible.
+
+Create a production release checklist.
+
+The checklist should include applicable:
+
+* security regression
+* authorization contract tests
+* build
+* unit tests
+* integration tests
+* API contract tests
+* Docker build
+* Compose validation
+* health/readiness
+* migration validation
+* startup
+* shutdown
+* restart
+* persistence
+* scheduler jobs
+* failure injection
+* endurance/resource observation
+* documentation synchronization
+
+Documentation is not allowed to claim validation that was not actually performed.
+
+⸻
+
+Required test expansion
+
+The current historical test count is insufficient as production-readiness proof.
+
+Add applicable tests for:
+
+API contract consistency
+
+Validate intended contract consistency between the production backend and mock runtime endpoints.
+
+Detect:
+
+* missing routes
+* method mismatch
+* response-shape drift
+* status-code drift
+* required-field drift
+
+Do not force mock-only behavior onto production if the production API contract intentionally differs.
+
+Explicitly document intentional differences.
+
+Write API authentication, authorization and CSRF
+
+Cover all write-route categories.
+
+Test:
+
+* admin permitted
+* readonly denied
+* unauthenticated denied
+* CSRF failure
+* Origin failure
+* valid request
+
+Query and body boundaries
+
+Test common validators and route-specific constraints.
+
+UPS
+
+Test timeout, debounce, recovery, notification deduplication and source fallback.
+
+Report scheduling
+
+Test restart-safe and concurrent deduplication.
+
+Docker
+
+Where the environment supports Docker:
+
+* validate Compose
+* build the image
+* start the intended stack or safe test topology
+* validate healthcheck
+* validate startup
+* validate graceful shutdown
+* validate restart
+
+Do not claim Docker validation if Docker is unavailable.
+
+Record the blocked validation accurately and continue other work.
+
+Malicious .env input
+
+Test CR, LF, CRLF, NUL and oversized values.
+
+Ensure user-controlled values cannot create additional environment-file assignments.
+
+⸻
+
+Completion meaning for the initial backlog
+
+The initial backlog is not complete merely because code changes were written.
+
+For each P0 and P1 finding:
+
+* current code was re-investigated
+* the risk was reproduced or demonstrated with a concrete invariant/execution path
+* an evidence-backed fix was implemented where confirmed
+* targeted validation passed
+* related regression passed
+* appropriate test protection exists
+* the finding is recorded with evidence and commit
+
+For new capabilities:
+
+* the intended capability is implemented
+* authorization boundary is correct
+* persistence/restart semantics are defined
+* failure behavior is tested
+* critical UI/API flows are validated
+* related regression passes
+
+For architecture work:
+
+* behavior remains intact
+* tests remain green
+* runtime validation remains healthy
+* ownership or testability measurably improves
+* no known lifecycle duplication was introduced
+
+The Goal must continue into the broader FINAL_PRODUCTION_MISSION.md production-hardening frontier after the initial backlog is processed.
+
+The initial findings becoming FIXED does NOT complete the production-hardening mission.
