@@ -55,7 +55,8 @@ open http://<主機IP>:3000
 | **7. CyberPower UPS** | `UPS_SOURCE` | `auto`(依序試 PPB→NUT→pwrstat→pmset)或指定。**目前 Docker 已驗證路徑是 `ppb`,見下方第四節** |
 | | `NUT_HOST`, `NUT_UPS_NAME` | NUT server 位置(容器內**不可**用 localhost) |
 | **8. PowerPanel Business** | `PPB_HOST`, `PPB_PORT`, `PPB_USER`, `PPB_PASSWORD` | PPB 跑在哪台就填哪台的 IP(容器內不可 127.0.0.1) |
-| **9. AdGuard Home** | `ADGUARD_HOST`, `ADGUARD_PORT`, `ADGUARD_USER`, `ADGUARD_PASSWORD` | AdGuard 管理帳密,啟用 DNS 防護頁 |
+| **9. AdGuard Home** | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` | 建議使用 HTTPS origin；啟用 DNS 防護頁 |
+| | `ADGUARD_ALLOW_INSECURE_HTTP`, `ADGUARD_TLS_VERIFY`, `ADGUARD_CA_FILE` | 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可掛自簽 CA。舊 `ADGUARD_HOST/PORT` 仍可用但同樣受傳輸政策保護 |
 | **10. Linux 小主機** | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_PORT` | 任何 Linux 主機的 SSH,啟用硬體監控頁 |
 | **11. 面板密碼** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：整站 Basic Auth(帳號隨意、密碼為此值) |
 

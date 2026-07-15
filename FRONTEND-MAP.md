@@ -62,6 +62,7 @@
 | 7010 | `fetchAppSettings()` | 後端設定 |
 | 7080 | `fetchConnections()` | 連線設定 |
 | settings | `fetchConfigBackupStatus()` / `downloadConfigBackup()` / `stageConfigRestore()` | admin-only 安全備份、明確確認、staged restore 狀態 |
+| settings | `conn-ADGUARD_*` | AdGuard HTTPS origin、legacy host/port、遠端 HTTP opt-in、TLS 驗證與自簽 CA 設定；密碼沿用 secret-set/pending restart 顯示契約 |
 | 7228 | `initWiimPage()` | WiiM 頁初始化 |
 | 7287 | `fetchWiimPlayback()` | WiiM 播放狀態 |
 | 7376 | `fetchWiimSystem()` | WiiM 系統資訊 |

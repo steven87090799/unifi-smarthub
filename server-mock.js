@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 const { version: APP_VERSION } = require('./package.json');
 const { ERROR_CODES } = require('./observability/error-codes');
 const { createPanelSecurity } = require('./server/middleware/panel-security');
+const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const writeInput = require('./server/policies/write-input-policy');
@@ -1173,7 +1174,9 @@ const mockConnDefaults = {
     NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '192.168.0.170',
     UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
-    ADGUARD_HOST: '', ADGUARD_PORT: '80', ADGUARD_USER: '',
+    ADGUARD_URL: '', ADGUARD_HOST: '', ADGUARD_PORT: '80',
+    ADGUARD_ALLOW_INSECURE_HTTP: 'false', ADGUARD_TLS_VERIFY: 'true', ADGUARD_CA_FILE: '',
+    ADGUARD_USER: '',
     LINUX_HOST: '', LINUX_SSH_PORT: '22', LINUX_SSH_USER: ''
 };
 const mockSecretDefaults = {
@@ -1219,6 +1222,25 @@ let mockConn = savedMockConnections.fields;
 let mockConnSecrets = savedMockConnections.secretsSet;
 const mockAppliedConn = { ...mockConn };
 const mockPendingRestartFields = new Set();
+const mockAdguardAxios = Object.freeze({
+    create() {
+        return { request: async () => ({ data: {} }) };
+    }
+});
+
+function validateMockAdguardConnection(updates) {
+    if (!Object.keys(updates).some(key => key.startsWith('ADGUARD_'))) return null;
+    const env = { ...mockConn, ...updates };
+    if (!Object.hasOwn(updates, 'ADGUARD_PASSWORD') && mockConnSecrets.ADGUARD_PASSWORD) {
+        env.ADGUARD_PASSWORD = 'mock-preserved-adguard-credential';
+    }
+    try {
+        createAdGuardConnection({ env, axios: mockAdguardAxios });
+        return null;
+    } catch (error) {
+        return error;
+    }
+}
 app.get('/api/connections', (req, res) => res.json({
     fields: mockConn,
     secretsSet: mockConnSecrets,
@@ -1241,6 +1263,14 @@ app.get('/api/connections/status', (_req, res) => res.json({
 app.post('/api/connections', (req, res) => {
     const updates = validatedInput(res, () => writeInput.parseConnectionUpdates(req.body, MOCK_CONN_FIELDS));
     if (!updates) return;
+    const adguardError = validateMockAdguardConnection(updates);
+    if (adguardError) {
+        return mockApiError(res, adguardError, {
+            status: 400,
+            code: ERROR_CODES.API_VALIDATION_FAILED,
+            publicMessage: adguardError.message
+        });
+    }
     for (const [key, value] of Object.entries(updates)) {
         if (Object.hasOwn(mockConnSecrets, key)) mockConnSecrets[key] = true;
         else mockConn[key] = value;

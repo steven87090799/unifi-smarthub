@@ -194,6 +194,10 @@ test('connection updates reject .env injection, bad types, oversized values, and
         { key: 'UNIFI_NETWORK_SITE_ID' },
         { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
         { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
+        { key: 'ADGUARD_URL' },
+        { key: 'ADGUARD_ALLOW_INSECURE_HTTP' },
+        { key: 'ADGUARD_TLS_VERIFY' },
+        { key: 'ADGUARD_CA_FILE' },
         { key: 'UPS_SOURCE' },
         { key: 'NUT_HOST' },
         { key: 'NUT_UPS_NAME' },
@@ -209,6 +213,10 @@ test('connection updates reject .env injection, bad types, oversized values, and
         UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
         UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
         UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
+        ADGUARD_URL: 'https://adguard.internal:3000/',
+        ADGUARD_ALLOW_INSECURE_HTTP: 'false',
+        ADGUARD_TLS_VERIFY: 'true',
+        ADGUARD_CA_FILE: '/app/config/adguard-ca.pem',
         UPS_SOURCE: 'ppb',
         PASSWORD: ' spaces and # are data '
     }, fields), {
@@ -219,6 +227,10 @@ test('connection updates reject .env injection, bad types, oversized values, and
         UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
         UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
         UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
+        ADGUARD_URL: 'https://adguard.internal:3000',
+        ADGUARD_ALLOW_INSECURE_HTTP: 'false',
+        ADGUARD_TLS_VERIFY: 'true',
+        ADGUARD_CA_FILE: '/app/config/adguard-ca.pem',
         UPS_SOURCE: 'ppb',
         PASSWORD: 'spaces and # are data'
     });
@@ -240,6 +252,10 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration?key=leak' }, fields), 'UNIFI_NETWORK_API_URL');
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080' }, fields).UNIFI_NETWORK_API_URL, 'http://127.0.0.1:8080');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_VERIFY: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_VERIFY');
+    validationError(() => parseConnectionUpdates({ ADGUARD_URL: 'https://adguard.internal/control' }, fields), 'ADGUARD_URL');
+    validationError(() => parseConnectionUpdates({ ADGUARD_URL: 'https://adguard.internal?key=leak' }, fields), 'ADGUARD_URL');
+    validationError(() => parseConnectionUpdates({ ADGUARD_ALLOW_INSECURE_HTTP: '1' }, fields), 'ADGUARD_ALLOW_INSECURE_HTTP');
+    validationError(() => parseConnectionUpdates({ ADGUARD_TLS_VERIFY: 'FALSE' }, fields), 'ADGUARD_TLS_VERIFY');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_SITE_ID: '../site' }, fields), 'UNIFI_NETWORK_SITE_ID');
     validationError(() => parseConnectionUpdates({ UNIFI_THREAT_BLOCK_LIST_ID: '0'.repeat(36) }, fields), 'UNIFI_THREAT_BLOCK_LIST_ID');
     validationError(() => parseConnectionUpdates({ UNIFI_THREAT_BLOCK_LIST_NAME: 'x'.repeat(129) }, fields), 'UNIFI_THREAT_BLOCK_LIST_NAME');
@@ -251,6 +267,7 @@ test('connection updates reject .env injection, bad types, oversized values, and
     }
     for (const attack of ['/bin/pwrstat;touch', 'pwrstat $(id)', '../pwrstat', '/bin//pwrstat']) {
         validationError(() => parseConnectionUpdates({ PWRSTAT_PATH: attack }, fields), 'PWRSTAT_PATH');
+        validationError(() => parseConnectionUpdates({ ADGUARD_CA_FILE: attack }, fields), 'ADGUARD_CA_FILE');
     }
     validationError(() => parseConnectionUpdates({ WAN_IFACE: 'eth0;id' }, fields), 'WAN_IFACE');
 });

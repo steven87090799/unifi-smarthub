@@ -3246,6 +3246,54 @@
                                     <p class="text-[8px] text-amber-500/80 mt-1">URL、key、mode 是同一個信任組；會先安全寫入，再由協調 recreate 主服務與 monitor 一起生效。普通 restart 不會套用半套設定。</p>
                                 </div>
                             </div>
+                            <!-- AdGuard Home -->
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                                <p class="text-[11px] font-bold text-emerald-400">🛡️ AdGuard Home 管理介面</p>
+                                <p class="text-[9px] text-slate-500 leading-relaxed">優先填 HTTPS origin。遠端 HTTP 會傳送 Basic 管理帳密，除非明確接受風險，否則後端拒絕連線。</p>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">HTTPS / HTTP Origin</label><input
+                                        id="conn-ADGUARD_URL" placeholder="https://adguard.internal:3000"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div class="grid grid-cols-3 gap-2">
+                                    <div class="col-span-2"><label class="text-[9px] text-slate-500 uppercase font-bold">舊版 Host（僅相容）</label><input
+                                            id="conn-ADGUARD_HOST" placeholder="192.168.1.250"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                    </div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">Port</label><input
+                                            id="conn-ADGUARD_PORT" placeholder="80"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                    </div>
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">管理帳號</label><input
+                                        id="conn-ADGUARD_USER"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">管理密碼 <span
+                                            id="connset-ADGUARD_PASSWORD" class="normal-case"></span></label><input
+                                        id="conn-ADGUARD_PASSWORD" type="password"
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">允許遠端 HTTP</label><select
+                                            id="conn-ADGUARD_ALLOW_INSECURE_HTTP"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            <option value="false">false（預設；拒絕）</option>
+                                            <option value="true">true（明確接受明文風險）</option>
+                                        </select>
+                                    </div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">驗證 HTTPS TLS</label><select
+                                            id="conn-ADGUARD_TLS_VERIFY"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            <option value="true">true（預設；建議）</option>
+                                            <option value="false">false（僅限受信內網）</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">自簽 CA 檔（選填）</label><input
+                                        id="conn-ADGUARD_CA_FILE" placeholder="/app/config/adguard-ca.pem"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                            </div>
                             <!-- 狀態一覽 -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2">
                                 <p class="text-[11px] font-bold text-slate-300">📡 目前連線狀態</p>

@@ -128,6 +128,15 @@ function unifiNetworkApiUrlValue(value, field) {
     return normalized;
 }
 
+function adguardUrlValue(value, field) {
+    const normalized = httpUrlValue(value, { field });
+    const parsed = new URL(normalized);
+    if (parsed.search || parsed.hash || !['', '/'].includes(parsed.pathname)) {
+        reject(`${field} must be an origin-only URL without path, query, or fragment`, field);
+    }
+    return parsed.origin;
+}
+
 function hostValue(value, field) {
     const normalized = stringValue(value, { field, min: 1, max: 253 });
     if (net.isIP(normalized)) return normalized;
@@ -379,7 +388,7 @@ function parseAppSettings(body, ranges) {
 }
 
 const PORT_FIELDS = new Set(['SSH_PORT', 'NAS_PORT', 'PPB_PORT', 'ADGUARD_PORT', 'LINUX_SSH_PORT']);
-const URL_FIELDS = new Set(['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'NAS_MONITOR_URL']);
+const URL_FIELDS = new Set(['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'NAS_MONITOR_URL', 'ADGUARD_URL']);
 const UUID_FIELDS = new Set(['UNIFI_NETWORK_SITE_ID', 'UNIFI_THREAT_BLOCK_LIST_ID']);
 const HOST_FIELDS = new Set([
     'UCG_IP', 'NAS_HOST', 'WIIM_IP', 'NUT_HOST', 'PPB_HOST',
@@ -389,6 +398,8 @@ const ENUM_FIELDS = Object.freeze({
     NAS_SCHEME: ['http', 'https'],
     NAS_MONITOR_MODE: ['docker_only', 'full'],
     UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
+    ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
+    ADGUARD_TLS_VERIFY: ['true', 'false'],
     UPS_SOURCE: ['auto', 'nut', 'pwrstat', 'pmset', 'ppb']
 });
 
@@ -414,7 +425,9 @@ function parseConnectionUpdates(body, fields) {
         else if (URL_FIELDS.has(key)) {
             value = key === 'UNIFI_NETWORK_API_URL'
                 ? unifiNetworkApiUrlValue(value, key)
-                : httpUrlValue(value, { field: key });
+                : key === 'ADGUARD_URL'
+                    ? adguardUrlValue(value, key)
+                    : httpUrlValue(value, { field: key });
         }
         else if (UUID_FIELDS.has(key)) {
             value = stringValue(value, {
@@ -430,7 +443,7 @@ function parseConnectionUpdates(body, fields) {
             value = stringValue(value, { field: key, min: 1, max: 32, pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u });
         } else if (key === 'NUT_UPS_NAME') {
             value = stringValue(value, { field: key, min: 1, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u });
-        } else if (key === 'PWRSTAT_PATH') {
+        } else if (key === 'PWRSTAT_PATH' || key === 'ADGUARD_CA_FILE') {
             value = stringValue(value, {
                 field: key,
                 min: 1,

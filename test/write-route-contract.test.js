@@ -225,6 +225,14 @@ const INVALID_WRITES = Object.freeze([
     ['connection noncanonical port', 'POST', '/api/connections', { PPB_PORT: '03052' }],
     ['connection insecure remote Integration API', 'POST', '/api/connections', { UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }],
     ['connection invalid Integration API TLS flag', 'POST', '/api/connections', { UNIFI_NETWORK_TLS_VERIFY: 'FALSE' }],
+    ['connection insecure remote AdGuard', 'POST', '/api/connections', {
+        ADGUARD_URL: 'http://192.0.2.10',
+        ADGUARD_USER: 'admin',
+        ADGUARD_PASSWORD: 'adguard-contract-test-secret'
+    }],
+    ['connection ambiguous AdGuard URL', 'POST', '/api/connections', { ADGUARD_URL: 'https://adguard.internal/control?key=leak' }],
+    ['connection invalid AdGuard HTTP flag', 'POST', '/api/connections', { ADGUARD_ALLOW_INSECURE_HTTP: '1' }],
+    ['connection invalid AdGuard TLS flag', 'POST', '/api/connections', { ADGUARD_TLS_VERIFY: 'FALSE' }],
     ['connection unknown field', 'POST', '/api/connections', { SURPRISE_SECRET: 'value' }],
     ['connection oversized secret', 'POST', '/api/connections', { PPB_PASSWORD: 'x'.repeat(4097) }]
 ]);

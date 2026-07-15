@@ -39,6 +39,7 @@ const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const { createSiteManagerClient } = require('./server/integrations/site-manager-client');
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
+const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
 const {
     PartialNotificationDeliveryError,
@@ -768,7 +769,7 @@ function protectedManagementAddresses() {
     for (const key of ['UCG_IP', 'NAS_HOST', 'WIIM_IP', 'NUT_HOST', 'PPB_HOST', 'ADGUARD_HOST', 'LINUX_HOST']) {
         if (process.env[key]) addresses.add(process.env[key]);
     }
-    for (const key of ['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL']) {
+    for (const key of ['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'ADGUARD_URL']) {
         try { addresses.add(new URL(process.env[key]).hostname); } catch { }
     }
     return [...addresses];
@@ -3010,7 +3011,9 @@ const CONN_FIELDS = [
     { key: 'WIIM_IP' },
     { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
-    { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' }, { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
+    { key: 'ADGUARD_URL' }, { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' },
+    { key: 'ADGUARD_ALLOW_INSECURE_HTTP' }, { key: 'ADGUARD_TLS_VERIFY' }, { key: 'ADGUARD_CA_FILE' },
+    { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
     { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true }
 ];
 const pendingRestartConnectionFields = new Set();
@@ -3053,6 +3056,7 @@ function rebuildClients() {
     unifiCloudClient = buildUnifiCloudClient();
     ({ base: NAS_BASE, client: nasClient } = buildNasClient());
     ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
+    adguardConnection = buildAdguardConnection();
     resetSseUpstream({ reconnect: true });
     wiimIP = process.env.WIIM_IP || wiimIP;
     localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
@@ -3094,6 +3098,18 @@ app.post('/api/connections', (req, res) => {
     });
     if (!updates) return;
     if (!Object.keys(updates).length) return res.json({ ok: true, changed: 0 });
+    if (Object.keys(updates).some(key => key.startsWith('ADGUARD_'))) {
+        try { createAdGuardConnection({ env: { ...process.env, ...updates }, axios }); }
+        catch (error) {
+            return apiError(res, error, {
+                status: 400,
+                code: ERROR_CODES.API_VALIDATION_FAILED,
+                module: 'api.connections',
+                function: 'validateAdguardConnection',
+                publicMessage: error.message
+            });
+        }
+    }
     try { persistEnvVars(updates); } catch (e) {
         if (e?.committed && e?.ambiguous) {
             logger.error({
@@ -4304,17 +4320,32 @@ app.get('/api/ups/csv', (req, res) => {
 });
 
 /* ===================== AdGuard Home DNS 防護 (REST API, Basic Auth) ===================== */
-const adgConfigured = () => !!(process.env.ADGUARD_HOST && process.env.ADGUARD_USER && !isPlaceholder(process.env.ADGUARD_PASSWORD));
+function buildAdguardConnection() {
+    try {
+        return { ...createAdGuardConnection({ env: process.env, axios }), configurationError: null };
+    } catch (error) {
+        logger.warning({
+            module: 'integration.adguard', function: 'configure', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'AdGuard integration configuration rejected',
+            fields: { error_code: error?.code || 'ADGUARD_CONFIG_INVALID' }
+        });
+        return { url: null, client: null, configured: false, tlsVerified: false, configurationError: true };
+    }
+}
+let adguardConnection = buildAdguardConnection();
+const adgConfigured = () => adguardConnection.configured;
 let adgLastOkTs = 0;
-async function adgReq(pathName, method = 'get', data) {
-    const base = `http://${process.env.ADGUARD_HOST}:${process.env.ADGUARD_PORT || 80}`;
-    const r = await axios({ url: base + pathName, method, data, timeout: 8000, auth: { username: process.env.ADGUARD_USER, password: process.env.ADGUARD_PASSWORD } });
+async function adgReq(pathName, method = 'get', data, params) {
+    if (!adguardConnection.client) throw new Error('AdGuard is not configured');
+    const result = await adguardConnection.client.request(pathName, { method, data, params });
     adgLastOkTs = Date.now();
-    return r.data;
+    return result;
 }
 // 總覽：狀態 + 統計 (查詢數/攔截數/Top 網域/Top 客戶端)
 app.get('/api/adguard/overview', async (req, res) => {
-    if (!adgConfigured()) return res.json({ source: 'not_configured' });
+    if (!adgConfigured()) {
+        return res.json({ source: adguardConnection.configurationError ? 'configuration_error' : 'not_configured' });
+    }
     try {
         const [status, stats] = await Promise.all([adgReq('/control/status'), adgReq('/control/stats')]);
         res.json({ status, stats, source: 'adguard' });
@@ -4331,8 +4362,10 @@ app.get('/api/adguard/querylog', async (req, res) => {
     if (!query) return;
     if (!adgConfigured()) return res.json({ entries: [], source: 'not_configured' });
     try {
-        const filtered = query.filtered ? '&response_status=filtered' : '';
-        const d = await adgReq(`/control/querylog?limit=${query.limit}${filtered}`);
+        const d = await adgReq('/control/querylog', 'get', undefined, {
+            limit: query.limit,
+            ...(query.filtered ? { response_status: 'filtered' } : {})
+        });
         const entries = (d.data || []).map(e => ({
             time: e.time,
             domain: e.question && e.question.name,

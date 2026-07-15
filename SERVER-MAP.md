@@ -88,6 +88,7 @@
 - `GET /api/ups/history` around 2763
 - `GET /api/ups/events` around 2769
 - `GET /api/adguard/overview` around 2789
+- `GET /api/adguard/querylog`、`POST /api/adguard/protection`：共用 `server/integrations/adguard-client.js`；HTTPS 預設驗證、遠端 HTTP 必須明確 opt-in、禁止 redirect/proxy credential forwarding
 - `GET /api/linux/stats` around 2889
 - `GET /api/linux/history` around 2910
 
@@ -114,6 +115,11 @@
 - `server/routes/frontend-asset-routes.js`: 只公開 lockfile 鎖定、帶版本 URL 的 Chart/D3/TopoJSON/world-atlas 檔案，並集中設定 CSP/anti-framing/referrer headers
 - `server/services/wifi-qr.js`: 同源 Guest WiFi QR SVG；不把 SSID/密碼送往第三方
 - `POST /api/wifi/qr`: admin only、Origin/CSRF、嚴格 SSID/WPA 驗證、`no-store`
+
+### AdGuard transport boundary
+
+- `server/integrations/adguard-client.js`: bounded origin/credential/CA/timeout policy，固定 `/control/*` request surface，Basic Auth 只送往已驗證的 configured origin
+- `/api/connections`: 寫入任何 `ADGUARD_*` 欄位前先組合候選設定並 fail closed；`ADGUARD_URL` 優先，舊 `ADGUARD_HOST/PORT` 僅保留相容性
 
 ## 搜尋範例
 
