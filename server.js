@@ -80,6 +80,7 @@ const {
     createWebPushService
 } = require('./server/services/web-push');
 const { createDockerMetricAlertState } = require('./server/services/docker-notification-state');
+const { createRecoverableFailureState } = require('./server/services/recoverable-failure-state');
 const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
 const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
@@ -182,17 +183,18 @@ function validatedInput(res, parse, { module, function: functionName }) {
 
 // 某些唯讀整合端點為維持既有 UI 契約，失敗時仍以 200 + source:error 回退。
 // 這些錯誤必須進 Docker log，但以 cooldown 合併，避免前端輪詢造成 log storm。
-const recoverableFailures = new Map();
 const RECOVERABLE_LOG_COOLDOWN_MS = Math.max(Number(process.env.ALERT_COOLDOWN_SECONDS) || 300, 1) * 1000;
+const recoverableFailures = createRecoverableFailureState({
+    cooldownMs: RECOVERABLE_LOG_COOLDOWN_MS,
+    maxEntries: 2000
+});
 function publicError(error) {
     return maskString(error?.message || String(error || 'External service unavailable')).slice(0, 500);
 }
 function logRecoverableFailure(key, error, options = {}) {
     const now = Date.now();
-    const state = recoverableFailures.get(key) || { occurrences: 0, last_logged_at: 0 };
-    state.occurrences += 1;
-    if (now - state.last_logged_at >= RECOVERABLE_LOG_COOLDOWN_MS) {
-        state.last_logged_at = now;
+    const state = recoverableFailures.record(key, now);
+    if (state.shouldLog) {
         logger.warning({
             module: options.module || 'external', function: options.function || 'fallback',
             code: options.code || ERROR_CODES.API_INTERNAL_ERROR,
@@ -200,7 +202,6 @@ function logRecoverableFailure(key, error, options = {}) {
             error, fields: { ...options.fields, occurrences: state.occurrences, cooldown_seconds: RECOVERABLE_LOG_COOLDOWN_MS / 1000 }
         });
     }
-    recoverableFailures.set(key, state);
 }
 
 logger.info({
@@ -1611,6 +1612,7 @@ async function scanDockerNotifications(s) {
             if (s.triggerDockerInventory) await notify('➖ Docker 容器已移除', `${previous.name || id}\n先前狀態 ${previous.state || 'unknown'}`);
             dockerContainerStates.delete(id);
             dockerMetricAlertState.removeContainer(id);
+            recoverableFailures.remove(`watcher.dockerLogs:${id}`);
         }
     }
 
