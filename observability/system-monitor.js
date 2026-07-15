@@ -30,13 +30,14 @@ function cpuTotals() {
 }
 
 class SystemMonitor {
-    constructor({ dataDir, db, taskTracker, issueTracker, logger, version, env = process.env } = {}) {
+    constructor({ dataDir, db, taskTracker, issueTracker, logger, version, buildIdentity, env = process.env } = {}) {
         this.dataDir = dataDir;
         this.db = db;
         this.taskTracker = taskTracker;
         this.issueTracker = issueTracker;
         this.logger = logger;
         this.version = version || 'unknown';
+        this.buildIdentity = buildIdentity || null;
         this.env = env;
         this.intervalSeconds = Math.max(envNumber('MONITOR_INTERVAL_SECONDS', 30, env), 5);
         this.enabled = String(env.MONITOR_ENABLED || 'true').toLowerCase() !== 'false';
@@ -252,6 +253,7 @@ class SystemMonitor {
             sampled_at: sample.timestamp,
             uptime_seconds: Math.floor(process.uptime()),
             app_version: this.version,
+            build: this.buildIdentity,
             cpu: { status: cpuStatus, usage_percent: systemCpu, process_usage_percent: processCpu, load_average: os.loadavg() },
             memory: {
                 status: memoryStatus, usage_percent: systemMemoryPct, process_mb: Number((memory.rss / MB).toFixed(1)),

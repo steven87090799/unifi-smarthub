@@ -131,7 +131,11 @@ test('health, readiness and diagnostics APIs return expected status without secr
     const db = { diagnostics: () => ({ ok: true, latency_ms: 1 }) };
     const taskTracker = { getStatus: () => ({ status: 'healthy', active_tasks: 0, stuck_tasks: 0 }) };
     const monitor = { ensureSample: async () => systemStatus };
-    registerHealthRoutes(app, { monitor, db, taskTracker, version: 'test' });
+    const buildIdentity = {
+        version: '3.0.0', revision: 'a'.repeat(40), created: '2026-07-15T00:00:00.000Z',
+        dirty: false, status: 'clean', complete: true
+    };
+    registerHealthRoutes(app, { monitor, db, taskTracker, version: 'test', buildIdentity });
     const server = await new Promise(resolve => {
         const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
     });
@@ -141,14 +145,44 @@ test('health, readiness and diagnostics APIs return expected status without secr
     const health = await (await fetch(`${base}/health`)).json();
     assert.equal(health.status, 'healthy');
     assert.equal(health.code, ERROR_CODES.API_HEALTH_OK);
+    assert.deepEqual(health.build, buildIdentity);
 
     const readyResponse = await fetch(`${base}/health/ready`);
     const ready = await readyResponse.json();
     assert.equal(readyResponse.status, 200);
     assert.equal(ready.status, 'ready');
     assert.equal(ready.checks.database.status, 'healthy');
+    assert.deepEqual(ready.build, buildIdentity);
 
     const diagnostics = await (await fetch(`${base}/api/system/status`)).json();
     assert.deepEqual(diagnostics, systemStatus);
     assert.doesNotMatch(JSON.stringify(diagnostics), /password|api_key|token|secret/i);
+});
+
+test('liveness stays healthy while database or worker readiness failures return 503', async t => {
+    const app = express();
+    let databaseOk = false;
+    let workerStatus = 'healthy';
+    const db = { diagnostics: () => ({ ok: databaseOk, latency_ms: 7 }) };
+    const taskTracker = { getStatus: () => ({ status: workerStatus, active_tasks: 1, stuck_tasks: workerStatus === 'critical' ? 1 : 0 }) };
+    registerHealthRoutes(app, {
+        monitor: { ensureSample: async () => ({}) }, db, taskTracker, version: 'test'
+    });
+    const server = await new Promise(resolve => {
+        const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+    });
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    assert.equal((await fetch(`${base}/health`)).status, 200);
+    const databaseFailure = await fetch(`${base}/health/ready`);
+    assert.equal(databaseFailure.status, 503);
+    assert.equal((await databaseFailure.json()).checks.database.status, 'critical');
+
+    databaseOk = true;
+    workerStatus = 'critical';
+    assert.equal((await fetch(`${base}/health`)).status, 200);
+    const workerFailure = await fetch(`${base}/health/ready`);
+    assert.equal(workerFailure.status, 503);
+    assert.equal((await workerFailure.json()).checks.worker.status, 'critical');
 });

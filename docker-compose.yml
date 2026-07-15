@@ -1,56 +1,110 @@
 services:
   unifi-smarthub:
-    build: .
-    image: unifi-smarthub:latest
-    container_name: unifi-smarthub
+    build:
+      context: .
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-}
+        BUILD_REVISION: ${BUILD_REVISION:-}
+        BUILD_CREATED: ${BUILD_CREATED:-}
+        BUILD_DIRTY: ${BUILD_DIRTY:-}
+        BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
+    image: ${SMARTHUB_IMAGE:-unifi-smarthub:latest}
     restart: unless-stopped
+    stop_grace_period: 20s
     ports:
-      - "3000:3000"
-    env_file:
-      - .env
+      - "${SMARTHUB_HOST_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
-      # 內建 Docker Monitor：部署在哪台 Docker 主機，就讀哪台主機的真實容器。
-      - NAS_MONITOR_URL=${NAS_MONITOR_URL:-http://nas-monitor:8000}
-      - NAS_MONITOR_API_KEY=${NAS_MONITOR_API_KEY:-smarthub-local-monitor}
+      - PORT=3000
+      - SMARTHUB_ENV_FILE=/app/config/.env
+      # 一般整合設定由 config/.env 載入。Monitor 的整組連線/信任設定刻意固定於
+      # container creation，避免 key 輪替途中把舊 credential 送到新 target。
+      - NAS_MONITOR_URL=${NAS_MONITOR_URL:-}
+      - NAS_MONITOR_API_KEY=${NAS_MONITOR_API_KEY:-}
       - NAS_MONITOR_MODE=${NAS_MONITOR_MODE:-docker_only}
+      - NAS_MONITOR_ALLOW_INSECURE_HTTP=${NAS_MONITOR_ALLOW_INSECURE_HTTP:-false}
+      - NAS_MONITOR_TLS_INSECURE=${NAS_MONITOR_TLS_INSECURE:-false}
+      - NAS_MONITOR_CA_FILE=${NAS_MONITOR_CA_FILE:-}
+      - NAS_MONITOR_ALLOW_LEGACY_ACTIONS=${NAS_MONITOR_ALLOW_LEGACY_ACTIONS:-false}
       # 時區：報表排程 (reportHour)、日誌時間戳、UPS 事件時間皆依此；容器預設 UTC 會差 8 小時
-      - TZ=Asia/Taipei
+      - TZ=${TZ:-Asia/Taipei}
+    extra_hosts:
+      # Docker Desktop/OrbStack 原生支援；Linux Engine 透過 host-gateway 保留 PPB REST 路徑。
+      - "host.docker.internal:host-gateway"
     volumes:
       # 具名 volume：持久化 SQLite、設定與遷移備份 (容器重建不遺失)
       - smarthub-data:/app/data
-      # bind mount .env：讓「設定 → 連線設定」網頁修改的連線資訊寫回宿主機，容器重建不遺失
-      # (.dockerignore 排除了 .env，若不掛載，網頁上改的設定會在重建後消失)
-      - ./.env:/app/.env
-    depends_on:
-      nas-monitor:
-        condition: service_healthy
+      # 掛載專用 config 目錄而非單一檔案，讓安全的同目錄 temp+fsync+rename 可成立。
+      # 不可改掛整個 repository；create_host_path=false 避免路徑錯誤時建立空目錄。
+      - type: bind
+        source: ${SMARTHUB_CONFIG_DIR:-./config}
+        target: /app/config
+        bind:
+          create_host_path: false
+    networks:
+      - default
+      - monitor-backplane
+    labels:
+      # Broker 永遠拒絕操作此 service，即使使用者 allowlist 誤設過寬。
+      - com.unifi.smarthub.nas-monitor.protected=true
     # 記憶體限制：此服務為輕量 Node 程序，256MB 足夠；預留下限確保排程穩定
     mem_limit: 256m
     mem_reservation: 128m
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
 
   nas-monitor:
-    build: ./nas-monitor
-    image: unifi-smarthub-nas-monitor:latest
-    container_name: unifi-smarthub-nas-monitor
+    profiles: ["nas-monitor"]
+    build:
+      context: ./nas-monitor
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-}
+        BUILD_REVISION: ${BUILD_REVISION:-}
+        BUILD_CREATED: ${BUILD_CREATED:-}
+        BUILD_DIRTY: ${BUILD_DIRTY:-}
+        BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
+    image: ${NAS_MONITOR_IMAGE:-unifi-smarthub-nas-monitor:latest}
     restart: unless-stopped
+    stop_grace_period: 20s
+    user: "1000:1000"
     environment:
       - PORT=8000
-      - NAS_MONITOR_API_KEY=${NAS_MONITOR_API_KEY:-smarthub-local-monitor}
+      - NAS_MONITOR_API_KEY=${NAS_MONITOR_API_KEY:-}
+      - NAS_MONITOR_MUTATIONS_ENABLED=${NAS_MONITOR_MUTATIONS_ENABLED:-false}
+      - NAS_MONITOR_ACTION_ALLOW_IDS=${NAS_MONITOR_ACTION_ALLOW_IDS:-}
+      - NAS_MONITOR_ACTION_ALLOW_LABELS=${NAS_MONITOR_ACTION_ALLOW_LABELS:-}
+      - NAS_MONITOR_LOGS_ENABLED=${NAS_MONITOR_LOGS_ENABLED:-false}
+      - NAS_MONITOR_LOG_ALLOW_IDS=${NAS_MONITOR_LOG_ALLOW_IDS:-}
+      - NAS_MONITOR_LOG_ALLOW_LABELS=${NAS_MONITOR_LOG_ALLOW_LABELS:-}
+      - NAS_MONITOR_ACTION_STOP_SECONDS=${NAS_MONITOR_ACTION_STOP_SECONDS:-10}
+      - NAS_MONITOR_MAX_LIST_RESPONSE_BYTES=${NAS_MONITOR_MAX_LIST_RESPONSE_BYTES:-3145728}
       - DOCKER_SOCKET=/var/run/docker.sock
-      - TZ=Asia/Taipei
+      - TZ=${TZ:-Asia/Taipei}
+    group_add:
+      # 設成宿主 Docker socket 的 numeric GID；0 只是 Docker Desktop/OrbStack 常見值。
+      - "${DOCKER_SOCKET_GID:-0}"
     volumes:
-      # 具有啟停/重啟容器權限；只應部署於可信任的內網 Docker 主機。
-      - /var/run/docker.sock:/var/run/docker.sock
+      # 即使容器本身是非 root，可寫 Docker socket 仍等同宿主機 root 等級控制權。
+      - type: bind
+        source: ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    networks:
+      - monitor-backplane
+    labels:
+      - com.unifi.smarthub.nas-monitor.protected=true
     mem_limit: 96m
     mem_reservation: 32m
 
 volumes:
   smarthub-data:
+
+networks:
+  monitor-backplane:
+    internal: true

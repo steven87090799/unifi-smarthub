@@ -57,9 +57,9 @@ LOG_FORMAT=json
 
 | Endpoint | Auth | 成本 / 用途 |
 |---|---|---|
-| `GET /health` | 不需 | 純 process liveness；Docker healthcheck 使用 |
+| `GET /health` | 不需 | 純 process liveness；供外部判斷程序是否仍能回應，不作容器 readiness gate |
 | `GET /healthz` | 不需 | 舊版相容 alias |
-| `GET /health/ready` | 不需 | SQLite `SELECT 1` + worker stuck 狀態；異常回 503 |
+| `GET /health/ready` | 不需 | SQLite `SELECT 1` + worker stuck 狀態；異常回 503，Docker image healthcheck 使用 |
 | `GET /api/system/status` | 沿用 `PANEL_PASSWORD` | 完整 CPU/RAM/disk/SQLite/worker/issues/trend diagnostics |
 
 外部家用設備是選配，不會 gate readiness。設備開機狀態仍由 `/api/connections/status` 與啟動 diagnostics 顯示。

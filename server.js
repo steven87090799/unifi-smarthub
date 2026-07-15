@@ -7,13 +7,24 @@ delete process.env.https_proxy;
 const express = require('express');
 const axios = require('axios');
 const { Client } = require('ssh2');
+const fs = require('node:fs');
 const path = require('path');
 const https = require('https');
 const { execFile } = require('child_process');
-const ENV_FILE = process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env');
-require('dotenv').config({ path: ENV_FILE }); // 以專案目錄定位 .env；測試可隔離到暫存檔
+const {
+    loadEnvFile,
+    parseDesiredEnvFile,
+    rewriteEnvFileAtomically,
+    upsertEnvAssignment
+} = require('./server/storage/env-file-store');
+const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
+const envFileState = loadEnvFile(ENV_FILE, {
+    environment: process.env,
+    required: process.env.NODE_ENV === 'production'
+}); // 先驗證 regular/size/mode/RW，再載入；開發環境允許檔案不存在
 const os = require('os');
 const { version: APP_VERSION } = require('./package.json');
+const { createBuildIdentity } = require('./observability/build-identity');
 const { ERROR_CODES } = require('./observability/error-codes');
 const { createLogger, maskString } = require('./observability/logger');
 const { IssueTracker } = require('./observability/issue-tracker');
@@ -26,16 +37,33 @@ const { TelegramCommandBot } = require('./telegram-command-bot');
 const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const { createSiteManagerClient } = require('./server/integrations/site-manager-client');
+const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
 const {
     PartialNotificationDeliveryError,
     createNotificationDispatcher
 } = require('./server/integrations/notification-delivery');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
+const {
+    DockerActionPolicyError,
+    ambiguousDockerActionResult,
+    containersFromPayload,
+    selectDockerActionTarget
+} = require('./server/policies/docker-action-policy');
 const { deriveDueReportSlot } = require('./server/jobs/report-schedule');
 const { createReportRunner } = require('./server/jobs/report-runner');
 const { createUpsState, FETCH_HEALTH, TRANSITION_TYPES } = require('./server/jobs/ups-state');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
+
+if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
+    && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
+    throw new Error('BUILD_IDENTITY_REQUIRED must be true or false');
+}
+const buildIdentityRequired = process.env.BUILD_IDENTITY_REQUIRED === 'true';
+const buildIdentity = createBuildIdentity(process.env, {
+    requireComplete: buildIdentityRequired,
+    requireClean: buildIdentityRequired
+});
 
 const APP_STARTED_AT = Date.now();
 let shuttingDown = false;
@@ -149,6 +177,7 @@ logger.info({
     module: 'app.lifecycle', function: 'bootstrap', code: ERROR_CODES.SYS_START,
     message: 'SmartHub starting', fields: {
         version: APP_VERSION,
+        ...buildIdentity.logFields,
         environment: process.env.NODE_ENV || 'development',
         node: process.version,
         hostname: os.hostname(),
@@ -604,7 +633,6 @@ app.get('/api/threats', async (req, res) => {
 });
 
 // 資料持久化目錄 (可用 DATA_DIR 環境變數覆寫；Docker 部署時掛載為 volume 以保留歷史資料)
-const fs = require('fs');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 try { fs.mkdirSync(DATA_DIR, { recursive: true }); }
 catch (error) {
@@ -667,7 +695,8 @@ try {
 }
 const HISTORY_HARD_CAP = 100000;
 const systemMonitor = new SystemMonitor({
-    dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger, version: APP_VERSION
+    dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger,
+    version: APP_VERSION, buildIdentity: buildIdentity.public
 });
 
 /* ===================== 應用程式設定 (可於「設定」頁調整所有伺服器端輪詢間隔) ===================== */
@@ -2473,28 +2502,34 @@ function nasHistorySince(hours) {
     return historyDb.getSince('nas', Date.now() - hours * 3600000);
 }
 
-/* ===================== NAS Monitor 擴充 REST API (系統 B / nas-monitor-interface) ===================== */
-// 選填：若另外部署了 nas-monitor-interface (Flask 中介層)，設定 NAS_MONITOR_URL + NAS_MONITOR_API_KEY 即可
-// 取得 Docker 管理、流量/儲存/溫度歷史、儲存滿載預測、警報等進階功能。未設定時全部回退展示資料。
+/* ===================== NAS Monitor 擴充 REST API ===================== */
+// 內建 Node broker 使用 docker_only；完整外部 monitor 才提供 history/alerts/SSE。
+// 未設定或安全設定驗證失敗時，整合保持 optional 並回傳誠實的空狀態。
 function buildNasMonClient() {
-    const url = process.env.NAS_MONITOR_URL || null;
-    const key = process.env.NAS_MONITOR_API_KEY || '';
-    return {
-        url,
-        client: url ? axios.create({
-            baseURL: url.replace(/\/$/, ''),
-            headers: { 'Accept': 'application/json', 'X-API-Key': key, 'Authorization': `Bearer ${key}` },
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-            timeout: 12000
-        }) : null
-    };
+    try {
+        nasMonConfigurationError = null;
+        return createNasMonitorConnection({ axios, env: process.env });
+    } catch (error) {
+        nasMonConfigurationError = error;
+        logger.warning({
+            module: 'integration.nasMonitor', function: 'buildClient', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'NAS Monitor configuration rejected; integration disabled', error
+        });
+        return { url: null, client: null, configured: false };
+    }
 }
+let nasMonConfigurationError = null;
 let { url: NASMON_URL, client: nasMonClient } = buildNasMonClient();
 function nasMonConfigured() { return !!NASMON_URL; }
 function nasMonAdvancedConfigured() {
     return nasMonConfigured() && String(process.env.NAS_MONITOR_MODE || 'full').toLowerCase() !== 'docker_only';
 }
 async function nasMonGet(p, params) { const r = await nasMonClient.get(p, { params }); return r.data; }
+function allowLegacyNasMonActions() { return process.env.NAS_MONITOR_ALLOW_LEGACY_ACTIONS === 'true'; }
+async function authorizeNasMonDockerAction(id, action) {
+    const inventory = await nasMonGet('/api/docker/containers');
+    return selectDockerActionTarget(inventory, id, action, { allowLegacy: allowLegacyNasMonActions() });
+}
 
 // 通用代理：優先呼叫系統 B，失敗或未設定時回退 fallback
 async function nasMonProxy(res, path, params, fallback) {
@@ -2515,7 +2550,14 @@ app.get('/api/nas/docker', async (req, res) => {
     if (!nasMonConfigured()) return res.json({ containers: [], source: 'not_configured' });
     try {
         const data = await nasMonGet('/api/docker/containers');
-        res.json({ containers: Array.isArray(data) ? data : (data.containers || data.data || []), source: 'nas_monitor' });
+        const containers = containersFromPayload(data);
+        res.json({
+            containers,
+            source: 'nas_monitor',
+            total: Number.isInteger(data?.total) ? data.total : containers.length,
+            truncated: data?.truncated === true,
+            actionsEnabled: containers.some(container => Array.isArray(container?.allowed_actions) && container.allowed_actions.length > 0)
+        });
     } catch (error) {
         logRecoverableFailure('nasMonitor.docker', error, { module: 'api.nasMonitor', function: 'getDockerContainers', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
         res.json({ containers: [], source: 'error', error: publicError(error) });
@@ -2535,16 +2577,32 @@ app.post('/api/nas/docker/:id/:action', async (req, res) => {
     if (!nasMonConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
         status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'dockerAction'
     });
+    let actionSubmitted = false;
     try {
-        const r = await nasMonClient.post(`/api/docker/containers/${encodeURIComponent(input.id)}/${input.action}`);
+        const target = await authorizeNasMonDockerAction(input.id, input.action);
+        actionSubmitted = true;
+        const r = await nasMonClient.post(`/api/docker/containers/${encodeURIComponent(target.id)}/${target.action}`);
         res.json({ success: true, data: r.data, source: 'nas_monitor' });
     } catch (error) {
+        if (error instanceof DockerActionPolicyError) return apiError(res, error, {
+            status: 403, code: ERROR_CODES.API_AUTHORIZATION_FAILED, publicMessage: 'docker_action_not_allowed',
+            module: 'api.nasMonitor', function: 'dockerAction'
+        });
+        const ambiguous = ambiguousDockerActionResult(error, input.action, { submitted: actionSubmitted });
+        if (ambiguous) {
+            logger.warning({
+                module: 'api.nasMonitor', function: 'dockerAction', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
+                http_status: 504, message: 'Docker action outcome is unknown; refresh state before deciding whether to retry',
+                fields: { action: ambiguous.action, ambiguous: true }
+            });
+            return res.status(504).json({ ...ambiguous, source: 'nas_monitor' });
+        }
         apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'dockerAction', logMessage: 'NAS Monitor Docker action failed' });
     }
 });
 
 // 21. Docker 容器日誌
-app.get('/api/nas/docker/:id/logs', async (req, res) => {
+app.get('/api/nas/docker/:id/logs', panelSecurity.requireAdmin, async (req, res) => {
     const input = validatedInput(res, () => ({
         id: queryInput.safePathIdentifierValue(req.params.id, { field: 'id', max: 128 }),
         ...queryInput.parseDockerLogsQuery(req.query)
@@ -2724,21 +2782,60 @@ app.delete('/api/nas/alerts/config/:metric', async (req, res) => {
    (帶 API Key)，再原樣轉發給前端。多個分頁共用同一條上游連線 (惰性建立/無人訂閱即斷開)，
    避免每個分頁各開一條 SSE 消耗 NAS 資源。上游斷線會自動退避重連。 */
 const sseClients = new Set();
-let sseUpstreamReq = null, sseReconnectTimer = null;
+const SSE_CONNECT_TIMEOUT_MS = 20_000;
+let sseUpstreamReq = null, sseConnectAttempt = null, sseReconnectTimer = null;
+
+function clearSseConnectAttempt(attempt, { abort = false } = {}) {
+    if (!attempt) return;
+    clearLifecycleTimeout(attempt.timeout);
+    attempt.timeout = null;
+    if (sseConnectAttempt === attempt) sseConnectAttempt = null;
+    if (abort && !attempt.controller.signal.aborted) {
+        attempt.cancelled = true;
+        attempt.controller.abort();
+    }
+}
+
+function resetSseUpstream({ reconnect = false } = {}) {
+    clearLifecycleTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
+    clearSseConnectAttempt(sseConnectAttempt, { abort: true });
+    if (sseUpstreamReq) {
+        try { sseUpstreamReq.data.destroy(); } catch { }
+        sseUpstreamReq = null;
+    }
+    if (reconnect && !shuttingDown && sseClients.size > 0) sseConnectUpstream();
+}
+
 function sseConnectUpstream() {
-    if (shuttingDown || !nasMonAdvancedConfigured() || sseUpstreamReq || sseClients.size === 0) return;
-    const base = NASMON_URL.replace(/\/$/, '');
-    const key = process.env.NAS_MONITOR_API_KEY || '';
-    axios.get(`${base}/api/stream`, {
-        responseType: 'stream', timeout: 0,
-        headers: { Accept: 'text/event-stream', 'X-API-Key': key, Authorization: `Bearer ${key}` }
+    if (shuttingDown || !nasMonAdvancedConfigured() || sseUpstreamReq || sseConnectAttempt || sseClients.size === 0) return;
+    const attempt = { controller: new AbortController(), timeout: null, cancelled: false };
+    sseConnectAttempt = attempt;
+    attempt.timeout = lifecycleTimeout(() => attempt.controller.abort(), SSE_CONNECT_TIMEOUT_MS, { unref: true });
+    nasMonClient.get('/api/stream', {
+        responseType: 'stream', timeout: 0, signal: attempt.controller.signal
     }).then(r => {
+        clearSseConnectAttempt(attempt);
+        if (shuttingDown || sseClients.size === 0) {
+            try { r.data.destroy(); } catch { }
+            return;
+        }
         sysLog('NAS SSE', '已連線上游即時推送串流');
         sseUpstreamReq = r;
         r.data.on('data', chunk => { for (const c of sseClients) c.write(chunk); });
-        r.data.on('end', () => { sseUpstreamReq = null; scheduleSseReconnect(); });
-        r.data.on('error', () => { sseUpstreamReq = null; scheduleSseReconnect(); });
-    }).catch(e => { sysLog('NAS SSE', `連線失敗: ${e.message}，10 秒後重試`, true); sseUpstreamReq = null; scheduleSseReconnect(); });
+        const disconnected = () => {
+            if (sseUpstreamReq !== r) return;
+            sseUpstreamReq = null;
+            scheduleSseReconnect();
+        };
+        r.data.once('end', disconnected);
+        r.data.once('error', disconnected);
+    }).catch(e => {
+        clearSseConnectAttempt(attempt);
+        if (attempt.cancelled || shuttingDown || sseClients.size === 0) return;
+        sysLog('NAS SSE', `連線失敗: ${e.message}，10 秒後重試`, true);
+        scheduleSseReconnect();
+    });
 }
 function scheduleSseReconnect() {
     if (shuttingDown || sseReconnectTimer || sseClients.size === 0) return;
@@ -2752,7 +2849,10 @@ app.get('/api/nas/stream', (req, res) => {
     res.write(':ok\n\n');
     sseClients.add(res);
     sseConnectUpstream();
-    req.on('close', () => { sseClients.delete(res); if (sseClients.size === 0 && sseUpstreamReq) { try { sseUpstreamReq.data.destroy(); } catch { } sseUpstreamReq = null; } });
+    req.on('close', () => {
+        sseClients.delete(res);
+        if (sseClients.size === 0) resetSseUpstream();
+    });
 });
 
 /* ===================== 應用程式設定 API ===================== */
@@ -2769,39 +2869,54 @@ app.post('/api/settings', (req, res) => {
     res.json({ ok: true, settings: appSettings });
 });
 
-/* ===================== 連線設定 (網頁直接改 .env，熱重建免重啟) ===================== */
+/* ===================== 連線設定 (網頁安全更新 config/.env) ===================== */
 // 允許透過設定頁修改的欄位 (secret: GET 時只回「是否已設定」)
 const CONN_FIELDS = [
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
-    { key: 'NAS_MONITOR_URL' }, { key: 'NAS_MONITOR_API_KEY', secret: true }, { key: 'NAS_MONITOR_MODE' },
+    { key: 'NAS_MONITOR_URL', restartRequired: true },
+    { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
+    { key: 'NAS_MONITOR_MODE', restartRequired: true },
     { key: 'WIIM_IP' },
     { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
     { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' }, { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
     { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true }
 ];
+const pendingRestartConnectionFields = new Set();
+const RECREATE_DEFAULTS = Object.freeze({
+    NAS_MONITOR_URL: '',
+    NAS_MONITOR_API_KEY: '',
+    NAS_MONITOR_MODE: 'docker_only'
+});
+
+function recreateValue(source, key) {
+    return Object.hasOwn(source || {}, key) ? String(source[key]) : RECREATE_DEFAULTS[key];
+}
+
+function reconcilePendingRestartFields(desired) {
+    for (const field of CONN_FIELDS.filter(candidate => candidate.restartRequired)) {
+        if (recreateValue(desired, field.key) === recreateValue(process.env, field.key)) {
+            pendingRestartConnectionFields.delete(field.key);
+        } else {
+            pendingRestartConnectionFields.add(field.key);
+        }
+    }
+}
+reconcilePendingRestartFields(envFileState.parsed);
 
 // 更新 .env 檔：既有 KEY= 行 (含註解掉的) 就地取代，否則附加到檔尾
 function persistEnvVars(updates) {
-    let content = '';
-    try { content = fs.readFileSync(ENV_FILE, 'utf8'); } catch { }
-    for (const [k, v] of Object.entries(updates)) {
-        const line = `${k}=${writeInput.quoteEnvValue(v)}`;
-        const re = new RegExp(`^#?\\s*${k}=.*$`, 'm');
-        content = re.test(content) ? content.replace(re, line) : content + (content.endsWith('\n') || !content ? '' : '\n') + line + '\n';
-    }
-    let mode = 0o600;
-    try { mode = fs.statSync(ENV_FILE).mode & 0o777; } catch { }
-    const temporary = `${ENV_FILE}.tmp-${process.pid}-${Date.now()}`;
-    try {
-        fs.writeFileSync(temporary, content, { mode });
-        fs.renameSync(temporary, ENV_FILE);
-    } finally {
-        try { fs.unlinkSync(temporary); } catch { }
-    }
+    rewriteEnvFileAtomically(ENV_FILE, original => {
+        let content = original;
+        for (const [k, v] of Object.entries(updates)) {
+            const line = `${k}=${writeInput.quoteEnvValue(v)}`;
+            content = upsertEnvAssignment(content, k, line);
+        }
+        return content;
+    });
 }
 
 // 熱重建所有依賴 env 的客戶端與快取 (免重啟)
@@ -2810,7 +2925,7 @@ function rebuildClients() {
     unifiCloudClient = buildUnifiCloudClient();
     ({ base: NAS_BASE, client: nasClient } = buildNasClient());
     ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
-    if (sseUpstreamReq) { try { sseUpstreamReq.data.destroy(); } catch { } sseUpstreamReq = null; sseConnectUpstream(); } // NAS_MONITOR_URL 可能已變更，重連上游 SSE
+    resetSseUpstream({ reconnect: true });
     wiimIP = process.env.WIIM_IP || wiimIP;
     localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
     nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
@@ -2821,13 +2936,27 @@ function rebuildClients() {
 
 // GET：非機密回明碼、機密只回是否已設定 (佔位字串視為未設定)
 app.get('/api/connections', (req, res) => {
+    let desired;
+    try { desired = parseDesiredEnvFile(ENV_FILE); }
+    catch (error) {
+        return apiError(res, error, {
+            code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.connections', function: 'readEnvFile',
+            logMessage: '.env read failed', publicMessage: '.env 讀取失敗，請檢查檔案與目錄權限'
+        });
+    }
+    reconcilePendingRestartFields(desired);
     const fields = {}, secretsSet = {};
     for (const f of CONN_FIELDS) {
-        const v = process.env[f.key];
+        const v = Object.hasOwn(desired, f.key) ? desired[f.key] : process.env[f.key];
         if (f.secret) secretsSet[f.key] = !isPlaceholder(v);
         else fields[f.key] = isPlaceholder(v) ? '' : (v || '');
     }
-    res.json({ fields, secretsSet });
+    res.json({
+        fields,
+        secretsSet,
+        restartRequiredFields: CONN_FIELDS.filter(field => field.restartRequired).map(field => field.key),
+        pendingRestartFields: [...pendingRestartConnectionFields]
+    });
 });
 
 // POST：留空 = 不變更；寫入 .env + 即時生效
@@ -2838,15 +2967,46 @@ app.post('/api/connections', (req, res) => {
     if (!updates) return;
     if (!Object.keys(updates).length) return res.json({ ok: true, changed: 0 });
     try { persistEnvVars(updates); } catch (e) {
+        if (e?.committed && e?.ambiguous) {
+            logger.error({
+                module: 'api.connections', function: 'persistEnvVars', code: ERROR_CODES.SYS_CONFIG_INVALID,
+                http_status: 500, message: '.env replacement committed but directory durability is unknown', error: e,
+                fields: { committed: true, ambiguous: true, outcome: e.outcome }
+            });
+            return res.status(500).json({
+                error: '.env 已替換，但持久化結果無法確認；請重新讀取設定後再決定是否重試',
+                code: ERROR_CODES.SYS_CONFIG_INVALID,
+                request_id: logger.getContext().request_id,
+                committed: true,
+                ambiguous: true
+            });
+        }
         return apiError(res, e, {
             code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.connections', function: 'persistEnvVars',
             logMessage: '.env persistence failed', publicMessage: '.env 寫入失敗，請檢查檔案權限'
         });
     }
-    for (const [k, v] of Object.entries(updates)) process.env[k] = v;
-    rebuildClients();
+    for (const [k, v] of Object.entries(updates)) {
+        const field = CONN_FIELDS.find(candidate => candidate.key === k);
+        if (field?.restartRequired) continue;
+        process.env[k] = v;
+    }
+    let desiredAfterWrite;
+    try { desiredAfterWrite = parseDesiredEnvFile(ENV_FILE); }
+    catch (error) {
+        return apiError(res, error, {
+            code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.connections', function: 'verifyEnvFile',
+            logMessage: '.env verification failed after write', publicMessage: '.env 已寫入但驗證失敗，請勿直接重試'
+        });
+    }
+    reconcilePendingRestartFields(desiredAfterWrite);
+    if (Object.keys(updates).some(key => !CONN_FIELDS.find(field => field.key === key)?.restartRequired)) rebuildClients();
     sysLog('Connections', `已更新 ${Object.keys(updates).length} 個欄位: ${Object.keys(updates).join(', ')}`);
-    res.json({ ok: true, changed: Object.keys(updates).length });
+    res.json({
+        ok: true,
+        changed: Object.keys(updates).length,
+        restartRequired: Object.keys(updates).filter(key => pendingRestartConnectionFields.has(key))
+    });
 });
 
 /* ===================== 定期報表 ===================== */
@@ -3285,14 +3445,21 @@ const telegramCommands = {
         if (!query) throw new Error('用法：/docker_restart <容器名稱>');
         if (!nasMonConfigured()) throw new Error('NAS Docker Monitor 尚未設定');
         const data = await nasMonGet('/api/docker/containers');
-        const containers = Array.isArray(data) ? data : (data.containers || data.data || []);
+        const containers = containersFromPayload(data);
         const exact = containers.filter(c => String(c.name || '').toLowerCase() === query || String(c.id || '').toLowerCase() === query);
         const matches = exact.length ? exact : containers.filter(c => String(c.name || '').toLowerCase().includes(query));
         if (matches.length !== 1) throw new Error(matches.length ? `找到 ${matches.length} 個容器，請輸入更完整名稱` : '找不到指定容器');
         const container = matches[0];
-        return { confirmation: `即將重新啟動 Docker 容器「${container.name || container.id}」。`, execute: async () => {
-            await nasMonClient.post(`/api/docker/containers/${encodeURIComponent(container.id)}/restart`);
-            return `${container.name || container.id} 已送出重新啟動指令。`;
+        const target = selectDockerActionTarget(data, container.id, 'restart', { allowLegacy: allowLegacyNasMonActions() });
+        return { confirmation: `即將重新啟動 Docker 容器「${target.name}」。`, execute: async () => {
+            try { await nasMonClient.post(`/api/docker/containers/${encodeURIComponent(target.id)}/restart`); }
+            catch (error) {
+                if (ambiguousDockerActionResult(error, 'restart')) {
+                    throw new Error('重啟結果不明；請先重新整理容器狀態，不要直接重試');
+                }
+                throw error;
+            }
+            return `${target.name} 已送出重新啟動指令。`;
         } };
     } },
     wiim_toggle: { description: '切換 WiiM 播放/暫停', mutating: true, prepare: async () => ({ confirmation: '即將切換 WiiM 播放/暫停狀態。', execute: async () => { if (!await wiimGet('setPlayerCmd:onepause')) throw new Error('WiiM 無回應'); return 'WiiM 播放狀態已切換。'; } }) },
@@ -4178,7 +4345,10 @@ app.get('/api/alerts/critical', (req, res) => {
 });
 
 // Liveness / readiness / 完整 diagnostics；/api/system/status 會沿用上方 Basic Auth。
-registerHealthRoutes(app, { monitor: systemMonitor, db: historyDb, taskTracker, version: APP_VERSION });
+registerHealthRoutes(app, {
+    monitor: systemMonitor, db: historyDb, taskTracker,
+    version: APP_VERSION, buildIdentity: buildIdentity.public
+});
 
 /* ===================== 啟動連線自我診斷 =====================
    開機時逐一測試每個設備連線並輸出 ✅/❌ + 具體原因與修復提示，
@@ -4305,12 +4475,7 @@ function gracefulShutdown(signal, exitCode = 0) {
         Object.values(jobTimers).forEach(clearInterval);
         jobTimers = {};
 
-        clearLifecycleTimeout(sseReconnectTimer);
-        sseReconnectTimer = null;
-        if (sseUpstreamReq) {
-            try { sseUpstreamReq.data.destroy(); } catch { }
-            sseUpstreamReq = null;
-        }
+        resetSseUpstream();
         for (const client of sseClients) {
             try { client.end(); } catch { }
         }
@@ -4372,7 +4537,8 @@ httpServer = app.listen(PORT, () => {
                 database: status.database.status,
                 database_latency_ms: status.database.latency_ms,
                 storage_free_gb: status.disk.free_bytes == null ? null : Number((status.disk.free_bytes / 1073741824).toFixed(2)),
-                worker: status.worker.status
+                worker: status.worker.status,
+                ...buildIdentity.logFields
             }
         });
     }).catch(error => logger.error({

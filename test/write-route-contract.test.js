@@ -8,16 +8,19 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const dotenv = require('dotenv');
+const { ERROR_CODES } = require('../observability/error-codes');
 
 const ROOT = path.resolve(__dirname, '..');
 const ADMIN_PASSWORD = 'integration-admin-secret';
 const BASIC_AUTH = `Basic ${Buffer.from(`admin:${ADMIN_PASSWORD}`).toString('base64')}`;
+const READONLY_AUTH = `Basic ${Buffer.from('readonly:integration-readonly-secret').toString('base64')}`;
 const VALIDATION_CODE = 'API-VALID-001';
 const ISOLATED_CHILD_BOOTSTRAP = String.raw`
 const Module = require('node:module');
+const realDotenv = require('dotenv');
 const originalLoad = Module._load;
 Module._load = function loadWithoutDotenv(request, parent, isMain) {
-    if (request === 'dotenv') return { config: () => ({ parsed: {} }) };
+    if (request === 'dotenv') return { config: () => ({ parsed: {} }), parse: realDotenv.parse };
     return originalLoad.call(this, request, parent, isMain);
 };
 require(process.argv[1]);
@@ -85,6 +88,7 @@ function safeChildEnvironment({ port, dataDir }) {
 async function startRuntime(script, label) {
     const port = await unusedPort();
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), `smarthub-${label}-`));
+    await fs.writeFile(path.join(dataDir, '.env'), '# isolated integration config\n', { mode: 0o600 });
     // Never let a child load the repository's real .env: the explicit loopback-only
     // environment below is the entire integration surface available to the server.
     const child = spawn(process.execPath, ['--eval', ISOLATED_CHILD_BOOTSTRAP, path.join(ROOT, script)], {
@@ -304,6 +308,27 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.secretsSet.PPB_PASSWORD, true);
     assert.equal(text.includes(secret), false, `${runtime.label} secret leaked in readback`);
 
+    response = await client.write('POST', '/api/connections', {
+        NAS_MONITOR_URL: 'http://nas-monitor:8000',
+        NAS_MONITOR_API_KEY: '0123456789abcdef0123456789abcdef',
+        NAS_MONITOR_MODE: 'full'
+    });
+    text = await response.text();
+    assert.equal(response.status, 200, `${runtime.label} restart-required connection: ${text}`);
+    body = JSON.parse(text);
+    assert.deepEqual(body.restartRequired, [
+        'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE'
+    ]);
+
+    response = await client.read('/api/connections');
+    body = await response.json();
+    assert.deepEqual(body.restartRequiredFields, [
+        'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE'
+    ]);
+    assert.deepEqual([...body.pendingRestartFields].sort(), [
+        'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'NAS_MONITOR_URL'
+    ]);
+
     if (runtime.label === 'production') {
         const serialized = await fs.readFile(path.join(runtime.dataDir, '.env'), 'utf8');
         const parsed = dotenv.parse(serialized);
@@ -319,6 +344,15 @@ async function exerciseRuntimeContract(t, script, label) {
     const runtime = await startRuntime(script, label);
     t.after(() => stopRuntime(runtime));
     const client = await createClient(runtime);
+
+    await t.test('readonly cannot fetch privileged Docker logs', async () => {
+        const response = await fetch(`${runtime.baseUrl}/api/nas/docker/${'a'.repeat(64)}/logs?lines=20`, {
+            headers: { authorization: READONLY_AUTH },
+            signal: AbortSignal.timeout(4_000)
+        });
+        assert.equal(response.status, 403);
+        assert.equal((await response.json()).code, ERROR_CODES.API_AUTHORIZATION_FAILED);
+    });
 
     for (const invalidCase of INVALID_WRITES) {
         await t.test(invalidCase[0], () => assertValidationFailure(runtime, client, invalidCase));

@@ -224,10 +224,17 @@ function createPanelSecurity(options = {}) {
         return next();
     }
 
+    function requireAdmin(req, res, next) {
+        if (req.panelAuth?.role === 'admin') return next();
+        emit('authorization_denied', req, { role: req.panelAuth?.role || 'unknown' });
+        return send(res, 403, 'Admin role required', options.authorizationCode || 'API-AUTH-403', getRequestId());
+    }
+
     return {
         authenticate,
         csrf,
         protectWrites,
+        requireAdmin,
         pruneFailures,
         getState: () => ({ failures: failures.size, eventKeys: eventLog.size, failureKeys: [...failures.keys()] })
     };

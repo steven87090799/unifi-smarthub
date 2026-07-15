@@ -18,6 +18,7 @@ async function createHarness(options = {}) {
     app.use(boundary.protectWrites);
     app.use(express.json());
     app.get('/api/settings', (req, res) => res.json({ role: req.panelAuth.role }));
+    app.get('/api/sensitive', boundary.requireAdmin, (req, res) => res.json({ role: req.panelAuth.role }));
     app.post('/api/settings', (req, res) => res.json({ ok: true, body: req.body }));
     const server = await new Promise(resolve => {
         const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
@@ -46,12 +47,23 @@ test('readonly can read but every unsafe API method is denied server-side', asyn
     t.after(harness.close);
     const authorization = basic('readonly', 'viewer-secret');
     assert.equal((await fetch(`${harness.origin}/api/settings`, { headers: { authorization } })).status, 200);
+    assert.equal((await fetch(`${harness.origin}/api/sensitive`, { headers: { authorization } })).status, 403);
     const token = await (await fetch(`${harness.origin}/api/security/csrf`, { headers: { authorization } })).json();
     const denied = await fetch(`${harness.origin}/api/settings`, {
         method: 'POST', headers: { authorization, origin: harness.origin, 'x-smarthub-csrf': token.csrfToken, 'content-type': 'application/json' }, body: '{}'
     });
     assert.equal(denied.status, 403);
     assert.equal((await denied.json()).code, 'API-AUTH-403');
+});
+
+test('admin-only safe reads do not require a CSRF token', async t => {
+    const harness = await createHarness();
+    t.after(harness.close);
+    const response = await fetch(`${harness.origin}/api/sensitive`, {
+        headers: { authorization: basic('admin', 'admin-secret') }
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { role: 'admin' });
 });
 
 test('unauthenticated requests are denied while health remains public', async t => {

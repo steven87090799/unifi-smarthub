@@ -17,22 +17,23 @@ Docker 容器管理的部署方式請見 [`NAS-DOCKER-MONITOR-SETUP.md`](NAS-DOC
 ```bash
 git clone <你的 repo 網址> && cd unifi-smarthub
 
-# 1. 建立設定檔 (Docker 部署「必須」先做這步，否則 bind mount 會建立成資料夾)
-cp .env.example .env
-nano .env        # 至少填第 1、2 組 (UCG SSH + UniFi 帳密)，其他都可以之後再補
+# 1. 建立專用設定目錄（必須存在且只放設定，不可掛整個 repository）
+install -d -m 700 config
+install -m 600 .env.example config/.env
+nano config/.env # PANEL_PASSWORD 必填；再填需啟用的整合設定
 
 # 2A. Docker 部署 (建議)
-docker compose up -d --build
-docker compose logs -f      # 看啟動診斷：每台設備會列出 ✅/❌ 與失敗原因
+docker compose --env-file config/.env up -d --build
+docker compose --env-file config/.env logs -f
 
 # 2B. 或本機直接跑 (需 Node 20+)
-npm install && npm start
+npm install && SMARTHUB_ENV_FILE=config/.env npm start
 
 # 3. 開瀏覽器
 open http://<主機IP>:3000
 ```
 
-> 沒填的設備區塊會顯示「未設定」並自動略過,面板照常運作;**之後可以直接在網頁「設定 → 連線設定」補填,免重啟即時生效**(會寫回 `.env`)。
+> 沒填的設備區塊會顯示「未設定」並自動略過。網頁「設定 → 連線設定」會安全寫回 `config/.env`；一般整合會即時生效，NAS Monitor URL/key/mode 為同一個 recreate-scoped 信任組，變更後必須協調重建相關容器。
 
 ---
 
@@ -46,68 +47,67 @@ open http://<主機IP>:3000
 | | `UNIFI_USERNAME` / `UNIFI_PASSWORD` | **本地**管理員帳號(建議另開一組,別用 SSO 主帳號;要用封鎖功能需 Full Management 角色) |
 | **3. UniFi 雲端** | `UNIFI_API_KEY` | [unifi.ui.com](https://unifi.ui.com) → API 建立。多站點/SD-WAN/ISP 指標 |
 | **4. UGREEN NAS** | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` | UGOS 管理員帳密(遙測 API 需管理員)。**密碼不可含 `#` `*` `§`**。`NAS_PORT`/`NAS_SCHEME` 預設 9443/https |
-| **5. NAS Monitor 中介層** | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY` | 選配的 Flask 中介層,啟用 Docker 管理/警報閾值/SSE 即時推送 |
+| **5. NAS Monitor 中介層** | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY` | 選配的 Docker Monitor；內建版需明確啟用 `nas-monitor` profile |
 | **6. WiiM 音響** | `WIIM_IP` | WiiM Amp 的區網 IP |
 | **7. CyberPower UPS** | `UPS_SOURCE` | `auto`(依序試 PPB→NUT→pwrstat→pmset)或指定。**目前 Docker 已驗證路徑是 `ppb`,見下方第四節** |
 | | `NUT_HOST`, `NUT_UPS_NAME` | NUT server 位置(容器內**不可**用 localhost) |
 | **8. PowerPanel Business** | `PPB_HOST`, `PPB_PORT`, `PPB_USER`, `PPB_PASSWORD` | PPB 跑在哪台就填哪台的 IP(容器內不可 127.0.0.1) |
 | **9. AdGuard Home** | `ADGUARD_HOST`, `ADGUARD_PORT`, `ADGUARD_USER`, `ADGUARD_PASSWORD` | AdGuard 管理帳密,啟用 DNS 防護頁 |
 | **10. Linux 小主機** | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_PORT` | 任何 Linux 主機的 SSH,啟用硬體監控頁 |
-| **11. 面板密碼** | `PANEL_PASSWORD` | **部署到 NAS 強烈建議設定**:整站 Basic Auth(帳號隨意、密碼為此值) |
+| **11. 面板密碼** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：整站 Basic Auth(帳號隨意、密碼為此值) |
 
 > **安全提醒**:此面板具有斷網、關 WiFi、PoE 斷電、改 `.env` 等控制權限。只在內網部署、務必設 `PANEL_PASSWORD`,不要直接曝露到公網;遠端存取請走 VPN。
 
 ---
 
-## 三、docker-compose.yml 完整說明
+## 三、Docker Compose 部署邊界
 
-專案內附的 `docker-compose.yml` 已經是完整可用版,逐段說明(標 ⚙️ 的是你可能要改的):
+預設 `docker compose up` 只啟動 SmartHub，不會綁定 Docker socket。`nas-monitor` 是 opt-in profile，也不是 SmartHub 啟動的強制依賴。完整 Compose 以專案內的 `docker-compose.yml` 為準，下列是重要部署保證：
 
 ```yaml
 services:
   unifi-smarthub:
-    build: .                          # 用專案內 Dockerfile 建置
-    image: unifi-smarthub:latest
-    container_name: unifi-smarthub
-    restart: unless-stopped           # 開機自啟、當機自動重啟
-
+    stop_grace_period: 20s
     ports:
-      - "3000:3000"                   # ⚙️ 對外埠。想改 8080 → "8080:3000"
-
-    env_file:
-      - .env                          # 所有帳密由此注入 (檔案必須存在!)
-
-    environment:
-      - NODE_ENV=production
-      - DATA_DIR=/app/data
-      - TZ=Asia/Taipei                # ⚙️ 時區。不設會是 UTC，報表發送時間差 8 小時
-
+      - "${SMARTHUB_HOST_PORT:-3000}:3000"
     volumes:
-      # 歷史資料持久化：重建容器/更新版本都不會遺失
-      - smarthub-data:/app/data
-      # .env 掛回宿主機：網頁「連線設定」的修改才能跨重建保留
-      - ./.env:/app/.env
+      # 專用目錄讓同目錄 temp+fsync+rename 成立；不可改掛 repository root
+      - type: bind
+        source: ${SMARTHUB_CONFIG_DIR:-./config}
+        target: /app/config
+        bind:
+          create_host_path: false
 
-    mem_limit: 256m                   # ⚙️ 記憶體上限 (實測常駐 60-120MB，充裕)
-    mem_reservation: 128m
-
-    healthcheck:                      # 容器自我健康檢查 (輕量 /health liveness)
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
-
-volumes:
-  smarthub-data:
+  nas-monitor:
+    profiles: ["nas-monitor"]
+    stop_grace_period: 20s
+    user: "1000:1000"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
 ```
 
+image 內建 healthcheck 對 `/health/ready` 發出最多 4 秒的 request，Docker 再以 5 秒強制截止。兩個 image 都使用 `SIGTERM`，Compose 給 20 秒 graceful-stop 時間。本專案不固定 `container_name`，volume 與容器名會跟 Compose project 隔離；同一主機部署多份時，每份都要有獨立 config 目錄，且 `SMARTHUB_CONFIG_DIR` 必須指向同一個 `--env-file` 所在目錄：
+
+```bash
+docker compose --env-file config-prod/.env -p smarthub-prod up -d --build
+docker compose --env-file config-lab/.env -p smarthub-lab up -d --build
+```
+
+上線前用 `docker compose --env-file config/.env config --quiet` 驗證結構；請勿輸出已展開的 config，因為其中可能含機密。每次 Compose 操作都使用同一個 `--env-file`；根目錄不要再保留另一份 `.env`，否則會重新產生雙重 authority。
+
+此基線使用 Compose profiles、long bind `create_host_path: false` 與 Docker Engine `host-gateway`；老舊 NAS 內建的 Compose v1/Engine 若不支援，應先升級，不要刪掉 fail-closed 或 PPB host mapping 設定來迴避。
+
+正式 release 不要從 dirty checkout 直接覆蓋 `latest`。先完成測試與 commit，再執行 `npm run release:build`；它會拒絕 staged/unstaged/untracked 差異，從 `git archive HEAD` 先建置並驗證兩個 staging image，再成對發布 revision tag；既有 revision tag 一律拒絕重指向，第二個 tag 發布失敗時會回滾第一個。它也會核對 OCI version/revision/created/dirty labels。local tag 仍不是 registry digest，部署證據應另記錄 image ID/digest。把輸出的 image 名稱設為 `SMARTHUB_IMAGE` / `NAS_MONITOR_IMAGE`，再用 `docker compose --env-file config/.env up -d --no-build --pull never` rehearsal。普通開發 build 的 `/health` 會標示 incomplete，不能當正式 release 證據。
+
 **部署檢查清單**:
-1. ☑ `cp .env.example .env` 已做(否則 `./.env` bind mount 會被 Docker 建立成**資料夾**,啟動就掛)
+
+1. ☑ `config/` 為專用目錄、`config/.env` 是 regular file，目錄可讓 container UID 1000 建立/rename temp；檔案權限為 `0600`
 2. ☑ `TZ` 改成你的時區
-3. ☑ `.env` 內已設 `PANEL_PASSWORD`
+3. ☑ `config/.env` 內已設 `PANEL_PASSWORD`，所有 Compose 指令都帶同一個 `--env-file config/.env`
 4. ☑ UPS 來源已照第四節設定(容器內 pwrstat/pmset 不可用)
 5. ☑ 所有 `*_HOST` 都是**實際 IP**,沒有任何 localhost/127.0.0.1(容器內的 localhost 是容器自己)
+6. ☑ 只有需要 Docker 管理時才照 `NAS-DOCKER-MONITOR-SETUP.md` 啟用 monitor profile
 
 ---
 
@@ -116,14 +116,16 @@ volumes:
 `UPS_SOURCE=auto` 的四個來源中,**pwrstat 與 pmset 在容器內不存在**,只剩兩條路:
 
 **方案 A — PowerPanel Business(目前 Docker 已驗證路徑)**
+
 1. 宿主機跑 CyberPower PowerPanel Business，REST discovery port 使用預設 `3052`
-2. `.env` 設:`UPS_SOURCE=ppb`、`PPB_HOST=host.docker.internal`、`PPB_PORT=3052`，並填 `PPB_USER`/`PPB_PASSWORD`
-3. Docker Desktop/OrbStack 可直接解析 `host.docker.internal`；純 Linux Engine 若無此名稱，需在 compose 加 `host-gateway` mapping。不要在容器內改用 `pwrstat`
+2. `config/.env` 設:`UPS_SOURCE=ppb`、`PPB_HOST=host.docker.internal`、`PPB_PORT=3052`，並填 `PPB_USER`/`PPB_PASSWORD`
+3. Compose 已保留 `host.docker.internal:host-gateway` mapping，可同時適用 Docker Desktop/OrbStack 與新版 Linux Engine。不要在容器內改用 `pwrstat`
 
 **方案 B — NUT(UPS USB 接 NAS 且已有 NUT server 時)**
+
 1. 在跑 Docker 的主機(NAS)上安裝並設定 NUT server,UPS USB 接這台
 2. 容器已內建 `upsc` 客戶端(Dockerfile 已裝 `nut`)
-3. `.env` 設:`UPS_SOURCE=nut`、`NUT_HOST=<NAS 的區網 IP>`(不能 localhost)、`NUT_UPS_NAME=<ups.conf 裡的名稱>`
+3. `config/.env` 設:`UPS_SOURCE=nut`、`NUT_HOST=<NAS 的區網 IP>`(不能 localhost)、`NUT_UPS_NAME=<ups.conf 裡的名稱>`
 
 啟動後看 `docker compose logs | grep Diag`,UPS 那行會直接告訴你連上了沒、失敗原因為何。
 
@@ -155,7 +157,9 @@ volumes:
 
 備份:
 ```bash
-docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
+docker volume ls --filter label=com.docker.compose.volume=smarthub-data --format '{{.Name}}'
+# 從上一行確認正確 project 的 volume 後再替換 <volume-name>；自訂 -p 時名稱會不同。
+docker run --rm -v <volume-name>:/d:ro -v "$PWD":/b alpine \
   tar czf /b/smarthub-backup.tar.gz -C /d .
 ```
 
@@ -165,10 +169,10 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
 
 ## 六、驗證部署成功
 
-1. **健康檢查**:`curl http://<主機IP>:3000/health` → `{"status":"healthy",...}`；`curl http://<主機IP>:3000/health/ready` 會再檢查 SQLite/worker；`docker compose ps` 應為 `healthy`
+1. **健康檢查**:`curl http://<主機IP>:3000/health` → `{"status":"healthy",...}`；`curl http://<主機IP>:3000/health/ready` 會再檢查 SQLite/worker；`docker compose --env-file config/.env ps` 應為 `healthy`
 2. **啟動連線診斷**(最快的除錯方式):
    ```bash
-   docker compose logs | grep Diag
+   docker compose --env-file config/.env logs | grep Diag
    ```
    啟動 3 秒後會逐台測試並輸出,例如:
    ```
@@ -186,9 +190,10 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
 
 | 現象 | 處理 |
 | :--- | :--- |
-| 啟動就掛 / `.env is a directory` | 忘了先 `cp .env.example .env` 就 `up`,Docker 把 bind mount 建成資料夾了:`docker compose down && rm -rf .env && cp .env.example .env` 重來 |
+| Compose 回報 `config` / `.env` 不存在 | 執行 `install -d -m 700 config && install -m 600 .env.example config/.env`，並確認指令帶 `--env-file config/.env` |
+| 舊版根目錄 `.env` 部署要升級 | 先停服務，再 `install -d -m 700 config && mv .env config/.env && chmod 600 config/.env`；必要時將 `config/` owner/ACL 調整成 container UID 1000 可建立檔案，之後不要保留第二份 root `.env` |
 | 某設備連不上 | 先看 `docker compose logs \| grep Diag`,每台的失敗原因(DNS/逾時/認證/埠拒絕)都有分類提示 |
-| 全部設備連不上 | 檢查 `.env` 裡是否有 `localhost`/`127.0.0.1` —— 容器內連不到宿主機或其他設備 |
+| 全部設備連不上 | 檢查 `config/.env` 裡是否有 `localhost`/`127.0.0.1` —— 容器內連不到宿主機或其他設備 |
 | SSH 硬體頁失敗 | UCG 的 SSH 密碼是**獨立設定**的,不是 UniFi 登入密碼;主控台 → Console Settings → Advanced → SSH |
 | 封鎖設備回 NoPermission | UniFi 本地帳號是唯讀角色,到 Admins 改為 Full Management |
 | 報表在錯的時間發送 | compose 的 `TZ` 沒設或設錯 |
@@ -203,14 +208,13 @@ docker run --rm -v unifi-smarthub_smarthub-data:/d -v "$PWD":/b alpine \
 ## 八、常用維運指令
 
 ```bash
-docker compose logs -f                # 追蹤日誌
-docker compose logs | grep Diag       # 只看啟動連線診斷
-docker compose logs unifi-smarthub | grep 'ERROR\|CRITICAL'
-docker compose logs unifi-smarthub | grep 'CODE=DB-'
-docker compose logs unifi-smarthub | grep 'TASK=8af32' # 暫時設 LOG_LEVEL=DEBUG 才會看到完整正常 lifecycle
-docker compose restart                # 重啟
-docker compose up -d --build          # 改程式後重建
-docker compose down                   # 停止 (歷史資料保留在 volume)
+docker compose --env-file config/.env logs -f
+docker compose --env-file config/.env logs | grep Diag
+docker compose --env-file config/.env logs unifi-smarthub | grep 'ERROR\|CRITICAL'
+docker compose --env-file config/.env restart
+npm run release:build                 # clean HEAD → revision-tagged images + label verification
+docker compose --env-file config/.env up -d --build # 僅供本機開發；identity 為 incomplete
+docker compose --env-file config/.env down          # 停止 (歷史資料保留在 volume)
 docker volume ls                      # 確認 smarthub-data 存在
 ```
 

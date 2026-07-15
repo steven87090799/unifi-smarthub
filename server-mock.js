@@ -9,6 +9,7 @@ const { createPanelSecurity } = require('./server/middleware/panel-security');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
+const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
 
 const app = express();
 app.use((_req, res, next) => {
@@ -17,7 +18,17 @@ app.use((_req, res, next) => {
     res.setHeader('X-Request-ID', requestId);
     next();
 });
-const mockSecurity = createPanelSecurity();
+const mockSecurity = createPanelSecurity({
+    adminPassword: process.env.PANEL_PASSWORD,
+    readonlyPassword: process.env.PANEL_READONLY_PASSWORD,
+    readonlyUsername: process.env.PANEL_READONLY_USERNAME || 'readonly',
+    requireAdminPassword: process.env.NODE_ENV === 'production',
+    authCode: ERROR_CODES.API_AUTH_FAILED,
+    rateLimitCode: ERROR_CODES.API_AUTH_RATE_LIMITED,
+    authorizationCode: ERROR_CODES.API_AUTHORIZATION_FAILED,
+    csrfCode: ERROR_CODES.API_CSRF_FAILED,
+    originCode: ERROR_CODES.API_ORIGIN_FAILED
+});
 app.use(mockSecurity.authenticate);
 app.get('/api/security/csrf', mockSecurity.csrf);
 app.use(mockSecurity.protectWrites);
@@ -590,11 +601,11 @@ function mSeries(hours, stepMin, gen) {
     return arr;
 }
 let mockDocker = [
-    { id: 'a1b2c3d4e5f6', name: 'jellyfin', image: 'jellyfin/jellyfin:latest', state: 'running', status: 'Up 3 days', cpu_percent: 4.2, mem_usage_mb: 512, mem_limit_mb: 2048 },
-    { id: 'b2c3d4e5f6a1', name: 'qbittorrent', image: 'linuxserver/qbittorrent', state: 'running', status: 'Up 3 days', cpu_percent: 1.1, mem_usage_mb: 210, mem_limit_mb: 1024 },
-    { id: 'c3d4e5f6a1b2', name: 'homeassistant', image: 'homeassistant/home-assistant', state: 'running', status: 'Up 5 days', cpu_percent: 2.8, mem_usage_mb: 380, mem_limit_mb: 1024 },
-    { id: 'd4e5f6a1b2c3', name: 'nginx-proxy-manager', image: 'jc21/nginx-proxy-manager', state: 'running', status: 'Up 5 days', cpu_percent: 0.3, mem_usage_mb: 96, mem_limit_mb: 512 },
-    { id: 'e5f6a1b2c3d4', name: 'immich-server', image: 'ghcr.io/immich-app/immich', state: 'exited', status: 'Exited (0) 2 hours ago', cpu_percent: 0, mem_usage_mb: 0, mem_limit_mb: 2048 }
+    { id: 'a'.repeat(64), name: 'jellyfin', image: 'jellyfin/jellyfin:latest', state: 'running', status: 'Up 3 days', cpu_percent: 4.2, mem_usage_mb: 512, mem_limit_mb: 2048, logs_allowed: true },
+    { id: 'b'.repeat(64), name: 'qbittorrent', image: 'linuxserver/qbittorrent', state: 'running', status: 'Up 3 days', cpu_percent: 1.1, mem_usage_mb: 210, mem_limit_mb: 1024, logs_allowed: true },
+    { id: 'c'.repeat(64), name: 'homeassistant', image: 'homeassistant/home-assistant', state: 'running', status: 'Up 5 days', cpu_percent: 2.8, mem_usage_mb: 380, mem_limit_mb: 1024, logs_allowed: true },
+    { id: 'd'.repeat(64), name: 'nginx-proxy-manager', image: 'jc21/nginx-proxy-manager', state: 'running', status: 'Up 5 days', cpu_percent: 0.3, mem_usage_mb: 96, mem_limit_mb: 512, logs_allowed: true },
+    { id: 'e'.repeat(64), name: 'immich-server', image: 'ghcr.io/immich-app/immich', state: 'exited', status: 'Exited (0) 2 hours ago', cpu_percent: 0, mem_usage_mb: 0, mem_limit_mb: 2048, logs_allowed: true }
 ];
 let mockAlerts = [
     { id: 'al-1', datetime: new Date(Date.now() - 3600000).toISOString(), metric: 'disk_temperature', level: 'warning', message: 'Seagate IronWolf 8TB 溫度達 48°C (閾值 45°C)', acknowledged: false },
@@ -606,8 +617,11 @@ let mockAlertConfig = [
     { metric: 'volume_usage', threshold: 85, condition: 'above', enabled: true }
 ];
 app.get('/api/nas/docker', (req, res) => {
-    mockDocker.forEach(c => { if (c.state === 'running') { c.cpu_percent = +(Math.random() * 5).toFixed(1); } });
-    res.json({ containers: mockDocker, source: 'fallback' });
+    mockDocker.forEach(c => {
+        if (c.state === 'running') c.cpu_percent = +(Math.random() * 5).toFixed(1);
+        c.allowed_actions = c.state === 'running' ? ['restart', 'stop'] : ['start'];
+    });
+    res.json({ containers: mockDocker, total: mockDocker.length, truncated: false, actionsEnabled: true, source: 'fallback' });
 });
 app.post('/api/nas/docker/:id/:action', (req, res) => {
     const input = validatedInput(res, () => ({
@@ -616,15 +630,20 @@ app.post('/api/nas/docker/:id/:action', (req, res) => {
         ...writeInput.parseEmptyBody(req.body)
     }));
     if (!input) return;
-    const c = mockDocker.find(x => x.id === input.id || x.name === input.id);
+    mockDocker.forEach(c => { c.allowed_actions = c.state === 'running' ? ['restart', 'stop'] : ['start']; });
+    let target;
+    try { target = selectDockerActionTarget({ containers: mockDocker }, input.id, input.action); }
+    catch (error) { return mockApiError(res, error, { status: 403, code: ERROR_CODES.API_AUTHORIZATION_FAILED, publicMessage: 'docker_action_not_allowed' }); }
+    const c = mockDocker.find(x => x.id === target.id);
     if (c) {
         c.state = input.action === 'stop' ? 'exited' : 'running';
         c.status = input.action === 'stop' ? 'Exited (0) just now' : 'Up 1 second';
         if (input.action === 'stop') { c.cpu_percent = 0; c.mem_usage_mb = 0; } else if (!c.mem_usage_mb) c.mem_usage_mb = 128;
+        c.allowed_actions = c.state === 'running' ? ['restart', 'stop'] : ['start'];
     }
     res.json({ success: true, source: 'fallback' });
 });
-app.get('/api/nas/docker/:id/logs', (req, res) => {
+app.get('/api/nas/docker/:id/logs', mockSecurity.requireAdmin, (req, res) => {
     const input = validatedInput(res, () => ({
         id: queryInput.safePathIdentifierValue(req.params.id, { field: 'id', max: 128 }),
         ...queryInput.parseDockerLogsQuery(req.query)
@@ -1038,9 +1057,14 @@ const mockSecretDefaults = {
     NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false, PPB_PASSWORD: false,
     ADGUARD_PASSWORD: false, LINUX_SSH_PASSWORD: false
 };
+const MOCK_RESTART_REQUIRED_FIELDS = Object.freeze([
+    'NAS_MONITOR_URL',
+    'NAS_MONITOR_API_KEY',
+    'NAS_MONITOR_MODE'
+]);
 const MOCK_CONN_FIELDS = [
-    ...Object.keys(mockConnDefaults).map(key => ({ key })),
-    ...Object.keys(mockSecretDefaults).map(key => ({ key, secret: true }))
+    ...Object.keys(mockConnDefaults).map(key => ({ key, restartRequired: MOCK_RESTART_REQUIRED_FIELDS.includes(key) })),
+    ...Object.keys(mockSecretDefaults).map(key => ({ key, secret: true, restartRequired: MOCK_RESTART_REQUIRED_FIELDS.includes(key) }))
 ];
 
 // Mock Server 也保留「已填過」的連線狀態，重啟開發伺服器時不用重填；密碼本身不會寫入。
@@ -1068,7 +1092,14 @@ function saveMockConnections() {
 const savedMockConnections = loadMockConnections();
 let mockConn = savedMockConnections.fields;
 let mockConnSecrets = savedMockConnections.secretsSet;
-app.get('/api/connections', (req, res) => res.json({ fields: mockConn, secretsSet: mockConnSecrets }));
+const mockAppliedConn = { ...mockConn };
+const mockPendingRestartFields = new Set();
+app.get('/api/connections', (req, res) => res.json({
+    fields: mockConn,
+    secretsSet: mockConnSecrets,
+    restartRequiredFields: [...MOCK_RESTART_REQUIRED_FIELDS],
+    pendingRestartFields: [...mockPendingRestartFields]
+}));
 app.get('/api/connections/status', (_req, res) => res.json({
     source: 'mock',
     devices: [
@@ -1087,19 +1118,29 @@ app.post('/api/connections', (req, res) => {
     for (const [key, value] of Object.entries(updates)) {
         if (Object.hasOwn(mockConnSecrets, key)) mockConnSecrets[key] = true;
         else mockConn[key] = value;
+        if (!MOCK_RESTART_REQUIRED_FIELDS.includes(key)) continue;
+        if (Object.hasOwn(mockConnSecrets, key) || mockConn[key] !== mockAppliedConn[key]) {
+            mockPendingRestartFields.add(key);
+        } else {
+            mockPendingRestartFields.delete(key);
+        }
     }
     const changed = Object.keys(updates).length;
     if (changed) saveMockConnections();
-    res.json({ ok: true, changed });
+    res.json({ ok: true, changed, restartRequired: Object.keys(updates).filter(key => mockPendingRestartFields.has(key)) });
 });
 
 app.get('/api/alerts/critical', (_req, res) => res.json({ alerts: [], source: 'mock' }));
 
-const mockHealth = (_req, res) => res.json({ status: 'healthy', code: ERROR_CODES.API_HEALTH_OK, uptime_seconds: Math.floor(process.uptime()), version: APP_VERSION, timestamp: new Date().toISOString(), source: 'mock' });
+const mockBuildIdentity = Object.freeze({
+    version: 'unknown', revision: 'unknown', created: 'unknown', dirty: null,
+    status: 'incomplete', complete: false
+});
+const mockHealth = (_req, res) => res.json({ status: 'healthy', code: ERROR_CODES.API_HEALTH_OK, uptime_seconds: Math.floor(process.uptime()), version: APP_VERSION, build: mockBuildIdentity, timestamp: new Date().toISOString(), source: 'mock' });
 app.get('/health', mockHealth);
 app.get('/healthz', mockHealth);
 app.get('/health/ready', (_req, res) => res.json({
-    status: 'ready', code: ERROR_CODES.API_READY_OK, source: 'mock',
+    status: 'ready', code: ERROR_CODES.API_READY_OK, source: 'mock', build: mockBuildIdentity,
     checks: { database: { status: 'healthy', latency_ms: 0 }, worker: { status: 'healthy', active_tasks: 0, stuck_tasks: 0 } }
 }));
 const mockSystemTrend = [];
@@ -1123,7 +1164,7 @@ app.get('/api/system/status', (_req, res) => {
     mockSystemTrend.push(sample);
     if (mockSystemTrend.length > 60) mockSystemTrend.shift();
     res.json({
-        status: memoryStatus, source: 'mock', sampled_at: sample.timestamp, uptime_seconds: Math.floor(process.uptime()), app_version: APP_VERSION,
+        status: memoryStatus, source: 'mock', sampled_at: sample.timestamp, uptime_seconds: Math.floor(process.uptime()), app_version: APP_VERSION, build: mockBuildIdentity,
         cpu: { status: 'healthy', usage_percent: sample.system_cpu_percent, process_usage_percent: sample.process_cpu_percent, load_average: os.loadavg() },
         memory: { status: memoryStatus, usage_percent: sample.system_memory_percent, process_mb: Number((mem.rss / 1048576).toFixed(1)), system_available_bytes: availableMemory, system_total_bytes: totalMemory },
         disk: { status: 'unknown', usage_percent: null, free_bytes: null },

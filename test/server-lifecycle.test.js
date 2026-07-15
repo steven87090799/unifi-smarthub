@@ -12,9 +12,10 @@ const Database = require('better-sqlite3');
 const ROOT = path.resolve(__dirname, '..');
 const BOOTSTRAP = String.raw`
 const Module = require('node:module');
+const realDotenv = require('dotenv');
 const originalLoad = Module._load;
 Module._load = function isolatedDotenv(request, parent, isMain) {
-    if (request === 'dotenv') return { config: () => ({ parsed: {} }) };
+    if (request === 'dotenv') return { config: () => ({ parsed: {} }), parse: realDotenv.parse };
     return originalLoad.call(this, request, parent, isMain);
 };
 require(process.argv[1]);
@@ -47,6 +48,7 @@ async function waitForHealth(baseUrl, child, output) {
 test('SIGTERM drains owned work, closes SQLite, and removes the instance lock', { timeout: 30_000 }, async t => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-lifecycle-'));
     t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dataDir, '.env'), '# isolated lifecycle config\n', { mode: 0o600 });
     const port = await unusedPort();
     const child = spawn(process.execPath, ['--eval', BOOTSTRAP, path.join(ROOT, 'server.js')], {
         cwd: ROOT,

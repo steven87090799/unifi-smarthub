@@ -13,9 +13,10 @@ const ADMIN_PASSWORD = 'ups-runtime-admin-secret';
 const AUTHORIZATION = `Basic ${Buffer.from(`admin:${ADMIN_PASSWORD}`).toString('base64')}`;
 const BOOTSTRAP = String.raw`
 const Module = require('node:module');
+const realDotenv = require('dotenv');
 const originalLoad = Module._load;
 Module._load = function isolatedDotenv(request, parent, isMain) {
-    if (request === 'dotenv') return { config: () => ({ parsed: {} }) };
+    if (request === 'dotenv') return { config: () => ({ parsed: {} }), parse: realDotenv.parse };
     return originalLoad.call(this, request, parent, isMain);
 };
 require(process.argv[1]);
@@ -46,6 +47,7 @@ async function waitFor(predicate, { timeoutMs = 20_000, intervalMs = 100, descri
 test('production UPS route retains last-good data across confirmed outage and recovery', { timeout: 45_000 }, async t => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-ups-runtime-'));
     t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dataDir, '.env'), '# isolated UPS runtime config\n', { mode: 0o600 });
 
     const modeFile = path.join(dataDir, 'ups-mode');
     const pwrstat = path.join(dataDir, 'pwrstat-fixture');

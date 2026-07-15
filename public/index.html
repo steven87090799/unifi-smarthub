@@ -3141,8 +3141,9 @@
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">資料來源</label>
                                     <select id="conn-UPS_SOURCE"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
-                                        <option value="auto">自動 (NUT → pwrstat → pmset)</option>
-                                        <option value="nut">NUT (upsc，建議)</option>
+                                        <option value="auto">自動 (PPB → NUT → pwrstat → pmset)</option>
+                                        <option value="ppb">PowerPanel Business REST（Docker 已驗證）</option>
+                                        <option value="nut">NUT (upsc)</option>
                                         <option value="pwrstat">pwrstat (官方 PowerPanel CLI)</option>
                                         <option value="pmset">pmset (macOS 原生，僅電量)</option>
                                     </select>
@@ -3191,21 +3192,22 @@
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
                                 <p class="text-[11px] font-bold text-emerald-400">📊 NAS Monitor 中介層 (選填)</p>
                                 <p class="text-[9px] text-slate-500 leading-relaxed">內建 Docker Monitor 可讀取部署主機的真實容器；完整外部服務另提供警報與進階歷史。操作方式見 <span class="mono text-blue-400">NAS-DOCKER-MONITOR-SETUP.md</span></p>
-                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">模式</label><select
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">模式 <span id="connset-NAS_MONITOR_MODE" class="normal-case"></span></label><select
                                         id="conn-NAS_MONITOR_MODE"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                         <option value="docker_only">docker_only（內建，只管理 Docker）</option>
                                         <option value="full">full（完整外部 NAS Monitor）</option>
                                     </select>
                                 </div>
-                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">服務網址</label><input
-                                        id="conn-NAS_MONITOR_URL" placeholder="http://192.168.0.x:8000"
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">服務網址 <span id="connset-NAS_MONITOR_URL" class="normal-case"></span></label><input
+                                        id="conn-NAS_MONITOR_URL" placeholder="http://nas-monitor:8000 或 https://monitor.internal"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">API Key <span
                                             id="connset-NAS_MONITOR_API_KEY" class="normal-case"></span></label><input
                                         id="conn-NAS_MONITOR_API_KEY" type="password"
                                         class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                    <p class="text-[8px] text-amber-500/80 mt-1">URL、key、mode 是同一個信任組；會先安全寫入，再由協調 recreate 主服務與 monitor 一起生效。普通 restart 不會套用半套設定。</p>
                                 </div>
                             </div>
                             <!-- 狀態一覽 -->
@@ -6951,7 +6953,10 @@
                 const containers = payload.containers || [];
                 const running = containers.filter(c => c.state === 'running').length;
                 document.getElementById('nas-docker-running').innerText = running;
-                document.getElementById('nas-docker-sub').innerText = `共 ${containers.length} 個容器`;
+                const total = Number.isInteger(payload.total) ? payload.total : containers.length;
+                document.getElementById('nas-docker-sub').innerText = payload.truncated
+                    ? `顯示 ${containers.length}/${total} 個容器（已達安全上限）`
+                    : `共 ${total} 個容器`;
                 document.getElementById('nas-docker-count').innerText = `— ${running}/${containers.length} 運行中`;
                 const tbody = document.getElementById('nas-docker-list');
                 const emptyMessage = payload.source === 'not_configured'
@@ -6972,6 +6977,11 @@
                     const networks = (c.networks || []).map(n => `${n.name}${n.ip_address ? ` ${n.ip_address}` : ''}`).join(' · ') || '--';
                     const ports = (c.ports || []).map(p => p.host ? `${p.host} → ${p.container}` : p.container).join(' · ') || '無公開連接埠';
                     const mounts = (c.mounts || []).map(m => `${m.destination}${m.read_write ? '' : ' (唯讀)'}`).join(' · ') || '無掛載';
+                    const allowedActions = new Set(Array.isArray(c.allowed_actions) ? c.allowed_actions : []);
+                    const actionButtons = [];
+                    if (on && allowedActions.has('restart')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="restart" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded">重啟</button>');
+                    if (on && allowedActions.has('stop')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="stop" class="px-2 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-bold rounded ml-1">停止</button>');
+                    if (!on && allowedActions.has('start')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="start" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded">啟動</button>');
                     return `
                     <tr class="hover:bg-slate-900/30">
                         <td class="py-2.5 pr-3"><p class="font-bold text-slate-200">${escapeHtml(c.name)}</p><p class="text-[9px] text-slate-500 mono truncate max-w-[220px]">${escapeHtml(c.image)}</p><p class="text-[8px] text-slate-700 mono">ID ${escapeHtml(String(c.id || '').slice(0, 12))}${c.compose_service ? ` · ${escapeHtml(c.compose_service)}` : ''}</p></td>
@@ -6980,11 +6990,8 @@
                         <td class="py-2.5 pr-3 mono text-[10px] text-slate-300">${on ? `${memUsage} / ${memLimit} MB <span class="text-slate-600">(${memPct}%)</span>` : '-'} </td>
                         <td class="py-2.5 pr-3 mono text-[9px] text-slate-400"><p>↓ ${diagBytes(c.network_rx_bytes)} · ↑ ${diagBytes(c.network_tx_bytes)}</p><p class="text-slate-600 mt-0.5">讀 ${diagBytes(c.block_read_bytes)} · 寫 ${diagBytes(c.block_write_bytes)}</p></td>
                         <td class="py-2.5 text-right whitespace-nowrap">
-                            ${on
-                            ? `<button type="button" data-docker-index="${index}" data-docker-action="restart" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded">重啟</button>
-                                   <button type="button" data-docker-index="${index}" data-docker-action="stop" class="px-2 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-bold rounded ml-1">停止</button>`
-                            : `<button type="button" data-docker-index="${index}" data-docker-action="start" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded">啟動</button>`}
-                            <button type="button" data-docker-index="${index}" data-docker-action="logs" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded ml-1">日誌</button>
+                            ${actionButtons.join('')}
+                            ${c.logs_allowed === true ? `<button type="button" data-docker-index="${index}" data-docker-action="logs" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded ml-1">日誌</button>` : ''}
                         </td>
                     </tr>
                     <tr class="text-[8px] text-slate-600 bg-slate-950/20">
@@ -7015,7 +7022,15 @@
             const labels = { start: '啟動', stop: '停止', restart: '重啟' };
             try {
                 const res = await fetch(`/api/nas/docker/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
-                if (!res.ok) throw new Error();
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    if (res.status === 504 && data.error === 'action_result_unknown' && data.ambiguous === true) {
+                        showToast('操作結果不明；已重新整理狀態，請勿直接重試', true);
+                        setTimeout(fetchNasDocker, 200);
+                        return;
+                    }
+                    throw new Error();
+                }
                 showToast(`已對容器下達${labels[action]}指令`);
                 setTimeout(fetchNasDocker, 800);
             } catch (e) { showToast('容器操作失敗', true); }
@@ -7812,11 +7827,19 @@
                     const el = document.getElementById('conn-' + k);
                     if (el) el.value = v || '';
                 }
+                for (const key of d.restartRequiredFields || []) {
+                    const badge = document.getElementById('connset-' + key);
+                    if (badge) badge.innerHTML = '';
+                }
                 for (const [k, set] of Object.entries(d.secretsSet || {})) {
                     const badge = document.getElementById('connset-' + k);
                     const input = document.getElementById('conn-' + k);
                     if (badge) badge.innerHTML = set ? '<span class="text-emerald-400">✓ 已設定</span>' : '<span class="text-amber-400">尚未設定</span>';
                     if (input) input.placeholder = set ? '已設定 (留空=不變更)' : '尚未設定，請填入';
+                }
+                for (const key of d.pendingRestartFields || []) {
+                    const badge = document.getElementById('connset-' + key);
+                    if (badge) badge.innerHTML = '<span class="text-amber-400">已儲存，待 recreate</span>';
                 }
                 renderConnStatus();
             } catch (e) { dbg('Conn', '載入失敗', e); }
@@ -7847,7 +7870,10 @@
             try {
                 const r = await (await fetch('/api/connections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
                 if (!r.ok) throw new Error(r.error || 'save failed');
-                showToast(`✅ 已套用 ${r.changed} 個連線設定 (免重啟)，各設備將於數秒內重新連線`);
+                const pending = Array.isArray(r.restartRequired) ? r.restartRequired : [];
+                showToast(pending.length
+                    ? `✅ 已儲存 ${r.changed} 個設定；${pending.join(', ')} 需 recreate 服務後生效`
+                    : `✅ 已套用 ${r.changed} 個連線設定 (免重啟)，各設備將於數秒內重新連線`);
                 document.querySelectorAll('.conn-secret').forEach(el => el.value = '');
                 // 立即觸發各設備重新抓取
                 fetchHardware(); fetchClients(); fetchThreats(); fetchNas(); fetchWiimSystem(); fetchWiimPlayback(); fetchUps();
