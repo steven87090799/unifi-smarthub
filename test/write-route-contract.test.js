@@ -354,6 +354,48 @@ async function exerciseRuntimeContract(t, script, label) {
         assert.equal((await response.json()).code, ERROR_CODES.API_AUTHORIZATION_FAILED);
     });
 
+    await t.test('admin-only backup export and staged restore share the production contract', async () => {
+        const denied = await fetch(`${runtime.baseUrl}/api/config/backup`, {
+            headers: { authorization: READONLY_AUTH }, signal: AbortSignal.timeout(8_000)
+        });
+        assert.equal(denied.status, 403);
+
+        const exported = await fetch(`${runtime.baseUrl}/api/config/backup`, {
+            headers: { authorization: BASIC_AUTH }, signal: AbortSignal.timeout(8_000)
+        });
+        const backupText = await exported.text();
+        assert.equal(exported.status, 200, `${runtime.label} backup export: ${backupText.slice(0, 500)}`);
+        assert.match(exported.headers.get('content-type') || '', /^application\/vnd\.unifi-smarthub\.backup\+json\b/i);
+        const backup = JSON.parse(backupText);
+        assert.equal(backup.manifest.format, 'unifi-smarthub-backup');
+        assert.equal(backup.environment.restorable, false);
+        assert.doesNotMatch(backupText, /integration-admin-secret|integration-readonly-secret/);
+
+        const csrfResponse = await fetch(`${runtime.baseUrl}/api/security/csrf`, {
+            headers: { authorization: BASIC_AUTH }, signal: AbortSignal.timeout(4_000)
+        });
+        const { csrfToken } = await csrfResponse.json();
+        const headers = {
+            authorization: BASIC_AUTH,
+            origin: runtime.baseUrl,
+            'x-smarthub-csrf': csrfToken,
+            'content-type': 'application/vnd.unifi-smarthub.backup+json'
+        };
+        const missingConfirmation = await fetch(`${runtime.baseUrl}/api/config/restore`, {
+            method: 'POST', headers, body: backupText, signal: AbortSignal.timeout(8_000)
+        });
+        assert.equal(missingConfirmation.status, 400);
+        const staged = await fetch(`${runtime.baseUrl}/api/config/restore`, {
+            method: 'POST',
+            headers: { ...headers, 'x-smarthub-restore-confirmation': 'RESTORE' },
+            body: backupText,
+            signal: AbortSignal.timeout(8_000)
+        });
+        const stagedText = await staged.text();
+        assert.equal(staged.status, 202, `${runtime.label} staged restore: ${stagedText.slice(0, 500)}`);
+        assert.deepEqual(JSON.parse(stagedText), { staged: true, restartRequired: true, secretsRestored: false });
+    });
+
     for (const invalidCase of INVALID_WRITES) {
         await t.test(invalidCase[0], () => assertValidationFailure(runtime, client, invalidCase));
     }

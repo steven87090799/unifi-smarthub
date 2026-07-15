@@ -53,6 +53,13 @@ const {
 const { deriveDueReportSlot } = require('./server/jobs/report-schedule');
 const { createReportRunner } = require('./server/jobs/report-runner');
 const { createUpsState, FETCH_HEALTH, TRANSITION_TYPES } = require('./server/jobs/ups-state');
+const {
+    BACKUP_MEDIA_TYPE,
+    MAX_BACKUP_BYTES,
+    BackupValidationError,
+    applyPendingRestore,
+    createConfigBackupService
+} = require('./server/services/config-backup');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
@@ -218,6 +225,7 @@ const panelSecurity = createPanelSecurity({
 app.use(panelSecurity.authenticate);
 app.get('/api/security/csrf', panelSecurity.csrf);
 app.use(panelSecurity.protectWrites);
+app.use('/api/config/restore', express.raw({ type: BACKUP_MEDIA_TYPE, limit: MAX_BACKUP_BYTES }));
 app.use(express.json({ limit: '256kb', strict: true }));
 
 // 託管前端靜態網頁
@@ -643,7 +651,6 @@ catch (error) {
     });
     process.exit(1);
 }
-
 /* ===================== 單一實例鎖 =====================
    防止同一份 DATA_DIR 被多個 server.js 同時使用：每個實例都有自己的推播監看器，
    多開會導致同一事件重複推播 N 次 (實際發生過：4 個測試殘留實例 + 正式 = 同則警報×5)。
@@ -676,6 +683,26 @@ if (process.env.ALLOW_MULTI_INSTANCE !== '1') {
     process.on('exit', () => { try { if (parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10) === process.pid) fs.unlinkSync(LOCK_FILE); } catch { } });
 }
 
+// Restore mutates the complete persistent state and must never run until this
+// process owns the DATA_DIR instance lock. This keeps accidental parallel
+// starts from replacing a database that another process still has open.
+try {
+    const restoreResult = applyPendingRestore({ dataDir: DATA_DIR });
+    if (restoreResult.applied) {
+        logger.warning({
+            module: 'config.restore', function: 'applyPendingRestore', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'A validated configuration restore was applied during startup',
+            fields: { rollback_directory: path.basename(restoreResult.backupDirectory), secrets_restored: false }
+        });
+    }
+} catch (error) {
+    logger.critical({
+        module: 'config.restore', function: 'applyPendingRestore', code: ERROR_CODES.SYS_START_FAILED,
+        message: 'Startup failed while applying or recovering a staged restore', error
+    });
+    process.exit(1);
+}
+
 // 統計/歷史資料集中由 SQLite 管理；啟動時會將既有 JSON 匯入並保留 .migrated.bak。
 const { createHistoryDb } = require('./db');
 let historyDb;
@@ -693,6 +720,12 @@ try {
     });
     process.exit(1);
 }
+const configBackupService = createConfigBackupService({
+    dataDir: DATA_DIR,
+    envFile: ENV_FILE,
+    appVersion: APP_VERSION,
+    database: historyDb
+});
 const HISTORY_HARD_CAP = 100000;
 const systemMonitor = new SystemMonitor({
     dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger,
@@ -3007,6 +3040,60 @@ app.post('/api/connections', (req, res) => {
         changed: Object.keys(updates).length,
         restartRequired: Object.keys(updates).filter(key => pendingRestartConnectionFields.has(key))
     });
+});
+
+/* ===================== 設定備份 / 還原 =====================
+   匯出包含一致的 SQLite 快照與非機密 JSON 設定；.env 只輸出遮罩後的
+   設定狀態。還原先完整驗證並 staging，下一次啟動才以可回滾交易套用。 */
+app.get('/api/config/backup/status', panelSecurity.requireAdmin, (_req, res) => {
+    res.json(configBackupService.status());
+});
+
+app.get('/api/config/backup', panelSecurity.requireAdmin, async (_req, res) => {
+    try {
+        const backup = await configBackupService.exportBackup();
+        const date = new Date().toISOString().slice(0, 10);
+        res.set('Content-Type', BACKUP_MEDIA_TYPE);
+        res.set('Content-Disposition', `attachment; filename="smarthub-backup-${date}.json"`);
+        res.set('Cache-Control', 'no-store');
+        res.send(JSON.stringify(backup));
+    } catch (error) {
+        const validation = error instanceof BackupValidationError;
+        apiError(res, error, {
+            status: validation ? error.httpStatus : 500,
+            code: validation ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.SYS_CONFIG_INVALID,
+            publicMessage: validation ? error.message : undefined,
+            module: 'api.configBackup', function: 'export', logMessage: 'Configuration backup export failed',
+            fields: validation ? { reason: error.code } : undefined
+        });
+    }
+});
+
+app.post('/api/config/restore', panelSecurity.requireAdmin, (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.is(BACKUP_MEDIA_TYPE)) {
+        return apiError(res, new Error(`Content-Type must be ${BACKUP_MEDIA_TYPE}`), {
+            status: 415, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'unsupported_backup_content_type',
+            module: 'api.configBackup', function: 'restore'
+        });
+    }
+    try {
+        const result = configBackupService.stageRestore(req.body, req.get('x-smarthub-restore-confirmation'));
+        logger.warning({
+            module: 'api.configBackup', function: 'restore', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'A validated configuration restore was staged for the next process start',
+            fields: { restart_required: true, secrets_restored: false }
+        });
+        res.status(202).json(result);
+    } catch (error) {
+        const validation = error instanceof BackupValidationError;
+        apiError(res, error, {
+            status: validation ? error.httpStatus : 500,
+            code: validation ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.SYS_CONFIG_INVALID,
+            publicMessage: validation ? error.message : undefined,
+            module: 'api.configBackup', function: 'restore', logMessage: 'Configuration restore staging failed',
+            fields: validation ? { reason: error.code } : undefined
+        });
+    }
 });
 
 /* ===================== 定期報表 ===================== */

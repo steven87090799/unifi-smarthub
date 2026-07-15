@@ -1066,6 +1066,10 @@ function createHistoryDb(dataDir, options = {}) {
                 };
             }
         },
+        async backup(destination) {
+            flush();
+            return db.backup(destination);
+        },
         close() {
             if (closed) return;
             flush();

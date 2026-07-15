@@ -155,7 +155,11 @@ docker compose --env-file config-lab/.env -p smarthub-lab up -d --build
 
 **取樣頻率是裝置感知的自適應模式**:總覽或 UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁全部前端資訊每 3 秒更新；總覽會同步加速其顯示的 UCG、NAS、WiiM 與趨勢後端取樣。切頁會立即撤銷上一個設備 scope，分頁進背景也主動釋放；心跳意外中斷時仍有伺服器短租約保護，租約到期即回到各項原本預設。UPS 的斷電歷史取樣獨立持續運作，不因頁面狀態降頻。
 
-備份:
+線上安全備份（建議）：以 admin 開啟「設定 → 設定備份與還原 → 下載安全備份」。後端會透過 SQLite snapshot API 產生一致快照，連同應用／介面 JSON 設定輸出；`.env` 只記錄遮罩後的設定狀態，**不含密碼、token、API key 或 webhook**。備份檔上限 64 MiB（SQLite snapshot 上限 43 MiB）。
+
+還原會先驗證格式、應用程式 major version、每個檔案的 SHA-256、SQLite `quick_check` 與必要資料表，再 staging 到資料 volume。它不會還原 `.env` 或通知管道機密；下一次 restart/recreate 取得 `DATA_DIR` 單一實例鎖後才套用，並在 `restore-backups/` 保留 pre-restore rollback copy。中斷的多檔交易會在下次啟動先回滾。
+
+完整離線 volume 備份（包含所有本機檔案與機密設定時，由操作者自行保護備份檔）：
 ```bash
 docker volume ls --filter label=com.docker.compose.volume=smarthub-data --format '{{.Name}}'
 # 從上一行確認正確 project 的 volume 後再替換 <volume-name>；自訂 -p 時名稱會不同。
@@ -163,7 +167,7 @@ docker run --rm -v <volume-name>:/d:ro -v "$PWD":/b alpine \
   tar czf /b/smarthub-backup.tar.gz -C /d .
 ```
 
-備份時需包含 `smarthub.db`、`smarthub.db-wal`、`smarthub.db-shm`（上述停止容器後備份的方式會完整包含）。若服務仍在執行，請先停止容器，或使用 SQLite 的 `VACUUM INTO` 產生一致性備份。
+離線備份時需包含 `smarthub.db`、`smarthub.db-wal`、`smarthub.db-shm`（上述停止容器後備份的方式會完整包含）。若服務仍在執行，請使用設定頁的線上安全備份，不要直接複製開啟中的 SQLite 檔。
 
 ---
 

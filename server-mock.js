@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { randomUUID } = require('node:crypto');
+const Database = require('better-sqlite3');
 const { version: APP_VERSION } = require('./package.json');
 const { ERROR_CODES } = require('./observability/error-codes');
 const { createPanelSecurity } = require('./server/middleware/panel-security');
@@ -10,6 +11,12 @@ const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-rout
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
+const {
+    BACKUP_MEDIA_TYPE,
+    MAX_BACKUP_BYTES,
+    BackupValidationError,
+    createConfigBackupService
+} = require('./server/services/config-backup');
 
 const app = express();
 app.use((_req, res, next) => {
@@ -32,6 +39,7 @@ const mockSecurity = createPanelSecurity({
 app.use(mockSecurity.authenticate);
 app.get('/api/security/csrf', mockSecurity.csrf);
 app.use(mockSecurity.protectWrites);
+app.use('/api/config/restore', express.raw({ type: BACKUP_MEDIA_TYPE, limit: MAX_BACKUP_BYTES }));
 app.use(express.json({ limit: '256kb', strict: true }));
 
 function mockApiError(res, error, {
@@ -70,6 +78,22 @@ let mockClients = [
 ];
 let mockClientAliases = {};
 let mockUiPreferences = {};
+
+const MOCK_BACKUP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-mock-backup-'));
+fs.writeFileSync(path.join(MOCK_BACKUP_DIR, 'app-settings.json'), JSON.stringify({ source: 'mock' }), { mode: 0o600 });
+const mockBackupDb = new Database(':memory:');
+mockBackupDb.exec(`
+    CREATE TABLE history (id INTEGER PRIMARY KEY, series TEXT NOT NULL, ts INTEGER NOT NULL, data TEXT NOT NULL);
+    CREATE TABLE ups_events (id INTEGER PRIMARY KEY, start_ts INTEGER NOT NULL);
+    CREATE TABLE block_history (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL);
+    CREATE TABLE report_runs (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL);
+`);
+const mockConfigBackupService = createConfigBackupService({
+    dataDir: MOCK_BACKUP_DIR,
+    envFile: path.join(MOCK_BACKUP_DIR, '.env'),
+    appVersion: APP_VERSION,
+    database: { backup: destination => mockBackupDb.backup(destination) }
+});
 
 let mockWiFi = [
     { _id: "wifi-1", name: "UniFi_Main_5G", enabled: true },
@@ -1130,6 +1154,43 @@ app.post('/api/connections', (req, res) => {
     res.json({ ok: true, changed, restartRequired: Object.keys(updates).filter(key => mockPendingRestartFields.has(key)) });
 });
 
+app.get('/api/config/backup/status', mockSecurity.requireAdmin, (_req, res) => {
+    res.json(mockConfigBackupService.status());
+});
+app.get('/api/config/backup', mockSecurity.requireAdmin, async (_req, res) => {
+    try {
+        const backup = await mockConfigBackupService.exportBackup();
+        res.set('Content-Type', BACKUP_MEDIA_TYPE);
+        res.set('Content-Disposition', 'attachment; filename="smarthub-mock-backup.json"');
+        res.set('Cache-Control', 'no-store');
+        res.send(JSON.stringify(backup));
+    } catch (error) {
+        const validation = error instanceof BackupValidationError;
+        mockApiError(res, error, {
+            status: validation ? error.httpStatus : 500,
+            code: validation ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+            publicMessage: validation ? error.message : 'Internal server error'
+        });
+    }
+});
+app.post('/api/config/restore', mockSecurity.requireAdmin, (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.is(BACKUP_MEDIA_TYPE)) {
+        return mockApiError(res, new Error(`Content-Type must be ${BACKUP_MEDIA_TYPE}`), {
+            status: 415, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'unsupported_backup_content_type'
+        });
+    }
+    try {
+        res.status(202).json(mockConfigBackupService.stageRestore(req.body, req.get('x-smarthub-restore-confirmation')));
+    } catch (error) {
+        const validation = error instanceof BackupValidationError;
+        mockApiError(res, error, {
+            status: validation ? error.httpStatus : 500,
+            code: validation ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+            publicMessage: validation ? error.message : 'Internal server error'
+        });
+    }
+});
+
 app.get('/api/alerts/critical', (_req, res) => res.json({ alerts: [], source: 'mock' }));
 
 const mockBuildIdentity = Object.freeze({
@@ -1196,4 +1257,13 @@ app.use((error, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3005;
-app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));
+const mockServer = app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));
+function stopMock() {
+    mockServer.close(() => {
+        try { mockBackupDb.close(); } catch { }
+        fs.rmSync(MOCK_BACKUP_DIR, { recursive: true, force: true });
+        process.exit(0);
+    });
+}
+process.once('SIGTERM', stopMock);
+process.once('SIGINT', stopMock);

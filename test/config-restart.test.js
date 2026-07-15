@@ -8,6 +8,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const dotenv = require('dotenv');
+const Database = require('better-sqlite3');
 
 const ROOT = path.resolve(__dirname, '..');
 const ADMIN_PASSWORD = 'config-restart-admin-secret';
@@ -102,6 +103,24 @@ async function adminWrite(runtime, route, body) {
     });
 }
 
+async function adminRestore(runtime, backupText) {
+    const csrfResponse = await adminRead(runtime, '/api/security/csrf');
+    assert.equal(csrfResponse.status, 200);
+    const { csrfToken } = await csrfResponse.json();
+    return fetch(`${runtime.baseUrl}/api/config/restore`, {
+        method: 'POST',
+        headers: {
+            Authorization: AUTHORIZATION,
+            Origin: runtime.baseUrl,
+            'X-SmartHub-CSRF': csrfToken,
+            'X-SmartHub-Restore-Confirmation': 'RESTORE',
+            'Content-Type': 'application/vnd.unifi-smarthub.backup+json'
+        },
+        body: backupText,
+        signal: AbortSignal.timeout(8_000)
+    });
+}
+
 test('a UI-persisted connection setting survives a real production process restart', { timeout: 30_000 }, async t => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-config-restart-'));
     const envFile = path.join(dataDir, '.env');
@@ -188,4 +207,58 @@ test('a UI-persisted connection setting survives a real production process resta
     assert.equal(response.status, 200);
     assert.deepEqual((await response.json()).pendingRestartFields, []);
     await stopServer(third);
+});
+
+test('a validated backup applies on real production restart with rollback and secret retention', { timeout: 30_000 }, async t => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-restore-restart-'));
+    const envFile = path.join(dataDir, '.env');
+    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    fs.writeFileSync(envFile, [
+        `PANEL_PASSWORD=${ADMIN_PASSWORD}`,
+        'PANEL_READONLY_PASSWORD=config-restart-readonly-secret',
+        'MONITOR_ENABLED=false',
+        'UCG_IP=127.0.0.1',
+        'SSH_PORT=1',
+        'UNIFI_CONTROLLER_URL=http://127.0.0.1:1',
+        'WIIM_IP=127.0.0.1',
+        'UPS_SOURCE=pwrstat',
+        'PWRSTAT_PATH=/definitely/missing/pwrstat',
+        'NAS_MONITOR_MODE=docker_only'
+    ].join('\n') + '\n', { mode: 0o600 });
+
+    const first = await startServer(dataDir, envFile);
+    t.after(() => {
+        if (first.child.exitCode === null && first.child.signalCode === null) first.child.kill('SIGKILL');
+    });
+    let response = await adminWrite(first, '/api/settings', { watcherSec: 41 });
+    assert.equal(response.status, 200, await response.text());
+    response = await adminRead(first, '/api/config/backup');
+    const backupText = await response.text();
+    assert.equal(response.status, 200, backupText.slice(0, 500));
+    assert.doesNotMatch(backupText, /config-restart-admin-secret|config-restart-readonly-secret/);
+    response = await adminWrite(first, '/api/settings', { watcherSec: 77 });
+    assert.equal(response.status, 200, await response.text());
+    response = await adminRestore(first, backupText);
+    assert.equal(response.status, 202, await response.text());
+    assert.equal((await adminRead(first, '/api/config/backup/status').then(r => r.json())).pending, true);
+    assert.equal((await adminRead(first, '/api/settings').then(r => r.json())).watcherSec, 77);
+    await stopServer(first);
+
+    const second = await startServer(dataDir, envFile);
+    t.after(() => {
+        if (second.child.exitCode === null && second.child.signalCode === null) second.child.kill('SIGKILL');
+    });
+    assert.equal((await adminRead(second, '/api/settings').then(r => r.json())).watcherSec, 41);
+    assert.equal((await adminRead(second, '/api/config/backup/status').then(r => r.json())).pending, false);
+    const rollbackRoot = path.join(dataDir, 'restore-backups');
+    const rollbackDirectories = fs.readdirSync(rollbackRoot).map(name => path.join(rollbackRoot, name));
+    assert.equal(rollbackDirectories.length, 1);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(rollbackDirectories[0], 'app-settings.json'))).watcherSec, 77);
+    const rollbackDb = new Database(path.join(rollbackDirectories[0], 'smarthub.db'), { readonly: true });
+    assert.equal(rollbackDb.pragma('quick_check')[0].quick_check, 'ok');
+    rollbackDb.close();
+    const retainedEnv = fs.readFileSync(envFile, 'utf8');
+    assert.match(retainedEnv, /config-restart-admin-secret/);
+    assert.match(retainedEnv, /config-restart-readonly-secret/);
+    await stopServer(second);
 });

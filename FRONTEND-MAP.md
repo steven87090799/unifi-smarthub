@@ -1,6 +1,6 @@
 # SmartHub Frontend Map
 
-`public/index.html` 是巨型單檔 SPA，約 8290 行。前端任務先用這份索引定位，再讀小區段。
+`public/index.html` 仍是大型單檔 SPA。前端任務先用這份 symbol/section 索引定位，再讀小區段；歷史行號只作搜尋提示，不是契約。
 
 ## Page Sections
 
@@ -60,6 +60,7 @@
 | 6990 | `renderPollConfig()` | 設定頁輪詢表 |
 | 7010 | `fetchAppSettings()` | 後端設定 |
 | 7080 | `fetchConnections()` | 連線設定 |
+| settings | `fetchConfigBackupStatus()` / `downloadConfigBackup()` / `stageConfigRestore()` | admin-only 安全備份、明確確認、staged restore 狀態 |
 | 7228 | `initWiimPage()` | WiiM 頁初始化 |
 | 7287 | `fetchWiimPlayback()` | WiiM 播放狀態 |
 | 7376 | `fetchWiimSystem()` | WiiM 系統資訊 |

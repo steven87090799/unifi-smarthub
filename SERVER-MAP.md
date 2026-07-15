@@ -1,6 +1,6 @@
 # SmartHub Backend Map
 
-`server.js` 是正式後端，約 3150 行；可觀測性拆在 `observability/*.js`，SQLite wrapper 在 `db.js`。後端任務先用這份索引定位，再讀小區段。
+`server.js` 是正式後端組裝入口；可觀測性拆在 `observability/*.js`，SQLite wrapper 在 `db.js`，可測試的整合／middleware／policy／job／service 邊界在 `server/`。後端任務先用這份索引定位 symbol，再讀小區段；行號只作搜尋提示，不是契約。
 
 ## 主要區段
 
@@ -10,7 +10,7 @@
 | 100-175 | UniFi client | 本地控制器 login/cookie、Cloud client |
 | 180-345 | UCG hardware | SSH 取 CPU/記憶體/磁碟/網路，`/api/hardware` |
 | 350-497 | UniFi Network | clients、switches、WiFi、threats |
-| 498-625 | Data / DB / settings | `DATA_DIR`、SQLite、SystemMonitor、app settings |
+| `DATA_DIR`, `historyDb` | Data / DB / settings | SQLite、SystemMonitor、app settings、啟動時 staged restore |
 | 625-730 | Client controls | alias、block/unblock、PoE、speedtest |
 | 740-790 | Site Manager | cloud sites/devices/isp/hosts/sdwan |
 | 790-888 | Security | security settings、auto defense |
@@ -19,7 +19,7 @@
 | 1302-1685 | UGOS NAS | NAS auth/token、overview、disks、logs、UPS |
 | 1687-1752 | UCG/NAS history | hardware and NAS historical samples |
 | 1753-1974 | NAS Monitor | docker、traffic、alerts、SSE stream |
-| 1975-2050 | Settings/connections | `/api/settings`, `.env` persistence, rebuild clients |
+| `CONN_FIELDS`, `configBackupService` | Settings/connections/recovery | `/api/settings`、`.env` persistence、backup/restore、client rebuild |
 | 2075-2316 | Reports/PWA | report builder/scheduler、manifest、service worker |
 | 2317-2497 | WiiM | LinkPlay proxy、status、history、art、CSV |
 | 2498-2778 | UPS | PPB/NUT/pwrstat/pmset、status/history/events/CSV |
@@ -74,6 +74,7 @@
 - `GET /api/notifications/log` around 1043
 - `GET/POST /api/settings` around 1976/1977
 - `GET/POST /api/connections` around 2036/2047
+- `GET /api/config/backup`, `GET /api/config/backup/status`, `POST /api/config/restore`（admin only；restore 使用專用 media type 並於 restart 套用）
 - `POST /api/reports/run` around 2640
 - `GET /api/reports/log` around 2644 (SQLite-persisted report generation and delivery log)
 
@@ -94,6 +95,11 @@
 - `GET /health` / `/healthz` / `/health/ready` registered around 2976
 - `GET /api/system/status` registered around 2976
 - modules: `observability/logger.js`, `system-monitor.js`, `issue-tracker.js`, `task-tracker.js`, `health-routes.js`
+
+### Recovery service
+
+- `server/services/config-backup.js`: secret-safe export、artifact/hash/schema validation、staged restore、startup rollback transaction
+- `db.js#createHistoryDb().backup()`: flush pending telemetry then create a consistent SQLite backup snapshot
 
 ## 搜尋範例
 
