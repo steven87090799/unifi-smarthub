@@ -79,6 +79,7 @@ const {
     WebPushServiceError,
     createWebPushService
 } = require('./server/services/web-push');
+const { createDockerMetricAlertState } = require('./server/services/docker-notification-state');
 const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
 const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
@@ -1597,11 +1598,10 @@ async function scanDockerNotifications(s) {
             { enabled: s.triggerDockerHighMemory, value: memPercent, threshold: s.dockerMemoryAlert ?? 90, key: 'memory', label: '記憶體', unit: '%' }
         ];
         for (const metric of metricChecks) {
-            const metricKey = `${metric.key}:${id}`;
             if (!metric.enabled || !Number.isFinite(metric.value) || metric.value < metric.threshold) continue;
-            const last = lastDockerMetricAlertTs.get(metricKey) || 0;
+            const last = dockerMetricAlertState.get(metric.key, id) || 0;
             if (firstBaseline || !notifBootstrapped || Date.now() - last <= 30 * 60 * 1000) continue;
-            lastDockerMetricAlertTs.set(metricKey, Date.now());
+            dockerMetricAlertState.record(metric.key, id, Date.now());
             await notify('🐳 Docker 容器資源過高', `${container.name || id}\n${metric.label} ${metric.value.toFixed(1)}${metric.unit} (門檻 ${metric.threshold}${metric.unit})`);
         }
     }
@@ -1610,6 +1610,7 @@ async function scanDockerNotifications(s) {
             if (currentIds.has(id)) continue;
             if (s.triggerDockerInventory) await notify('➖ Docker 容器已移除', `${previous.name || id}\n先前狀態 ${previous.state || 'unknown'}`);
             dockerContainerStates.delete(id);
+            dockerMetricAlertState.removeContainer(id);
         }
     }
 
@@ -2076,7 +2077,7 @@ let nasWasOnline = null, unifiWasOnline = null;
 let cloudLastOnline = null;
 let dockerWatcherBootstrapped = false, systemIssueWatcherBootstrapped = false;
 const dockerContainerStates = new Map();
-const lastDockerMetricAlertTs = new Map();
+const dockerMetricAlertState = createDockerMetricAlertState({ maxEntries: 2000 });
 const notifiedDockerLogFingerprints = new Set();
 const knownSystemIssues = new Map();
 let lastDockerLogScanTs = 0;
