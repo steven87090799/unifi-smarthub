@@ -3,6 +3,7 @@
 const PWA_SHELL = Object.freeze([
     '/',
     '/assets/tailwind.css',
+    '/js/web-push.js',
     '/vendor/chart.js/4.5.1/chart.umd.js',
     '/vendor/d3/7.9.0/d3.min.js',
     '/vendor/topojson-client/3.1.0/topojson-client.min.js',

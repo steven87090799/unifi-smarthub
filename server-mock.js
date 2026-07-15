@@ -15,7 +15,6 @@ const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const adguardServicePolicy = require('./server/policies/adguard-service-policy');
-const webPushPolicy = require('./server/policies/web-push-policy');
 const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
 const {
     BACKUP_MEDIA_TYPE,
@@ -25,6 +24,8 @@ const {
 } = require('./server/services/config-backup');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
+const { WebPushServiceError } = require('./server/services/web-push');
+const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 
 const app = express();
 app.use((_req, res, next) => {
@@ -865,6 +866,35 @@ let mockNotif = {
 let mockNotifLog = [];
 const mockVapid = webPushLibrary.generateVAPIDKeys();
 const mockWebPushSubscriptions = new Map();
+const mockWebPushService = {
+    snapshot() {
+        return {
+            configured: true,
+            publicKey: mockVapid.publicKey,
+            subject: 'mailto:mock@smarthub.invalid',
+            error: null,
+            subscriptionCount: mockWebPushSubscriptions.size,
+            maxSubscriptions: 20
+        };
+    },
+    subscribe(input) {
+        const created = !mockWebPushSubscriptions.has(input.endpoint);
+        if (created && mockWebPushSubscriptions.size >= 20) {
+            throw new WebPushServiceError('Web Push subscription capacity reached', {
+                code: 'subscription_capacity', httpStatus: 409
+            });
+        }
+        mockWebPushSubscriptions.set(input.endpoint, input);
+        return { ok: true, created, subscriptionCount: mockWebPushSubscriptions.size };
+    },
+    unsubscribe(endpoint) {
+        return {
+            ok: true,
+            removed: mockWebPushSubscriptions.delete(endpoint),
+            subscriptionCount: mockWebPushSubscriptions.size
+        };
+    }
+};
 function pushMockNotif(e) { mockNotifLog.unshift(e); mockNotifLog = mockNotifLog.slice(0, 50); }
 app.get('/api/notifications/settings', (req, res) => {
     const { webhookUrl, botToken, ...safe } = mockNotif;
@@ -890,31 +920,19 @@ app.post('/api/notifications/test', (req, res) => {
     res.json(entry.ok ? { ok: true } : { ok: false, error: entry.error });
 });
 app.get('/api/notifications/log', (req, res) => res.json({ log: mockNotifLog }));
-app.get('/api/web-push/config', (_req, res) => res.json({
-    configured: true,
-    publicKey: mockVapid.publicKey,
-    subject: 'mailto:mock@smarthub.invalid',
-    error: null,
-    enabled: !!mockNotif.webPushEnabled,
-    subscriptionCount: mockWebPushSubscriptions.size,
-    maxSubscriptions: 20
-}));
-app.post('/api/web-push/subscriptions', mockSecurity.requireAdmin, (req, res) => {
-    const input = validatedInput(res, () => webPushPolicy.parseSubscriptionRequest(req.body));
-    if (!input) return;
-    const created = !mockWebPushSubscriptions.has(input.endpoint);
-    if (created && mockWebPushSubscriptions.size >= 20) {
-        return mockApiError(res, new Error('Web Push subscription capacity reached'), {
-            status: 409, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'Web Push subscription capacity reached'
-        });
-    }
-    mockWebPushSubscriptions.set(input.endpoint, input);
-    res.status(created ? 201 : 200).json({ ok: true, created, subscriptionCount: mockWebPushSubscriptions.size });
-});
-app.delete('/api/web-push/subscriptions', mockSecurity.requireAdmin, (req, res) => {
-    const input = validatedInput(res, () => webPushPolicy.parseUnsubscribeRequest(req.body));
-    if (!input) return;
-    res.json({ ok: true, removed: mockWebPushSubscriptions.delete(input.endpoint), subscriptionCount: mockWebPushSubscriptions.size });
+registerWebPushRoutes(app, {
+    requireAdmin: mockSecurity.requireAdmin,
+    getState: () => ({ ...mockWebPushService.snapshot(), enabled: !!mockNotif.webPushEnabled }),
+    subscribe: input => mockWebPushService.subscribe(input),
+    unsubscribe: endpoint => mockWebPushService.unsubscribe(endpoint),
+    onValidationError: (error, { res }) => mockApiError(res, error, {
+        status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: error.message
+    }),
+    onOperationError: (error, { operation, res }) => mockApiError(res, error, {
+        status: error instanceof WebPushServiceError ? error.httpStatus : operation === 'unsubscribe' ? 400 : 500,
+        code: error instanceof WebPushServiceError ? ERROR_CODES.SYS_CONFIG_INVALID : ERROR_CODES.API_INTERNAL_ERROR,
+        publicMessage: error instanceof WebPushServiceError ? error.message : `Web Push ${operation} failed`
+    })
 });
 // 模擬：啟用後每 25 秒模擬推播一則新威脅通知，讓預覽的紀錄會累積
 setInterval(() => {

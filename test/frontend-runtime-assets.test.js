@@ -32,6 +32,8 @@ test('production frontend has no third-party executable/data dependency or QR cr
     assert.match(serverSource, /PWA_CACHE_NAME[\s\S]+buildIdentity\.public\.revision/u);
     assert.match(serverSource, /renderPwaServiceWorker\(PWA_CACHE_NAME\)/u);
     assert.match(mockServerSource, /renderPwaServiceWorker/u);
+    assert.match(html, /<script src="\/js\/web-push\.js"><\/script>/u);
+    assert.match(serviceWorkerSource, /'\/js\/web-push\.js'/u);
 });
 
 test('locked vendor routes serve only the exact bounded same-origin assets', async t => {

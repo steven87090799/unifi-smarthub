@@ -51,7 +51,6 @@ const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const adguardServicePolicy = require('./server/policies/adguard-service-policy');
-const webPushPolicy = require('./server/policies/web-push-policy');
 const {
     DockerActionPolicyError,
     ambiguousDockerActionResult,
@@ -81,6 +80,7 @@ const {
     createWebPushService
 } = require('./server/services/web-push');
 const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
+const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
@@ -1485,41 +1485,25 @@ app.post('/api/notifications/test', async (req, res) => {
 // 近期推播紀錄
 app.get('/api/notifications/log', (req, res) => res.json({ log: notifLog }));
 
-app.get('/api/web-push/config', (_req, res) => {
-    res.json({ ...webPushService.snapshot(), enabled: !!loadNotifSettings().webPushEnabled });
-});
-
-app.post('/api/web-push/subscriptions', panelSecurity.requireAdmin, (req, res) => {
-    const input = validatedInput(res, () => webPushPolicy.parseSubscriptionRequest(req.body), {
-        module: 'api.webPush', function: 'subscribe'
-    });
-    if (!input) return;
-    try {
-        const result = webPushService.subscribe(input);
-        res.status(result.created ? 201 : 200).json(result);
-    } catch (error) {
+registerWebPushRoutes(app, {
+    requireAdmin: panelSecurity.requireAdmin,
+    getState: () => ({ ...webPushService.snapshot(), enabled: !!loadNotifSettings().webPushEnabled }),
+    subscribe: input => webPushService.subscribe(input),
+    unsubscribe: endpoint => webPushService.unsubscribe(endpoint),
+    onValidationError: (error, { operation, res }) => apiError(res, error, {
+        status: error.httpStatus || 400,
+        code: ERROR_CODES.API_VALIDATION_FAILED,
+        publicMessage: error.message,
+        module: 'api.webPush', function: operation, logMessage: `Web Push ${operation} validation failed`,
+        fields: error.field ? { field: error.field } : undefined
+    }),
+    onOperationError: (error, { operation, res }) => {
         const expected = error instanceof WebPushServiceError;
-        apiError(res, error, {
-            status: expected ? error.httpStatus : 500,
+        return apiError(res, error, {
+            status: expected ? error.httpStatus : operation === 'unsubscribe' ? 400 : 500,
             code: expected ? ERROR_CODES.SYS_CONFIG_INVALID : ERROR_CODES.API_INTERNAL_ERROR,
-            publicMessage: expected ? error.message : 'Web Push subscription failed',
-            module: 'api.webPush', function: 'subscribe', logMessage: 'Web Push subscription failed'
-        });
-    }
-});
-
-app.delete('/api/web-push/subscriptions', panelSecurity.requireAdmin, (req, res) => {
-    const input = validatedInput(res, () => webPushPolicy.parseUnsubscribeRequest(req.body), {
-        module: 'api.webPush', function: 'unsubscribe'
-    });
-    if (!input) return;
-    try { res.json(webPushService.unsubscribe(input.endpoint)); }
-    catch (error) {
-        apiError(res, error, {
-            status: 400,
-            code: ERROR_CODES.API_VALIDATION_FAILED,
-            publicMessage: 'Web Push unsubscribe request is invalid',
-            module: 'api.webPush', function: 'unsubscribe', logMessage: 'Web Push unsubscribe failed'
+            publicMessage: expected ? error.message : `Web Push ${operation} failed`,
+            module: 'api.webPush', function: operation, logMessage: `Web Push ${operation} failed`
         });
     }
 });

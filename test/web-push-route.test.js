@@ -149,6 +149,13 @@ test('production and mock Web Push routes preserve config secrecy, admin lifecyc
         assert.match(worker, /addEventListener\('notificationclick'/u);
         assert.match(worker, /pathname\.startsWith\('\/api\/'\)/u);
 
+        response = await fetch(`${runtime.baseUrl}/js/web-push.js`, { headers: { authorization: readonly } });
+        assert.equal(response.status, 200, script);
+        const frontendModule = await response.text();
+        assert.match(frontendModule, /window\.fetchWebPushState = fetchWebPushState/u);
+        assert.match(frontendModule, /window\.subscribeWebPush = subscribeWebPush/u);
+        assert.doesNotMatch(frontendModule, /WEB_PUSH_PRIVATE_KEY|privateKey/u);
+
         response = await write(runtime, admin, adminCsrf, 'DELETE', '/api/web-push/subscriptions', { endpoint: subscription.endpoint });
         assert.equal(response.status, 200, script);
         assert.equal((await response.json()).removed, true);

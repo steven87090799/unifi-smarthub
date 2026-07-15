@@ -8,6 +8,7 @@ const vm = require('node:vm');
 const { renderPwaServiceWorker } = require('../server/services/pwa-service-worker');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'web-push.js'), 'utf8');
 
 test('Web Push UI requires an explicit admin user gesture and never receives private VAPID material', () => {
     for (const token of [
@@ -15,19 +16,32 @@ test('Web Push UI requires an explicit admin user gesture and never receives pri
         'id="notif-webpush-enabled"',
         'onclick="subscribeWebPush()"',
         'onclick="unsubscribeWebPush()"',
+        '<script src="/js/web-push.js"></script>'
+    ]) assert.ok(html.includes(token), `missing ${token}`);
+    for (const token of [
         "Notification.requestPermission()",
         'userVisibleOnly: true',
         "fetch('/api/web-push/subscriptions'",
         'applicationServerKey: base64UrlToUint8Array(webPushConfig.publicKey)',
-        "dataset.panelRole !== 'admin'"
-    ]) assert.ok(html.includes(token), `missing ${token}`);
-    assert.doesNotMatch(html, /WEB_PUSH_PRIVATE_KEY|privateKey/u);
+        "dataset.panelRole !== 'admin'",
+        'window.fetchWebPushState = fetchWebPushState'
+    ]) assert.ok(source.includes(token), `missing ${token}`);
+    assert.doesNotMatch(`${html}\n${source}`, /WEB_PUSH_PRIVATE_KEY|privateKey/u);
 });
 
 test('an existing browser subscription remains re-registerable after server persistence loss', () => {
-    assert.match(html, /subscribeButton\.disabled = !isAdmin \|\| !!capabilityError \|\| !!configuration;/u);
-    assert.match(html, /subscribeButton\.textContent = localSubscription \? '同步\/更新此瀏覽器訂閱'/u);
-    assert.doesNotMatch(html, /subscribeButton\.disabled[^;]+\|\| !!localSubscription/u);
+    assert.match(source, /subscribeButton\.disabled = !isAdmin \|\| !!browserError \|\| !!configuration;/u);
+    assert.match(source, /subscribeButton\.textContent = localSubscription \? '同步\/更新此瀏覽器訂閱'/u);
+    assert.doesNotMatch(source, /subscribeButton\.disabled[^;]+\|\| !!localSubscription/u);
+});
+
+test('classic frontend module exposes only the three explicit Web Push UI entry points', () => {
+    const window = {};
+    new vm.Script(source).runInContext(vm.createContext({ window }));
+    assert.deepEqual(Object.keys(window).sort(), [
+        'fetchWebPushState', 'subscribeWebPush', 'unsubscribeWebPush'
+    ]);
+    for (const value of Object.values(window)) assert.equal(typeof value, 'function');
 });
 
 test('rendered service worker shows visible notifications and confines click navigation to same-origin paths', async () => {

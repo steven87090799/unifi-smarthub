@@ -131,6 +131,7 @@
 
 ### Web Push
 
+- `server/routes/web-push-routes.js`: production/mock 共用 exact GET/POST/DELETE contract、輸入 policy 與 admin middleware slot；runtime-specific service/error adapter 由組裝入口注入
 - `server/policies/web-push-policy.js`: exact HTTPS subscription、P-256/auth key、matched VAPID tuple 與 same-origin visible payload contract
 - `server/services/web-push.js`: SQLite subscriptions、24-hour delivery claims、bounded concurrency/retry/backoff、404/410 cleanup；endpoint 只以 hash 寫入 log
 - `server/services/pwa-service-worker.js`: production/mock 共用 shell cache、visible push 與 same-origin notification-click renderer
