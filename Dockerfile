@@ -1,11 +1,5 @@
 FROM node:20-alpine
 
-ARG BUILD_VERSION=""
-ARG BUILD_REVISION=""
-ARG BUILD_CREATED=""
-ARG BUILD_DIRTY=""
-ARG BUILD_IDENTITY_REQUIRED="false"
-
 # tini 作為 PID 1，正確處理訊號與殭屍程序 (SSH 子連線清理)
 # nut：提供 upsc 客戶端，容器內才能讀取 NAS/主機上 NUT server 的 UPS 數據 (UPS_SOURCE=nut)
 # tzdata：時區資料，配合 TZ 環境變數讓報表排程/日誌時間正確 (預設 UTC 會差 8 小時)
@@ -25,6 +19,15 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ \
 
 # 複製應用程式原始碼 (.dockerignore 已排除 node_modules/.env/data 等)
 COPY . .
+
+# Release identity changes for every build. Declare it only after the locked
+# dependencies and source payload so metadata changes invalidate identity
+# layers, not an otherwise identical runtime filesystem.
+ARG BUILD_VERSION=""
+ARG BUILD_REVISION=""
+ARG BUILD_CREATED=""
+ARG BUILD_DIRTY=""
+ARG BUILD_IDENTITY_REQUIRED="false"
 
 ENV BUILD_VERSION=${BUILD_VERSION} \
     BUILD_REVISION=${BUILD_REVISION} \

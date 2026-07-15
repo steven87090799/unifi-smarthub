@@ -1,16 +1,18 @@
 FROM node:20-alpine
 
-ARG BUILD_VERSION=""
-ARG BUILD_REVISION=""
-ARG BUILD_CREATED=""
-ARG BUILD_DIRTY=""
-ARG BUILD_IDENTITY_REQUIRED="false"
-
 RUN apk add --no-cache tini
 
 WORKDIR /app
 COPY --chown=node:node server.js ./server.js
 COPY --chown=node:node build-identity.js ./build-identity.js
+
+# Identity metadata is unique per release; keep it below the stable OS and
+# source payload layers so those layers remain reusable across release tags.
+ARG BUILD_VERSION=""
+ARG BUILD_REVISION=""
+ARG BUILD_CREATED=""
+ARG BUILD_DIRTY=""
+ARG BUILD_IDENTITY_REQUIRED="false"
 
 ENV BUILD_VERSION=${BUILD_VERSION} \
     BUILD_REVISION=${BUILD_REVISION} \

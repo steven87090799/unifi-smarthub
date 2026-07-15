@@ -70,3 +70,13 @@ test('release images carry OCI source identity and build context excludes non-ru
     assert.match(monitorServer, /build:\s*buildIdentity/);
     assert.match(monitorServer, /event:\s*'nas_monitor_started'/);
 });
+
+test('release identity metadata cannot invalidate stable dependency or payload layers', () => {
+    const mainIdentity = mainDockerfile.indexOf('ARG BUILD_VERSION');
+    assert.ok(mainIdentity > mainDockerfile.indexOf('npm ci --omit=dev'));
+    assert.ok(mainIdentity > mainDockerfile.indexOf('COPY . .'));
+
+    const monitorIdentity = monitorDockerfile.indexOf('ARG BUILD_VERSION');
+    assert.ok(monitorIdentity > monitorDockerfile.indexOf('apk add --no-cache tini'));
+    assert.ok(monitorIdentity > monitorDockerfile.indexOf('COPY --chown=node:node build-identity.js'));
+});
