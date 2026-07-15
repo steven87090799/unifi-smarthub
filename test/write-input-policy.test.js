@@ -189,6 +189,11 @@ test('connection updates reject .env injection, bad types, oversized values, and
     const fields = [
         { key: 'SSH_PORT' },
         { key: 'UNIFI_CONTROLLER_URL' },
+        { key: 'UNIFI_NETWORK_API_URL' },
+        { key: 'UNIFI_NETWORK_TLS_VERIFY' },
+        { key: 'UNIFI_NETWORK_SITE_ID' },
+        { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
+        { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
         { key: 'UPS_SOURCE' },
         { key: 'NUT_HOST' },
         { key: 'NUT_UPS_NAME' },
@@ -199,11 +204,21 @@ test('connection updates reject .env injection, bad types, oversized values, and
     assert.deepEqual(parseConnectionUpdates({
         SSH_PORT: '22',
         UNIFI_CONTROLLER_URL: 'https://192.168.1.1:443',
+        UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration',
+        UNIFI_NETWORK_TLS_VERIFY: 'true',
+        UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
+        UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
+        UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
         UPS_SOURCE: 'ppb',
         PASSWORD: ' spaces and # are data '
     }, fields), {
         SSH_PORT: '22',
         UNIFI_CONTROLLER_URL: 'https://192.168.1.1:443',
+        UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration',
+        UNIFI_NETWORK_TLS_VERIFY: 'true',
+        UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
+        UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
+        UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
         UPS_SOURCE: 'ppb',
         PASSWORD: 'spaces and # are data'
     });
@@ -220,6 +235,14 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ PASSWORD: 'x'.repeat(4097) }, fields), 'PASSWORD');
     validationError(() => parseConnectionUpdates({ UNIFI_CONTROLLER_URL: 'ftp://host' }, fields), 'UNIFI_CONTROLLER_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_CONTROLLER_URL: 'https://user:pass@host' }, fields), 'UNIFI_CONTROLLER_URL');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'file:///tmp/api' }, fields), 'UNIFI_NETWORK_API_URL');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }, fields), 'UNIFI_NETWORK_API_URL');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration?key=leak' }, fields), 'UNIFI_NETWORK_API_URL');
+    assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080' }, fields).UNIFI_NETWORK_API_URL, 'http://127.0.0.1:8080');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_VERIFY: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_VERIFY');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_SITE_ID: '../site' }, fields), 'UNIFI_NETWORK_SITE_ID');
+    validationError(() => parseConnectionUpdates({ UNIFI_THREAT_BLOCK_LIST_ID: '0'.repeat(36) }, fields), 'UNIFI_THREAT_BLOCK_LIST_ID');
+    validationError(() => parseConnectionUpdates({ UNIFI_THREAT_BLOCK_LIST_NAME: 'x'.repeat(129) }, fields), 'UNIFI_THREAT_BLOCK_LIST_NAME');
     for (const attack of ['host;touch', 'host$(id)', 'host`id`', 'host name', 'host/part']) {
         validationError(() => parseConnectionUpdates({ NUT_HOST: attack }, fields), 'NUT_HOST');
     }

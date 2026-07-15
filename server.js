@@ -37,6 +37,7 @@ const { TelegramCommandBot } = require('./telegram-command-bot');
 const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const { createSiteManagerClient } = require('./server/integrations/site-manager-client');
+const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
 const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
 const {
     PartialNotificationDeliveryError,
@@ -44,6 +45,7 @@ const {
 } = require('./server/integrations/notification-delivery');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
+const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const {
     DockerActionPolicyError,
     ambiguousDockerActionResult,
@@ -60,6 +62,10 @@ const {
     applyPendingRestore,
     createConfigBackupService
 } = require('./server/services/config-backup');
+const {
+    ThreatIpBlockingError,
+    createThreatIpBlockingService
+} = require('./server/services/threat-ip-blocking');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
@@ -725,6 +731,71 @@ const configBackupService = createConfigBackupService({
     envFile: ENV_FILE,
     appVersion: APP_VERSION,
     database: historyDb
+});
+const threatTrafficListClient = createUniFiTrafficListClient({
+    transport: ({ tlsVerify, ...request }) => axios({
+        ...request,
+        httpsAgent: new https.Agent({ rejectUnauthorized: tlsVerify !== false })
+    }),
+    getEnvironment: () => process.env
+});
+const threatIpBlockingService = createThreatIpBlockingService({
+    repository: historyDb,
+    client: threatTrafficListClient,
+    logger
+});
+
+function protectedManagementAddresses() {
+    const addresses = new Set();
+    for (const key of ['UCG_IP', 'NAS_HOST', 'WIIM_IP', 'NUT_HOST', 'PPB_HOST', 'ADGUARD_HOST', 'LINUX_HOST']) {
+        if (process.env[key]) addresses.add(process.env[key]);
+    }
+    for (const key of ['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL']) {
+        try { addresses.add(new URL(process.env[key]).hostname); } catch { }
+    }
+    return [...addresses];
+}
+
+app.get('/api/security/threat-blocks', panelSecurity.requireAdmin, (_req, res) => {
+    res.json(threatIpBlockingService.snapshot());
+});
+
+app.post('/api/security/threat-blocks', panelSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => threatIpPolicy.parseCreateThreatIpBlock(req.body, {
+        protectedAddresses: protectedManagementAddresses()
+    }), { module: 'api.threatBlock', function: 'add' });
+    if (!input) return;
+    try {
+        const result = await threatIpBlockingService.add(input);
+        res.status(result.applied ? (result.duplicate ? 200 : 201) : 202).json(result);
+    } catch (error) {
+        const expected = error instanceof ThreatIpBlockingError;
+        apiError(res, error, {
+            status: expected ? error.httpStatus : 500,
+            code: expected ? ERROR_CODES.SYS_CONFIG_INVALID : ERROR_CODES.EXT_UNIFI_FAILED,
+            publicMessage: expected ? error.message : 'Threat block request failed',
+            module: 'api.threatBlock', function: 'add', logMessage: 'Threat block request failed'
+        });
+    }
+});
+
+app.delete('/api/security/threat-blocks/:id', panelSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => threatIpPolicy.parseRemoveThreatIpBlock(req.params.id, req.body), {
+        module: 'api.threatBlock', function: 'remove'
+    });
+    if (!input) return;
+    try {
+        const result = await threatIpBlockingService.remove(input.id);
+        res.status(result.applied ? 200 : 202).json(result);
+    } catch (error) {
+        const expected = error instanceof ThreatIpBlockingError;
+        apiError(res, error, {
+            status: expected ? error.httpStatus : 500,
+            code: expected && error.httpStatus === 404 ? ERROR_CODES.API_NOT_FOUND : ERROR_CODES.EXT_UNIFI_FAILED,
+            publicMessage: expected ? error.message : 'Threat block removal failed',
+            module: 'api.threatBlock', function: 'remove', logMessage: 'Threat block removal failed'
+        });
+    }
 });
 const HISTORY_HARD_CAP = 100000;
 const systemMonitor = new SystemMonitor({
@@ -1918,6 +1989,8 @@ async function runSerialJob(name, fn) {
         runningJobPromises.delete(jobPromise);
     }
 }
+lifecycleInterval(() => runSerialJob('threatBlockReconcile', () => threatIpBlockingService.reconcile()), 15000);
+runSerialJob('threatBlockReconcile', () => threatIpBlockingService.reconcile());
 function scheduleServerJobs() {
     clearInterval(jobTimers.watcher);
     clearInterval(jobTimers.autodef);
@@ -2908,6 +2981,10 @@ const CONN_FIELDS = [
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
     { key: 'UNIFI_API_KEY', secret: true },
+    { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
+    { key: 'UNIFI_NETWORK_TLS_VERIFY' },
+    { key: 'UNIFI_NETWORK_SITE_ID' }, { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
+    { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
     { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
     { key: 'NAS_MONITOR_URL', restartRequired: true },
     { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
@@ -4380,6 +4457,7 @@ app.get('/api/connections/status', async (req, res) => {
     const fresh = (ts, sec) => ts && (Date.now() - ts) < sec * 1000;
     const wiimHit = wiimCache['getStatusEx'];
     const cloud = await checkCloudStatus();
+    const threatBlocks = threatIpBlockingService.snapshot();
     const upsSnapshot = upsFetchState.snapshot();
     const upsDetail = upsSnapshot.lastGood
         ? `${(upsSnapshot.lastGood.actualSource || '').toUpperCase()} · 電池 ${upsSnapshot.lastGood.battery ?? '--'}%${upsSnapshot.dataIsStale ? ` · 資料已過 ${Math.round((upsSnapshot.staleAgeMs || 0) / 1000)} 秒` : ''}`
@@ -4389,6 +4467,7 @@ app.get('/api/connections/status', async (req, res) => {
             { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: fresh(hwCache && hwCache.ts, 120), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
+            { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
             { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
             { name: 'WiiM Amp', configured: true, ok: fresh(wiimHit && wiimHit.timestamp, 120), detail: wiimHit ? '有回應' : '無快取' },

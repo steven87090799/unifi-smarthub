@@ -118,6 +118,16 @@ function httpUrlValue(value, { field = 'url', max = 2048 } = {}) {
     return normalized;
 }
 
+function unifiNetworkApiUrlValue(value, field) {
+    const normalized = httpUrlValue(value, { field });
+    const parsed = new URL(normalized);
+    const hostname = parsed.hostname.replace(/^\[|\]$/gu, '').toLowerCase();
+    const loopback = hostname === 'localhost' || hostname === '::1' || /^127(?:\.\d{1,3}){3}$/u.test(hostname);
+    if (parsed.search || parsed.hash) reject(`${field} must not contain query or fragment data`, field);
+    if (parsed.protocol === 'http:' && !loopback) reject(`${field} must use HTTPS outside loopback`, field);
+    return normalized;
+}
+
 function hostValue(value, field) {
     const normalized = stringValue(value, { field, min: 1, max: 253 });
     if (net.isIP(normalized)) return normalized;
@@ -358,7 +368,8 @@ function parseAppSettings(body, ranges) {
 }
 
 const PORT_FIELDS = new Set(['SSH_PORT', 'NAS_PORT', 'PPB_PORT', 'ADGUARD_PORT', 'LINUX_SSH_PORT']);
-const URL_FIELDS = new Set(['UNIFI_CONTROLLER_URL', 'NAS_MONITOR_URL']);
+const URL_FIELDS = new Set(['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'NAS_MONITOR_URL']);
+const UUID_FIELDS = new Set(['UNIFI_NETWORK_SITE_ID', 'UNIFI_THREAT_BLOCK_LIST_ID']);
 const HOST_FIELDS = new Set([
     'UCG_IP', 'NAS_HOST', 'WIIM_IP', 'NUT_HOST', 'PPB_HOST',
     'ADGUARD_HOST', 'LINUX_HOST'
@@ -366,6 +377,7 @@ const HOST_FIELDS = new Set([
 const ENUM_FIELDS = Object.freeze({
     NAS_SCHEME: ['http', 'https'],
     NAS_MONITOR_MODE: ['docker_only', 'full'],
+    UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
     UPS_SOURCE: ['auto', 'nut', 'pwrstat', 'pmset', 'ppb']
 });
 
@@ -388,7 +400,19 @@ function parseConnectionUpdates(body, fields) {
         const max = definition.secret ? 4096 : 2048;
         let value = stringValue(raw, { field: key, min: 1, max });
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
-        else if (URL_FIELDS.has(key)) value = httpUrlValue(value, { field: key });
+        else if (URL_FIELDS.has(key)) {
+            value = key === 'UNIFI_NETWORK_API_URL'
+                ? unifiNetworkApiUrlValue(value, key)
+                : httpUrlValue(value, { field: key });
+        }
+        else if (UUID_FIELDS.has(key)) {
+            value = stringValue(value, {
+                field: key,
+                min: 36,
+                max: 36,
+                pattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
+            }).toLowerCase();
+        }
         else if (HOST_FIELDS.has(key)) value = hostValue(value, key);
         else if (Object.hasOwn(ENUM_FIELDS, key)) value = enumValue(value, ENUM_FIELDS[key], key);
         else if (key === 'WAN_IFACE') {
@@ -402,6 +426,8 @@ function parseConnectionUpdates(body, fields) {
                 max: 1024,
                 pattern: /^(?:[A-Za-z0-9][A-Za-z0-9._+-]*|\/(?:[A-Za-z0-9._+-]+\/)*[A-Za-z0-9._+-]+)$/u
             });
+        } else if (key === 'UNIFI_THREAT_BLOCK_LIST_NAME') {
+            value = stringValue(value, { field: key, min: 1, max: 128 });
         }
         updates[key] = value;
     }

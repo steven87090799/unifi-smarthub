@@ -1921,6 +1921,18 @@
                             </div>
                         </div>
 
+                        <div id="threat-block-panel"
+                            class="hidden bg-slate-950/70 border border-slate-800/60 rounded-xl p-4 space-y-3">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <h4 class="text-xs font-bold text-slate-200">UniFi 臨時來源 IP 封鎖</h4>
+                                    <p class="text-[10px] text-slate-500 mt-0.5">僅管理員；只接受公網 IPv4，必須設定到期時間，系統會自動移除並重試同步。</p>
+                                </div>
+                                <span id="threat-block-status" class="text-[10px] text-slate-500 mono">讀取中…</span>
+                            </div>
+                            <div id="threat-block-list" class="space-y-1.5"></div>
+                        </div>
+
                         <!-- 安全評分計算方式說明 -->
                         <details class="bg-slate-950/70 border border-slate-800/60 rounded-xl overflow-hidden">
                             <summary class="px-5 py-3 cursor-pointer flex items-center justify-between">
@@ -3128,6 +3140,35 @@
                                         (選填) <span id="connset-UNIFI_API_KEY" class="normal-case"></span></label><input
                                         id="conn-UNIFI_API_KEY" type="password"
                                         class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <p class="text-[9px] text-amber-400 pt-2 leading-relaxed">臨時威脅封鎖使用獨立的 Network Integration API 金鑰與專用 IPV4_ADDRESSES 清單；該清單不可人工混用。</p>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">Integration API URL（可留空沿用控制器）</label><input
+                                        id="conn-UNIFI_NETWORK_API_URL" placeholder="https://192.168.0.1/proxy/network/integration"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">Integration API Key <span
+                                            id="connset-UNIFI_NETWORK_API_KEY" class="normal-case"></span></label><input
+                                        id="conn-UNIFI_NETWORK_API_KEY" type="password"
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">驗證 Integration API TLS 憑證</label><select
+                                        id="conn-UNIFI_NETWORK_TLS_VERIFY"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        <option value="true">true（預設；建議）</option>
+                                        <option value="false">false（僅限受信任內網自簽憑證）</option>
+                                    </select>
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">Network Site UUID</label><input
+                                        id="conn-UNIFI_NETWORK_SITE_ID" placeholder="00000000-0000-0000-0000-000000000000"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">專用 Traffic List UUID</label><input
+                                        id="conn-UNIFI_THREAT_BLOCK_LIST_ID" placeholder="00000000-0000-0000-0000-000000000000"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">專用清單名稱</label><input
+                                        id="conn-UNIFI_THREAT_BLOCK_LIST_NAME" placeholder="SmartHub Threat Blocks"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
                             <!-- WiiM + UPS -->
@@ -6265,6 +6306,8 @@
             });
         }
 
+        let threatBlockState = null;
+
         function renderThreatTable() {
             const tbody = document.getElementById('threat-table-body');
             if (!tbody) return;
@@ -6279,7 +6322,8 @@
                 const timeStr = new Date(t.datetime).toLocaleString('zh-TW', { hour12: false });
                 const sevColor = t.severity === 'HIGH' ? 'bg-red-950/80 text-red-400 border-red-900/40' : 'bg-amber-950/80 text-amber-400 border-amber-900/40';
                 const catColor = CAT_COLORS[t.category] || '#64748b';
-                const canBlock = t.src_ip && t.src_ip !== '-' && /^\d+\.\d+\.\d+\.\d+$/.test(t.src_ip);
+                const canBlock = document.documentElement.dataset.panelRole === 'admin'
+                    && t.src_ip && t.src_ip !== '-' && /^\d+\.\d+\.\d+\.\d+$/.test(t.src_ip);
                 return `
                 <tr class="hover:bg-slate-900/40 transition border-b border-slate-850/30">
                     <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(timeStr)}</td>
@@ -6291,7 +6335,7 @@
                     <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(t.port)}</td>
                     <td class="py-2.5 text-right whitespace-nowrap">
                         <span class="font-black text-red-500 text-[10px] uppercase tracking-wider">${escapeHtml(t.action_taken)}</span>
-                        ${canBlock ? `<button onclick="copySrcIp('${t.src_ip}')" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg></button>` : ''}
+                        ${canBlock ? `<button onclick="copySrcIp('${t.src_ip}')" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 002 2v8a2 2 0 002 2z"/></svg></button><button onclick="requestThreatBlock('${t.src_ip}')" title="加入有期限的 UniFi 封鎖清單" class="ml-1.5 px-1.5 py-0.5 rounded border border-red-900/60 text-[9px] font-bold text-red-400 hover:bg-red-950/60">臨時封鎖</button>` : ''}
                     </td>
                 </tr>`;
             }).join('');
@@ -6299,6 +6343,84 @@
 
         function copySrcIp(ip) {
             navigator.clipboard?.writeText(ip).then(() => showToast(`已複製來源 IP: ${ip}`)).catch(() => { });
+        }
+
+        function renderThreatBlocks() {
+            const panel = document.getElementById('threat-block-panel');
+            const status = document.getElementById('threat-block-status');
+            const list = document.getElementById('threat-block-list');
+            if (!panel || !status || !list) return;
+            const admin = document.documentElement.dataset.panelRole === 'admin';
+            panel.classList.toggle('hidden', !admin);
+            if (!admin) return;
+            const state = threatBlockState;
+            if (!state) {
+                status.textContent = '讀取中…';
+                list.innerHTML = '';
+                return;
+            }
+            const configured = state.configuration?.configured === true;
+            const health = state.reconcile?.status || 'pending';
+            status.textContent = configured ? `Integration API · ${health}` : 'Integration API 尚未設定';
+            status.className = `text-[10px] mono ${!configured || health === 'degraded' ? 'text-amber-400' : 'text-emerald-400'}`;
+            const blocks = (state.blocks || []).filter(block => block.desiredState === 'active');
+            list.innerHTML = blocks.length ? blocks.map(block => `
+                <div class="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900/60 px-3 py-2">
+                    <span class="mono text-xs text-slate-200">${escapeHtml(block.ip)}</span>
+                    <span class="text-[9px] ${block.syncState === 'applied' ? 'text-emerald-400' : 'text-amber-400'}">${escapeHtml(block.syncState)}</span>
+                    <span class="text-[9px] text-slate-500">到期 ${escapeHtml(new Date(block.expiresAt).toLocaleString('zh-TW', { hour12: false }))}</span>
+                    <button onclick="removeThreatBlock('${escapeHtml(block.id)}','${escapeHtml(block.ip)}')" class="ml-auto text-[9px] font-bold text-red-400 hover:text-red-300">提前移除</button>
+                </div>`).join('') : '<p class="text-[10px] text-slate-600">目前沒有有效的臨時來源 IP 封鎖。</p>';
+        }
+
+        async function fetchThreatBlocks() {
+            try {
+                const security = await loadPanelSecurityContext();
+                renderThreatTable();
+                if (security.role !== 'admin') return renderThreatBlocks();
+                const response = await fetch('/api/security/threat-blocks', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                threatBlockState = await response.json();
+                renderThreatBlocks();
+            } catch (error) {
+                dbg('ThreatBlock', '讀取失敗', error);
+            }
+        }
+
+        async function requestThreatBlock(ip) {
+            const raw = prompt(`封鎖 ${ip} 幾分鐘？（15 到 43200）`, '1440');
+            if (raw === null) return;
+            const expiresInMinutes = Number(raw);
+            if (!Number.isInteger(expiresInMinutes) || expiresInMinutes < 15 || expiresInMinutes > 43200) {
+                return showToast('到期時間必須是 15 到 43200 分鐘的整數', true);
+            }
+            if (!confirm(`確認將公網來源 ${ip} 加入 SmartHub 專用 UniFi 封鎖清單？\n\n到期：${new Date(Date.now() + expiresInMinutes * 60000).toLocaleString('zh-TW')}\n到期後系統會自動移除。`)) return;
+            try {
+                const response = await fetch('/api/security/threat-blocks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip, expiresInMinutes, confirmation: 'BLOCK_EXTERNAL_IP' })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                showToast(result.applied ? `已套用 ${ip} 的臨時封鎖` : `已保存 ${ip}；UniFi 暫時無法同步，將自動重試`, !result.applied);
+                await fetchThreatBlocks();
+            } catch (error) { showToast(`封鎖失敗：${error.message}`, true); }
+        }
+
+        async function removeThreatBlock(id, ip) {
+            if (!confirm(`確認提前移除 ${ip} 的 UniFi 臨時封鎖？`)) return;
+            try {
+                const response = await fetch(`/api/security/threat-blocks/${encodeURIComponent(id)}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirmation: 'REMOVE_EXTERNAL_IP_BLOCK' })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                showToast(result.applied ? `已移除 ${ip}` : `已保存移除要求；UniFi 恢復後會自動重試`, !result.applied);
+                await fetchThreatBlocks();
+            } catch (error) { showToast(`移除失敗：${error.message}`, true); }
         }
 
         function exportThreatsCSV() {
@@ -6520,6 +6642,7 @@
                         }
                     }
                 }
+                fetchThreatBlocks();
             } catch (e) { console.error('Threats fetch failed', e); }
         }
 

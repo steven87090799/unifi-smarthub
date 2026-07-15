@@ -49,7 +49,7 @@
 | 5319 | `fetchClients()` | 客戶端；表格列含鍵盤/ARIA 操作 |
 | 5550 | `fetchWiFiNetworks()` | WiFi |
 | 5604-5695 | `fetchCloud*()` | Site Manager |
-| 5759 | `renderThreatTable()` | 資安事件表 |
+| 5759 | `renderThreatTable()` / `fetchThreatBlocks()` | 資安事件表；管理員臨時公網 IPv4 封鎖、到期與同步狀態 |
 | 5859 | `updateSecurityAnalytics()` | 資安分析/評分 |
 | 5964 | `fetchThreats()` | 威脅事件 |
 | 6065 | `fetchNas()` | NAS 基本資訊 |

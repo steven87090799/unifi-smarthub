@@ -38,6 +38,7 @@
 - `GET /api/wifi-networks` around 430
 - `PUT /api/wifi-networks/:id` around 443
 - `GET /api/threats` around 458
+- `GET/POST /api/security/threat-blocks`、`DELETE /api/security/threat-blocks/:id`（admin only；公網 IPv4、強制到期、SQLite desired state/audit、UniFi 專用 traffic list reconciliation）
 - `PUT /api/device/restrict` around 642
 - `POST /api/poe/power-cycle` around 676
 - `POST /api/speedtest` around 693
@@ -100,6 +101,13 @@
 
 - `server/services/config-backup.js`: secret-safe export、artifact/hash/schema validation、staged restore、startup rollback transaction
 - `db.js#createHistoryDb().backup()`: flush pending telemetry then create a consistent SQLite backup snapshot
+
+### Threat IP blocking
+
+- `server/policies/threat-ip-policy.js`: 公網 IPv4／管理位址／到期／二次確認契約
+- `server/integrations/unifi-traffic-list-client.js`: 官方 Network Integration API traffic-list identity 與完整 PUT
+- `server/services/threat-ip-blocking.js`: 序列化 mutation/reconciliation、持久 retry backoff、到期移除
+- `db.js`: `threat_ip_blocks` desired state 與 bounded `threat_ip_block_audit`
 
 ## 搜尋範例
 

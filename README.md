@@ -45,6 +45,7 @@ open http://<主機IP>:3000
 | | `WAN_IFACE` | WAN 網卡名,UCG-Ultra 通常 `eth4` |
 | **2. UniFi 本地控制** | `UNIFI_CONTROLLER_URL` | UniFi OS 裝置通常 `https://<UCG_IP>` |
 | | `UNIFI_USERNAME` / `UNIFI_PASSWORD` | **本地**管理員帳號(建議另開一組,別用 SSO 主帳號;要用封鎖功能需 Full Management 角色) |
+| | `UNIFI_NETWORK_API_URL`, `UNIFI_NETWORK_API_KEY`, `UNIFI_NETWORK_TLS_VERIFY`, `UNIFI_NETWORK_SITE_ID`, `UNIFI_THREAT_BLOCK_LIST_ID`, `UNIFI_THREAT_BLOCK_LIST_NAME` | 選填的臨時威脅來源 IPv4 封鎖。使用獨立 Network Integration API key，以及事先建立、由 SmartHub 專用且已被防火牆 policy 引用的 `IPV4_ADDRESSES` 清單。非 loopback 必須 HTTPS；TLS 憑證預設驗證。 |
 | **3. UniFi 雲端** | `UNIFI_API_KEY` | [unifi.ui.com](https://unifi.ui.com) → API 建立。多站點/SD-WAN/ISP 指標 |
 | **4. UGREEN NAS** | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` | UGOS 管理員帳密(遙測 API 需管理員)。**密碼不可含 `#` `*` `§`**。`NAS_PORT`/`NAS_SCHEME` 預設 9443/https |
 | **5. NAS Monitor 中介層** | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY` | 選配的 Docker Monitor；內建版需明確啟用 `nas-monitor` profile |
@@ -57,6 +58,12 @@ open http://<主機IP>:3000
 | **11. 面板密碼** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：整站 Basic Auth(帳號隨意、密碼為此值) |
 
 > **安全提醒**:此面板具有斷網、關 WiFi、PoE 斷電、改 `.env` 等控制權限。只在內網部署、務必設 `PANEL_PASSWORD`,不要直接曝露到公網;遠端存取請走 VPN。
+
+### UniFi 臨時威脅來源封鎖契約
+
+資安頁的「臨時封鎖」只對管理員顯示，且只接受公網單一 IPv4。私有、loopback、link-local、文件／測試、multicast、reserved，以及目前管理設備的位址都會在伺服器端拒絕；IPv6 明確不支援於此 IPv4 清單。每筆封鎖必須設定 15 分鐘到 30 天的到期時間，desired state 與 audit 儲存在 SQLite，UniFi 暫時離線時會保留要求、以有上限的退避重試，恢復後自動 reconciliation。
+
+依 [UniFi Network Integration API](https://developer.ui.com/network/v10.3.58/gettingstarted) 建立 API key、site UUID 與一個名稱完全相符的專用 `IPV4_ADDRESSES` Traffic Matching List，再讓既有防火牆 policy 引用該清單。SmartHub 使用官方完整 `PUT` 更新契約，因此此清單不可與人工項目或其他自動化共用。官方 schema 規定至少一個 item；沒有有效封鎖時系統只保留不可路由的 TEST-NET-1 `192.0.2.1` sentinel。測試只使用 mock／loopback fake controller，不會對實際 UniFi 寫入。
 
 ---
 

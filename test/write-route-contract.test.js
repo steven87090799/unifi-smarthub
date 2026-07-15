@@ -221,6 +221,8 @@ const INVALID_WRITES = Object.freeze([
     ['connection newline injection', 'POST', '/api/connections', { PPB_PASSWORD: 'safe\nEVIL=1' }],
     ['connection shell host injection', 'POST', '/api/connections', { PPB_HOST: 'host$(id)' }],
     ['connection noncanonical port', 'POST', '/api/connections', { PPB_PORT: '03052' }],
+    ['connection insecure remote Integration API', 'POST', '/api/connections', { UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }],
+    ['connection invalid Integration API TLS flag', 'POST', '/api/connections', { UNIFI_NETWORK_TLS_VERIFY: 'FALSE' }],
     ['connection unknown field', 'POST', '/api/connections', { SURPRISE_SECRET: 'value' }],
     ['connection oversized secret', 'POST', '/api/connections', { PPB_PASSWORD: 'x'.repeat(4097) }]
 ]);
@@ -290,13 +292,14 @@ async function assertSafeLocalWrites(runtime, client) {
 
     const secret = "pass with # and 'quote $HOME";
     response = await client.write('POST', '/api/connections', {
-        UPS_SOURCE: 'ppb', PPB_HOST: '127.0.0.1', PPB_PORT: '3052', PPB_PASSWORD: secret
+        UPS_SOURCE: 'ppb', PPB_HOST: '127.0.0.1', PPB_PORT: '3052', PPB_PASSWORD: secret,
+        UNIFI_NETWORK_TLS_VERIFY: 'false'
     });
     text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} connections: ${text}`);
     body = JSON.parse(text);
     assert.equal(body.ok, true);
-    assert.equal(body.changed, 4);
+    assert.equal(body.changed, 5);
 
     response = await client.read('/api/connections');
     text = await response.text();
@@ -305,6 +308,7 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.fields.UPS_SOURCE, 'ppb');
     assert.equal(body.fields.PPB_HOST, '127.0.0.1');
     assert.equal(body.fields.PPB_PORT, '3052');
+    assert.equal(body.fields.UNIFI_NETWORK_TLS_VERIFY, 'false');
     assert.equal(body.secretsSet.PPB_PASSWORD, true);
     assert.equal(text.includes(secret), false, `${runtime.label} secret leaked in readback`);
 

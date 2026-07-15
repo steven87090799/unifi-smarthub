@@ -10,6 +10,7 @@ const { createPanelSecurity } = require('./server/middleware/panel-security');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
+const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
 const {
     BACKUP_MEDIA_TYPE,
@@ -404,6 +405,85 @@ app.get('/api/threats', (req, res) => {
         if (mockThreats.length > 30) mockThreats.pop();
     }
     res.json({ threats: mockThreats });
+});
+
+let mockThreatIpBlocks = [];
+let mockThreatIpAudit = [];
+function mockThreatBlockSnapshot() {
+    return {
+        configuration: { configured: true, missing: [], ipv4Only: true, listName: 'SmartHub Threat Blocks' },
+        reconcile: {
+            status: 'healthy',
+            lastReconcileAt: new Date().toISOString(),
+            lastSuccessAt: new Date().toISOString(),
+            lastChanged: false,
+            lastError: null
+        },
+        blocks: mockThreatIpBlocks,
+        audit: mockThreatIpAudit.slice(0, 100)
+    };
+}
+app.get('/api/security/threat-blocks', mockSecurity.requireAdmin, (_req, res) => {
+    res.json(mockThreatBlockSnapshot());
+});
+app.post('/api/security/threat-blocks', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => threatIpPolicy.parseCreateThreatIpBlock(req.body, {
+        protectedAddresses: [mockConn?.UCG_IP].filter(Boolean)
+    }));
+    if (!input) return;
+    const now = Date.now();
+    const expiresTs = now + input.expiresInMinutes * 60 * 1000;
+    let block = mockThreatIpBlocks.find(candidate => candidate.ip === input.ip);
+    const duplicate = !!block;
+    const extended = duplicate && expiresTs > block.expiresTs;
+    if (!block) {
+        block = {
+            id: randomUUID(), ip: input.ip, createdTs: now, createdAt: new Date(now).toISOString(),
+            expiresTs, expiresAt: new Date(expiresTs).toISOString(), desiredState: 'active',
+            syncState: 'applied', updatedAt: new Date(now).toISOString(), lastAttemptAt: new Date(now).toISOString(),
+            attemptCount: 0, nextRetryTs: null, nextRetryAt: null, lastError: null
+        };
+        mockThreatIpBlocks.unshift(block);
+    } else if (extended) {
+        block.expiresTs = expiresTs;
+        block.expiresAt = new Date(expiresTs).toISOString();
+        block.updatedAt = new Date(now).toISOString();
+    }
+    mockThreatIpAudit.unshift({
+        id: mockThreatIpAudit.length + 1,
+        blockId: block.id,
+        timestamp: new Date(now).toISOString(),
+        ip: block.ip,
+        action: duplicate ? (extended ? 'extend' : 'duplicate') : 'add',
+        outcome: duplicate && !extended ? 'unchanged' : 'applied',
+        detail: null
+    });
+    mockThreatIpAudit = mockThreatIpAudit.slice(0, 1000);
+    res.status(duplicate ? 200 : 201).json({
+        ok: true, accepted: true, applied: true, duplicate, extended, block,
+        reconcile: mockThreatBlockSnapshot().reconcile
+    });
+});
+app.delete('/api/security/threat-blocks/:id', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => threatIpPolicy.parseRemoveThreatIpBlock(req.params.id, req.body));
+    if (!input) return;
+    const index = mockThreatIpBlocks.findIndex(block => block.id === input.id);
+    if (index === -1) {
+        return mockApiError(res, new Error('Threat IP block was not found'), {
+            status: 404, code: ERROR_CODES.API_NOT_FOUND, publicMessage: 'Threat IP block was not found'
+        });
+    }
+    const [block] = mockThreatIpBlocks.splice(index, 1);
+    mockThreatIpAudit.unshift({
+        id: mockThreatIpAudit.length + 1,
+        blockId: block.id,
+        timestamp: new Date().toISOString(),
+        ip: block.ip,
+        action: 'remove',
+        outcome: 'applied',
+        detail: null
+    });
+    res.json({ ok: true, accepted: true, applied: true, id: input.id, reconcile: mockThreatBlockSnapshot().reconcile });
 });
 
 // 封鎖歷史紀錄 (記憶體內模擬)
@@ -1069,6 +1149,11 @@ const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirna
 const mockConnDefaults = {
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
     UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo',
+    UNIFI_NETWORK_API_URL: 'https://192.168.0.1/proxy/network/integration',
+    UNIFI_NETWORK_TLS_VERIFY: 'true',
+    UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
+    UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
+    UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
     NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '',
     NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '192.168.0.170',
     UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
@@ -1078,6 +1163,7 @@ const mockConnDefaults = {
 };
 const mockSecretDefaults = {
     SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false,
+    UNIFI_NETWORK_API_KEY: true,
     NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false, PPB_PASSWORD: false,
     ADGUARD_PASSWORD: false, LINUX_SSH_PASSWORD: false
 };
@@ -1130,6 +1216,7 @@ app.get('/api/connections/status', (_req, res) => res.json({
         { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
         { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },
         { name: 'Site Manager', configured: false, ok: null, detail: '' },
+        { name: 'UniFi Threat Blocking', configured: true, ok: true, detail: 'healthy' },
         { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
         { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, detail: mockConn.NAS_MONITOR_URL || '' },
         { name: 'WiiM Amp', configured: true, ok: true, detail: mockConn.WIIM_IP },

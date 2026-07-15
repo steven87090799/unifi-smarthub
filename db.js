@@ -179,6 +179,32 @@ function createHistoryDb(dataDir, options = {}) {
             claim_token TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_report_runs_ts ON report_runs(ts DESC);
+        CREATE TABLE IF NOT EXISTS threat_ip_blocks (
+            id TEXT PRIMARY KEY,
+            ip TEXT NOT NULL UNIQUE,
+            created_ts INTEGER NOT NULL,
+            expires_ts INTEGER NOT NULL,
+            desired_state TEXT NOT NULL CHECK(desired_state IN ('active', 'removed')),
+            sync_state TEXT NOT NULL CHECK(sync_state IN ('pending', 'applied', 'error')),
+            updated_ts INTEGER NOT NULL,
+            last_attempt_ts INTEGER,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_ts INTEGER,
+            last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_threat_ip_blocks_expiry
+            ON threat_ip_blocks(desired_state, expires_ts);
+        CREATE TABLE IF NOT EXISTS threat_ip_block_audit (
+            id INTEGER PRIMARY KEY,
+            block_id TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            ip TEXT NOT NULL,
+            action TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            detail TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_threat_ip_block_audit_ts
+            ON threat_ip_block_audit(ts DESC, id DESC);
     `);
 
     // report_runs predates durable scheduler claims. ALTER only missing columns
@@ -503,10 +529,193 @@ function createHistoryDb(dataDir, options = {}) {
             ORDER BY ts DESC, id DESC LIMIT -1 OFFSET ${REPORT_SCHEDULE_KEY_RETENTION}
         )
     `);
+    const getThreatIpBlockByIdStmt = db.prepare('SELECT * FROM threat_ip_blocks WHERE id = ?');
+    const getThreatIpBlockByIpStmt = db.prepare('SELECT * FROM threat_ip_blocks WHERE ip = ?');
+    const listThreatIpBlocksStmt = db.prepare(`
+        SELECT * FROM threat_ip_blocks ORDER BY created_ts DESC, id DESC
+    `);
+    const insertThreatIpBlockStmt = db.prepare(`
+        INSERT INTO threat_ip_blocks (
+            id, ip, created_ts, expires_ts, desired_state, sync_state, updated_ts,
+            last_attempt_ts, attempt_count, next_retry_ts, last_error
+        ) VALUES (
+            @id, @ip, @created_ts, @expires_ts, 'active', 'pending', @updated_ts,
+            NULL, 0, NULL, NULL
+        )
+    `);
+    const reactivateThreatIpBlockStmt = db.prepare(`
+        UPDATE threat_ip_blocks
+        SET expires_ts = @expires_ts,
+            desired_state = 'active',
+            sync_state = 'pending',
+            updated_ts = @updated_ts,
+            next_retry_ts = NULL,
+            last_error = NULL
+        WHERE id = @id
+    `);
+    const removeThreatIpBlockStmt = db.prepare(`
+        UPDATE threat_ip_blocks
+        SET desired_state = 'removed',
+            sync_state = 'pending',
+            updated_ts = @updated_ts,
+            next_retry_ts = NULL,
+            last_error = NULL
+        WHERE id = @id AND desired_state <> 'removed'
+    `);
+    const listExpiredThreatIpBlocksStmt = db.prepare(`
+        SELECT * FROM threat_ip_blocks
+        WHERE desired_state = 'active' AND expires_ts <= ?
+        ORDER BY expires_ts ASC, id ASC
+    `);
+    const insertThreatIpBlockAuditStmt = db.prepare(`
+        INSERT INTO threat_ip_block_audit (block_id, ts, ip, action, outcome, detail)
+        VALUES (@block_id, @ts, @ip, @action, @outcome, @detail)
+    `);
+    const listThreatIpBlockAuditStmt = db.prepare(`
+        SELECT * FROM threat_ip_block_audit ORDER BY ts DESC, id DESC LIMIT ?
+    `);
+    const deleteOldThreatIpBlockAuditStmt = db.prepare(`
+        DELETE FROM threat_ip_block_audit WHERE id IN (
+            SELECT id FROM threat_ip_block_audit ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 1000
+        )
+    `);
+    const markActiveThreatIpBlocksSyncedStmt = db.prepare(`
+        UPDATE threat_ip_blocks
+        SET sync_state = 'applied',
+            updated_ts = @updated_ts,
+            last_attempt_ts = @updated_ts,
+            attempt_count = 0,
+            next_retry_ts = NULL,
+            last_error = NULL
+        WHERE desired_state = 'active'
+    `);
+    const deleteRemovedThreatIpBlocksStmt = db.prepare(`
+        DELETE FROM threat_ip_blocks WHERE desired_state = 'removed'
+    `);
+    const markThreatIpBlockSyncFailureStmt = db.prepare(`
+        UPDATE threat_ip_blocks
+        SET sync_state = 'error',
+            updated_ts = @updated_ts,
+            last_attempt_ts = @updated_ts,
+            attempt_count = MIN(attempt_count + 1, 1000000),
+            next_retry_ts = @next_retry_ts,
+            last_error = @last_error
+    `);
     const healthStmt = db.prepare('SELECT 1 AS ok');
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
     });
+    function writeThreatIpAudit(entry) {
+        insertThreatIpBlockAuditStmt.run({
+            block_id: entry.blockId,
+            ts: entry.ts,
+            ip: entry.ip,
+            action: String(entry.action).slice(0, 40),
+            outcome: String(entry.outcome).slice(0, 40),
+            detail: entry.detail == null ? null : String(entry.detail).slice(0, 500)
+        });
+        deleteOldThreatIpBlockAuditStmt.run();
+    }
+    const requestThreatIpBlockTransaction = db.transaction(entry => {
+        const existing = getThreatIpBlockByIpStmt.get(entry.ip);
+        if (!existing) {
+            insertThreatIpBlockStmt.run({
+                id: entry.id,
+                ip: entry.ip,
+                created_ts: entry.createdTs,
+                expires_ts: entry.expiresTs,
+                updated_ts: entry.createdTs
+            });
+            writeThreatIpAudit({
+                blockId: entry.id, ts: entry.createdTs, ip: entry.ip,
+                action: 'add', outcome: 'pending', detail: `expires_ts=${entry.expiresTs}`
+            });
+            return { created: true, extended: false, id: entry.id };
+        }
+        const reactivated = existing.desired_state !== 'active';
+        const extended = reactivated || entry.expiresTs > existing.expires_ts;
+        if (extended) {
+            reactivateThreatIpBlockStmt.run({
+                id: existing.id,
+                expires_ts: entry.expiresTs,
+                updated_ts: entry.createdTs
+            });
+        }
+        writeThreatIpAudit({
+            blockId: existing.id, ts: entry.createdTs, ip: entry.ip,
+            action: reactivated ? 'reactivate' : (extended ? 'extend' : 'duplicate'),
+            outcome: extended ? 'pending' : 'unchanged',
+            detail: `requested_expires_ts=${entry.expiresTs}`
+        });
+        return { created: false, extended, id: existing.id };
+    });
+    const requestThreatIpBlockRemovalTransaction = db.transaction((id, timestamp, reason) => {
+        const existing = getThreatIpBlockByIdStmt.get(id);
+        if (!existing) return null;
+        const changed = removeThreatIpBlockStmt.run({ id, updated_ts: timestamp }).changes === 1;
+        writeThreatIpAudit({
+            blockId: existing.id, ts: timestamp, ip: existing.ip,
+            action: reason === 'expired' ? 'expire' : 'remove',
+            outcome: changed ? 'pending' : 'unchanged', detail: reason
+        });
+        return { changed, id: existing.id, ip: existing.ip };
+    });
+    const expireThreatIpBlocksTransaction = db.transaction(timestamp => {
+        const expired = listExpiredThreatIpBlocksStmt.all(timestamp);
+        for (const row of expired) {
+            removeThreatIpBlockStmt.run({ id: row.id, updated_ts: timestamp });
+            writeThreatIpAudit({
+                blockId: row.id, ts: timestamp, ip: row.ip,
+                action: 'expire', outcome: 'pending', detail: `expires_ts=${row.expires_ts}`
+            });
+        }
+        return expired.length;
+    });
+    const markThreatIpBlocksSyncedTransaction = db.transaction(timestamp => {
+        const removed = listThreatIpBlocksStmt.all().filter(row => row.desired_state === 'removed');
+        markActiveThreatIpBlocksSyncedStmt.run({ updated_ts: timestamp });
+        for (const row of removed) {
+            writeThreatIpAudit({
+                blockId: row.id, ts: timestamp, ip: row.ip,
+                action: 'reconcile', outcome: 'removed', detail: null
+            });
+        }
+        deleteRemovedThreatIpBlocksStmt.run();
+        return removed.length;
+    });
+    const markThreatIpBlockSyncFailureTransaction = db.transaction((timestamp, error, retryAt) => {
+        const rows = listThreatIpBlocksStmt.all();
+        markThreatIpBlockSyncFailureStmt.run({
+            updated_ts: timestamp,
+            next_retry_ts: retryAt,
+            last_error: String(error).slice(0, 500)
+        });
+        for (const row of rows) {
+            writeThreatIpAudit({
+                blockId: row.id, ts: timestamp, ip: row.ip,
+                action: 'reconcile', outcome: 'failed', detail: String(error).slice(0, 500)
+            });
+        }
+        return rows.length;
+    });
+    function mapThreatIpBlock(row) {
+        return {
+            id: row.id,
+            ip: row.ip,
+            createdTs: row.created_ts,
+            createdAt: new Date(row.created_ts).toISOString(),
+            expiresTs: row.expires_ts,
+            expiresAt: new Date(row.expires_ts).toISOString(),
+            desiredState: row.desired_state,
+            syncState: row.sync_state,
+            updatedAt: new Date(row.updated_ts).toISOString(),
+            lastAttemptAt: row.last_attempt_ts == null ? null : new Date(row.last_attempt_ts).toISOString(),
+            attemptCount: row.attempt_count,
+            nextRetryTs: row.next_retry_ts,
+            nextRetryAt: row.next_retry_ts == null ? null : new Date(row.next_retry_ts).toISOString(),
+            lastError: row.last_error
+        };
+    }
     function claimExistingOrInsert(row, { allowInsert = true } = {}) {
         const result = allowInsert ? claimScheduledReportStmt.run(row) : { changes: 0 };
         if (result.changes === 1) {
@@ -885,6 +1094,67 @@ function createHistoryDb(dataDir, options = {}) {
                     source: row.source,
                 ...(row.reason ? { reason: row.reason } : {})
             })));
+        },
+        requestThreatIpBlock(entry) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new TypeError('threat IP block request must be an object');
+            }
+            if (typeof entry.id !== 'string' || typeof entry.ip !== 'string'
+                || !Number.isInteger(entry.createdTs) || !Number.isInteger(entry.expiresTs)
+                || entry.expiresTs <= entry.createdTs) {
+                throw new TypeError('threat IP block request is invalid');
+            }
+            return measure('requestThreatIpBlock', 'threat_ip_blocks', () => {
+                const result = requestThreatIpBlockTransaction.immediate(entry);
+                return { ...result, block: mapThreatIpBlock(getThreatIpBlockByIdStmt.get(result.id)) };
+            }, { transaction: true });
+        },
+        requestThreatIpBlockRemoval(id, timestamp, reason = 'manual') {
+            if (typeof id !== 'string' || !Number.isInteger(timestamp)) {
+                throw new TypeError('threat IP block removal request is invalid');
+            }
+            return measure('requestThreatIpBlockRemoval', 'threat_ip_blocks', () => (
+                requestThreatIpBlockRemovalTransaction.immediate(id, timestamp, reason)
+            ), { transaction: true });
+        },
+        expireThreatIpBlocks(timestamp = Date.now()) {
+            if (!Number.isInteger(timestamp)) throw new TypeError('threat IP expiry timestamp must be an integer');
+            return measure('expireThreatIpBlocks', 'threat_ip_blocks', () => (
+                expireThreatIpBlocksTransaction.immediate(timestamp)
+            ), { transaction: true });
+        },
+        listThreatIpBlocks() {
+            return measure('listThreatIpBlocks', 'threat_ip_blocks', () => (
+                listThreatIpBlocksStmt.all().map(mapThreatIpBlock)
+            ));
+        },
+        listThreatIpBlockAudit(limit = 100) {
+            const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+            return measure('listThreatIpBlockAudit', 'threat_ip_block_audit', () => (
+                listThreatIpBlockAuditStmt.all(safeLimit).map(row => ({
+                    id: row.id,
+                    blockId: row.block_id,
+                    timestamp: new Date(row.ts).toISOString(),
+                    ip: row.ip,
+                    action: row.action,
+                    outcome: row.outcome,
+                    detail: row.detail
+                }))
+            ));
+        },
+        markThreatIpBlocksSynced(timestamp = Date.now()) {
+            if (!Number.isInteger(timestamp)) throw new TypeError('threat IP sync timestamp must be an integer');
+            return measure('markThreatIpBlocksSynced', 'threat_ip_blocks', () => (
+                markThreatIpBlocksSyncedTransaction.immediate(timestamp)
+            ), { transaction: true });
+        },
+        markThreatIpBlockSyncFailure(timestamp, error, retryAt) {
+            if (!Number.isInteger(timestamp) || !Number.isInteger(retryAt) || retryAt <= timestamp) {
+                throw new TypeError('threat IP retry timestamps are invalid');
+            }
+            return measure('markThreatIpBlockSyncFailure', 'threat_ip_blocks', () => (
+                markThreatIpBlockSyncFailureTransaction.immediate(timestamp, error, retryAt)
+            ), { transaction: true });
         },
         insertReportRun(entry) {
             return measure('insertReportRun', 'report_runs', db.transaction(() => {
