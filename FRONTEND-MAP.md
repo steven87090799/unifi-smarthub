@@ -71,6 +71,7 @@
 | 7992 | `initUpsCharts()` | UPS 圖表 |
 | 8016 | `fetchUps()` | UPS 狀態/歷史/事件 + 降採樣 |
 | 8158 | `fetchAdguard*()` | AdGuard |
+| AdGuard | `fetchAdguardServicePolicies()` / `saveAdguardServicePolicy()` / `removeAdguardServicePolicy()` | admin-only 裝置 IP/MAC、YouTube/TikTok/Gaming、IANA timezone、每日 allow window、同步錯誤/重試與 baseline restore |
 | 8219 | `fetchLinux*()` | Linux 小主機 |
 
 ## 前端資產

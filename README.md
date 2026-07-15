@@ -60,6 +60,8 @@ open http://<主機IP>:3000
 | **10. Linux 小主機** | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_PORT` | 任何 Linux 主機的 SSH,啟用硬體監控頁 |
 | **11. 面板密碼** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：整站 Basic Auth(帳號隨意、密碼為此值) |
 
+AdGuard 頁的管理員控制可對 persistent client 的精確 IP/MAC 套用 YouTube、TikTok、Gaming 服務政策。每日「允許時段」代表暫停 blocked-service filtering 的區間，時段外維持封鎖；政策以 SQLite 保存並在重啟或 AdGuard 恢復後重新協調。SmartHub 只在政策有效期間接管 blocked-services 欄位，移除時會還原首次套用前保存的基準。
+
 > **安全提醒**:此面板具有斷網、關 WiFi、PoE 斷電、改 `.env` 等控制權限。只在內網部署、務必設 `PANEL_PASSWORD`,不要直接曝露到公網;遠端存取請走 VPN。
 
 ### UniFi 臨時威脅來源封鎖契約

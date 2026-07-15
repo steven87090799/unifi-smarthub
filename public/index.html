@@ -1575,6 +1575,59 @@
                         </div>
                     </div>
 
+                    <div id="adg-policy-card"
+                        class="hidden bg-slate-900/40 border border-amber-500/20 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-4">
+                            <div>
+                                <h3 class="text-sm font-bold text-white tracking-wider">每台裝置服務封鎖</h3>
+                                <p class="text-[10px] text-slate-400 mt-1">SmartHub 會接管此裝置的 blocked-services 欄位；刪除政策時還原首次套用前的基準。</p>
+                                <p class="text-[10px] text-amber-300 mt-1">「允許時段」是 AdGuard 的封鎖停用區間；未勾選的星期全天封鎖，時段外封鎖會自動恢復。</p>
+                            </div>
+                            <span id="adg-policy-health" class="px-2.5 py-1 rounded-full text-[9px] font-bold bg-slate-800 text-slate-400">載入中</span>
+                        </div>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            <div class="space-y-3 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="text-[9px] text-slate-500 uppercase font-bold">裝置 IP 或 MAC</label>
+                                        <input id="adg-policy-device" placeholder="192.168.1.50"
+                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-1">
+                                    </div>
+                                    <div>
+                                        <label class="text-[9px] text-slate-500 uppercase font-bold">IANA 時區</label>
+                                        <input id="adg-policy-timezone" value="Asia/Taipei"
+                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-1">
+                                    </div>
+                                </div>
+                                <div>
+                                    <p class="text-[9px] text-slate-500 uppercase font-bold mb-2">封鎖分類</p>
+                                    <div class="flex flex-wrap gap-3">
+                                        <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" value="youtube" class="adg-policy-category accent-red-500"> YouTube</label>
+                                        <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" value="tiktok" class="adg-policy-category accent-pink-500"> TikTok</label>
+                                        <label class="flex items-center gap-1.5 text-xs text-slate-300"><input type="checkbox" value="gaming" class="adg-policy-category accent-blue-500"> Gaming</label>
+                                    </div>
+                                </div>
+                                <div>
+                                    <p class="text-[9px] text-slate-500 uppercase font-bold mb-2">每週允許時段（未勾選＝全天封鎖）</p>
+                                    <div class="space-y-1.5" id="adg-policy-days">
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="mon"><span><input type="checkbox" class="accent-emerald-500 mr-1">週一</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="tue"><span><input type="checkbox" class="accent-emerald-500 mr-1">週二</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="wed"><span><input type="checkbox" class="accent-emerald-500 mr-1">週三</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="thu"><span><input type="checkbox" class="accent-emerald-500 mr-1">週四</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="fri"><span><input type="checkbox" class="accent-emerald-500 mr-1">週五</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="sat"><span><input type="checkbox" class="accent-emerald-500 mr-1">週六</span><input type="time" value="09:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="22:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="sun"><span><input type="checkbox" class="accent-emerald-500 mr-1">週日</span><input type="time" value="09:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="22:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                    </div>
+                                </div>
+                                <button onclick="saveAdguardServicePolicy()"
+                                    class="w-full px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition">儲存並立即協調</button>
+                            </div>
+                            <div id="adg-policy-list" class="space-y-2">
+                                <p class="text-xs text-slate-500 text-center py-6">政策載入中...</p>
+                            </div>
+                        </div>
+                    </div>
+
                 </section>
 
                 <!-- ==================== 頁面：客戶端 ==================== -->
@@ -5400,7 +5453,7 @@
             fetchConnections();
             fetchConfigBackupStatus();
             fetchUps();
-            fetchAdguard(); fetchAdgLog();
+            fetchAdguard(); fetchAdgLog(); fetchAdguardServicePolicies();
             fetchLinux(); fetchLnxChart();
             fetchWiimDeviceInfo();
             initWiimPage();
@@ -5415,7 +5468,7 @@
 
         /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
         const POLL_JOBS = {
-            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog()]), def: 60, label: 'AdGuard DNS 統計', desc: '多久更新一次 AdGuard Home 的攔截統計與查詢日誌。' },
+            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]), def: 60, label: 'AdGuard DNS 統計', desc: '多久更新一次 AdGuard Home 的攔截統計、查詢日誌與裝置服務政策。' },
             linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]), def: 120, label: 'Linux 小主機監控', desc: '多久 SSH 抓一次小主機的 CPU/溫度/記憶體/磁碟並更新歷史圖。' },
             critAlerts: { fn: () => fetchCritAlerts(), def: 10, label: '重大事件警報', desc: '多久檢查一次重大事件 (UPS 斷電/WAN 斷線等)，觸發頂部紅色閃爍橫幅。' },
             hardware: { fn: () => fetchHardware(), def: 15, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
@@ -9403,6 +9456,89 @@
                 return all.source === 'adguard' && blocked.source === 'adguard';
             } catch { return false; }
         }
+        const ADG_POLICY_DAY_LABELS = { sun: '週日', mon: '週一', tue: '週二', wed: '週三', thu: '週四', fri: '週五', sat: '週六' };
+        const ADG_POLICY_CATEGORY_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', gaming: 'Gaming' };
+        async function fetchAdguardServicePolicies() {
+            const card = document.getElementById('adg-policy-card');
+            if (!card) return false;
+            if (document.documentElement.dataset.panelRole !== 'admin') {
+                card.classList.add('hidden');
+                return true;
+            }
+            card.classList.remove('hidden');
+            const health = document.getElementById('adg-policy-health');
+            const list = document.getElementById('adg-policy-list');
+            try {
+                const response = await fetch('/api/adguard/service-policies', { cache: 'no-store' });
+                const state = await response.json();
+                if (!response.ok) throw new Error(state.error || `HTTP ${response.status}`);
+                const reconcile = state.reconcile || {};
+                const healthy = reconcile.status === 'healthy';
+                health.textContent = healthy ? '● 協調正常' : reconcile.status === 'degraded' ? '⚠ 協調失敗' : '○ 等待首次協調';
+                health.className = `px-2.5 py-1 rounded-full text-[9px] font-bold ${healthy ? 'bg-emerald-500/10 text-emerald-400' : reconcile.status === 'degraded' ? 'bg-red-500/10 text-red-400' : 'bg-amber-500/10 text-amber-300'}`;
+                const policies = state.policies || [];
+                list.innerHTML = policies.length ? policies.map(policy => {
+                    const windows = Object.entries(policy.allowWindows || {}).map(([day, window]) => `${ADG_POLICY_DAY_LABELS[day] || day} ${window.start}-${window.end}`).join(' · ');
+                    const labels = (policy.categories || []).map(category => ADG_POLICY_CATEGORY_LABELS[category] || category).join(' / ');
+                    const stateClass = policy.syncState === 'applied' ? 'text-emerald-400' : policy.syncState === 'error' ? 'text-red-400' : 'text-amber-300';
+                    return `<div class="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
+                        <div class="flex items-start gap-3">
+                            <div class="min-w-0 flex-grow">
+                                <p class="text-xs font-bold text-slate-200 mono">${escapeHtml(policy.deviceId)}</p>
+                                <p class="text-[10px] text-slate-400 mt-1">${escapeHtml(labels)} · ${escapeHtml(policy.timeZone)}</p>
+                                <p class="text-[9px] text-slate-500 mt-1">允許：${escapeHtml(windows || '無（全天封鎖）')}</p>
+                                <p class="text-[9px] ${stateClass} mt-2">${escapeHtml(policy.desiredState)} / ${escapeHtml(policy.syncState)}${policy.lastError ? ` · ${escapeHtml(policy.lastError)}` : ''}${policy.nextRetryAt ? ` · 重試 ${escapeHtml(new Date(policy.nextRetryAt).toLocaleString('zh-TW'))}` : ''}</p>
+                            </div>
+                            <button onclick="removeAdguardServicePolicy('${escapeHtml(policy.id)}')" class="shrink-0 px-2.5 py-1 rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 text-[10px] font-bold">移除並還原</button>
+                        </div>
+                    </div>`;
+                }).join('') : '<p class="text-xs text-slate-500 text-center py-6">尚未建立裝置服務政策</p>';
+                return true;
+            } catch (error) {
+                health.textContent = '讀取失敗';
+                health.className = 'px-2.5 py-1 rounded-full text-[9px] font-bold bg-red-500/10 text-red-400';
+                list.innerHTML = `<p class="text-xs text-red-400 text-center py-6">${escapeHtml(error.message)}</p>`;
+                return false;
+            }
+        }
+        async function saveAdguardServicePolicy() {
+            if (document.documentElement.dataset.panelRole !== 'admin') return showToast('僅管理員可變更 AdGuard 政策', true);
+            const categories = [...document.querySelectorAll('.adg-policy-category:checked')].map(input => input.value);
+            const allowWindows = {};
+            for (const row of document.querySelectorAll('.adg-policy-day')) {
+                const [enabled, start, end] = row.querySelectorAll('input');
+                if (enabled.checked) allowWindows[row.dataset.day] = { start: start.value, end: end.value };
+            }
+            const body = {
+                deviceId: document.getElementById('adg-policy-device').value.trim(),
+                categories,
+                timeZone: document.getElementById('adg-policy-timezone').value.trim(),
+                allowWindows
+            };
+            try {
+                const response = await fetch('/api/adguard/service-policies', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                showToast(result.applied ? 'AdGuard 裝置政策已套用' : '政策已保存，等待 AdGuard 恢復後重試', !result.applied);
+                await fetchAdguardServicePolicies();
+            } catch (error) { showToast(`政策儲存失敗: ${error.message}`, true); }
+        }
+        async function removeAdguardServicePolicy(id) {
+            if (document.documentElement.dataset.panelRole !== 'admin') return showToast('僅管理員可移除 AdGuard 政策', true);
+            if (!confirm('確定移除此政策並還原首次套用前的 AdGuard blocked-services 設定？')) return;
+            try {
+                const response = await fetch(`/api/adguard/service-policies/${encodeURIComponent(id)}`, {
+                    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirmation: 'REMOVE_ADGUARD_SERVICE_POLICY' })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                showToast(result.applied ? '政策已移除，原設定已還原' : '移除已保存，等待 AdGuard 恢復後還原', !result.applied);
+                await fetchAdguardServicePolicies();
+            } catch (error) { showToast(`政策移除失敗: ${error.message}`, true); }
+        }
         async function refreshAdguardNow() {
             const button = document.getElementById('adg-refresh');
             if (!button || button.disabled) return;
@@ -9412,7 +9548,7 @@
             button.classList.add('opacity-60');
             icon?.classList.add('animate-spin');
             try {
-                const results = await Promise.all([fetchAdguard(), fetchAdgLog()]);
+                const results = await Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]);
                 showToast(results.every(Boolean) ? 'AdGuard 資料已立即更新' : 'AdGuard 部分資料更新失敗', !results.every(Boolean));
             } finally {
                 button.disabled = false;

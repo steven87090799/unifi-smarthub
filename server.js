@@ -48,6 +48,7 @@ const {
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
+const adguardServicePolicy = require('./server/policies/adguard-service-policy');
 const {
     DockerActionPolicyError,
     ambiguousDockerActionResult,
@@ -68,6 +69,10 @@ const {
     ThreatIpBlockingError,
     createThreatIpBlockingService
 } = require('./server/services/threat-ip-blocking');
+const {
+    AdGuardServicePolicyError,
+    createAdGuardServicePolicyService
+} = require('./server/services/adguard-service-policy');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
@@ -761,6 +766,21 @@ const threatTrafficListClient = createUniFiTrafficListClient({
 const threatIpBlockingService = createThreatIpBlockingService({
     repository: historyDb,
     client: threatTrafficListClient,
+    logger
+});
+const adguardServicePolicyClient = {
+    configuration: () => ({
+        configured: adguardConnection.configured,
+        transport: adguardConnection.url ? new URL(adguardConnection.url).protocol.replace(':', '') : null,
+        tlsVerified: adguardConnection.tlsVerified
+    }),
+    listClients: () => adgReq('/control/clients'),
+    listServices: () => adgReq('/control/blocked_services/all'),
+    updateClient: (name, data) => adgReq('/control/clients/update', 'post', { name, data })
+};
+const adguardServicePolicyService = createAdGuardServicePolicyService({
+    repository: historyDb,
+    client: adguardServicePolicyClient,
     logger
 });
 
@@ -2010,6 +2030,8 @@ async function runSerialJob(name, fn) {
 }
 lifecycleInterval(() => runSerialJob('threatBlockReconcile', () => threatIpBlockingService.reconcile()), 15000);
 runSerialJob('threatBlockReconcile', () => threatIpBlockingService.reconcile());
+lifecycleInterval(() => runSerialJob('adguardPolicyReconcile', () => adguardServicePolicyService.reconcile()), 15000);
+runSerialJob('adguardPolicyReconcile', () => adguardServicePolicyService.reconcile());
 function scheduleServerJobs() {
     clearInterval(jobTimers.watcher);
     clearInterval(jobTimers.autodef);
@@ -4396,6 +4418,48 @@ app.post('/api/adguard/protection', async (req, res) => {
     } catch (e) { apiError(res, e, { code: ERROR_CODES.EXT_ADGUARD_FAILED, module: 'api.adguard', function: 'setProtection', logMessage: 'Failed to update AdGuard protection' }); }
 });
 
+app.get('/api/adguard/service-policies', panelSecurity.requireAdmin, (_req, res) => {
+    res.json(adguardServicePolicyService.snapshot());
+});
+
+app.post('/api/adguard/service-policies', panelSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => adguardServicePolicy.parsePolicyRequest(req.body), {
+        module: 'api.adguardPolicy', function: 'upsert'
+    });
+    if (!input) return;
+    try {
+        const result = await adguardServicePolicyService.upsert(input);
+        res.status(result.applied ? (result.created ? 201 : 200) : 202).json(result);
+    } catch (error) {
+        const expected = error instanceof AdGuardServicePolicyError;
+        apiError(res, error, {
+            status: expected ? error.httpStatus : 500,
+            code: expected ? ERROR_CODES.SYS_CONFIG_INVALID : ERROR_CODES.EXT_ADGUARD_FAILED,
+            publicMessage: expected ? error.message : 'AdGuard service policy request failed',
+            module: 'api.adguardPolicy', function: 'upsert', logMessage: 'AdGuard service policy request failed'
+        });
+    }
+});
+
+app.delete('/api/adguard/service-policies/:id', panelSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => adguardServicePolicy.parsePolicyRemoval(req.params.id, req.body), {
+        module: 'api.adguardPolicy', function: 'remove'
+    });
+    if (!input) return;
+    try {
+        const result = await adguardServicePolicyService.remove(input.id);
+        res.status(result.applied ? 200 : 202).json(result);
+    } catch (error) {
+        const expected = error instanceof AdGuardServicePolicyError;
+        apiError(res, error, {
+            status: expected ? error.httpStatus : 500,
+            code: expected && error.httpStatus === 404 ? ERROR_CODES.API_NOT_FOUND : ERROR_CODES.EXT_ADGUARD_FAILED,
+            publicMessage: expected ? error.message : 'AdGuard service policy removal failed',
+            module: 'api.adguardPolicy', function: 'remove', logMessage: 'AdGuard service policy removal failed'
+        });
+    }
+});
+
 /* ===================== Linux 小主機監控 (SSH，比照 UCG 模式) ===================== */
 const linuxConfigured = () => !!(process.env.LINUX_HOST && process.env.LINUX_SSH_USER && !isPlaceholder(process.env.LINUX_SSH_PASSWORD));
 const LINUX_CMD = [
@@ -4511,6 +4575,7 @@ app.get('/api/connections/status', async (req, res) => {
     const wiimHit = wiimCache['getStatusEx'];
     const cloud = await checkCloudStatus();
     const threatBlocks = threatIpBlockingService.snapshot();
+    const adguardPolicies = adguardServicePolicyService.snapshot();
     const upsSnapshot = upsFetchState.snapshot();
     const upsDetail = upsSnapshot.lastGood
         ? `${(upsSnapshot.lastGood.actualSource || '').toUpperCase()} · 電池 ${upsSnapshot.lastGood.battery ?? '--'}%${upsSnapshot.dataIsStale ? ` · 資料已過 ${Math.round((upsSnapshot.staleAgeMs || 0) / 1000)} 秒` : ''}`
@@ -4526,6 +4591,7 @@ app.get('/api/connections/status', async (req, res) => {
             { name: 'WiiM Amp', configured: true, ok: fresh(wiimHit && wiimHit.timestamp, 120), detail: wiimHit ? '有回應' : '無快取' },
             { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), detail: upsDetail },
             { name: 'AdGuard Home', configured: adgConfigured(), ok: fresh(adgLastOkTs, 180), detail: adgLastOkTs ? '有回應' : '尚無資料' },
+            { name: 'AdGuard 裝置政策', configured: adguardPolicies.policies.length > 0, ok: adguardPolicies.reconcile.status === 'healthy' ? true : (adguardPolicies.reconcile.status === 'degraded' ? false : null), detail: `${adguardPolicies.policies.length} 筆 · ${adguardPolicies.reconcile.status}` },
             { name: 'Linux 小主機', configured: linuxConfigured(), ok: fresh(linuxCache && linuxCache.ts, 180), detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
         ]
     });

@@ -24,12 +24,12 @@ async function unusedPort() {
     return port;
 }
 
-async function startApp(extraEnvironment) {
+async function startApp(extraEnvironment, script = 'server.js') {
     const port = await unusedPort();
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'smarthub-adguard-route-'));
     const envFile = path.join(dataDir, '.env');
     await fs.writeFile(envFile, '# isolated AdGuard route test\n', { mode: 0o600 });
-    const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+    const child = spawn(process.execPath, [path.join(ROOT, script)], {
         cwd: ROOT,
         env: {
             ...process.env,
@@ -107,6 +107,19 @@ async function write(baseUrl, authorization, token, route, body) {
 
 function startFakeAdGuard() {
     const requests = [];
+    let clients = [{
+        name: 'Living Room',
+        ids: ['192.168.1.50'],
+        tags: ['user_child'],
+        use_global_settings: true,
+        filtering_enabled: true,
+        parental_enabled: false,
+        safebrowsing_enabled: true,
+        safesearch_enabled: false,
+        use_global_blocked_services: true,
+        blocked_services: [],
+        blocked_services_schedule: {}
+    }];
     const server = http.createServer(async (req, res) => {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
@@ -136,6 +149,17 @@ function startFakeAdGuard() {
             }));
         }
         if (req.url === '/control/protection' && req.method === 'POST') return res.end('{}');
+        if (req.url === '/control/clients' && req.method === 'GET') {
+            return res.end(JSON.stringify({ clients: { persistent: clients } }));
+        }
+        if (req.url === '/control/blocked_services/all' && req.method === 'GET') {
+            return res.end(JSON.stringify([{ id: 'youtube' }, { id: 'tiktok' }]));
+        }
+        if (req.url === '/control/clients/update' && req.method === 'POST') {
+            const update = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            clients = clients.map(client => client.name === update.name ? update.data : client);
+            return res.end('{}');
+        }
         res.writeHead(404);
         res.end('{}');
     });
@@ -190,4 +214,108 @@ test('production AdGuard routes preserve auth and use the bounded same-origin cr
     const rejected = await response.json();
     assert.equal(rejected.code, 'API-VALID-001');
     assert.doesNotMatch(JSON.stringify(rejected), new RegExp(ADGUARD_PASSWORD, 'u'));
+
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies`, {
+        headers: { authorization: readonlyAuth }
+    });
+    assert.equal(response.status, 403);
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies`, {
+        headers: { authorization: adminAuth }
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).policies, []);
+
+    response = await write(runtime.baseUrl, adminAuth, adminCsrf, '/api/adguard/service-policies', {
+        deviceId: '192.168.1.50',
+        categories: ['youtube', 'tiktok'],
+        timeZone: 'Asia/Taipei',
+        allowWindows: { mon: { start: '18:00', end: '20:00' } }
+    });
+    assert.equal(response.status, 201, await response.clone().text());
+    const created = await response.json();
+    assert.equal(created.applied, true);
+    const clientUpdate = fake.requests.find(request => request.url === '/control/clients/update');
+    assert.ok(clientUpdate);
+    const updateBody = JSON.parse(clientUpdate.body);
+    assert.equal(updateBody.data.use_global_blocked_services, false);
+    assert.deepEqual(updateBody.data.blocked_services, ['tiktok', 'youtube']);
+    assert.deepEqual(updateBody.data.tags, ['user_child']);
+
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies`, {
+        headers: { authorization: adminAuth }
+    });
+    const snapshot = await response.json();
+    assert.equal(snapshot.policies.length, 1);
+    assert.equal(snapshot.policies[0].syncState, 'applied');
+    assert.equal(Object.hasOwn(snapshot.policies[0], 'baseline'), false);
+    response = await fetch(`${runtime.baseUrl}/api/connections/status`, {
+        headers: { authorization: adminAuth }
+    });
+    assert.equal((await response.json()).devices.find(device => device.name === 'AdGuard 裝置政策').detail, '1 筆 · healthy');
+
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies/${created.policy.id}`, {
+        method: 'DELETE',
+        headers: {
+            authorization: adminAuth,
+            origin: runtime.baseUrl,
+            'x-smarthub-csrf': adminCsrf,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ confirmation: 'REMOVE_ADGUARD_SERVICE_POLICY' })
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal((await response.json()).applied, true);
+});
+
+test('mock AdGuard service-policy routes mirror admin, validation, state, and removal contracts', { timeout: 20_000 }, async t => {
+    const runtime = await startApp({}, 'server-mock.js');
+    t.after(() => stopApp(runtime));
+    const adminAuth = auth('admin', ADMIN_PASSWORD);
+    const readonlyAuth = auth('readonly', READONLY_PASSWORD);
+    const adminCsrf = await csrf(runtime.baseUrl, adminAuth);
+    const readonlyCsrf = await csrf(runtime.baseUrl, readonlyAuth);
+
+    let response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies`, {
+        headers: { authorization: readonlyAuth }
+    });
+    assert.equal(response.status, 403);
+    response = await write(runtime.baseUrl, readonlyAuth, readonlyCsrf, '/api/adguard/service-policies', {
+        deviceId: '192.168.1.50', categories: ['youtube'],
+        timeZone: 'Asia/Taipei', allowWindows: {}
+    });
+    assert.equal(response.status, 403);
+    response = await write(runtime.baseUrl, adminAuth, adminCsrf, '/api/adguard/service-policies', {
+        deviceId: '192.168.1.50', categories: ['youtube'],
+        timeZone: 'Asia/Taipei', allowWindows: { sat: { start: '08:00', end: '22:00' } }
+    });
+    assert.equal(response.status, 201, await response.clone().text());
+    const created = await response.json();
+    assert.equal(created.applied, true);
+
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies`, {
+        headers: { authorization: adminAuth }
+    });
+    const snapshot = await response.json();
+    assert.equal(snapshot.policies.length, 1);
+    assert.equal(snapshot.definitions.scheduleSemantics, 'allow_windows_when_blocking_is_inactive');
+    response = await fetch(`${runtime.baseUrl}/api/connections/status`, {
+        headers: { authorization: adminAuth }
+    });
+    assert.equal((await response.json()).devices.find(device => device.name === 'AdGuard 裝置政策').detail, '1 筆 · healthy');
+
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies/${created.policy.id}`, {
+        method: 'DELETE',
+        headers: {
+            authorization: adminAuth,
+            origin: runtime.baseUrl,
+            'x-smarthub-csrf': adminCsrf,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ confirmation: 'REMOVE_ADGUARD_SERVICE_POLICY' })
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    response = await fetch(`${runtime.baseUrl}/api/adguard/service-policies`, {
+        headers: { authorization: adminAuth }
+    });
+    assert.deepEqual((await response.json()).policies, []);
 });

@@ -205,6 +205,35 @@ function createHistoryDb(dataDir, options = {}) {
         );
         CREATE INDEX IF NOT EXISTS idx_threat_ip_block_audit_ts
             ON threat_ip_block_audit(ts DESC, id DESC);
+        CREATE TABLE IF NOT EXISTS adguard_service_policies (
+            id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL UNIQUE,
+            categories_json TEXT NOT NULL,
+            time_zone TEXT NOT NULL,
+            allow_windows_json TEXT NOT NULL,
+            baseline_json TEXT,
+            desired_state TEXT NOT NULL CHECK(desired_state IN ('active', 'removed')),
+            sync_state TEXT NOT NULL CHECK(sync_state IN ('pending', 'applied', 'error')),
+            created_ts INTEGER NOT NULL,
+            updated_ts INTEGER NOT NULL,
+            last_attempt_ts INTEGER,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_ts INTEGER,
+            last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_adguard_service_policies_retry
+            ON adguard_service_policies(desired_state, sync_state, next_retry_ts);
+        CREATE TABLE IF NOT EXISTS adguard_service_policy_audit (
+            id INTEGER PRIMARY KEY,
+            policy_id TEXT NOT NULL,
+            ts INTEGER NOT NULL,
+            device_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            detail TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_adguard_service_policy_audit_ts
+            ON adguard_service_policy_audit(ts DESC, id DESC);
     `);
 
     // report_runs predates durable scheduler claims. ALTER only missing columns
@@ -601,6 +630,81 @@ function createHistoryDb(dataDir, options = {}) {
             next_retry_ts = @next_retry_ts,
             last_error = @last_error
     `);
+    const getAdguardServicePolicyByIdStmt = db.prepare('SELECT * FROM adguard_service_policies WHERE id = ?');
+    const getAdguardServicePolicyByDeviceStmt = db.prepare('SELECT * FROM adguard_service_policies WHERE device_id = ?');
+    const listAdguardServicePoliciesStmt = db.prepare(`
+        SELECT * FROM adguard_service_policies ORDER BY created_ts ASC, id ASC
+    `);
+    const insertAdguardServicePolicyStmt = db.prepare(`
+        INSERT INTO adguard_service_policies (
+            id, device_id, categories_json, time_zone, allow_windows_json, baseline_json,
+            desired_state, sync_state, created_ts, updated_ts, last_attempt_ts,
+            attempt_count, next_retry_ts, last_error
+        ) VALUES (
+            @id, @device_id, @categories_json, @time_zone, @allow_windows_json, NULL,
+            'active', 'pending', @created_ts, @updated_ts, NULL, 0, NULL, NULL
+        )
+    `);
+    const updateAdguardServicePolicyStmt = db.prepare(`
+        UPDATE adguard_service_policies
+        SET categories_json = @categories_json,
+            time_zone = @time_zone,
+            allow_windows_json = @allow_windows_json,
+            desired_state = 'active',
+            sync_state = 'pending',
+            updated_ts = @updated_ts,
+            next_retry_ts = NULL,
+            last_error = NULL
+        WHERE id = @id
+    `);
+    const removeAdguardServicePolicyStmt = db.prepare(`
+        UPDATE adguard_service_policies
+        SET desired_state = 'removed',
+            sync_state = 'pending',
+            updated_ts = @updated_ts,
+            next_retry_ts = NULL,
+            last_error = NULL
+        WHERE id = @id AND desired_state <> 'removed'
+    `);
+    const setAdguardServicePolicyBaselineStmt = db.prepare(`
+        UPDATE adguard_service_policies
+        SET baseline_json = @baseline_json, updated_ts = @updated_ts
+        WHERE id = @id AND baseline_json IS NULL
+    `);
+    const markAdguardServicePolicyAppliedStmt = db.prepare(`
+        UPDATE adguard_service_policies
+        SET sync_state = 'applied',
+            updated_ts = @updated_ts,
+            last_attempt_ts = @updated_ts,
+            attempt_count = 0,
+            next_retry_ts = NULL,
+            last_error = NULL
+        WHERE id = @id AND desired_state = 'active'
+    `);
+    const deleteAdguardServicePolicyStmt = db.prepare('DELETE FROM adguard_service_policies WHERE id = ?');
+    const markAdguardServicePolicyFailureStmt = db.prepare(`
+        UPDATE adguard_service_policies
+        SET sync_state = 'error',
+            updated_ts = @updated_ts,
+            last_attempt_ts = @updated_ts,
+            attempt_count = MIN(attempt_count + 1, 1000000),
+            next_retry_ts = @next_retry_ts,
+            last_error = @last_error
+        WHERE id = @id
+    `);
+    const insertAdguardServicePolicyAuditStmt = db.prepare(`
+        INSERT INTO adguard_service_policy_audit (policy_id, ts, device_id, action, outcome, detail)
+        VALUES (@policy_id, @ts, @device_id, @action, @outcome, @detail)
+    `);
+    const listAdguardServicePolicyAuditStmt = db.prepare(`
+        SELECT * FROM adguard_service_policy_audit ORDER BY ts DESC, id DESC LIMIT ?
+    `);
+    const deleteOldAdguardServicePolicyAuditStmt = db.prepare(`
+        DELETE FROM adguard_service_policy_audit WHERE id IN (
+            SELECT id FROM adguard_service_policy_audit
+            ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 1000
+        )
+    `);
     const healthStmt = db.prepare('SELECT 1 AS ok');
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
@@ -708,6 +812,147 @@ function createHistoryDb(dataDir, options = {}) {
             expiresAt: new Date(row.expires_ts).toISOString(),
             desiredState: row.desired_state,
             syncState: row.sync_state,
+            updatedAt: new Date(row.updated_ts).toISOString(),
+            lastAttemptAt: row.last_attempt_ts == null ? null : new Date(row.last_attempt_ts).toISOString(),
+            attemptCount: row.attempt_count,
+            nextRetryTs: row.next_retry_ts,
+            nextRetryAt: row.next_retry_ts == null ? null : new Date(row.next_retry_ts).toISOString(),
+            lastError: row.last_error
+        };
+    }
+    function boundedPolicyJson(value, field, maxBytes = 16384) {
+        let serialized;
+        try { serialized = JSON.stringify(value); }
+        catch { throw new TypeError(`${field} must be JSON serializable`); }
+        if (!serialized || Buffer.byteLength(serialized, 'utf8') > maxBytes) {
+            throw new TypeError(`${field} exceeds its storage boundary`);
+        }
+        return serialized;
+    }
+    function parsePolicyJson(value, field) {
+        try { return JSON.parse(value); }
+        catch { throw new TypeError(`stored ${field} is invalid JSON`); }
+    }
+    function writeAdguardServicePolicyAudit(entry) {
+        insertAdguardServicePolicyAuditStmt.run({
+            policy_id: entry.policyId,
+            ts: entry.ts,
+            device_id: entry.deviceId,
+            action: String(entry.action).slice(0, 40),
+            outcome: String(entry.outcome).slice(0, 40),
+            detail: entry.detail == null ? null : String(entry.detail).slice(0, 500)
+        });
+        deleteOldAdguardServicePolicyAuditStmt.run();
+    }
+    const upsertAdguardServicePolicyTransaction = db.transaction(entry => {
+        const categoriesJson = boundedPolicyJson(entry.categories, 'categories', 2048);
+        const allowWindowsJson = boundedPolicyJson(entry.allowWindows, 'allowWindows', 4096);
+        const existing = getAdguardServicePolicyByDeviceStmt.get(entry.deviceId);
+        if (!existing) {
+            insertAdguardServicePolicyStmt.run({
+                id: entry.id,
+                device_id: entry.deviceId,
+                categories_json: categoriesJson,
+                time_zone: entry.timeZone,
+                allow_windows_json: allowWindowsJson,
+                created_ts: entry.timestamp,
+                updated_ts: entry.timestamp
+            });
+            writeAdguardServicePolicyAudit({
+                policyId: entry.id, ts: entry.timestamp, deviceId: entry.deviceId,
+                action: 'create', outcome: 'pending', detail: `categories=${entry.categories.join(',')}`
+            });
+            return { id: entry.id, created: true, changed: true };
+        }
+        const changed = existing.desired_state !== 'active'
+            || existing.categories_json !== categoriesJson
+            || existing.time_zone !== entry.timeZone
+            || existing.allow_windows_json !== allowWindowsJson;
+        if (changed) {
+            updateAdguardServicePolicyStmt.run({
+                id: existing.id,
+                categories_json: categoriesJson,
+                time_zone: entry.timeZone,
+                allow_windows_json: allowWindowsJson,
+                updated_ts: entry.timestamp
+            });
+        }
+        writeAdguardServicePolicyAudit({
+            policyId: existing.id, ts: entry.timestamp, deviceId: existing.device_id,
+            action: changed ? 'update' : 'duplicate', outcome: changed ? 'pending' : 'unchanged',
+            detail: `categories=${entry.categories.join(',')}`
+        });
+        return { id: existing.id, created: false, changed };
+    });
+    const removeAdguardServicePolicyTransaction = db.transaction((id, timestamp) => {
+        const existing = getAdguardServicePolicyByIdStmt.get(id);
+        if (!existing) return null;
+        const changed = removeAdguardServicePolicyStmt.run({ id, updated_ts: timestamp }).changes === 1;
+        writeAdguardServicePolicyAudit({
+            policyId: id, ts: timestamp, deviceId: existing.device_id,
+            action: 'remove', outcome: changed ? 'pending' : 'unchanged', detail: null
+        });
+        return { id, deviceId: existing.device_id, changed };
+    });
+    const setAdguardServicePolicyBaselineTransaction = db.transaction((id, baseline, timestamp) => {
+        const existing = getAdguardServicePolicyByIdStmt.get(id);
+        if (!existing) return false;
+        const serialized = boundedPolicyJson(baseline, 'baseline', 16384);
+        const changed = setAdguardServicePolicyBaselineStmt.run({
+            id, baseline_json: serialized, updated_ts: timestamp
+        }).changes === 1;
+        if (changed) writeAdguardServicePolicyAudit({
+            policyId: id, ts: timestamp, deviceId: existing.device_id,
+            action: 'baseline', outcome: 'stored', detail: null
+        });
+        return changed;
+    });
+    const markAdguardServicePolicySyncedTransaction = db.transaction((id, timestamp, changed) => {
+        const existing = getAdguardServicePolicyByIdStmt.get(id);
+        if (!existing) return null;
+        if (existing.desired_state === 'removed') {
+            writeAdguardServicePolicyAudit({
+                policyId: id, ts: timestamp, deviceId: existing.device_id,
+                action: 'reconcile', outcome: 'restored', detail: changed ? 'upstream_changed' : 'upstream_unchanged'
+            });
+            deleteAdguardServicePolicyStmt.run(id);
+            return { removed: true };
+        }
+        markAdguardServicePolicyAppliedStmt.run({ id, updated_ts: timestamp });
+        writeAdguardServicePolicyAudit({
+            policyId: id, ts: timestamp, deviceId: existing.device_id,
+            action: 'reconcile', outcome: 'applied', detail: changed ? 'upstream_changed' : 'upstream_unchanged'
+        });
+        return { removed: false };
+    });
+    const markAdguardServicePolicyFailureTransaction = db.transaction((id, timestamp, error, retryAt) => {
+        const existing = getAdguardServicePolicyByIdStmt.get(id);
+        if (!existing) return false;
+        markAdguardServicePolicyFailureStmt.run({
+            id,
+            updated_ts: timestamp,
+            next_retry_ts: retryAt,
+            last_error: String(error).slice(0, 500)
+        });
+        writeAdguardServicePolicyAudit({
+            policyId: id, ts: timestamp, deviceId: existing.device_id,
+            action: 'reconcile', outcome: 'failed', detail: String(error).slice(0, 500)
+        });
+        return true;
+    });
+    function mapAdguardServicePolicy(row) {
+        return {
+            id: row.id,
+            deviceId: row.device_id,
+            categories: parsePolicyJson(row.categories_json, 'categories'),
+            timeZone: row.time_zone,
+            allowWindows: parsePolicyJson(row.allow_windows_json, 'allowWindows'),
+            baseline: row.baseline_json == null ? null : parsePolicyJson(row.baseline_json, 'baseline'),
+            desiredState: row.desired_state,
+            syncState: row.sync_state,
+            createdTs: row.created_ts,
+            createdAt: new Date(row.created_ts).toISOString(),
+            updatedTs: row.updated_ts,
             updatedAt: new Date(row.updated_ts).toISOString(),
             lastAttemptAt: row.last_attempt_ts == null ? null : new Date(row.last_attempt_ts).toISOString(),
             attemptCount: row.attempt_count,
@@ -1154,6 +1399,72 @@ function createHistoryDb(dataDir, options = {}) {
             }
             return measure('markThreatIpBlockSyncFailure', 'threat_ip_blocks', () => (
                 markThreatIpBlockSyncFailureTransaction.immediate(timestamp, error, retryAt)
+            ), { transaction: true });
+        },
+        upsertAdguardServicePolicy(entry) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+                || typeof entry.id !== 'string' || typeof entry.deviceId !== 'string'
+                || !Array.isArray(entry.categories) || typeof entry.timeZone !== 'string'
+                || !entry.allowWindows || typeof entry.allowWindows !== 'object'
+                || !Number.isInteger(entry.timestamp)) {
+                throw new TypeError('AdGuard service policy request is invalid');
+            }
+            return measure('upsertAdguardServicePolicy', 'adguard_service_policies', () => {
+                const result = upsertAdguardServicePolicyTransaction.immediate(entry);
+                return { ...result, policy: mapAdguardServicePolicy(getAdguardServicePolicyByIdStmt.get(result.id)) };
+            }, { transaction: true });
+        },
+        requestAdguardServicePolicyRemoval(id, timestamp) {
+            if (typeof id !== 'string' || !Number.isInteger(timestamp)) {
+                throw new TypeError('AdGuard service policy removal request is invalid');
+            }
+            return measure('requestAdguardServicePolicyRemoval', 'adguard_service_policies', () => (
+                removeAdguardServicePolicyTransaction.immediate(id, timestamp)
+            ), { transaction: true });
+        },
+        listAdguardServicePolicies() {
+            return measure('listAdguardServicePolicies', 'adguard_service_policies', () => (
+                listAdguardServicePoliciesStmt.all().map(mapAdguardServicePolicy)
+            ));
+        },
+        listAdguardServicePolicyAudit(limit = 100) {
+            const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 200);
+            return measure('listAdguardServicePolicyAudit', 'adguard_service_policy_audit', () => (
+                listAdguardServicePolicyAuditStmt.all(safeLimit).map(row => ({
+                    id: row.id,
+                    policyId: row.policy_id,
+                    timestamp: new Date(row.ts).toISOString(),
+                    deviceId: row.device_id,
+                    action: row.action,
+                    outcome: row.outcome,
+                    detail: row.detail
+                }))
+            ));
+        },
+        setAdguardServicePolicyBaseline(id, baseline, timestamp) {
+            if (typeof id !== 'string' || !baseline || typeof baseline !== 'object'
+                || Array.isArray(baseline) || !Number.isInteger(timestamp)) {
+                throw new TypeError('AdGuard service policy baseline is invalid');
+            }
+            return measure('setAdguardServicePolicyBaseline', 'adguard_service_policies', () => (
+                setAdguardServicePolicyBaselineTransaction.immediate(id, baseline, timestamp)
+            ), { transaction: true });
+        },
+        markAdguardServicePolicySynced(id, timestamp, changed = false) {
+            if (typeof id !== 'string' || !Number.isInteger(timestamp) || typeof changed !== 'boolean') {
+                throw new TypeError('AdGuard service policy sync result is invalid');
+            }
+            return measure('markAdguardServicePolicySynced', 'adguard_service_policies', () => (
+                markAdguardServicePolicySyncedTransaction.immediate(id, timestamp, changed)
+            ), { transaction: true });
+        },
+        markAdguardServicePolicyFailure(id, timestamp, error, retryAt) {
+            if (typeof id !== 'string' || !Number.isInteger(timestamp)
+                || !Number.isInteger(retryAt) || retryAt <= timestamp) {
+                throw new TypeError('AdGuard service policy retry result is invalid');
+            }
+            return measure('markAdguardServicePolicyFailure', 'adguard_service_policies', () => (
+                markAdguardServicePolicyFailureTransaction.immediate(id, timestamp, error, retryAt)
             ), { transaction: true });
         },
         insertReportRun(entry) {

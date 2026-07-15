@@ -89,6 +89,7 @@
 - `GET /api/ups/events` around 2769
 - `GET /api/adguard/overview` around 2789
 - `GET /api/adguard/querylog`、`POST /api/adguard/protection`：共用 `server/integrations/adguard-client.js`；HTTPS 預設驗證、遠端 HTTP 必須明確 opt-in、禁止 redirect/proxy credential forwarding
+- `GET/POST /api/adguard/service-policies`、`DELETE /api/adguard/service-policies/:id`：admin-only 每裝置服務封鎖 desired state、baseline restore、SQLite audit 與 bounded reconciliation
 - `GET /api/linux/stats` around 2889
 - `GET /api/linux/history` around 2910
 
@@ -120,6 +121,12 @@
 
 - `server/integrations/adguard-client.js`: bounded origin/credential/CA/timeout policy，固定 `/control/*` request surface，Basic Auth 只送往已驗證的 configured origin
 - `/api/connections`: 寫入任何 `ADGUARD_*` 欄位前先組合候選設定並 fail closed；`ADGUARD_URL` 優先，舊 `ADGUARD_HOST/PORT` 僅保留相容性
+
+### AdGuard per-device service policy
+
+- `server/policies/adguard-service-policy.js`: IP/MAC、YouTube/TikTok/Gaming controlled definitions、IANA timezone 與每日 allow-window 契約；allow window 是 AdGuard blocked-service filtering 的 inactivity period
+- `server/services/adguard-service-policy.js`: 序列化 per-device reconciliation、支援 upstream client/catalog 兩種回應形狀、保留非管理欄位、首次 baseline capture、移除還原、bounded retry/drift repair
+- `db.js`: `adguard_service_policies` desired state / retry / baseline 與 bounded `adguard_service_policy_audit`
 
 ## 搜尋範例
 

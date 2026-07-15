@@ -13,6 +13,7 @@ const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-rout
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
+const adguardServicePolicy = require('./server/policies/adguard-service-policy');
 const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
 const {
     BACKUP_MEDIA_TYPE,
@@ -1160,6 +1161,81 @@ app.post('/api/adguard/protection', (req, res) => {
     res.json({ ok: true, enabled: mockAdguardProtection });
 });
 
+let mockAdguardServicePolicies = [];
+let mockAdguardServicePolicyAudit = [];
+function mockAdguardServicePolicySnapshot() {
+    const now = new Date().toISOString();
+    return {
+        configuration: { configured: true, transport: 'https', tlsVerified: true },
+        definitions: adguardServicePolicy.publicCategoryDefinitions(),
+        ownership: 'SmartHub owns blocked service fields while a policy is active and restores their captured baseline on removal.',
+        reconcile: {
+            status: 'healthy', lastReconcileAt: now, lastSuccessAt: now,
+            lastChanged: false, lastError: null
+        },
+        policies: mockAdguardServicePolicies,
+        audit: mockAdguardServicePolicyAudit.slice(0, 100)
+    };
+}
+app.get('/api/adguard/service-policies', mockSecurity.requireAdmin, (_req, res) => {
+    res.json(mockAdguardServicePolicySnapshot());
+});
+app.post('/api/adguard/service-policies', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => adguardServicePolicy.parsePolicyRequest(req.body));
+    if (!input) return;
+    const now = Date.now();
+    let policy = mockAdguardServicePolicies.find(candidate => candidate.deviceId === input.deviceId);
+    const created = !policy;
+    const changed = created || JSON.stringify({
+        categories: policy.categories, timeZone: policy.timeZone, allowWindows: policy.allowWindows
+    }) !== JSON.stringify({
+        categories: input.categories, timeZone: input.timeZone, allowWindows: input.allowWindows
+    });
+    if (!policy) {
+        policy = {
+            id: randomUUID(), deviceId: input.deviceId,
+            createdTs: now, createdAt: new Date(now).toISOString()
+        };
+        mockAdguardServicePolicies.unshift(policy);
+    }
+    Object.assign(policy, input, {
+        desiredState: 'active', syncState: 'applied', updatedTs: now,
+        updatedAt: new Date(now).toISOString(), lastAttemptAt: new Date(now).toISOString(),
+        attemptCount: 0, nextRetryTs: null, nextRetryAt: null, lastError: null
+    });
+    mockAdguardServicePolicyAudit.unshift({
+        id: mockAdguardServicePolicyAudit.length + 1,
+        policyId: policy.id, timestamp: new Date(now).toISOString(), deviceId: policy.deviceId,
+        action: created ? 'create' : (changed ? 'update' : 'duplicate'),
+        outcome: changed ? 'applied' : 'unchanged', detail: null
+    });
+    mockAdguardServicePolicyAudit = mockAdguardServicePolicyAudit.slice(0, 1000);
+    res.status(created ? 201 : 200).json({
+        ok: true, accepted: true, applied: true, created, changed, policy,
+        reconcile: mockAdguardServicePolicySnapshot().reconcile
+    });
+});
+app.delete('/api/adguard/service-policies/:id', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => adguardServicePolicy.parsePolicyRemoval(req.params.id, req.body));
+    if (!input) return;
+    const index = mockAdguardServicePolicies.findIndex(policy => policy.id === input.id);
+    if (index === -1) {
+        return mockApiError(res, new Error('AdGuard service policy was not found'), {
+            status: 404, code: ERROR_CODES.API_NOT_FOUND, publicMessage: 'AdGuard service policy was not found'
+        });
+    }
+    const [policy] = mockAdguardServicePolicies.splice(index, 1);
+    mockAdguardServicePolicyAudit.unshift({
+        id: mockAdguardServicePolicyAudit.length + 1,
+        policyId: policy.id, timestamp: new Date().toISOString(), deviceId: policy.deviceId,
+        action: 'remove', outcome: 'restored', detail: null
+    });
+    res.json({
+        ok: true, accepted: true, applied: true, id: input.id,
+        reconcile: mockAdguardServicePolicySnapshot().reconcile
+    });
+});
+
 /* ===== 連線設定 (模擬) ===== */
 const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'mock-connections.json');
 const mockConnDefaults = {
@@ -1257,7 +1333,8 @@ app.get('/api/connections/status', (_req, res) => res.json({
         { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
         { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, detail: mockConn.NAS_MONITOR_URL || '' },
         { name: 'WiiM Amp', configured: true, ok: true, detail: mockConn.WIIM_IP },
-        { name: 'UPS', configured: true, ok: true, detail: 'NUT mock' }
+        { name: 'UPS', configured: true, ok: true, detail: 'NUT mock' },
+        { name: 'AdGuard 裝置政策', configured: mockAdguardServicePolicies.length > 0, ok: true, detail: `${mockAdguardServicePolicies.length} 筆 · healthy` }
     ]
 }));
 app.post('/api/connections', (req, res) => {

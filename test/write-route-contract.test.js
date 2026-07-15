@@ -233,6 +233,16 @@ const INVALID_WRITES = Object.freeze([
     ['connection ambiguous AdGuard URL', 'POST', '/api/connections', { ADGUARD_URL: 'https://adguard.internal/control?key=leak' }],
     ['connection invalid AdGuard HTTP flag', 'POST', '/api/connections', { ADGUARD_ALLOW_INSECURE_HTTP: '1' }],
     ['connection invalid AdGuard TLS flag', 'POST', '/api/connections', { ADGUARD_TLS_VERIFY: 'FALSE' }],
+    ['AdGuard policy invalid identity', 'POST', '/api/adguard/service-policies', {
+        deviceId: 'living-room', categories: ['youtube'], timeZone: 'Asia/Taipei', allowWindows: {}
+    }],
+    ['AdGuard policy invalid schedule boundary', 'POST', '/api/adguard/service-policies', {
+        deviceId: '192.168.1.50', categories: ['youtube'], timeZone: 'Asia/Taipei',
+        allowWindows: { mon: { start: '20:00', end: '18:00' } }
+    }],
+    ['AdGuard policy invalid removal confirmation', 'DELETE', '/api/adguard/service-policies/11111111-1111-4111-8111-111111111111', {
+        confirmation: 'yes'
+    }],
     ['connection unknown field', 'POST', '/api/connections', { SURPRISE_SECRET: 'value' }],
     ['connection oversized secret', 'POST', '/api/connections', { PPB_PASSWORD: 'x'.repeat(4097) }]
 ]);
