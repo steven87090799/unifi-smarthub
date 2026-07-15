@@ -35,6 +35,7 @@ const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
 const { TelegramCommandBot } = require('./telegram-command-bot');
 const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
+const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const { createSiteManagerClient } = require('./server/integrations/site-manager-client');
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
@@ -66,6 +67,7 @@ const {
     ThreatIpBlockingError,
     createThreatIpBlockingService
 } = require('./server/services/threat-ip-blocking');
+const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
@@ -235,7 +237,8 @@ app.use('/api/config/restore', express.raw({ type: BACKUP_MEDIA_TYPE, limit: MAX
 app.use(express.json({ limit: '256kb', strict: true }));
 
 // 託管前端靜態網頁
-app.use(express.static(path.join(__dirname, 'public')));
+registerFrontendAssetRoutes(app, { rootDir: __dirname });
+app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()));
 
 // 建立忽略內網自簽 HTTPS 憑證錯誤的 Axios 實例
 // 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
@@ -602,6 +605,21 @@ app.put('/api/wifi-networks/:id', async (req, res) => {
         res.json({ success: true });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.wifi', function: 'updateWifiNetwork', logMessage: 'Failed to update WiFi network' });
+    }
+});
+
+app.post('/api/wifi/qr', panelSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseWifiQrRequest(req.body), {
+        module: 'api.wifiQr', function: 'render'
+    });
+    if (!input) return;
+    try {
+        const svg = await renderWifiQrSvg(input);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+        res.type('image/svg+xml').send(svg);
+    } catch (error) {
+        apiError(res, error, { module: 'api.wifiQr', function: 'render', logMessage: 'WiFi QR generation failed' });
     }
 });
 
@@ -3638,6 +3656,7 @@ const telegramCommandBot = new TelegramCommandBot({ axios, getSettings: loadNoti
 
 /* ===================== PWA (manifest + service worker) ===================== */
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');
+const PWA_CACHE_NAME = `smarthub-shell-${buildIdentity.public.revision === 'unknown' ? APP_VERSION : buildIdentity.public.revision}`;
 app.get('/manifest.webmanifest', (req, res) => {
     res.json({
         name: 'SmartHub 戰情室', short_name: 'SmartHub', start_url: '/', display: 'standalone',
@@ -3650,8 +3669,9 @@ app.get('/manifest.webmanifest', (req, res) => {
 });
 app.get('/sw.js', (req, res) => {
     res.type('application/javascript').send(`
-const C='smarthub-v1';
-self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(['/'])))});
+const C=${JSON.stringify(PWA_CACHE_NAME)};
+const SHELL=['/','/assets/tailwind.css','/vendor/chart.js/4.5.1/chart.umd.js','/vendor/d3/7.9.0/d3.min.js','/vendor/topojson-client/3.1.0/topojson-client.min.js','/vendor/world-atlas/2.0.2/countries-110m.json'];
+self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(SHELL)))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{
   if(e.request.method!=='GET')return;

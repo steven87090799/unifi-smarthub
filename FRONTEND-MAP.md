@@ -52,6 +52,7 @@
 | 5759 | `renderThreatTable()` / `fetchThreatBlocks()` | 資安事件表；管理員臨時公網 IPv4 封鎖、到期與同步狀態 |
 | 5859 | `updateSecurityAnalytics()` | 資安分析/評分 |
 | 5964 | `fetchThreats()` | 威脅事件 |
+| 6100 | `updateGuestQR()` | 透過同源 admin-only API 產生 QR blob；不得把 SSID/密碼送往第三方 |
 | 6065 | `fetchNas()` | NAS 基本資訊 |
 | 6296 | `initNasCharts()` | NAS 圖表初始化 |
 | 6343-6754 | `fetchNas*()` | NAS 進階/告警/Docker |
@@ -70,6 +71,12 @@
 | 8016 | `fetchUps()` | UPS 狀態/歷史/事件 + 降採樣 |
 | 8158 | `fetchAdguard*()` | AdGuard |
 | 8219 | `fetchLinux*()` | Linux 小主機 |
+
+## 前端資產
+
+- `public/assets/tailwind.css`: `tailwindcss@3.4.19` 的 deterministic production output
+- `frontend/tailwind.input.css` + `tailwind.config.cjs`: CSS 建置來源；修改 class 後跑 `npm run build:css`
+- Chart.js、D3、TopoJSON、world-atlas 由 `/vendor/<package>/<exact-version>/...` 同源提供，版本由 `package-lock.json` 與 `server/routes/frontend-asset-routes.js` 約束
 
 ## 常用定位
 

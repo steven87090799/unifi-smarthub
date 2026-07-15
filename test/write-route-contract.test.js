@@ -187,6 +187,8 @@ const INVALID_WRITES = Object.freeze([
     ['WiFi path identifier', 'PUT', '/api/wifi-networks/bad%24id', { enabled: true }],
     ['WiFi boolean string', 'PUT', '/api/wifi-networks/wifi-1', { enabled: 'false' }],
     ['WiFi unknown field', 'PUT', '/api/wifi-networks/wifi-1', { enabled: true, extra: 1 }],
+    ['WiFi QR weak password', 'POST', '/api/wifi/qr', { ssid: 'Guest', password: 'short' }],
+    ['WiFi QR unknown field', 'POST', '/api/wifi/qr', { ssid: 'Guest', password: 'safe passphrase', external: true }],
     ['device restriction malformed MAC', 'PUT', '/api/device/restrict', { deviceId: 'not-a-mac', blockState: false }],
     ['device restriction boolean string', 'PUT', '/api/device/restrict', { deviceId: '00:11:22:33:44:55', blockState: 'false' }],
     ['device restriction unknown field', 'PUT', '/api/device/restrict', { deviceId: '00:11:22:33:44:55', blockState: false, extra: 1 }],
@@ -250,10 +252,33 @@ async function assertValidationFailure(runtime, client, [label, method, route, p
 }
 
 async function assertSafeLocalWrites(runtime, client) {
-    let response = await client.write('POST', '/api/ui-preferences', {
-        preferences: { theme: 'light', pollConfig: { hardware: 5 } }
+    let response = await client.read('/');
+    assert.equal(response.status, 200, `${runtime.label} frontend shell`);
+    assert.match(response.headers.get('content-security-policy') || '', /frame-ancestors 'none'/u);
+    for (const asset of [
+        '/assets/tailwind.css',
+        '/vendor/chart.js/4.5.1/chart.umd.js',
+        '/vendor/d3/7.9.0/d3.min.js',
+        '/vendor/topojson-client/3.1.0/topojson-client.min.js',
+        '/vendor/world-atlas/2.0.2/countries-110m.json'
+    ]) {
+        response = await client.read(asset);
+        assert.equal(response.status, 200, `${runtime.label} same-origin asset ${asset}`);
+    }
+
+    response = await client.write('POST', '/api/wifi/qr', {
+        ssid: 'Guest;Network', password: 'correct horse battery'
     });
     let text = await response.text();
+    assert.equal(response.status, 200, `${runtime.label} WiFi QR: ${text}`);
+    assert.match(response.headers.get('content-type') || '', /image\/svg\+xml/u);
+    assert.match(response.headers.get('cache-control') || '', /no-store/u);
+    assert.doesNotMatch(text, /Guest;Network|correct horse battery/u);
+
+    response = await client.write('POST', '/api/ui-preferences', {
+        preferences: { theme: 'light', pollConfig: { hardware: 5 } }
+    });
+    text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} UI preferences: ${text}`);
     let body = JSON.parse(text);
     assert.equal(body.ok, true);
@@ -356,6 +381,46 @@ async function exerciseRuntimeContract(t, script, label) {
         });
         assert.equal(response.status, 403);
         assert.equal((await response.json()).code, ERROR_CODES.API_AUTHORIZATION_FAILED);
+    });
+
+    await t.test('WiFi QR remains admin-only with same-origin CSRF proof', async () => {
+        const body = JSON.stringify({ ssid: 'Guest', password: 'safe passphrase' });
+        assert.equal((await fetch(`${runtime.baseUrl}/api/wifi/qr`, {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body
+        })).status, 401);
+        const readonlyCsrfResponse = await fetch(`${runtime.baseUrl}/api/security/csrf`, {
+            headers: { authorization: READONLY_AUTH }
+        });
+        const readonlyCsrf = (await readonlyCsrfResponse.json()).csrfToken;
+        assert.equal((await fetch(`${runtime.baseUrl}/api/wifi/qr`, {
+            method: 'POST',
+            headers: {
+                authorization: READONLY_AUTH,
+                origin: runtime.baseUrl,
+                'x-smarthub-csrf': readonlyCsrf,
+                'content-type': 'application/json'
+            },
+            body
+        })).status, 403);
+        assert.equal((await fetch(`${runtime.baseUrl}/api/wifi/qr`, {
+            method: 'POST',
+            headers: { authorization: BASIC_AUTH, origin: runtime.baseUrl, 'content-type': 'application/json' },
+            body
+        })).status, 403);
+        const adminCsrfResponse = await fetch(`${runtime.baseUrl}/api/security/csrf`, {
+            headers: { authorization: BASIC_AUTH }
+        });
+        const adminCsrf = (await adminCsrfResponse.json()).csrfToken;
+        assert.equal((await fetch(`${runtime.baseUrl}/api/wifi/qr`, {
+            method: 'POST',
+            headers: {
+                authorization: BASIC_AUTH,
+                origin: 'https://hostile.example',
+                'x-smarthub-csrf': adminCsrf,
+                'content-type': 'application/json'
+            },
+            body
+        })).status, 403);
     });
 
     await t.test('admin-only backup export and staged restore share the production contract', async () => {

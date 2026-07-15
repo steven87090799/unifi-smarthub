@@ -109,6 +109,12 @@
 - `server/services/threat-ip-blocking.js`: 序列化 mutation/reconciliation、持久 retry backoff、到期移除
 - `db.js`: `threat_ip_blocks` desired state 與 bounded `threat_ip_block_audit`
 
+### Frontend runtime trust boundary
+
+- `server/routes/frontend-asset-routes.js`: 只公開 lockfile 鎖定、帶版本 URL 的 Chart/D3/TopoJSON/world-atlas 檔案，並集中設定 CSP/anti-framing/referrer headers
+- `server/services/wifi-qr.js`: 同源 Guest WiFi QR SVG；不把 SSID/密碼送往第三方
+- `POST /api/wifi/qr`: admin only、Origin/CSRF、嚴格 SSID/WPA 驗證、`no-store`
+
 ## 搜尋範例
 
 ```bash

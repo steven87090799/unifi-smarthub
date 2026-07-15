@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 const { version: APP_VERSION } = require('./package.json');
 const { ERROR_CODES } = require('./observability/error-codes');
 const { createPanelSecurity } = require('./server/middleware/panel-security');
+const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
@@ -18,6 +19,7 @@ const {
     BackupValidationError,
     createConfigBackupService
 } = require('./server/services/config-backup');
+const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 
 const app = express();
 app.use((_req, res, next) => {
@@ -69,7 +71,8 @@ function validatedInput(res, parse) {
 }
 
 // 託管前端靜態網頁
-app.use(express.static(path.join(__dirname, 'public')));
+registerFrontendAssetRoutes(app, { rootDir: __dirname });
+app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()));
 
 // 模擬變數
 let mockClients = [
@@ -370,6 +373,17 @@ app.put('/api/wifi-networks/:id', (req, res) => {
         net.enabled = input.enabled;
     }
     res.json({ success: true });
+});
+
+app.post('/api/wifi/qr', mockSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseWifiQrRequest(req.body));
+    if (!input) return;
+    try {
+        const svg = await renderWifiQrSvg(input);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+        res.type('image/svg+xml').send(svg);
+    } catch (error) { mockApiError(res, error); }
 });
 
 // 5. 獲取 IPS/IDS 威脅警報
@@ -934,8 +948,9 @@ app.get('/manifest.webmanifest', (req, res) => res.json({
     icons: [{ src: PWA_ICON, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' }, { src: PWA_ICON, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' }]
 }));
 app.get('/sw.js', (req, res) => res.type('application/javascript').send(`
-const C='smarthub-v1';
-self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(['/'])))});
+const C=${JSON.stringify(`smarthub-shell-mock-${APP_VERSION}`)};
+const SHELL=['/','/assets/tailwind.css','/vendor/chart.js/4.5.1/chart.umd.js','/vendor/d3/7.9.0/d3.min.js','/vendor/topojson-client/3.1.0/topojson-client.min.js','/vendor/world-atlas/2.0.2/countries-110m.json'];
+self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(SHELL)))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.pathname.startsWith('/api/')||u.pathname.startsWith('/health'))return;e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));});`));
 

@@ -16,24 +16,18 @@
         // 註冊 Service Worker (PWA 可安裝 + 離線殼層)
         if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => { }));
     </script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        // 補齊專案使用但 Tailwind 未內建的中間色階 (slate-750/850)，否則這些 class 會靜默失效
-        tailwind.config = { theme: { extend: { colors: { slate: { 750: '#293548', 850: '#172033' } } } } };
-    </script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+    <link rel="stylesheet" href="/assets/tailwind.css">
+    <script src="/vendor/chart.js/4.5.1/chart.umd.js"></script>
+    <script src="/vendor/d3/7.9.0/d3.min.js"></script>
+    <script src="/vendor/topojson-client/3.1.0/topojson-client.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
-
         body {
-            font-family: 'Noto Sans TC', sans-serif;
+            font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
             background-color: #030712;
         }
 
         .mono {
-            font-family: 'Fira Code', monospace;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
         }
 
         .glow-red {
@@ -2019,9 +2013,10 @@
                             <h3 class="text-xs font-bold text-emerald-400 mb-4 tracking-wider uppercase">臨時訪客網路 QR 產生
                             </h3>
                             <div class="space-y-3">
-                                <input type="text" id="v-ssid" placeholder="SSID"
+                                <p class="text-[9px] text-slate-500">僅管理員；QR 由 SmartHub 同源產生，SSID 與密碼不會送往第三方服務。</p>
+                                <input type="text" id="v-ssid" placeholder="SSID" maxlength="32"
                                     class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500">
-                                <input type="password" id="v-pass" placeholder="密碼"
+                                <input type="password" id="v-pass" placeholder="密碼" minlength="8" maxlength="64" autocomplete="new-password"
                                     class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500">
                                 <button onclick="updateGuestQR()"
                                     class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded-xl transition">更新
@@ -5647,7 +5642,7 @@
 
         async function initWorldMap() {
             try {
-                const world = await (await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')).json();
+                const world = await (await fetch('/vendor/world-atlas/2.0.2/countries-110m.json')).json();
                 const countries = topojson.feature(world, world.objects.countries);
                 const svg = d3.select('#threat-map');
                 mapProjection = d3.geoEquirectangular().fitSize([800, 400], countries);
@@ -6106,12 +6101,28 @@
             } catch (e) { showToast('WiFi 更新失敗', true); }
         }
 
-        function updateGuestQR() {
+        let guestQrObjectUrl = null;
+        async function updateGuestQR() {
+            if (document.documentElement.dataset.panelRole !== 'admin') return showToast('僅管理員可產生 WiFi QR', true);
             const ssid = document.getElementById('v-ssid').value, pass = document.getElementById('v-pass').value;
             if (!ssid) return;
             const img = document.getElementById('qr-img');
-            img.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(`WIFI:S:${ssid};T:WPA;P:${pass};;`)}`;
-            img.classList.remove('hidden');
+            try {
+                const response = await fetch('/api/wifi/qr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ssid, password: pass })
+                });
+                if (!response.ok) {
+                    const result = await response.json().catch(() => ({}));
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                const blob = await response.blob();
+                if (guestQrObjectUrl) URL.revokeObjectURL(guestQrObjectUrl);
+                guestQrObjectUrl = URL.createObjectURL(blob);
+                img.src = guestQrObjectUrl;
+                img.classList.remove('hidden');
+            } catch (error) { showToast(`QR 產生失敗：${error.message}`, true); }
         }
 
         /* ==================== 雲端 Site Manager ==================== */

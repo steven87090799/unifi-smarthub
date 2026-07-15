@@ -158,6 +158,17 @@ function parseWifiUpdate(id, body) {
     };
 }
 
+function parseWifiQrRequest(body) {
+    exactObject(body, { allowed: ['ssid', 'password'], required: ['ssid', 'password'] });
+    const ssid = stringValue(body.ssid, { field: 'ssid', min: 1, max: 64, trim: false });
+    if (Buffer.byteLength(ssid, 'utf8') > 32) reject('ssid must not exceed 32 UTF-8 bytes', 'ssid');
+    const password = stringValue(body.password, { field: 'password', min: 8, max: 64, trim: false });
+    const passphrase = /^[\x20-\x7e]{8,63}$/u.test(password);
+    const rawKey = /^[0-9a-f]{64}$/iu.test(password);
+    if (!passphrase && !rawKey) reject('password must be an 8-63 character WPA passphrase or 64 hex digits', 'password');
+    return { ssid, password };
+}
+
 function parseDeviceRestriction(body) {
     exactObject(body, {
         allowed: ['deviceId', 'blockState', 'deviceName'],
@@ -472,6 +483,7 @@ module.exports = {
     parsePoePowerCycle,
     parseSingleBoolean,
     parseWifiUpdate,
+    parseWifiQrRequest,
     parseUiPreferences,
     quoteEnvValue,
     stringValue

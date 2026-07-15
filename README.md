@@ -33,6 +33,8 @@ npm install && SMARTHUB_ENV_FILE=config/.env npm start
 open http://<主機IP>:3000
 ```
 
+前端的 Tailwind CSS、Chart.js、D3、TopoJSON 與世界地圖資料全部由同一個 SmartHub release image 提供，不依賴第三方 CDN。修改 `public/index.html` 的 Tailwind class 後請執行 `npm run build:css`；`npm run check:css` 會拒絕過期的生成檔。Guest WiFi QR 也在同源後端產生，SSID／密碼不會送往外部 QR 服務。
+
 > 沒填的設備區塊會顯示「未設定」並自動略過。網頁「設定 → 連線設定」會安全寫回 `config/.env`；一般整合會即時生效，NAS Monitor URL/key/mode 為同一個 recreate-scoped 信任組，變更後必須協調重建相關容器。
 
 ---
