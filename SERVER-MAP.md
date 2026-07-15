@@ -140,6 +140,7 @@
 
 ### Long-lived notification/failure state
 
+- `server/services/auto-defense-block-state.js`: Auto Defense 成功 block 的 10-minute propagation cooldown；canonical MAC、future-alarm rejection、2,000-entry recency bound，expiry 後允許新事件重新隔離
 - `server/services/docker-notification-state.js`: Docker CPU/RAM cooldown 的單一 owner；container removal cleanup + 2,000-entry recency bound
 - `server/services/recoverable-failure-state.js`: integration failure log cooldown 的單一 owner；保留 first-log/cooldown 語意，支援動態 Docker key removal + 2,000-key bound
 

@@ -81,6 +81,10 @@ const {
 } = require('./server/services/web-push');
 const { createDockerMetricAlertState } = require('./server/services/docker-notification-state');
 const { createRecoverableFailureState } = require('./server/services/recoverable-failure-state');
+const {
+    createAutoDefenseBlockState,
+    isRecentAlarmTimestamp
+} = require('./server/services/auto-defense-block-state');
 const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
 const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
@@ -1185,16 +1189,17 @@ app.post('/api/security/settings', (req, res) => {
 });
 
 const INFECTION_KEYWORDS = ['MALWARE', 'TROJAN', 'BOTNET', 'CNC', ' C2 ', 'COINMINER', 'RANSOMWARE', 'BACKDOOR'];
-const autoBlockedMacs = new Set();
+const autoDefenseBlockState = createAutoDefenseBlockState({ cooldownMs: 10 * 60 * 1000, maxEntries: 2000 });
 
 async function autoDefenseSweep() {
     if (!loadSecSettings().autoDefense) return;
     try {
+        const sweepTimestamp = Date.now();
         sysLog('AutoDefense', '啟動自動防禦威脅日誌掃描...');
         const cookie = await getLocalSession();
         const alarm = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
         const recent = (alarm.data.data || []).filter(a =>
-            isIpsAlarm(a) && Date.now() - new Date(a.datetime).getTime() < 10 * 60 * 1000);
+            isIpsAlarm(a) && isRecentAlarmTimestamp(a.datetime, sweepTimestamp));
         if (!recent.length) {
             sysLog('AutoDefense', '掃描完成，未偵測到近 10 分鐘內的高危 IPS 威脅。');
             return;
@@ -1205,10 +1210,10 @@ async function autoDefenseSweep() {
             const msg = (t.msg || '').toUpperCase();
             if (!INFECTION_KEYWORDS.some(k => msg.includes(k))) continue;
             const victim = clients.find(c => c.ip === t.dest_ip && !c.blocked);
-            if (victim && !autoBlockedMacs.has(victim.mac)) {
+            if (victim && autoDefenseBlockState.shouldBlock(victim.mac, sweepTimestamp)) {
                 sysLog('AutoDefense', `⚠️ 偵測到重大感染威脅：設備 IP ${t.dest_ip} (${victim.mac}) 觸發「${t.msg}」，即將自動進行網絡物理隔離！`, true);
                 await unifiClient.post('/proxy/network/api/s/default/cmd/stamgr', { cmd: 'block-sta', mac: victim.mac }, { headers: { 'Cookie': cookie } });
-                autoBlockedMacs.add(victim.mac);
+                autoDefenseBlockState.record(victim.mac, sweepTimestamp);
                 appendBlockHistory({
                     datetime: new Date().toISOString(),
                     mac: victim.mac,
