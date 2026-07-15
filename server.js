@@ -18,6 +18,10 @@ const {
     rewriteEnvFileAtomically,
     upsertEnvAssignment
 } = require('./server/storage/env-file-store');
+const {
+    readJsonObjectFile,
+    writeJsonObjectAtomically
+} = require('./server/storage/json-file-store');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -896,24 +900,37 @@ function normalizeAppSettings(settings) {
     return settings;
 }
 let appSettings = normalizeAppSettings((() => {
-    try { return { ...APP_DEFAULTS, ...JSON.parse(fs.readFileSync(APP_SETTINGS_FILE, 'utf8')) }; }
+    try { return { ...APP_DEFAULTS, ...readJsonObjectFile(APP_SETTINGS_FILE) }; }
     catch (error) {
-        if (error.code !== 'ENOENT') logger.warning({
+        if (error.cause?.code !== 'ENOENT') logger.warning({
             module: 'config.app', function: 'loadAppSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
             message: 'App settings could not be read; defaults are in use', error, fields: { file: path.basename(APP_SETTINGS_FILE) }
         });
         return { ...APP_DEFAULTS };
     }
 })());
-function saveAppSettings() { fs.writeFileSync(APP_SETTINGS_FILE, JSON.stringify(appSettings, null, 2)); }
+function saveAppSettings(next) {
+    try { writeJsonObjectAtomically(APP_SETTINGS_FILE, next); }
+    catch (error) {
+        if (error.committed) appSettings = next;
+        throw error;
+    }
+    appSettings = next;
+}
 
 /* ===================== 跨部署 UI 偏好 =====================
    連線、通知與伺服器設定各自已有專用檔案；這裡保存純介面偏好，讓重建
    容器或換瀏覽器後，仍可還原使用者最後選擇的主題、輪詢與版面。 */
 const UI_PREFERENCES_FILE = path.join(DATA_DIR, 'ui-preferences.json');
 let uiPreferences = (() => {
-    try { return JSON.parse(fs.readFileSync(UI_PREFERENCES_FILE, 'utf8')); }
-    catch { return {}; }
+    try { return readJsonObjectFile(UI_PREFERENCES_FILE); }
+    catch (error) {
+        if (error.cause?.code !== 'ENOENT') logger.warning({
+            module: 'config.uiPreferences', function: 'loadUiPreferences', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'UI preferences could not be read; using an empty object', error, fields: { file: path.basename(UI_PREFERENCES_FILE) }
+        });
+        return {};
+    }
 })();
 app.get('/api/ui-preferences', (_req, res) => res.json({ preferences: uiPreferences }));
 app.post('/api/ui-preferences', (req, res) => {
@@ -921,9 +938,13 @@ app.post('/api/ui-preferences', (req, res) => {
         module: 'api.uiPreferences', function: 'save'
     });
     if (!incoming) return;
-    Object.assign(uiPreferences, incoming);
-    try { fs.writeFileSync(UI_PREFERENCES_FILE, JSON.stringify(uiPreferences, null, 2)); }
-    catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.uiPreferences', function: 'save', logMessage: 'UI preference persistence failed' }); }
+    const next = { ...uiPreferences, ...incoming };
+    try { writeJsonObjectAtomically(UI_PREFERENCES_FILE, next); }
+    catch (error) {
+        if (error.committed) uiPreferences = next;
+        return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.uiPreferences', function: 'save', logMessage: 'UI preference persistence failed' });
+    }
+    uiPreferences = next;
     res.json({ ok: true, preferences: uiPreferences });
 });
 
@@ -947,9 +968,9 @@ function appendBlockHistory(entry) { historyDb.insertBlock(entry); }
    存 data/client-aliases.json ({mac: name})，套用於客戶端清單/Top5/報表等所有顯示。 */
 const CLIENT_ALIAS_FILE = path.join(DATA_DIR, 'client-aliases.json');
 let clientAliases = (() => {
-    try { return JSON.parse(fs.readFileSync(CLIENT_ALIAS_FILE, 'utf8')); }
+    try { return readJsonObjectFile(CLIENT_ALIAS_FILE); }
     catch (error) {
-        if (error.code !== 'ENOENT') logger.warning({
+        if (error.cause?.code !== 'ENOENT') logger.warning({
             module: 'config.clientAliases', function: 'loadAliases', code: ERROR_CODES.SYS_CONFIG_INVALID,
             message: 'Client aliases could not be read; using an empty map', error, fields: { file: path.basename(CLIENT_ALIAS_FILE) }
         });
@@ -962,12 +983,15 @@ app.post('/api/client-aliases', (req, res) => {
         module: 'api.clientAliases', function: 'saveAlias'
     });
     if (!input) return;
-    if (input.name) clientAliases[input.mac] = input.name;
-    else delete clientAliases[input.mac];
-    try { fs.writeFileSync(CLIENT_ALIAS_FILE, JSON.stringify(clientAliases, null, 2)); }
+    const next = { ...clientAliases };
+    if (input.name) next[input.mac] = input.name;
+    else delete next[input.mac];
+    try { writeJsonObjectAtomically(CLIENT_ALIAS_FILE, next); }
     catch (error) {
+        if (error.committed) clientAliases = next;
         return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.clientAliases', function: 'saveAlias', logMessage: 'Client alias persistence failed' });
     }
+    clientAliases = next;
     res.json({ ok: true, aliases: clientAliases });
 });
 
@@ -1160,9 +1184,9 @@ const SEC_FILE = path.join(DATA_DIR, 'security-settings.json');
 let secSettingsCache = null;
 function loadSecSettings() {
     if (secSettingsCache) return secSettingsCache;
-    try { secSettingsCache = { autoDefense: false, ...JSON.parse(fs.readFileSync(SEC_FILE, 'utf8')) }; }
+    try { secSettingsCache = { autoDefense: false, ...readJsonObjectFile(SEC_FILE) }; }
     catch (error) {
-        if (error.code !== 'ENOENT') logger.warning({
+        if (error.cause?.code !== 'ENOENT') logger.warning({
             module: 'config.security', function: 'loadSecSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
             message: 'Security settings could not be read; safe defaults are in use', error, fields: { file: path.basename(SEC_FILE) }
         });
@@ -1171,8 +1195,12 @@ function loadSecSettings() {
     return secSettingsCache;
 }
 function saveSecSettings(s) {
+    try { writeJsonObjectAtomically(SEC_FILE, s); }
+    catch (error) {
+        if (error.committed) secSettingsCache = s;
+        throw error;
+    }
     secSettingsCache = s;
-    fs.writeFileSync(SEC_FILE, JSON.stringify(s, null, 2));
 }
 
 app.get('/api/security/settings', (req, res) => res.json(loadSecSettings()));
@@ -1181,8 +1209,7 @@ app.post('/api/security/settings', (req, res) => {
         module: 'api.security', function: 'saveSecSettings'
     });
     if (!input) return;
-    const s = loadSecSettings();
-    s.autoDefense = input.autoDefense;
+    const s = { ...loadSecSettings(), autoDefense: input.autoDefense };
     try { saveSecSettings(s); }
     catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.security', function: 'saveSecSettings', logMessage: 'Security settings persistence failed' }); }
     res.json(s);
@@ -1313,9 +1340,9 @@ const NOTIF_DEFAULTS = {
 let notifSettingsCache = null;
 function loadNotifSettings() {
     if (notifSettingsCache) return notifSettingsCache;
-    try { notifSettingsCache = { ...NOTIF_DEFAULTS, ...JSON.parse(fs.readFileSync(NOTIF_FILE, 'utf8')) }; }
+    try { notifSettingsCache = { ...NOTIF_DEFAULTS, ...readJsonObjectFile(NOTIF_FILE) }; }
     catch (error) {
-        if (error.code !== 'ENOENT') logger.warning({
+        if (error.cause?.code !== 'ENOENT') logger.warning({
             module: 'config.notifications', function: 'loadNotifSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
             message: 'Notification settings could not be read; defaults are in use', error, fields: { file: path.basename(NOTIF_FILE) }
         });
@@ -1324,8 +1351,12 @@ function loadNotifSettings() {
     return notifSettingsCache;
 }
 function saveNotifSettings(s) {
+    try { writeJsonObjectAtomically(NOTIF_FILE, s); }
+    catch (error) {
+        if (error.committed) notifSettingsCache = s;
+        throw error;
+    }
     notifSettingsCache = s;
-    fs.writeFileSync(NOTIF_FILE, JSON.stringify(s, null, 2));
 }
 
 let notifLog = [];
@@ -1472,8 +1503,7 @@ app.post('/api/notifications/settings', (req, res) => {
         module: 'api.notifications', function: 'saveNotifSettings'
     });
     if (!input) return;
-    const s = loadNotifSettings();
-    Object.assign(s, input);
+    const s = { ...loadNotifSettings(), ...input };
     try { saveNotifSettings(s); }
     catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.notifications', function: 'saveNotifSettings', logMessage: 'Notification settings persistence failed' }); }
     res.json({ ok: true });
@@ -3093,9 +3123,12 @@ app.post('/api/settings', (req, res) => {
         module: 'api.settings', function: 'saveAppSettings'
     });
     if (!input) return;
-    Object.assign(appSettings, input);
-    try { saveAppSettings(); }
-    catch (error) { return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.settings', function: 'saveAppSettings', logMessage: 'App settings persistence failed' }); }
+    const next = { ...appSettings, ...input };
+    try { saveAppSettings(next); }
+    catch (error) {
+        if (error.committed) scheduleServerJobs();
+        return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.settings', function: 'saveAppSettings', logMessage: 'App settings persistence failed' });
+    }
     scheduleServerJobs();   // 立即套用新的伺服器端間隔
     res.json({ ok: true, settings: appSettings });
 });

@@ -172,6 +172,27 @@ test('a UI-persisted connection setting survives a real production process resta
     assert.deepEqual(JSON.parse(tupleWriteText).restartRequired, [
         'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE'
     ]);
+    for (const [route, body] of [
+        ['/api/settings', { watcherSec: 45, reportEnabled: false }],
+        ['/api/ui-preferences', { preferences: { theme: 'dark' } }],
+        ['/api/client-aliases', { mac: 'AA:BB:CC:DD:EE:FF', name: 'Restart Lamp' }],
+        ['/api/security/settings', { autoDefense: true }],
+        ['/api/notifications/settings', { enabled: false, triggerSystemWarning: true }]
+    ]) {
+        response = await adminWrite(first, route, body);
+        assert.equal(response.status, 200, `${route}: ${await response.text()}`);
+    }
+    for (const name of [
+        'app-settings.json',
+        'ui-preferences.json',
+        'client-aliases.json',
+        'security-settings.json',
+        'notification-settings.json'
+    ]) {
+        assert.equal(fs.statSync(path.join(dataDir, name)).mode & 0o777, 0o600, `${name} mode`);
+        assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(dataDir, name), 'utf8')), `${name} JSON`);
+    }
+    assert.deepEqual(fs.readdirSync(dataDir).filter(name => name.includes('.tmp-')), []);
     await stopServer(first);
     assert.equal(dotenv.parse(fs.readFileSync(envFile)).WIIM_IP, '192.0.2.55');
 
@@ -193,6 +214,14 @@ test('a UI-persisted connection setting survives a real production process resta
     assert.deepEqual(afterOrdinaryRestart.pendingRestartFields.sort(), [
         'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'NAS_MONITOR_URL'
     ]);
+    assert.equal((await adminRead(second, '/api/settings').then(r => r.json())).watcherSec, 45);
+    assert.equal((await adminRead(second, '/api/settings').then(r => r.json())).reportEnabled, false);
+    assert.equal((await adminRead(second, '/api/ui-preferences').then(r => r.json())).preferences.theme, 'dark');
+    assert.equal((await adminRead(second, '/api/client-aliases').then(r => r.json())).aliases['aa:bb:cc:dd:ee:ff'], 'Restart Lamp');
+    assert.equal((await adminRead(second, '/api/security/settings').then(r => r.json())).autoDefense, true);
+    const restartedNotifications = await adminRead(second, '/api/notifications/settings').then(r => r.json());
+    assert.equal(restartedNotifications.enabled, false);
+    assert.equal(restartedNotifications.triggerSystemWarning, true);
     await stopServer(second);
 
     const third = await startServer(dataDir, envFile, {

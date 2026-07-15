@@ -95,8 +95,10 @@ function safeJsonBytes(value, field) {
     if (typeof value !== 'string' || Buffer.byteLength(value) > MAX_CONFIG_FILE_BYTES) {
         throw new BackupValidationError(`${field} is missing or too large`);
     }
-    try { JSON.parse(value); }
+    let parsed;
+    try { parsed = JSON.parse(value); }
     catch { throw new BackupValidationError(`${field} is not valid JSON`); }
+    assertPlainObject(parsed, field);
     return Buffer.from(value);
 }
 

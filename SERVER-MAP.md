@@ -144,6 +144,10 @@
 - `server/services/docker-notification-state.js`: Docker CPU/RAM cooldown 的單一 owner；container removal cleanup + 2,000-entry recency bound
 - `server/services/recoverable-failure-state.js`: integration failure log cooldown 的單一 owner；保留 first-log/cooldown 語意，支援動態 Docker key removal + 2,000-key bound
 
+### Mutable configuration durability
+
+- `server/storage/json-file-store.js`: app、UI preference、client alias、security、notification JSON 的 bounded plain-object reader 與同目錄 0600 temp + fsync + atomic rename writer；API 先落盤再發布 live state
+
 ## 搜尋範例
 
 ```bash

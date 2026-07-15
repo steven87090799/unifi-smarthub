@@ -100,6 +100,19 @@ test('restore rejects missing confirmation, incompatible versions, corruption, a
     tamperedMetadata.environment.values.WIIM_IP.value = '203.0.113.99';
     assert.throws(() => f.service.stageRestore(Buffer.from(JSON.stringify(tamperedMetadata)), 'RESTORE'), /manifest integrity/);
 
+    const nonObjectSettings = structuredClone(f.artifact);
+    const nonObjectData = '[]';
+    nonObjectSettings.files['app-settings.json'] = {
+        data: nonObjectData,
+        bytes: Buffer.byteLength(nonObjectData),
+        sha256: sha256(nonObjectData)
+    };
+    nonObjectSettings.manifest.integrity = integrityFor(nonObjectSettings);
+    assert.throws(
+        () => f.service.stageRestore(Buffer.from(JSON.stringify(nonObjectSettings)), 'RESTORE'),
+        /files\.app-settings\.json\.data must be an object/
+    );
+
     assert.deepEqual(f.service.stageRestore(raw, 'RESTORE'), { staged: true, restartRequired: true, secretsRestored: false });
     assert.deepEqual(f.service.status(), { pending: true });
     assert.throws(() => f.service.stageRestore(raw, 'RESTORE'), error => error instanceof BackupValidationError && error.httpStatus === 409);
