@@ -7,4 +7,4 @@
 - 前端可見的 API／設定變更要同步 `server-mock.js` 並驗證。
 - Docker UPS 使用 PPB REST（`UPS_SOURCE=ppb`、`host.docker.internal:3052`）；容器內 `pwrstat` 不適用。
 
-完整技術規格在 `spec.md`，部署資訊在 `README.md`，診斷資訊在 `OBSERVABILITY.md`；均按任務需要才讀。
+歷史技術背景在 `spec.md`；live contract 先查 maps、tests 與精準 source。部署資訊在 `README.md`，診斷資訊在 `OBSERVABILITY.md`；均按任務需要才讀。

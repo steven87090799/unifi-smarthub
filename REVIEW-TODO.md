@@ -1,32 +1,20 @@
-# SmartHub — 待辦與驗證
+# SmartHub Remaining Engineering Backlog
 
-> 只保留尚未完成的工作；已落地的 XSS 防護、上游 timeout、背景 job guard、可見頁 polling 與設定欄位限制，請以程式碼與測試為準。
+本文件只列 hardening 後仍未宣稱完成的非阻擋工作。已修復問題與實際驗證結果不在此重複；以 `PRODUCTION_READINESS_REPORT.md`（完成後）、repository tests 與 commit history 為準。
 
-## P2：漸進式架構拆分
+## 漸進式架構拆分
 
-### [ ] 拆分 `server.js`
+- [ ] 依 contract-test coverage，逐一把 UniFi、NAS、WiiM、UPS clients 與 recurring jobs 從 `server.js` 抽出；每次 extraction 必須有可量測的 ownership/testability 收益。
+- [ ] 在現有 `public/js/web-push.js` 邊界之後，逐一抽出 polling/API 或單一頁面 feature；先保護 navigation、visibility lease、charts、error/empty state 與 write controls。
+- [ ] 減少 `server-mock.js` 的重複 route assembly，但不得犧牲 production/mock contract parity 或讓 mock 取得 production secret/side effect。
 
-目前正式後端仍集中 client、routes、排程與裝置協定。以不改變 endpoint contract 為前提，逐步抽出：
+## 需要部署環境或外部授權的驗證
 
-- `server/clients/`：UniFi、Cloud、NAS、WiiM、UPS。
-- `server/routes/`：依設備與設定分組。
-- `server/jobs/`：trend、notification、NAS、WiiM、UPS。
-- 共用 timeout、retry、serial job 與錯誤 helper。
+- [ ] 在實際目標主機執行長時間 resource/volume/log 趨勢監控；短時間 accelerated cycles 不是 365 天證明。
+- [ ] 若要發布到 registry，驗證 paired push、immutable digest、pull-from-clean-host 與 digest-based rollback；repository 的 `release:build` 目前只建立本機 image/tag。
+- [ ] 只有取得明確 destructive authorization 後，才對真實 UniFi、NAS Docker、WiiM、PoE 或 AdGuard mutation 執行 production smoke test。
+- [ ] 在真正的 PPB/NUT、NAS、UniFi、AdGuard 與 Web Push endpoint 驗證部署網路、憑證/CA、權限與 rate-limit policy；本機 failure injection 不取代外部 compatibility test。
 
-### [ ] 拆分 `public/index.html`
+## Product backlog
 
-先抽共用安全輸出 helper、polling manager 與 CSS，再依頁面抽 client/security/NAS/WiiM/UPS；避免一次重寫或變更既有 UI/endpoint 行為。
-
-## 低優先 API 改善
-
-- Site Manager 處理 `nextToken` 分頁。
-- 對 HTTP 429 建立有限退避策略。
-- 在適當時機把可遷移的本地 Legacy API 改為 Integration API。
-
-## 尚待驗證
-
-- [ ] 啟動 mock server，檢查主要頁面 API。
-- [ ] 以惡意 alias、Docker 名稱、NAS log、AdGuard domain 驗證 XSS 防護。
-- [ ] 模擬上游 timeout，確認 route 有限時返回且背景 job 不重疊。
-- [ ] 隱藏／切換分頁，確認 polling 暫停與恢復正確。
-- [ ] 測試設定邊界值與非法值。
+未實作功能與安全邊界請見 `ROADMAP.md`。任何新 capability 都必須重新通過 `PRODUCTION-RELEASE-CHECKLIST.md`，不得把本清單當成已完成驗證的證據。

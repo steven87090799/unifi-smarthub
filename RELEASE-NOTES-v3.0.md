@@ -42,15 +42,22 @@ SmartHub v3.0 將通知中心、每日營運報表與即時總覽更新整合成
 
 ## 升級方式
 
-升級前先備份 `.env` 與持久化資料卷：
+升級前先依 [`PRODUCTION-RELEASE-CHECKLIST.md`](PRODUCTION-RELEASE-CHECKLIST.md) 完成安全備份、repository gates 與 clean immutable release build。正式部署使用 `config/.env` 作唯一設定 authority，不再從 checkout 根目錄讀第二份 `.env`：
 
 ```bash
 git fetch --tags
 git checkout v3.0
-docker compose up -d --build --force-recreate
-docker compose ps
-docker compose logs --tail=100 unifi-smarthub
+npm ci
+npm test
+npm run release:build
+# 將 release JSON 的兩個 revision tags 寫入 config/.env 的
+# SMARTHUB_IMAGE / NAS_MONITOR_IMAGE 後：
+docker compose --env-file config/.env up -d --no-build --pull never
+docker compose --env-file config/.env ps
+docker compose --env-file config/.env logs --tail=100 unifi-smarthub
 ```
+
+不要以 `--build --force-recreate` 從 dirty checkout 建正式 release，也不要重指既有 revision tag。啟用 Docker Monitor 時，兩個 image 必須使用同一個 release revision，並以 `--profile nas-monitor` 協調啟動。
 
 升級後建議進入「通知推播」逐項確認新增條件與門檻。Docker 告警需要設定 NAS Monitor；其他設備告警只會在對應整合已設定時執行監測。
 

@@ -1,8 +1,8 @@
 # SmartHub — 家用網路/儲存/電源整合戰情室
 
-Docker 容器管理的部署方式請見 [`NAS-DOCKER-MONITOR-SETUP.md`](NAS-DOCKER-MONITOR-SETUP.md)。
+正式發布請依 [`PRODUCTION-RELEASE-CHECKLIST.md`](PRODUCTION-RELEASE-CHECKLIST.md)；Docker 容器管理的部署方式請見 [`NAS-DOCKER-MONITOR-SETUP.md`](NAS-DOCKER-MONITOR-SETUP.md)。
 
-自架的全屋監控面板,把 **UniFi UCG-Ultra**(硬體/客戶端/WiFi/IPS 威脅/雲端)、**UGREEN UGOS Pro NAS**(CPU/硬碟/儲存/風扇/休眠)、**WiiM Amp** 串流音響、**CyberPower UPS** 電源、**AdGuard Home** DNS 防護與 **Linux 小主機** 整合到單一網頁。前後端分離,所有帳密金鑰僅存在後端 `.env`,前端不接觸任何上游 API。
+自架的全屋監控面板,把 **UniFi UCG-Ultra**(硬體/客戶端/WiFi/IPS 威脅/雲端)、**UGREEN UGOS Pro NAS**(CPU/硬碟/儲存/風扇/休眠)、**WiiM Amp** 串流音響、**CyberPower UPS** 電源、**AdGuard Home** DNS 防護與 **Linux 小主機** 整合到單一網頁。前後端分離,所有帳密金鑰僅存在後端 `config/.env`,前端不接觸任何上游 API。
 
 - **前端**:`public/index.html` — 側邊欄 SPA,13 個分頁:總覽 / 客戶端 / 資安 / WiFi / 雲端站點 / UCG 閘道器 / NAS 儲存 / WiiM 音響 / UPS 電源 / AdGuard DNS / Linux 小主機 / 工具 / 通知推播 / 設定
 - **後端**:`server.js`(Express,port 3000)— 資料來源:SSH×2、UniFi 本地 API、Site Manager 雲端 API、UGOS API、LinkPlay HTTP API、NUT/PowerPanel Business、AdGuard REST API
@@ -22,7 +22,7 @@ install -d -m 700 config
 install -m 600 .env.example config/.env
 nano config/.env # PANEL_PASSWORD 必填；再填需啟用的整合設定
 
-# 2A. Docker 部署 (建議)
+# 2A. 本機 Docker 預覽；正式發布必須改走 Production Release Checklist
 docker compose --env-file config/.env up -d --build
 docker compose --env-file config/.env logs -f
 
@@ -105,15 +105,16 @@ services:
 image 內建 healthcheck 對 `/health/ready` 發出最多 4 秒的 request，Docker 再以 5 秒強制截止。兩個 image 都使用 `SIGTERM`，Compose 給 20 秒 graceful-stop 時間。本專案不固定 `container_name`，volume 與容器名會跟 Compose project 隔離；同一主機部署多份時，每份都要有獨立 config 目錄，且 `SMARTHUB_CONFIG_DIR` 必須指向同一個 `--env-file` 所在目錄：
 
 ```bash
-docker compose --env-file config-prod/.env -p smarthub-prod up -d --build
-docker compose --env-file config-lab/.env -p smarthub-lab up -d --build
+# 兩份 env 都要填入各自要部署的 immutable SMARTHUB_IMAGE / NAS_MONITOR_IMAGE
+docker compose --env-file config-prod/.env -p smarthub-prod up -d --no-build --pull never
+docker compose --env-file config-lab/.env -p smarthub-lab up -d --no-build --pull never
 ```
 
 上線前用 `docker compose --env-file config/.env config --quiet` 驗證結構；請勿輸出已展開的 config，因為其中可能含機密。每次 Compose 操作都使用同一個 `--env-file`；根目錄不要再保留另一份 `.env`，否則會重新產生雙重 authority。
 
 此基線使用 Compose profiles、long bind `create_host_path: false` 與 Docker Engine `host-gateway`；老舊 NAS 內建的 Compose v1/Engine 若不支援，應先升級，不要刪掉 fail-closed 或 PPB host mapping 設定來迴避。
 
-正式 release 不要從 dirty checkout 直接覆蓋 `latest`。先完成測試與 commit，再執行 `npm run release:build`；它會拒絕 staged/unstaged/untracked 差異，從 `git archive HEAD` 先建置並驗證兩個 staging image，再成對發布 revision tag；既有 revision tag 一律拒絕重指向，第二個 tag 發布失敗時會回滾第一個。它也會核對 OCI version/revision/created/dirty labels。local tag 仍不是 registry digest，部署證據應另記錄 image ID/digest。把輸出的 image 名稱設為 `SMARTHUB_IMAGE` / `NAS_MONITOR_IMAGE`，再用 `docker compose --env-file config/.env up -d --no-build --pull never` rehearsal。普通開發 build 的 `/health` 會標示 incomplete，不能當正式 release 證據。
+正式 release 不要從 dirty checkout 直接覆蓋 `latest`。先完成測試與 commit，再執行 `npm run release:build`；它會拒絕 staged/unstaged/untracked 差異，從 `git archive HEAD` 先建置並驗證兩個 staging image，再成對發布 revision tag；既有 revision tag 一律拒絕重指向，第二個 tag 發布失敗時會回滾第一個。它也會核對 OCI version/revision/created/dirty labels。local tag 仍不是 registry digest，部署證據應另記錄 image ID/digest。把輸出的 image 名稱設為 `SMARTHUB_IMAGE` / `NAS_MONITOR_IMAGE`，再用 `docker compose --env-file config/.env up -d --no-build --pull never` rehearsal。普通開發 build 的 `/health` 會標示 incomplete，不能當正式 release 證據。完整 gate、兩個 image 的 identity、隔離 rehearsal 與 rollback 步驟以 [`PRODUCTION-RELEASE-CHECKLIST.md`](PRODUCTION-RELEASE-CHECKLIST.md) 為準。
 
 **部署檢查清單**:
 
@@ -242,6 +243,7 @@ docker volume ls                      # 確認 smarthub-data 存在
 ## 附錄
 
 - `AGENTS.md` / `CLAUDE.md` — 精簡 AI 工作入口與讀檔路由
-- `ROADMAP.md` — 未使用 API 盤點與功能路線圖
+- `ROADMAP.md` — 已落地能力摘要與尚未實作的產品／架構候選
 - `OBSERVABILITY.md` — Structured Logging、Status Code、Health/Diagnostics API、監控門檻與 Docker 除錯
+- `PRODUCTION-RELEASE-CHECKLIST.md` — clean build、不可變雙 image transaction、rehearsal、rollback 與 release record
 - `*-api.md` — UniFi / UGREEN / WiiM / CyberPower 各 API 規格參考

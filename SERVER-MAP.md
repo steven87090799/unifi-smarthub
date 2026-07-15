@@ -1,103 +1,103 @@
 # SmartHub Backend Map
 
-`server.js` 是正式後端組裝入口；可觀測性拆在 `observability/*.js`，SQLite wrapper 在 `db.js`，可測試的整合／middleware／policy／job／service 邊界在 `server/`。後端任務先用這份索引定位 symbol，再讀小區段；行號只作搜尋提示，不是契約。
+`server.js` 是正式後端組裝入口；可觀測性拆在 `observability/*.js`，SQLite wrapper 在 `db.js`，可測試的整合／middleware／policy／job／service 邊界在 `server/`。後端任務先用這份 symbol/route 索引定位，再讀小區段；不要保存會隨功能漂移的行號。
 
 ## 主要區段
 
-| 行號約略 | 區段 | 內容 |
-|---:|---|---|
-| 1-100 | 啟動與共用工具 | structured logger、error code、request context、Basic Auth、`apiError()` |
-| 100-175 | UniFi client | 本地控制器 login/cookie、Cloud client |
-| 180-345 | UCG hardware | SSH 取 CPU/記憶體/磁碟/網路，`/api/hardware` |
-| 350-497 | UniFi Network | clients、switches、WiFi、threats |
+| 搜尋錨點 | 區段 | 內容 |
+|---|---|---|
+| `createAppLogger`, `apiError` | 啟動與共用工具 | structured logger、error code、request context、Basic Auth、API error contract |
+| `unifiLogin`, `createSiteManagerClient` | UniFi clients | 本地 controller login/cookie、bounded Cloud client |
+| `/api/hardware` | UCG hardware | SSH 取 CPU/記憶體/磁碟/網路 |
+| `/api/clients`, `/api/wifi-networks`, `/api/threats` | UniFi Network | clients、switches、WiFi、threats |
 | `DATA_DIR`, `historyDb` | Data / DB / settings | SQLite、SystemMonitor、app settings、啟動時 staged restore |
-| 625-730 | Client controls | alias、block/unblock、PoE、speedtest |
-| 740-790 | Site Manager | cloud sites/devices/isp/hosts/sdwan |
-| 790-888 | Security | security settings、auto defense |
-| 890-1230 | Notifications / scheduler | settings、dispatch、watcher、task trace、server jobs |
-| 1231-1300 | Trend history | adaptive sampling、history、heartbeat |
-| 1302-1685 | UGOS NAS | NAS auth/token、overview、disks、logs、UPS |
-| 1687-1752 | UCG/NAS history | hardware and NAS historical samples |
-| 1753-1974 | NAS Monitor | docker、traffic、alerts、SSE stream |
+| `/api/device/restrict`, `/api/poe/power-cycle`, `/api/speedtest` | Client controls | alias、block/unblock、PoE、speedtest |
+| `/api/cloud/sites` | Site Manager | cloud sites/devices/ISP/hosts/SD-WAN |
+| `securitySettings`, `threatBlockingService` | Security | security settings、auto defense、temporary public-IP blocks |
+| `notificationSettings`, `reportRunner` | Notifications / scheduler | settings、dispatch、watchers、task trace、durable report jobs |
+| `activityLease`, `/api/history` | Trend history | adaptive sampling、history、visibility heartbeat |
+| `nasLogin`, `/api/nas/overview` | UGOS NAS | NAS auth/token、overview、disks、logs、UPS |
+| `/api/hardware/history`, `/api/nas/history` | UCG/NAS history | hardware and NAS historical samples |
+| `nasMonitorClient`, `/api/nas/stream` | NAS Monitor | docker、traffic、alerts、bounded SSE stream |
 | `CONN_FIELDS`, `configBackupService` | Settings/connections/recovery | `/api/settings`、`.env` persistence、backup/restore、client rebuild |
-| 2075-2316 | Reports/PWA | report builder/scheduler、manifest、service worker |
-| 2317-2497 | WiiM | LinkPlay proxy、status、history、art、CSV |
-| 2498-2778 | UPS | PPB/NUT/pwrstat/pmset、status/history/events/CSV |
-| 2779-2824 | AdGuard | overview、querylog、protection |
-| 2825-2920 | Linux host | SSH stats、history |
-| 2920-2977 | Health/status | device status、critical alerts、health/readiness/system status |
-| 2978-3143 | Startup / errors | external diagnostics、API error handler、listen、shutdown/crash handlers |
+| `reportRunner`, `registerPwaRoutes` | Reports/PWA | report builder/scheduler、manifest、service worker |
+| `wiimRequest`, `/api/wiim/status` | WiiM | typed LinkPlay proxy、status、history、art、CSV |
+| `readUpsLive`, `/api/ups/status` | UPS | PPB/NUT/pwrstat/pmset、state/history/events/CSV |
+| `adGuardClient`, `/api/adguard/overview` | AdGuard | bounded transport、overview、querylog、protection/policies |
+| `/api/linux/stats` | Linux host | SSH stats、history |
+| `registerHealthRoutes` | Health/status | liveness、readiness、system diagnostics |
+| `startServer`, `shutdown` | Startup / errors | external diagnostics、API error handler、listen、shutdown/crash handlers |
 
 ## Endpoint 快查
 
 ### UniFi / UCG
 
-- `GET /api/hardware` around 347
-- `GET /api/clients` around 363
-- `GET /api/network/switches` around 390
-- `GET /api/wifi-networks` around 430
-- `PUT /api/wifi-networks/:id` around 443
-- `GET /api/threats` around 458
+- `GET /api/hardware`
+- `GET /api/clients`
+- `GET /api/network/switches`
+- `GET /api/wifi-networks`
+- `PUT /api/wifi-networks/:id`
+- `GET /api/threats`
 - `GET/POST /api/security/threat-blocks`、`DELETE /api/security/threat-blocks/:id`（admin only；公網 IPv4、強制到期、SQLite desired state/audit、UniFi 專用 traffic list reconciliation）
-- `PUT /api/device/restrict` around 642
-- `POST /api/poe/power-cycle` around 676
-- `POST /api/speedtest` around 693
-- `GET /api/speedtest/status` around 708
-- `GET /api/hardware/history` around 1679
+- `PUT /api/device/restrict`
+- `POST /api/poe/power-cycle`
+- `POST /api/speedtest`
+- `GET /api/speedtest/status`
+- `GET /api/hardware/history`
 
 ### Cloud Site Manager
 
-- `GET /api/cloud/sites` around 726
-- `GET /api/cloud/devices` around 739
-- `GET /api/cloud/isp-metrics` around 752
-- `GET /api/cloud/hosts` around 784
-- `GET /api/cloud/sdwan` around 797
+- `GET /api/cloud/sites`
+- `GET /api/cloud/devices`
+- `GET /api/cloud/isp-metrics`
+- `GET /api/cloud/hosts`
+- `GET /api/cloud/sdwan`
 
 ### NAS / NAS Monitor
 
-- `GET /api/nas/overview` around 1416
-- `GET /api/nas/disks` around 1493
-- `GET /api/nas/disk-smart` around 1515
-- `GET /api/nas/logs` around 1540
-- `GET /api/nas/sleep-stats` around 1565
-- `GET /api/nas/volumes` around 1627
-- `GET /api/nas/ups` around 1647
-- `GET /api/nas/docker` around 1787
-- `POST /api/nas/docker/:id/:action` around 1798
-- `GET /api/nas/docker/:id/logs` around 1815
-- `GET /api/nas/alerts` around 1881
-- `GET /api/nas/stream` around 1964
+- `GET /api/nas/overview`
+- `GET /api/nas/disks`
+- `GET /api/nas/disk-smart`
+- `GET /api/nas/logs`
+- `GET /api/nas/sleep-stats`
+- `GET /api/nas/volumes`
+- `GET /api/nas/ups`
+- `GET /api/nas/docker`
+- `POST /api/nas/docker/:id/:action`
+- `GET /api/nas/docker/:id/logs`
+- `GET /api/nas/alerts`
+- `GET /api/nas/stream`
 
 ### Notifications / Settings / Reports
 
-- `GET/POST /api/notifications/settings` around 999/1018
-- `POST /api/notifications/test` around 1037
-- `GET /api/notifications/log` around 1043
+- `GET/POST /api/notifications/settings`
+- `POST /api/notifications/test`
+- `GET /api/notifications/log`
 - `GET /api/web-push/config`、`POST/DELETE /api/web-push/subscriptions`：public VAPID metadata、admin-only persistent browser subscription lifecycle；private key 永不回傳
-- `GET/POST /api/settings` around 1976/1977
-- `GET/POST /api/connections` around 2036/2047
+- `GET/POST /api/settings`
+- `GET/POST /api/connections`
 - `GET /api/config/backup`, `GET /api/config/backup/status`, `POST /api/config/restore`（admin only；restore 使用專用 media type 並於 restart 套用）
-- `POST /api/reports/run` around 2640
-- `GET /api/reports/log` around 2644 (SQLite-persisted report generation and delivery log)
+- `POST /api/reports/run`
+- `GET /api/reports/log`（SQLite-persisted report generation and delivery log）
 
 ### WiiM / UPS / AdGuard / Linux
 
-- `GET /api/wiim/status` around 2405
-- `GET /api/wiim/cmd` around 2435
-- `GET /api/wiim/art` around 2447
-- `GET /api/ups/status` around 2755
-- `GET /api/ups/history` around 2763
-- `GET /api/ups/events` around 2769
-- `GET /api/adguard/overview` around 2789
+- `GET /api/wiim/status`
+- `GET /api/wiim/cmd`（只保留 typed read compatibility；mutation 使用受保護的 POST route）
+- `GET /api/wiim/art`
+- `GET /api/ups/status`
+- `GET /api/ups/history`
+- `GET /api/ups/events`
+- `GET /api/adguard/overview`
 - `GET /api/adguard/querylog`、`POST /api/adguard/protection`：共用 `server/integrations/adguard-client.js`；HTTPS 預設驗證、遠端 HTTP 必須明確 opt-in、禁止 redirect/proxy credential forwarding
 - `GET/POST /api/adguard/service-policies`、`DELETE /api/adguard/service-policies/:id`：admin-only 每裝置服務封鎖 desired state、baseline restore、SQLite audit 與 bounded reconciliation
-- `GET /api/linux/stats` around 2889
-- `GET /api/linux/history` around 2910
+- `GET /api/linux/stats`
+- `GET /api/linux/history`
 
 ### Health / Diagnostics
 
-- `GET /health` / `/healthz` / `/health/ready` registered around 2976
-- `GET /api/system/status` registered around 2976
+- `GET /health` / `/healthz` / `/health/ready`
+- `GET /api/system/status`
 - modules: `observability/logger.js`, `system-monitor.js`, `issue-tracker.js`, `task-tracker.js`, `health-routes.js`
 
 ### Recovery service
@@ -138,9 +138,13 @@
 - `server/integrations/notification-delivery.js`: Web Push 是額外 fan-out；primary partial-delivery ambiguity 不可被 fallback 覆寫
 - `db.js`: `web_push_subscriptions` 與 bounded `web_push_delivery_claims`
 
+### Long-lived notification/failure state
+
+- `server/services/docker-notification-state.js`: Docker CPU/RAM cooldown 的單一 owner；container removal cleanup + 2,000-entry recency bound
+- `server/services/recoverable-failure-state.js`: integration failure log cooldown 的單一 owner；保留 first-log/cooldown 語意，支援動態 Docker key removal + 2,000-key bound
+
 ## 搜尋範例
 
 ```bash
 rg -n "app\\.(get|post|put).*ups|readUpsLive|sampleUps" server.js
-sed -n '2498,2778p' server.js
 ```

@@ -5,11 +5,11 @@
 | 項目 | 目前架構 |
 |---|---|
 | Backend | Node.js 20、Express 4，正式入口 `server.js` |
-| Frontend | 單檔 SPA `public/index.html`，Tailwind CDN、Chart.js、D3 |
+| Frontend | SPA shell `public/index.html` + `public/js/web-push.js`；Tailwind、Chart.js、D3、TopoJSON 與 world-atlas 全部由同一 release image 以確切版本同源提供 |
 | Database | `better-sqlite3` 單連線、WAL；歷史序列與事件集中在 `data/smarthub.db` |
-| 設定儲存 | `app-settings.json`、`security-settings.json`、`notification-settings.json`、`.env` |
+| 設定儲存 | data volume 的應用 JSON + 部署實例唯一 authority `config/.env`；歷史／事件／claims／policies 使用 SQLite |
 | Worker / Queue | 同一 Node process 內的週期排程，`runSerialJob()` 防同名工作重入；定期報表的 claim/retry 狀態另存 SQLite，沒有外部 queue broker |
-| Docker | 單一 `unifi-smarthub` service、tini、非 root、具名 volume、256 MB memory limit |
+| Docker | `unifi-smarthub` 預設 service（tini、非 root、具名 volume、256 MiB limit）+ opt-in `nas-monitor` profile（read-only rootfs、non-root、cap drop、96 MiB limit）；monitor 不 gate 主服務 readiness |
 | 外部服務 | UniFi local/cloud、UCG/Linux SSH、UGREEN NAS、NAS Monitor、WiiM、UPS、AdGuard；全部為選配 |
 
 ## Problems Found（實作前）
@@ -72,6 +72,14 @@ LOG_FORMAT=json
 - 多段訊息若已有部分被接受，紀錄會成為 terminal `partial`，保留已送/總段數且不自動重送，以免已接受段落重複。UI 的手動預覽同樣不會自動重送 partial 結果。
 - 一般手動紀錄保留最新 50 筆；已完成/耗盡的排程 identity 保留最新 512 個（最高頻率每 6 小時約 128 天）。active 與 retryable claim 不受這項清理影響。
 
+## 長時間執行的 bounded state
+
+- `SystemMonitor` 只保留 60 筆 resource samples；一般歷史寫入 queue 以 1,000 筆或 1 MiB 提前 flush，SQLite retention 由設定控制。
+- `TaskTracker`、已解除 issue、手動報表、terminal schedule identity、Web Push delivery claim、subscription、authentication identity 與各 integration cooldown 都有固定容量或持久 retention。
+- Docker CPU/RAM notification cooldown 由 `server/services/docker-notification-state.js` 擁有；container 移除時釋放並以 2,000 entries 作最後防線。
+- 可恢復 integration failure 的 log cooldown 由 `server/services/recoverable-failure-state.js` 擁有；動態 Docker key 在移除時釋放並以 2,000 keys 作最後防線。
+- UI health severity、Docker log verbosity 與 push notification delivery 是三個獨立控制面。`LOG_LEVEL` 不會改變 `/api/system/status` 的 severity，也不會自行啟用推播；通知仍受各 trigger 與 channel 設定控制。
+
 ## Status Code List
 
 - SYSTEM：`SYS-START-001`、`SYS-READY-001`、`SYS-SHUTDOWN-001`、`SYS-START-FAILED-001`、`SYS-CONFIG-001`、`SYS-CRASH-001/002`、`SYS-CPU-001/002`、`SYS-MEM-001/002/003`、`SYS-DISK-001/002`、`SYS-RESOURCE-OK-001`、`SYS-MONITOR-001`
@@ -85,15 +93,15 @@ LOG_FORMAT=json
 ## 維運指令
 
 ```bash
-docker compose build
-docker compose up -d
-docker compose ps
-docker compose logs -f unifi-smarthub
+docker compose --env-file config/.env build
+docker compose --env-file config/.env up -d
+docker compose --env-file config/.env ps
+docker compose --env-file config/.env logs -f unifi-smarthub
 
-docker compose logs unifi-smarthub | grep 'ERROR'
-docker compose logs unifi-smarthub | grep 'CRITICAL'
-docker compose logs unifi-smarthub | grep 'DB-CONN-001'
-docker compose logs unifi-smarthub | grep 'TASK=8af32'
+docker compose --env-file config/.env logs unifi-smarthub | grep 'ERROR'
+docker compose --env-file config/.env logs unifi-smarthub | grep 'CRITICAL'
+docker compose --env-file config/.env logs unifi-smarthub | grep 'DB-CONN-001'
+docker compose --env-file config/.env logs unifi-smarthub | grep 'TASK=8af32'
 
 curl -fsS http://localhost:3000/health
 curl -fsS http://localhost:3000/health/ready
@@ -110,3 +118,5 @@ curl -fsS -u "admin:${PANEL_PASSWORD}" http://localhost:3000/api/system/status
 - resource trend 是記憶體內 60 筆 ring buffer，重啟會清空，尚未提供 Prometheus endpoint。
 - process CPU 與 host system CPU 都會提供；Docker memory 優先讀 cgroup limit/usage，非容器環境才讀 host memory。
 - `Possible memory growth detected` 至少需要 10 個 sample、8 次上升且增幅超過 20 MB 或 20%；它是診斷線索，不等同已證實 memory leak。
+- 加速 endurance 只能證明實際執行 cycles 中的容量、SQLite integrity/query plan、latency、heap tail 與 handle cleanup。V8 `heapTotal` 與 native allocator 會讓 RSS 以區塊成長；短 run 的 RSS high-water mark 不可被描述為 365 天安全證明。
+- 沒有內建 Prometheus、跨 restart resource trend 或遠端 log retention；需要長期趨勢時應由部署層蒐集 container RSS/CPU、restart count、volume growth 與 structured logs。

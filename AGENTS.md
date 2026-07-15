@@ -27,4 +27,4 @@ Node.js + Express 後端（`server.js`）與單頁前端（`public/index.html`�
 - 前端以活動 scope 讓總覽／裝置頁走 3 秒更新；UPS 取樣獨立於瀏覽狀態。
 - Docker UPS 已驗證的路徑是 PPB REST（`UPS_SOURCE=ppb`，透過 `host.docker.internal:3052`）；不要改用容器內 `pwrstat`。
 
-完整 API 與架構細節在 `spec.md`，但只在需要全貌時讀取。
+歷史架構背景與早期 API 參考在 `spec.md`；live contract 先查 maps、共用 policy/route modules 與 tests，必要時再精準讀 source。
