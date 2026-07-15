@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const {
     PartialNotificationDeliveryError,
     chunkText,
-    createNotificationDispatcher
+    createNotificationDispatcher,
+    dispatchNotificationFanout
 } = require('../server/integrations/notification-delivery');
 
 function fakeHttp(steps = []) {
@@ -108,4 +109,44 @@ test('an already-aborted delivery performs no external request', async () => {
         /deadline/
     );
     assert.equal(http.calls.length, 0);
+});
+
+test('Web Push fanout never prevents a healthy primary Discord or Telegram delivery', async () => {
+    const result = await dispatchNotificationFanout({
+        dispatchPrimary: async () => undefined,
+        dispatchWebPush: async () => ({ attempted: 1, sent: 0, failed: 1 }),
+        title: 'Alert', body: 'Body', settings: { webPushEnabled: true }
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.primary, true);
+    assert.equal(result.partial, true);
+});
+
+test('Web Push provides a fallback only when at least one subscription accepted the notification', async () => {
+    const primaryFailure = new Error('Discord unavailable');
+    const fallback = await dispatchNotificationFanout({
+        dispatchPrimary: async () => { throw primaryFailure; },
+        dispatchWebPush: async () => ({ attempted: 2, sent: 1, failed: 1 }),
+        title: 'Alert', body: 'Body', settings: { webPushEnabled: true }
+    });
+    assert.equal(fallback.ok, true);
+    assert.equal(fallback.fallback, 'web_push');
+    assert.equal(fallback.primaryError, primaryFailure);
+
+    await assert.rejects(dispatchNotificationFanout({
+        dispatchPrimary: async () => { throw primaryFailure; },
+        dispatchWebPush: async () => ({ skipped: 'no_subscriptions', attempted: 0, sent: 0, failed: 0 }),
+        title: 'Alert', body: 'Body', settings: { webPushEnabled: true }
+    }), /Discord unavailable/);
+});
+
+test('Web Push success cannot erase an ambiguous partial primary delivery', async () => {
+    const partial = new PartialNotificationDeliveryError('second part failed', {
+        channel: 'telegram', sentParts: 1, totalParts: 2
+    });
+    await assert.rejects(dispatchNotificationFanout({
+        dispatchPrimary: async () => { throw partial; },
+        dispatchWebPush: async () => ({ attempted: 1, sent: 1, failed: 0 }),
+        title: 'Alert', body: 'Body', settings: { webPushEnabled: true }
+    }), error => error === partial);
 });

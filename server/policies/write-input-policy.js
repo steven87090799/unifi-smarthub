@@ -215,7 +215,7 @@ function parseEmptyBody(body) {
 }
 
 const NOTIFICATION_BOOLEAN_FIELDS = Object.freeze([
-    'enabled', 'telegramCommandsEnabled', 'triggerThreats', 'triggerNasAlerts', 'triggerWiimTemp',
+    'enabled', 'webPushEnabled', 'telegramCommandsEnabled', 'triggerThreats', 'triggerNasAlerts', 'triggerWiimTemp',
     'triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange',
     'triggerClientWeakSignal', 'triggerClientConnectivity', 'triggerNetworkDeviceOffline',
     'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerWiimOffline',

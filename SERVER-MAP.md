@@ -73,6 +73,7 @@
 - `GET/POST /api/notifications/settings` around 999/1018
 - `POST /api/notifications/test` around 1037
 - `GET /api/notifications/log` around 1043
+- `GET /api/web-push/config`、`POST/DELETE /api/web-push/subscriptions`：public VAPID metadata、admin-only persistent browser subscription lifecycle；private key 永不回傳
 - `GET/POST /api/settings` around 1976/1977
 - `GET/POST /api/connections` around 2036/2047
 - `GET /api/config/backup`, `GET /api/config/backup/status`, `POST /api/config/restore`（admin only；restore 使用專用 media type 並於 restart 套用）
@@ -127,6 +128,14 @@
 - `server/policies/adguard-service-policy.js`: IP/MAC、YouTube/TikTok/Gaming controlled definitions、IANA timezone 與每日 allow-window 契約；allow window 是 AdGuard blocked-service filtering 的 inactivity period
 - `server/services/adguard-service-policy.js`: 序列化 per-device reconciliation、支援 upstream client/catalog 兩種回應形狀、保留非管理欄位、首次 baseline capture、移除還原、bounded retry/drift repair
 - `db.js`: `adguard_service_policies` desired state / retry / baseline 與 bounded `adguard_service_policy_audit`
+
+### Web Push
+
+- `server/policies/web-push-policy.js`: exact HTTPS subscription、P-256/auth key、matched VAPID tuple 與 same-origin visible payload contract
+- `server/services/web-push.js`: SQLite subscriptions、24-hour delivery claims、bounded concurrency/retry/backoff、404/410 cleanup；endpoint 只以 hash 寫入 log
+- `server/services/pwa-service-worker.js`: production/mock 共用 shell cache、visible push 與 same-origin notification-click renderer
+- `server/integrations/notification-delivery.js`: Web Push 是額外 fan-out；primary partial-delivery ambiguity 不可被 fallback 覆寫
+- `db.js`: `web_push_subscriptions` 與 bounded `web_push_delivery_claims`
 
 ## 搜尋範例
 

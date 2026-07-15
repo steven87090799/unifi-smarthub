@@ -6,6 +6,7 @@ delete process.env.https_proxy;
 
 const express = require('express');
 const axios = require('axios');
+const webPushLibrary = require('web-push');
 const { Client } = require('ssh2');
 const fs = require('node:fs');
 const path = require('path');
@@ -43,12 +44,14 @@ const { createAdGuardConnection } = require('./server/integrations/adguard-clien
 const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
 const {
     PartialNotificationDeliveryError,
-    createNotificationDispatcher
+    createNotificationDispatcher,
+    dispatchNotificationFanout
 } = require('./server/integrations/notification-delivery');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const adguardServicePolicy = require('./server/policies/adguard-service-policy');
+const webPushPolicy = require('./server/policies/web-push-policy');
 const {
     DockerActionPolicyError,
     ambiguousDockerActionResult,
@@ -73,6 +76,11 @@ const {
     AdGuardServicePolicyError,
     createAdGuardServicePolicyService
 } = require('./server/services/adguard-service-policy');
+const {
+    WebPushServiceError,
+    createWebPushService
+} = require('./server/services/web-push');
+const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const FOCUSED_DEVICE_SAMPLE_MS = 3000;
 
@@ -783,6 +791,12 @@ const adguardServicePolicyService = createAdGuardServicePolicyService({
     client: adguardServicePolicyClient,
     logger
 });
+const webPushService = createWebPushService({
+    repository: historyDb,
+    webPush: webPushLibrary,
+    env: process.env,
+    logger
+});
 
 function protectedManagementAddresses() {
     const addresses = new Set();
@@ -1270,7 +1284,7 @@ async function readDockerLogFindings(containers, { lines = 120, maxContainers = 
 // 偵測到新威脅攔截或 NAS 嚴重警報時，推播到 Discord / Telegram / 通用 Webhook。
 const NOTIF_FILE = path.join(DATA_DIR, 'notification-settings.json');
 const NOTIF_DEFAULTS = {
-    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', telegramCommandsEnabled: false,
+    enabled: false, webPushEnabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', telegramCommandsEnabled: false,
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
     triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
@@ -1343,10 +1357,49 @@ async function notify(title, body, options = {}) {
     if (!s.enabled) return { skipped: 'disabled' };
     sysLog('Notification', `發送推播通知：主題 "${title}"，頻道: ${s.channel}...`);
     try {
-        await dispatchNotification(title, body, s, options);
-        pushNotifLog({ ts: new Date().toISOString(), title, body, channel: s.channel, ok: true });
+        const delivery = await dispatchNotificationFanout({
+            dispatchPrimary: dispatchNotification,
+            dispatchWebPush: (pushTitle, pushBody, pushOptions) => webPushService.send(pushTitle, pushBody, pushOptions),
+            title,
+            body,
+            settings: s,
+            options
+        });
+        if (delivery.primaryError) logger.warning({
+            module: 'notification.dispatch', function: 'notify', code: ERROR_CODES.EXT_NOTIFICATION_FAILED,
+            message: 'Primary notification channel failed; Web Push fallback succeeded',
+            error: delivery.primaryError,
+            fields: { channel: s.channel, title, fallback: 'web_push' }
+        });
+        if (delivery.webPush?.serviceError) logger.warning({
+            module: 'notification.webPush', function: 'notify', code: ERROR_CODES.EXT_NOTIFICATION_FAILED,
+            message: 'Web Push fanout service failed; primary notification result was preserved',
+            error: delivery.webPush.serviceError,
+            fields: { channel: s.channel, title }
+        });
+        pushNotifLog({
+            ts: new Date().toISOString(), title, body, channel: s.channel, ok: true,
+            ...(delivery.partial ? { partial: true } : {}),
+            webPush: {
+                sent: Number(delivery.webPush?.sent || 0),
+                failed: Number(delivery.webPush?.failed || 0),
+                expired: Number(delivery.webPush?.expired || 0),
+                skipped: delivery.webPush?.skipped || null
+            },
+            ...(delivery.fallback ? { fallback: delivery.fallback } : {})
+        });
         sysLog('Notification', '通知推送成功。');
-        return { ok: true };
+        return {
+            ok: true,
+            ...(delivery.partial ? { partial: true } : {}),
+            ...(delivery.fallback ? { fallback: delivery.fallback } : {}),
+            webPush: {
+                sent: Number(delivery.webPush?.sent || 0),
+                failed: Number(delivery.webPush?.failed || 0),
+                expired: Number(delivery.webPush?.expired || 0),
+                skipped: delivery.webPush?.skipped || null
+            }
+        };
     } catch (e) {
         const partial = e instanceof PartialNotificationDeliveryError;
         logger.error({
@@ -1381,7 +1434,7 @@ async function notify(title, body, options = {}) {
 app.get('/api/notifications/settings', (req, res) => {
     const s = loadNotifSettings();
     res.json({
-        enabled: s.enabled, channel: s.channel, chatId: s.chatId, telegramCommandsEnabled: !!s.telegramCommandsEnabled,
+        enabled: s.enabled, webPushEnabled: !!s.webPushEnabled, channel: s.channel, chatId: s.chatId, telegramCommandsEnabled: !!s.telegramCommandsEnabled,
         triggerThreats: s.triggerThreats, triggerNasAlerts: s.triggerNasAlerts, triggerWiimTemp: s.triggerWiimTemp !== false,
         triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
         triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerClientWeakSignal: !!s.triggerClientWeakSignal, triggerClientConnectivity: !!s.triggerClientConnectivity, clientSignalAlert: s.clientSignalAlert ?? 75,
@@ -1431,6 +1484,45 @@ app.post('/api/notifications/test', async (req, res) => {
 
 // 近期推播紀錄
 app.get('/api/notifications/log', (req, res) => res.json({ log: notifLog }));
+
+app.get('/api/web-push/config', (_req, res) => {
+    res.json({ ...webPushService.snapshot(), enabled: !!loadNotifSettings().webPushEnabled });
+});
+
+app.post('/api/web-push/subscriptions', panelSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => webPushPolicy.parseSubscriptionRequest(req.body), {
+        module: 'api.webPush', function: 'subscribe'
+    });
+    if (!input) return;
+    try {
+        const result = webPushService.subscribe(input);
+        res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+        const expected = error instanceof WebPushServiceError;
+        apiError(res, error, {
+            status: expected ? error.httpStatus : 500,
+            code: expected ? ERROR_CODES.SYS_CONFIG_INVALID : ERROR_CODES.API_INTERNAL_ERROR,
+            publicMessage: expected ? error.message : 'Web Push subscription failed',
+            module: 'api.webPush', function: 'subscribe', logMessage: 'Web Push subscription failed'
+        });
+    }
+});
+
+app.delete('/api/web-push/subscriptions', panelSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => webPushPolicy.parseUnsubscribeRequest(req.body), {
+        module: 'api.webPush', function: 'unsubscribe'
+    });
+    if (!input) return;
+    try { res.json(webPushService.unsubscribe(input.endpoint)); }
+    catch (error) {
+        apiError(res, error, {
+            status: 400,
+            code: ERROR_CODES.API_VALIDATION_FAILED,
+            publicMessage: 'Web Push unsubscribe request is invalid',
+            module: 'api.webPush', function: 'unsubscribe', logMessage: 'Web Push unsubscribe failed'
+        });
+    }
+});
 
 // 監看器：偵測新威脅 (ips:alert) 與 NAS 嚴重警報，推播並去重
 const notifiedThreatIds = new Set();
@@ -3706,17 +3798,7 @@ app.get('/manifest.webmanifest', (req, res) => {
     });
 });
 app.get('/sw.js', (req, res) => {
-    res.type('application/javascript').send(`
-const C=${JSON.stringify(PWA_CACHE_NAME)};
-const SHELL=['/','/assets/tailwind.css','/vendor/chart.js/4.5.1/chart.umd.js','/vendor/d3/7.9.0/d3.min.js','/vendor/topojson-client/3.1.0/topojson-client.min.js','/vendor/world-atlas/2.0.2/countries-110m.json'];
-self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(SHELL)))});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
-self.addEventListener('fetch',e=>{
-  if(e.request.method!=='GET')return;
-  const u=new URL(e.request.url);
-  if(u.pathname.startsWith('/api/')||u.pathname.startsWith('/health'))return; // API / health 不快取
-  e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));
-});`);
+    res.type('application/javascript').send(renderPwaServiceWorker(PWA_CACHE_NAME));
 });
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---

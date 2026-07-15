@@ -16,6 +16,7 @@ const ROOT = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const mockServerSource = fs.readFileSync(path.join(ROOT, 'server-mock.js'), 'utf8');
+const serviceWorkerSource = fs.readFileSync(path.join(ROOT, 'server', 'services', 'pwa-service-worker.js'), 'utf8');
 
 test('production frontend has no third-party executable/data dependency or QR credential egress', () => {
     assert.doesNotMatch(html, /<script[^>]+src="https?:\/\//iu);
@@ -26,10 +27,11 @@ test('production frontend has no third-party executable/data dependency or QR cr
     assert.match(html, /dataset\.panelRole !== 'admin'/u);
     for (const asset of frontendVendorAssets(ROOT)) {
         assert.ok(html.includes(asset.url), asset.url);
-        assert.ok(serverSource.includes(asset.url), `service worker precache: ${asset.url}`);
-        assert.ok(mockServerSource.includes(asset.url), `mock service worker precache: ${asset.url}`);
+        assert.ok(serviceWorkerSource.includes(asset.url), `service worker precache: ${asset.url}`);
     }
     assert.match(serverSource, /PWA_CACHE_NAME[\s\S]+buildIdentity\.public\.revision/u);
+    assert.match(serverSource, /renderPwaServiceWorker\(PWA_CACHE_NAME\)/u);
+    assert.match(mockServerSource, /renderPwaServiceWorker/u);
 });
 
 test('locked vendor routes serve only the exact bounded same-origin assets', async t => {

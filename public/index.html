@@ -2717,6 +2717,27 @@
                                 </div>
                             </div>
 
+                            <div id="web-push-card" class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 space-y-3">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <p class="text-xs font-bold text-blue-100">瀏覽器 Web Push（額外通道）</p>
+                                        <p class="text-[9px] text-slate-500 mt-1 leading-relaxed">由目前瀏覽器明確授權；不取代 Discord／Telegram。Push 失敗時原通道仍會繼續。</p>
+                                    </div>
+                                    <label class="flex items-center gap-2 text-[10px] text-slate-300 cursor-pointer shrink-0">
+                                        <input type="checkbox" id="notif-webpush-enabled" class="accent-blue-500 w-4 h-4">
+                                        啟用 fan-out
+                                    </label>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button id="web-push-subscribe" onclick="subscribeWebPush()"
+                                        class="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold transition">授權並訂閱此瀏覽器</button>
+                                    <button id="web-push-unsubscribe" onclick="unsubscribeWebPush()"
+                                        class="px-3 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 text-[10px] font-bold transition">取消此瀏覽器訂閱</button>
+                                    <span id="web-push-status" class="text-[9px] text-slate-500">檢查中...</span>
+                                </div>
+                                <p class="text-[9px] text-amber-300/80">通知權限只會在按下訂閱按鈕後詢問；若瀏覽器拒絕，必須到網站權限設定手動解除。</p>
+                            </div>
+
                             <!-- Discord / 通用 Webhook 欄位 -->
                             <div id="notif-webhook-field">
                                 <label
@@ -5446,6 +5467,7 @@
             // NAS Monitor 為選配；未設定時不要建立 EventSource，避免每次載入留下 503 錯誤。
             fetchAlertConfig().then(configured => { if (configured) connectNasSse(); });
             fetchNotifSettings();
+            fetchWebPushState();
             fetchNotifLog();
             fetchAppSettings();
             fetchReportLog();
@@ -5483,7 +5505,7 @@
             nasAdvanced: { fn: () => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts(), fetchNasSleepStats()]), def: 120, label: 'NAS 進階 (歷史圖/警報)', desc: '多久抓一次 NAS 的系統/流量/溫度/儲存歷史圖、滿載預估、警報事件與硬碟休眠統計（資料量較大，建議較長間隔）。' },
             docker: { fn: () => fetchNasDocker(), def: 30, label: 'Docker 容器', desc: '多久刷新一次 Docker 容器清單與其即時 CPU/記憶體占用。' },
             trend: { fn: () => fetchTrends(), def: 30, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
-            notifLog: { fn: () => fetchNotifLog(), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄清單。' },
+            notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄與 Web Push 訂閱狀態。' },
             reportLog: { fn: () => fetchReportLog(), def: 30, label: '報表執行紀錄', desc: '多久刷新一次定期報表的手動／排程發送紀錄與保存的報表內容。' },
             systemStatus: { fn: () => fetchSystemStatus(), def: 30, label: 'System Diagnostics', desc: '多久更新一次本服務的 CPU、記憶體、磁碟、SQLite、背景工作與 Active Issues。後端監控間隔另由 MONITOR_INTERVAL_SECONDS 控制。' },
             security: { fn: () => fetchSecuritySettings(), def: 30, label: '資安設定同步', desc: '多久同步一次自動防禦開關的最新狀態（避免多裝置操作時顯示不一致）。' },
@@ -7660,6 +7682,104 @@
 
         /* ==================== 通知推播 ==================== */
         let notifChannel = 'discord';
+        let webPushConfig = null;
+
+        function base64UrlToUint8Array(value) {
+            const padding = '='.repeat((4 - value.length % 4) % 4);
+            const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
+            return Uint8Array.from(raw, character => character.charCodeAt(0));
+        }
+
+        function webPushCapabilityError() {
+            if (!window.isSecureContext) return 'Web Push 需要 HTTPS secure context';
+            if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return '此瀏覽器不支援 Web Push';
+            if (Notification.permission === 'denied') return '通知權限已被瀏覽器拒絕';
+            return null;
+        }
+
+        async function fetchWebPushState() {
+            const status = document.getElementById('web-push-status');
+            if (!status) return false;
+            const subscribeButton = document.getElementById('web-push-subscribe');
+            const unsubscribeButton = document.getElementById('web-push-unsubscribe');
+            const isAdmin = document.documentElement.dataset.panelRole === 'admin';
+            try {
+                const response = await fetch('/api/web-push/config', { cache: 'no-store' });
+                const state = await response.json();
+                if (!response.ok) throw new Error(state.error || `HTTP ${response.status}`);
+                webPushConfig = state;
+                const capabilityError = webPushCapabilityError();
+                let localSubscription = null;
+                if (!capabilityError) {
+                    const registration = await navigator.serviceWorker.ready;
+                    localSubscription = await registration.pushManager.getSubscription();
+                }
+                const configuration = !state.configured
+                    ? state.error === 'partial_vapid_configuration' ? 'VAPID 設定不完整' : state.error === 'invalid_vapid_configuration' ? 'VAPID 設定無效' : '伺服器尚未設定 VAPID'
+                    : null;
+                status.textContent = capabilityError || configuration || `${localSubscription ? '此瀏覽器已訂閱' : '此瀏覽器未訂閱'} · 伺服器共 ${state.subscriptionCount || 0} 筆`;
+                status.className = `text-[9px] ${capabilityError || configuration ? 'text-red-400' : localSubscription ? 'text-emerald-400' : 'text-slate-500'}`;
+                subscribeButton.textContent = localSubscription ? '同步/更新此瀏覽器訂閱' : '授權並訂閱此瀏覽器';
+                subscribeButton.disabled = !isAdmin || !!capabilityError || !!configuration;
+                unsubscribeButton.disabled = !isAdmin || !localSubscription;
+                for (const button of [subscribeButton, unsubscribeButton]) button.classList.toggle('opacity-50', button.disabled);
+                return true;
+            } catch (error) {
+                webPushConfig = null;
+                status.textContent = `Web Push 狀態讀取失敗：${error.message}`;
+                status.className = 'text-[9px] text-red-400';
+                subscribeButton.disabled = true;
+                unsubscribeButton.disabled = true;
+                return false;
+            }
+        }
+
+        async function subscribeWebPush() {
+            if (document.documentElement.dataset.panelRole !== 'admin') return showToast('僅管理員可建立 Web Push 訂閱', true);
+            const capabilityError = webPushCapabilityError();
+            if (capabilityError) return showToast(capabilityError, true);
+            try {
+                if (!webPushConfig?.configured && !await fetchWebPushState()) throw new Error('無法取得 Web Push 設定');
+                if (!webPushConfig?.configured || !webPushConfig.publicKey) throw new Error('伺服器尚未完成 VAPID 設定');
+                const permission = await Notification.requestPermission();
+                if (permission !== 'granted') throw new Error(permission === 'denied' ? '通知權限已被拒絕' : '未授予通知權限');
+                const registration = await navigator.serviceWorker.ready;
+                let subscription = await registration.pushManager.getSubscription();
+                if (!subscription) subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: base64UrlToUint8Array(webPushConfig.publicKey)
+                });
+                const response = await fetch('/api/web-push/subscriptions', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subscription: subscription.toJSON() })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                showToast(result.created ? '此瀏覽器已建立 Web Push 訂閱' : '此瀏覽器訂閱已更新');
+                await fetchWebPushState();
+            } catch (error) {
+                showToast(`Web Push 訂閱失敗：${error.message}`, true);
+                await fetchWebPushState();
+            }
+        }
+
+        async function unsubscribeWebPush() {
+            if (document.documentElement.dataset.panelRole !== 'admin') return showToast('僅管理員可移除 Web Push 訂閱', true);
+            try {
+                const registration = await navigator.serviceWorker.ready;
+                const subscription = await registration.pushManager.getSubscription();
+                if (!subscription) return showToast('此瀏覽器沒有 Web Push 訂閱', true);
+                const response = await fetch('/api/web-push/subscriptions', {
+                    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ endpoint: subscription.endpoint })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+                await subscription.unsubscribe();
+                showToast('此瀏覽器 Web Push 訂閱已移除');
+                await fetchWebPushState();
+            } catch (error) { showToast(`Web Push 取消失敗：${error.message}`, true); }
+        }
 
         function setNotifChannel(ch) {
             notifChannel = ch;
@@ -7678,6 +7798,7 @@
             try {
                 const s = await (await fetch('/api/notifications/settings')).json();
                 document.getElementById('notif-enabled').checked = !!s.enabled;
+                document.getElementById('notif-webpush-enabled').checked = !!s.webPushEnabled;
                 document.getElementById('notif-chatid').value = s.chatId || '';
                 document.getElementById('notif-trig-threats').checked = !!s.triggerThreats;
                 document.getElementById('notif-trig-nas').checked = !!s.triggerNasAlerts;
@@ -7769,6 +7890,7 @@
         async function saveNotifSettings() {
             const body = {
                 enabled: document.getElementById('notif-enabled').checked,
+                webPushEnabled: document.getElementById('notif-webpush-enabled').checked,
                 channel: notifChannel,
                 chatId: document.getElementById('notif-chatid').value.trim(),
                 telegramCommandsEnabled: document.getElementById('notif-telegram-commands')?.checked ?? false,

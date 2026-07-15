@@ -72,6 +72,7 @@
 | 8016 | `fetchUps()` | UPS 狀態/歷史/事件 + 降採樣 |
 | 8158 | `fetchAdguard*()` | AdGuard |
 | AdGuard | `fetchAdguardServicePolicies()` / `saveAdguardServicePolicy()` / `removeAdguardServicePolicy()` | admin-only 裝置 IP/MAC、YouTube/TikTok/Gaming、IANA timezone、每日 allow window、同步錯誤/重試與 baseline restore |
+| Notify | `fetchWebPushState()` / `subscribeWebPush()` / `unsubscribeWebPush()` | admin user gesture、permission denied、VAPID public key、目前瀏覽器訂閱與 server subscription count；Web Push 是額外 fan-out |
 | 8219 | `fetchLinux*()` | Linux 小主機 |
 
 ## 前端資產
@@ -79,6 +80,7 @@
 - `public/assets/tailwind.css`: `tailwindcss@3.4.19` 的 deterministic production output
 - `frontend/tailwind.input.css` + `tailwind.config.cjs`: CSS 建置來源；修改 class 後跑 `npm run build:css`
 - Chart.js、D3、TopoJSON、world-atlas 由 `/vendor/<package>/<exact-version>/...` 同源提供，版本由 `package-lock.json` 與 `server/routes/frontend-asset-routes.js` 約束
+- `/sw.js` 由 `server/services/pwa-service-worker.js` 產生，production/mock 共用 cache/push/click 行為；API/health 不進 cache，push click 只接受 same-origin path
 
 ## 常用定位
 

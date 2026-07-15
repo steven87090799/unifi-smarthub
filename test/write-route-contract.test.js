@@ -203,6 +203,12 @@ const INVALID_WRITES = Object.freeze([
     ['notification threshold above maximum', 'POST', '/api/notifications/settings', { clientSignalAlert: 96 }],
     ['notification invalid channel', 'POST', '/api/notifications/settings', { channel: 'sms' }],
     ['notification boolean string', 'POST', '/api/notifications/settings', { enabled: 'true' }],
+    ['Web Push insecure endpoint', 'POST', '/api/web-push/subscriptions', {
+        subscription: { endpoint: 'http://push.example.test/device', expirationTime: null, keys: { p256dh: 'bad', auth: 'bad' } }
+    }],
+    ['Web Push unsubscribe unknown field', 'DELETE', '/api/web-push/subscriptions', {
+        endpoint: 'https://push.example.test/device', extra: true
+    }],
     ['settings minimum minus one', 'POST', '/api/settings', { trendActiveSec: 4 }],
     ['settings maximum plus one', 'POST', '/api/settings', { trendActiveSec: 3601 }],
     ['settings invalid hour', 'POST', '/api/settings', { reportHour: 24 }],

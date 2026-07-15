@@ -234,6 +234,29 @@ function createHistoryDb(dataDir, options = {}) {
         );
         CREATE INDEX IF NOT EXISTS idx_adguard_service_policy_audit_ts
             ON adguard_service_policy_audit(ts DESC, id DESC);
+        CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+            endpoint_hash TEXT PRIMARY KEY,
+            endpoint TEXT NOT NULL,
+            expiration_ts INTEGER,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_ts INTEGER NOT NULL,
+            updated_ts INTEGER NOT NULL,
+            last_success_ts INTEGER,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_ts INTEGER,
+            last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_retry
+            ON web_push_subscriptions(next_retry_ts, expiration_ts);
+        CREATE TABLE IF NOT EXISTS web_push_delivery_claims (
+            endpoint_hash TEXT NOT NULL,
+            notification_key TEXT NOT NULL,
+            created_ts INTEGER NOT NULL,
+            PRIMARY KEY (endpoint_hash, notification_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_web_push_delivery_claims_created
+            ON web_push_delivery_claims(created_ts, endpoint_hash, notification_key);
     `);
 
     // report_runs predates durable scheduler claims. ALTER only missing columns
@@ -705,6 +728,66 @@ function createHistoryDb(dataDir, options = {}) {
             ORDER BY ts DESC, id DESC LIMIT -1 OFFSET 1000
         )
     `);
+    const getWebPushSubscriptionStmt = db.prepare('SELECT * FROM web_push_subscriptions WHERE endpoint_hash = ?');
+    const countWebPushSubscriptionsStmt = db.prepare('SELECT COUNT(*) AS count FROM web_push_subscriptions');
+    const listWebPushSubscriptionsStmt = db.prepare(`
+        SELECT * FROM web_push_subscriptions ORDER BY created_ts ASC, endpoint_hash ASC
+    `);
+    const upsertWebPushSubscriptionStmt = db.prepare(`
+        INSERT INTO web_push_subscriptions (
+            endpoint_hash, endpoint, expiration_ts, p256dh, auth, created_ts, updated_ts,
+            last_success_ts, failure_count, next_retry_ts, last_error
+        ) VALUES (
+            @endpoint_hash, @endpoint, @expiration_ts, @p256dh, @auth, @created_ts, @updated_ts,
+            NULL, 0, NULL, NULL
+        )
+        ON CONFLICT(endpoint_hash) DO UPDATE SET
+            endpoint = excluded.endpoint,
+            expiration_ts = excluded.expiration_ts,
+            p256dh = excluded.p256dh,
+            auth = excluded.auth,
+            updated_ts = excluded.updated_ts,
+            failure_count = 0,
+            next_retry_ts = NULL,
+            last_error = NULL
+    `);
+    const deleteWebPushSubscriptionStmt = db.prepare('DELETE FROM web_push_subscriptions WHERE endpoint_hash = ?');
+    const deleteWebPushClaimsForEndpointStmt = db.prepare('DELETE FROM web_push_delivery_claims WHERE endpoint_hash = ?');
+    const markWebPushSuccessStmt = db.prepare(`
+        UPDATE web_push_subscriptions
+        SET last_success_ts = @timestamp, updated_ts = @timestamp,
+            failure_count = 0, next_retry_ts = NULL, last_error = NULL
+        WHERE endpoint_hash = @endpoint_hash
+    `);
+    const markWebPushFailureStmt = db.prepare(`
+        UPDATE web_push_subscriptions
+        SET updated_ts = @timestamp,
+            failure_count = MIN(failure_count + 1, 1000000),
+            next_retry_ts = @next_retry_ts,
+            last_error = @last_error
+        WHERE endpoint_hash = @endpoint_hash
+    `);
+    const insertWebPushDeliveryClaimStmt = db.prepare(`
+        INSERT OR IGNORE INTO web_push_delivery_claims (endpoint_hash, notification_key, created_ts)
+        VALUES (@endpoint_hash, @notification_key, @created_ts)
+    `);
+    const deleteWebPushDeliveryClaimStmt = db.prepare(`
+        DELETE FROM web_push_delivery_claims WHERE endpoint_hash = ? AND notification_key = ?
+    `);
+    const deleteExpiredWebPushDeliveryClaimsStmt = db.prepare(`
+        DELETE FROM web_push_delivery_claims WHERE created_ts < ?
+    `);
+    const boundWebPushDeliveryClaimsStmt = db.prepare(`
+        DELETE FROM web_push_delivery_claims WHERE rowid IN (
+            SELECT rowid FROM web_push_delivery_claims
+            ORDER BY created_ts DESC, endpoint_hash DESC, notification_key DESC
+            LIMIT -1 OFFSET 10000
+        )
+    `);
+    const listExpiredWebPushSubscriptionHashesStmt = db.prepare(`
+        SELECT endpoint_hash FROM web_push_subscriptions
+        WHERE expiration_ts IS NOT NULL AND expiration_ts <= ?
+    `);
     const healthStmt = db.prepare('SELECT 1 AS ok');
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
@@ -961,6 +1044,61 @@ function createHistoryDb(dataDir, options = {}) {
             lastError: row.last_error
         };
     }
+    function mapWebPushSubscription(row) {
+        return {
+            endpointHash: row.endpoint_hash,
+            endpoint: row.endpoint,
+            expirationTime: row.expiration_ts,
+            keys: { p256dh: row.p256dh, auth: row.auth },
+            createdTs: row.created_ts,
+            updatedTs: row.updated_ts,
+            lastSuccessTs: row.last_success_ts,
+            failureCount: row.failure_count,
+            nextRetryTs: row.next_retry_ts,
+            lastError: row.last_error
+        };
+    }
+    const upsertWebPushSubscriptionTransaction = db.transaction(entry => {
+        const existing = getWebPushSubscriptionStmt.get(entry.endpointHash);
+        if (!existing && countWebPushSubscriptionsStmt.get().count >= 20) {
+            throw new RangeError('web push subscription capacity reached');
+        }
+        upsertWebPushSubscriptionStmt.run({
+            endpoint_hash: entry.endpointHash,
+            endpoint: entry.endpoint,
+            expiration_ts: entry.expirationTime,
+            p256dh: entry.keys.p256dh,
+            auth: entry.keys.auth,
+            created_ts: entry.timestamp,
+            updated_ts: entry.timestamp
+        });
+        return {
+            created: !existing,
+            subscription: mapWebPushSubscription(getWebPushSubscriptionStmt.get(entry.endpointHash))
+        };
+    });
+    const deleteWebPushSubscriptionTransaction = db.transaction(endpointHash => {
+        deleteWebPushClaimsForEndpointStmt.run(endpointHash);
+        return deleteWebPushSubscriptionStmt.run(endpointHash).changes === 1;
+    });
+    const claimWebPushDeliveryTransaction = db.transaction(entry => {
+        deleteExpiredWebPushDeliveryClaimsStmt.run(entry.timestamp - 24 * 60 * 60 * 1000);
+        const claimed = insertWebPushDeliveryClaimStmt.run({
+            endpoint_hash: entry.endpointHash,
+            notification_key: entry.notificationKey,
+            created_ts: entry.timestamp
+        }).changes === 1;
+        boundWebPushDeliveryClaimsStmt.run();
+        return claimed;
+    });
+    const pruneExpiredWebPushSubscriptionsTransaction = db.transaction(timestamp => {
+        const hashes = listExpiredWebPushSubscriptionHashesStmt.all(timestamp).map(row => row.endpoint_hash);
+        for (const endpointHash of hashes) {
+            deleteWebPushClaimsForEndpointStmt.run(endpointHash);
+            deleteWebPushSubscriptionStmt.run(endpointHash);
+        }
+        return hashes.length;
+    });
     function claimExistingOrInsert(row, { allowInsert = true } = {}) {
         const result = allowInsert ? claimScheduledReportStmt.run(row) : { changes: 0 };
         if (result.changes === 1) {
@@ -1465,6 +1603,85 @@ function createHistoryDb(dataDir, options = {}) {
             }
             return measure('markAdguardServicePolicyFailure', 'adguard_service_policies', () => (
                 markAdguardServicePolicyFailureTransaction.immediate(id, timestamp, error, retryAt)
+            ), { transaction: true });
+        },
+        upsertWebPushSubscription(entry) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+                || typeof entry.endpointHash !== 'string' || !/^[0-9a-f]{64}$/u.test(entry.endpointHash)
+                || typeof entry.endpoint !== 'string' || entry.endpoint.length > 2048
+                || !entry.keys || typeof entry.keys.p256dh !== 'string' || typeof entry.keys.auth !== 'string'
+                || !(entry.expirationTime == null || Number.isSafeInteger(entry.expirationTime))
+                || !Number.isSafeInteger(entry.timestamp)) {
+                throw new TypeError('web push subscription is invalid');
+            }
+            return measure('upsertWebPushSubscription', 'web_push_subscriptions', () => (
+                upsertWebPushSubscriptionTransaction.immediate(entry)
+            ), { transaction: true });
+        },
+        deleteWebPushSubscription(endpointHash) {
+            if (typeof endpointHash !== 'string' || !/^[0-9a-f]{64}$/u.test(endpointHash)) {
+                throw new TypeError('web push endpoint hash is invalid');
+            }
+            return measure('deleteWebPushSubscription', 'web_push_subscriptions', () => (
+                deleteWebPushSubscriptionTransaction.immediate(endpointHash)
+            ), { transaction: true });
+        },
+        listWebPushSubscriptions() {
+            return measure('listWebPushSubscriptions', 'web_push_subscriptions', () => (
+                listWebPushSubscriptionsStmt.all().map(mapWebPushSubscription)
+            ));
+        },
+        countWebPushSubscriptions() {
+            return measure('countWebPushSubscriptions', 'web_push_subscriptions', () => (
+                countWebPushSubscriptionsStmt.get().count
+            ));
+        },
+        markWebPushSuccess(endpointHash, timestamp) {
+            if (typeof endpointHash !== 'string' || !/^[0-9a-f]{64}$/u.test(endpointHash)
+                || !Number.isSafeInteger(timestamp)) {
+                throw new TypeError('web push success result is invalid');
+            }
+            return measure('markWebPushSuccess', 'web_push_subscriptions', () => (
+                markWebPushSuccessStmt.run({ endpoint_hash: endpointHash, timestamp }).changes === 1
+            ));
+        },
+        markWebPushFailure(endpointHash, timestamp, error, retryAt) {
+            if (typeof endpointHash !== 'string' || !/^[0-9a-f]{64}$/u.test(endpointHash)
+                || !Number.isSafeInteger(timestamp) || !Number.isSafeInteger(retryAt) || retryAt <= timestamp) {
+                throw new TypeError('web push failure result is invalid');
+            }
+            return measure('markWebPushFailure', 'web_push_subscriptions', () => (
+                markWebPushFailureStmt.run({
+                    endpoint_hash: endpointHash,
+                    timestamp,
+                    next_retry_ts: retryAt,
+                    last_error: String(error || 'push_failed').slice(0, 120)
+                }).changes === 1
+            ));
+        },
+        claimWebPushDelivery(endpointHash, notificationKey, timestamp) {
+            if (typeof endpointHash !== 'string' || !/^[0-9a-f]{64}$/u.test(endpointHash)
+                || typeof notificationKey !== 'string' || !/^[0-9a-f]{64}$/u.test(notificationKey)
+                || !Number.isSafeInteger(timestamp)) {
+                throw new TypeError('web push delivery claim is invalid');
+            }
+            return measure('claimWebPushDelivery', 'web_push_delivery_claims', () => (
+                claimWebPushDeliveryTransaction.immediate({ endpointHash, notificationKey, timestamp })
+            ), { transaction: true });
+        },
+        releaseWebPushDelivery(endpointHash, notificationKey) {
+            if (typeof endpointHash !== 'string' || !/^[0-9a-f]{64}$/u.test(endpointHash)
+                || typeof notificationKey !== 'string' || !/^[0-9a-f]{64}$/u.test(notificationKey)) {
+                throw new TypeError('web push delivery claim is invalid');
+            }
+            return measure('releaseWebPushDelivery', 'web_push_delivery_claims', () => (
+                deleteWebPushDeliveryClaimStmt.run(endpointHash, notificationKey).changes === 1
+            ));
+        },
+        pruneExpiredWebPushSubscriptions(timestamp) {
+            if (!Number.isSafeInteger(timestamp)) throw new TypeError('web push expiry timestamp is invalid');
+            return measure('pruneExpiredWebPushSubscriptions', 'web_push_subscriptions', () => (
+                pruneExpiredWebPushSubscriptionsTransaction.immediate(timestamp)
             ), { transaction: true });
         },
         insertReportRun(entry) {

@@ -59,8 +59,11 @@ open http://<主機IP>:3000
 | | `ADGUARD_ALLOW_INSECURE_HTTP`, `ADGUARD_TLS_VERIFY`, `ADGUARD_CA_FILE` | 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可掛自簽 CA。舊 `ADGUARD_HOST/PORT` 仍可用但同樣受傳輸政策保護 |
 | **10. Linux 小主機** | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_PORT` | 任何 Linux 主機的 SSH,啟用硬體監控頁 |
 | **11. 面板密碼** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：整站 Basic Auth(帳號隨意、密碼為此值) |
+| **12. Web Push** | `WEB_PUSH_SUBJECT`, `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` | 選填的瀏覽器通知；VAPID 三欄必須同時設定，private key 只存於 `config/.env`。 |
 
 AdGuard 頁的管理員控制可對 persistent client 的精確 IP/MAC 套用 YouTube、TikTok、Gaming 服務政策。每日「允許時段」代表暫停 blocked-service filtering 的區間，時段外維持封鎖；政策以 SQLite 保存並在重啟或 AdGuard 恢復後重新協調。SmartHub 只在政策有效期間接管 blocked-services 欄位，移除時會還原首次套用前保存的基準。
+
+Web Push 是 Discord／Telegram／Webhook 之外的額外 fan-out，不會取代既有通道。第一次設定時在安全環境執行 `npx web-push generate-vapid-keys --json`，將同一組 key 長期保存於 `config/.env`；不要把輸出提交、貼進 log 或每次重建。瀏覽器只會在管理員按下「授權並訂閱」後要求通知權限。訂閱以 SQLite 去重保存；過期或 push service 回應 404/410 時自動清除，暫時性拒絕採有限重試與持久退避。
 
 > **安全提醒**:此面板具有斷網、關 WiFi、PoE 斷電、改 `.env` 等控制權限。只在內網部署、務必設 `PANEL_PASSWORD`,不要直接曝露到公網;遠端存取請走 VPN。
 

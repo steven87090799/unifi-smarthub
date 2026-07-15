@@ -131,8 +131,52 @@ function createNotificationDispatcher({ httpClient } = {}) {
     };
 }
 
+async function dispatchNotificationFanout({
+    dispatchPrimary,
+    dispatchWebPush,
+    title,
+    body,
+    settings,
+    options = {}
+} = {}) {
+    if (typeof dispatchPrimary !== 'function') throw new TypeError('dispatchPrimary is required');
+    if (!settings?.webPushEnabled) {
+        await dispatchPrimary(title, body, settings, options);
+        return { ok: true, primary: true, webPush: { skipped: 'disabled' } };
+    }
+    if (typeof dispatchWebPush !== 'function') throw new TypeError('dispatchWebPush is required when Web Push is enabled');
+
+    const [primary, push] = await Promise.allSettled([
+        dispatchPrimary(title, body, settings, options),
+        dispatchWebPush(title, body, options)
+    ]);
+    const pushResult = push.status === 'fulfilled'
+        ? push.value
+        : { attempted: 0, sent: 0, failed: 1, serviceError: push.reason };
+    if (primary.status === 'fulfilled') {
+        return {
+            ok: true,
+            primary: true,
+            webPush: pushResult,
+            partial: Number(pushResult?.failed || 0) > 0 || push.status === 'rejected'
+        };
+    }
+    if (primary.reason instanceof PartialNotificationDeliveryError) throw primary.reason;
+    if (Number(pushResult?.sent || 0) > 0) {
+        return {
+            ok: true,
+            primary: false,
+            fallback: 'web_push',
+            primaryError: primary.reason,
+            webPush: pushResult
+        };
+    }
+    throw primary.reason;
+}
+
 module.exports = {
     PartialNotificationDeliveryError,
     chunkText,
-    createNotificationDispatcher
+    createNotificationDispatcher,
+    dispatchNotificationFanout
 };

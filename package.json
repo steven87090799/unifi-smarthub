@@ -21,6 +21,7 @@
     "qrcode": "1.5.4",
     "ssh2": "^1.15.0",
     "topojson-client": "3.1.0",
+    "web-push": "3.6.7",
     "world-atlas": "2.0.2"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 const express = require('express');
+const webPushLibrary = require('web-push');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -14,6 +15,7 @@ const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const adguardServicePolicy = require('./server/policies/adguard-service-policy');
+const webPushPolicy = require('./server/policies/web-push-policy');
 const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
 const {
     BACKUP_MEDIA_TYPE,
@@ -22,6 +24,7 @@ const {
     createConfigBackupService
 } = require('./server/services/config-backup');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
+const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
 
 const app = express();
 app.use((_req, res, next) => {
@@ -845,7 +848,7 @@ app.delete('/api/nas/alerts/config/:metric', (req, res) => {
 
 /* ===== 通知推播中心 (模擬) ===== */
 let mockNotif = {
-    enabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', telegramCommandsEnabled: false,
+    enabled: false, webPushEnabled: false, channel: 'discord', webhookUrl: '', botToken: '', chatId: '', telegramCommandsEnabled: false,
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
     triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
@@ -860,6 +863,8 @@ let mockNotif = {
     triggerSystemCritical: true, triggerSystemWarning: false, triggerSystemRecovery: true, triggerSystemStartup: false
 };
 let mockNotifLog = [];
+const mockVapid = webPushLibrary.generateVAPIDKeys();
+const mockWebPushSubscriptions = new Map();
 function pushMockNotif(e) { mockNotifLog.unshift(e); mockNotifLog = mockNotifLog.slice(0, 50); }
 app.get('/api/notifications/settings', (req, res) => {
     const { webhookUrl, botToken, ...safe } = mockNotif;
@@ -876,19 +881,49 @@ app.post('/api/notifications/test', (req, res) => {
     if (!input) return;
     // 展示模式：模擬送出成功 (需先啟用且已填目標)
     if (!mockNotif.enabled) return res.json({ skipped: 'disabled' });
-    const configured = mockNotif.channel === 'telegram' ? (mockNotif.botToken && mockNotif.chatId) : mockNotif.webhookUrl;
-    const entry = { ts: new Date().toISOString(), title: '🔔 SmartHub 測試通知', body: `測試訊息 ${new Date().toLocaleString('zh-TW')}`, channel: mockNotif.channel, ok: !!configured };
+    const primaryConfigured = mockNotif.channel === 'telegram' ? (mockNotif.botToken && mockNotif.chatId) : mockNotif.webhookUrl;
+    const webPushConfigured = mockNotif.webPushEnabled && mockWebPushSubscriptions.size > 0;
+    const configured = primaryConfigured || webPushConfigured;
+    const entry = { ts: new Date().toISOString(), title: '🔔 SmartHub 測試通知', body: `測試訊息 ${new Date().toLocaleString('zh-TW')}`, channel: mockNotif.channel, ok: !!configured, webPush: { sent: webPushConfigured ? mockWebPushSubscriptions.size : 0, failed: 0 } };
     if (!configured) entry.error = '尚未填寫推播目標';
     pushMockNotif(entry);
     res.json(entry.ok ? { ok: true } : { ok: false, error: entry.error });
 });
 app.get('/api/notifications/log', (req, res) => res.json({ log: mockNotifLog }));
+app.get('/api/web-push/config', (_req, res) => res.json({
+    configured: true,
+    publicKey: mockVapid.publicKey,
+    subject: 'mailto:mock@smarthub.invalid',
+    error: null,
+    enabled: !!mockNotif.webPushEnabled,
+    subscriptionCount: mockWebPushSubscriptions.size,
+    maxSubscriptions: 20
+}));
+app.post('/api/web-push/subscriptions', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => webPushPolicy.parseSubscriptionRequest(req.body));
+    if (!input) return;
+    const created = !mockWebPushSubscriptions.has(input.endpoint);
+    if (created && mockWebPushSubscriptions.size >= 20) {
+        return mockApiError(res, new Error('Web Push subscription capacity reached'), {
+            status: 409, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'Web Push subscription capacity reached'
+        });
+    }
+    mockWebPushSubscriptions.set(input.endpoint, input);
+    res.status(created ? 201 : 200).json({ ok: true, created, subscriptionCount: mockWebPushSubscriptions.size });
+});
+app.delete('/api/web-push/subscriptions', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => webPushPolicy.parseUnsubscribeRequest(req.body));
+    if (!input) return;
+    res.json({ ok: true, removed: mockWebPushSubscriptions.delete(input.endpoint), subscriptionCount: mockWebPushSubscriptions.size });
+});
 // 模擬：啟用後每 25 秒模擬推播一則新威脅通知，讓預覽的紀錄會累積
 setInterval(() => {
     if (!mockNotif.enabled || !mockNotif.triggerThreats) return;
-    const configured = mockNotif.channel === 'telegram' ? (mockNotif.botToken && mockNotif.chatId) : mockNotif.webhookUrl;
+    const primaryConfigured = mockNotif.channel === 'telegram' ? (mockNotif.botToken && mockNotif.chatId) : mockNotif.webhookUrl;
+    const webPushConfigured = mockNotif.webPushEnabled && mockWebPushSubscriptions.size > 0;
+    const configured = primaryConfigured || webPushConfigured;
     const t = mockThreats[0];
-    if (t) pushMockNotif({ ts: new Date().toISOString(), title: '🛡️ IPS 攔截新威脅', body: `來源 ${t.src_ip} (${t.src_country})\n${t.msg}`, channel: mockNotif.channel, ok: !!configured });
+    if (t) pushMockNotif({ ts: new Date().toISOString(), title: '🛡️ IPS 攔截新威脅', body: `來源 ${t.src_ip} (${t.src_country})\n${t.msg}`, channel: mockNotif.channel, ok: !!configured, webPush: { sent: webPushConfigured ? mockWebPushSubscriptions.size : 0, failed: 0 } });
 }, 25000);
 
 /* ===== 應用程式設定 (模擬) ===== */
@@ -949,12 +984,9 @@ app.get('/manifest.webmanifest', (req, res) => res.json({
     background_color: '#030712', theme_color: '#030712', orientation: 'portrait-primary',
     icons: [{ src: PWA_ICON, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' }, { src: PWA_ICON, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' }]
 }));
-app.get('/sw.js', (req, res) => res.type('application/javascript').send(`
-const C=${JSON.stringify(`smarthub-shell-mock-${APP_VERSION}`)};
-const SHELL=['/','/assets/tailwind.css','/vendor/chart.js/4.5.1/chart.umd.js','/vendor/d3/7.9.0/d3.min.js','/vendor/topojson-client/3.1.0/topojson-client.min.js','/vendor/world-atlas/2.0.2/countries-110m.json'];
-self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(C).then(c=>c.addAll(SHELL)))});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==C).map(k=>caches.delete(k)))));self.clients.claim()});
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.pathname.startsWith('/api/')||u.pathname.startsWith('/health'))return;e.respondWith(fetch(e.request).then(r=>{const cp=r.clone();caches.open(C).then(c=>c.put(e.request,cp));return r}).catch(()=>caches.match(e.request).then(m=>m||caches.match('/'))));});`));
+app.get('/sw.js', (req, res) => res.type('application/javascript').send(
+    renderPwaServiceWorker(`smarthub-shell-mock-${APP_VERSION}`)
+));
 
 // --- WiiM Amp Mock Endpoints & Background Polling ---
 let mockWiimHistory = [];

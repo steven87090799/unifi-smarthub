@@ -45,6 +45,7 @@ async function fixture(t) {
     write(envFile, [
         'PANEL_PASSWORD=top-secret',
         'UNIFI_API_KEY=another-secret',
+        'WEB_PUSH_PRIVATE_KEY=web-push-private-material',
         'WIIM_IP=192.0.2.55',
         'UPS_SOURCE=ppb'
     ].join('\n') + '\n');
@@ -67,8 +68,9 @@ test('export produces a consistent SQLite snapshot and never exports live env se
     assert.equal(f.artifact.environment.restorable, false);
     assert.deepEqual(f.artifact.environment.values.PANEL_PASSWORD, { secret: true, configured: true });
     assert.deepEqual(f.artifact.environment.values.UNIFI_API_KEY, { secret: true, configured: true });
+    assert.deepEqual(f.artifact.environment.values.WEB_PUSH_PRIVATE_KEY, { secret: true, configured: true });
     assert.deepEqual(f.artifact.environment.values.WIIM_IP, { secret: false, value: '192.0.2.55' });
-    assert.doesNotMatch(JSON.stringify(f.artifact), /top-secret|another-secret/);
+    assert.doesNotMatch(JSON.stringify(f.artifact), /top-secret|another-secret|web-push-private-material/);
     assert.equal(f.artifact.files['app-settings.json'].data, JSON.stringify({ watcherSec: 45 }));
 
     const snapshot = path.join(f.directory, 'exported.db');
