@@ -22,6 +22,7 @@ const {
     readJsonObjectFile,
     writeJsonObjectAtomically
 } = require('./server/storage/json-file-store');
+const { acquireInstanceLock } = require('./server/storage/instance-lock');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -702,33 +703,32 @@ catch (error) {
 /* ===================== 單一實例鎖 =====================
    防止同一份 DATA_DIR 被多個 server.js 同時使用：每個實例都有自己的推播監看器，
    多開會導致同一事件重複推播 N 次 (實際發生過：4 個測試殘留實例 + 正式 = 同則警報×5)。
-   鎖檔記 PID；持鎖程序已死 (stale) 則接管。設 ALLOW_MULTI_INSTANCE=1 可跳過 (測試用)。 */
-const LOCK_FILE = path.join(DATA_DIR, '.instance.lock');
+   以獨立 SQLite authority 在 IMMEDIATE transaction 內寫入 PID + random owner token；
+   持鎖程序已死 (stale) 才可接管，舊版 PID lock 只在取得 transaction owner 後遷移。
+   設 ALLOW_MULTI_INSTANCE=1 可跳過 (僅限隔離測試)。 */
+const LOCK_FILE = path.join(DATA_DIR, '.instance-lock.sqlite');
+const LEGACY_LOCK_FILE = path.join(DATA_DIR, '.instance.lock');
+let instanceLock = null;
 if (process.env.ALLOW_MULTI_INSTANCE !== '1') {
     try {
-        const oldPid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10);
-        if (oldPid && oldPid !== process.pid) {
-            let alive = false;
-            try { process.kill(oldPid, 0); alive = true; } catch { }
-            if (alive) {
-                logger.critical({
-                    module: 'app.instanceLock', function: 'acquire', code: ERROR_CODES.SYS_START_FAILED,
-                    message: 'Another SmartHub instance is already using this DATA_DIR',
-                    fields: { existing_pid: oldPid, suggested_check: 'Use a different DATA_DIR or set ALLOW_MULTI_INSTANCE=1 only for isolated tests.' }
-                });
-                process.exit(1);
-            }
-        }
-    } catch { /* 鎖檔不存在 = 正常首啟 */ }
-    try { fs.writeFileSync(LOCK_FILE, String(process.pid)); }
+        instanceLock = acquireInstanceLock({ lockFile: LOCK_FILE, legacyLockFile: LEGACY_LOCK_FILE });
+    }
     catch (error) {
         logger.critical({
             module: 'app.instanceLock', function: 'acquire', code: ERROR_CODES.SYS_START_FAILED,
-            message: 'Failed to create SmartHub instance lock', error, fields: { lock_file: path.basename(LOCK_FILE) }
+            message: error.code === 'INSTANCE_LOCK_HELD'
+                ? 'Another SmartHub instance is already using this DATA_DIR'
+                : 'Failed to acquire SmartHub instance lock',
+            error,
+            fields: {
+                lock_file: path.basename(LOCK_FILE),
+                ...(error.ownerPid ? { existing_pid: error.ownerPid } : {}),
+                suggested_check: 'Use a different DATA_DIR or set ALLOW_MULTI_INSTANCE=1 only for isolated tests.'
+            }
         });
         process.exit(1);
     }
-    process.on('exit', () => { try { if (parseInt(fs.readFileSync(LOCK_FILE, 'utf8'), 10) === process.pid) fs.unlinkSync(LOCK_FILE); } catch { } });
+    process.on('exit', () => { instanceLock?.release(); });
 }
 
 // Restore mutates the complete persistent state and must never run until this

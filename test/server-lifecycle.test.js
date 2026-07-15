@@ -45,43 +45,44 @@ async function waitForHealth(baseUrl, child, output) {
     throw new Error(`server did not become healthy\n${output()}`);
 }
 
-test('SIGTERM drains owned work, closes SQLite, and removes the instance lock', { timeout: 30_000 }, async t => {
+test('SIGTERM drains owned work, closes SQLite, and releases the instance owner row', { timeout: 30_000 }, async t => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-lifecycle-'));
     t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
     fs.writeFileSync(path.join(dataDir, '.env'), '# isolated lifecycle config\n', { mode: 0o600 });
     const port = await unusedPort();
+    const isolatedEnvironment = {
+        ...process.env,
+        NODE_ENV: 'production',
+        PORT: String(port),
+        DATA_DIR: dataDir,
+        SMARTHUB_ENV_FILE: path.join(dataDir, '.env'),
+        PANEL_PASSWORD: 'lifecycle-admin-secret',
+        PANEL_READONLY_PASSWORD: 'lifecycle-readonly-secret',
+        LOG_LEVEL: 'INFO',
+        LOG_FORMAT: 'json',
+        LOG_JSON: 'true',
+        MONITOR_ENABLED: 'false',
+        UCG_IP: '127.0.0.1',
+        SSH_PORT: '1',
+        SSH_USER: '',
+        SSH_PASSWORD: '',
+        UNIFI_CONTROLLER_URL: 'http://127.0.0.1:1',
+        UNIFI_USERNAME: '',
+        UNIFI_PASSWORD: '',
+        UNIFI_API_KEY: '',
+        NAS_HOST: '',
+        NAS_USER: '',
+        NAS_PASSWORD: '',
+        NAS_MONITOR_URL: '',
+        WIIM_IP: '127.0.0.1',
+        UPS_SOURCE: 'nut',
+        NUT_HOST: '127.0.0.1',
+        ADGUARD_HOST: '',
+        LINUX_HOST: ''
+    };
     const child = spawn(process.execPath, ['--eval', BOOTSTRAP, path.join(ROOT, 'server.js')], {
         cwd: ROOT,
-        env: {
-            ...process.env,
-            NODE_ENV: 'production',
-            PORT: String(port),
-            DATA_DIR: dataDir,
-            SMARTHUB_ENV_FILE: path.join(dataDir, '.env'),
-            PANEL_PASSWORD: 'lifecycle-admin-secret',
-            PANEL_READONLY_PASSWORD: 'lifecycle-readonly-secret',
-            LOG_LEVEL: 'INFO',
-            LOG_FORMAT: 'json',
-            LOG_JSON: 'true',
-            MONITOR_ENABLED: 'false',
-            UCG_IP: '127.0.0.1',
-            SSH_PORT: '1',
-            SSH_USER: '',
-            SSH_PASSWORD: '',
-            UNIFI_CONTROLLER_URL: 'http://127.0.0.1:1',
-            UNIFI_USERNAME: '',
-            UNIFI_PASSWORD: '',
-            UNIFI_API_KEY: '',
-            NAS_HOST: '',
-            NAS_USER: '',
-            NAS_PASSWORD: '',
-            NAS_MONITOR_URL: '',
-            WIIM_IP: '127.0.0.1',
-            UPS_SOURCE: 'nut',
-            NUT_HOST: '127.0.0.1',
-            ADGUARD_HOST: '',
-            LINUX_HOST: ''
-        },
+        env: isolatedEnvironment,
         stdio: ['ignore', 'pipe', 'pipe']
     });
     t.after(() => {
@@ -97,7 +98,32 @@ test('SIGTERM drains owned work, closes SQLite, and removes the instance lock', 
     });
 
     await waitForHealth(`http://127.0.0.1:${port}`, child, () => logs);
-    assert.equal(fs.existsSync(path.join(dataDir, '.instance.lock')), true);
+    const lockDatabasePath = path.join(dataDir, '.instance-lock.sqlite');
+    assert.equal(fs.existsSync(lockDatabasePath), true);
+    const ownedLockDatabase = new Database(lockDatabasePath, { readonly: true });
+    assert.equal(ownedLockDatabase.prepare('SELECT pid FROM instance_owner WHERE singleton = 1').get().pid, child.pid);
+    ownedLockDatabase.close();
+
+    const contenderPort = await unusedPort();
+    const contender = spawn(process.execPath, ['--eval', BOOTSTRAP, path.join(ROOT, 'server.js')], {
+        cwd: ROOT,
+        env: { ...isolatedEnvironment, PORT: String(contenderPort) },
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    t.after(() => {
+        if (contender.exitCode === null && contender.signalCode === null) contender.kill('SIGKILL');
+    });
+    let contenderLogs = '';
+    contender.stdout.on('data', chunk => { contenderLogs += chunk; });
+    contender.stderr.on('data', chunk => { contenderLogs += chunk; });
+    const contenderResult = await new Promise((resolve, reject) => {
+        contender.once('error', reject);
+        contender.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    assert.deepEqual(contenderResult, { code: 1, signal: null });
+    assert.match(contenderLogs, /INSTANCE_LOCK_HELD|Another SmartHub instance is already using this DATA_DIR/u);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/health`)).status, 200);
+
     const started = Date.now();
     child.kill('SIGTERM');
     let timeoutHandle;
@@ -111,7 +137,9 @@ test('SIGTERM drains owned work, closes SQLite, and removes the instance lock', 
     assert.deepEqual(result, { code: 0, signal: null });
     assert.ok(Date.now() - started < 6_000, `shutdown exceeded deadline\n${logs}`);
     assert.match(logs, /SmartHub shutdown started/);
-    assert.equal(fs.existsSync(path.join(dataDir, '.instance.lock')), false);
+    const releasedLockDatabase = new Database(lockDatabasePath, { readonly: true });
+    assert.equal(releasedLockDatabase.prepare('SELECT COUNT(*) count FROM instance_owner').get().count, 0);
+    releasedLockDatabase.close();
 
     const db = new Database(path.join(dataDir, 'smarthub.db'), { readonly: true });
     assert.deepEqual(db.pragma('quick_check'), [{ quick_check: 'ok' }]);

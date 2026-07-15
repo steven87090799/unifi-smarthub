@@ -182,7 +182,7 @@ test('startup rolls back an interrupted multi-file restore before opening SQLite
 
 test('production startup owns the DATA_DIR lock before applying restore and opens SQLite afterward', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-    const lockOwned = source.indexOf("process.on('exit', () => { try { if (parseInt(fs.readFileSync(LOCK_FILE");
+    const lockOwned = source.indexOf('instanceLock = acquireInstanceLock({ lockFile: LOCK_FILE, legacyLockFile: LEGACY_LOCK_FILE })');
     const restore = source.indexOf('const restoreResult = applyPendingRestore');
     const database = source.indexOf('historyDb = createHistoryDb');
     assert.ok(lockOwned > 0 && restore > lockOwned && database > restore);
