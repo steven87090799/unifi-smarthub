@@ -918,15 +918,16 @@
             body::before, body::after { display: none; }
         }
     </style>
+    <link rel="stylesheet" href="/assets/console.css">
 </head>
 
 <body
     class="text-slate-100 min-h-screen selection:bg-blue-600 selection:text-white bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-950 via-slate-900 to-black">
     <div id="grid-backdrop"></div>
 
-    <div class="flex min-h-screen">
+    <div id="app-shell" class="flex min-h-screen">
         <!-- ============ 側邊欄導航 ============ -->
-        <div id="sidebar-backdrop" class="fixed inset-0 bg-black/60 z-40 hidden lg:hidden"
+        <div id="sidebar-backdrop" aria-hidden="true" class="fixed inset-0 bg-black/60 z-40 hidden lg:hidden"
             onclick="toggleSidebar(false)"></div>
         <aside id="sidebar"
             class="fixed lg:sticky top-0 z-50 h-screen w-60 bg-slate-950/95 lg:bg-slate-950/60 backdrop-blur-xl border-r border-slate-800/80 flex flex-col transition-transform duration-200 -translate-x-full lg:translate-x-0">
@@ -943,6 +944,15 @@
                             class="text-blue-500">Hub</span></h1>
                     <p class="text-[9px] text-slate-500">UniFi × UGREEN 戰情室</p>
                 </div>
+                <button id="sidebar-collapse-toggle" type="button"
+                    class="sidebar-collapse-toggle hidden lg:grid"
+                    onclick="toggleSidebarCollapse()" aria-controls="sidebar" aria-expanded="true"
+                    aria-label="收合側邊欄" title="收合側邊欄">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m14 7-5 5 5 5" />
+                    </svg>
+                </button>
             </div>
             <nav class="flex-grow py-2 space-y-1 overflow-y-auto terminal-scroll">
                 <button data-page="overview" onclick="navigate('overview')"
@@ -1069,7 +1079,7 @@
 
         <!-- ============ 主內容區 ============ -->
         <div class="flex-1 flex flex-col min-w-0">
-            <header
+            <header id="app-topbar"
                 class="border-b border-slate-800/80 bg-slate-950/40 backdrop-blur-xl sticky top-0 z-30 px-4 md:px-6 py-3.5 flex items-center gap-4">
                 <button aria-label="開啟導航選單" aria-controls="sidebar" class="lg:hidden p-2 rounded-lg border border-slate-800 text-slate-400"
                     onclick="toggleSidebar(true)">
@@ -1077,11 +1087,12 @@
                         <path stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16" />
                     </svg>
                 </button>
-                <div>
+                <div class="page-header-copy">
+                    <p class="page-eyebrow">Secure Operations Console</p>
                     <h2 class="text-lg font-black tracking-wider text-white" id="page-title">總覽 Overview</h2>
                     <p class="text-[10px] text-slate-500" id="page-subtitle">全系統健康狀態一覽</p>
                 </div>
-                <div class="ml-auto flex items-center gap-2">
+                <div class="topbar-actions ml-auto flex items-center gap-2">
                     <!-- 重大事件警報橫幅：只在 UPS 斷電/WAN 斷線等嚴重事件時出現，強烈閃爍，點擊關閉 -->
                     <button id="crit-alert-banner" onclick="dismissCritAlerts()" title="點擊關閉此警報"
                         class="hidden items-center gap-2 px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider crit-blink cursor-pointer max-w-[50vw]">
@@ -1093,6 +1104,7 @@
                         class="px-3 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full text-[10px] font-bold mono uppercase tracking-wider hidden sm:inline"
                         id="cloud-status-badge">SITE MANAGER: ONLINE</span>
                     <button onclick="toggleLayoutEdit()" id="layout-edit-btn" title="編輯版面：拖曳卡片與導航項目調整順序"
+                        aria-label="編輯版面排序"
                         class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                             <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" stroke-linejoin="round" />
@@ -1101,7 +1113,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M17 14v6m-3-3h6" />
                         </svg>
                     </button>
-                    <button onclick="toggleTheme()" title="切換主題"
+                    <button onclick="toggleTheme()" title="切換主題" aria-label="切換深色或淺色主題"
                         class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition">
                         <svg id="theme-icon-moon" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8"
                             viewBox="0 0 24 24">
@@ -5079,6 +5091,7 @@
         const smartChartUxPlugin = {
             id: 'smartChartUx',
             beforeInit(chart) {
+                applyConsoleChartPalette(chart, document.documentElement.classList.contains('light'));
                 const host = chart.canvas.parentElement;
                 if (host) host.classList.add('chart-host', 'chart-loading');
                 chart.canvas.setAttribute('role', 'img');
@@ -5129,8 +5142,9 @@
             }
         };
 
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.font.family = "'Noto Sans TC', sans-serif";
+        Chart.defaults.color = '#8c98aa';
+        Chart.defaults.borderColor = 'rgba(180,197,218,.095)';
+        Chart.defaults.font.family = "Inter, 'Noto Sans TC', sans-serif";
         Chart.defaults.font.size = 11;
         Chart.defaults.animation.duration = 240;
         Chart.defaults.animation.easing = 'easeOutQuart';
@@ -5227,13 +5241,74 @@
             const modal = document.getElementById(id);
             if (!modal) return;
             modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+            modal.classList.toggle('is-open', open);
+            if (!modal.hasAttribute('tabindex')) modal.tabIndex = -1;
+            document.body.classList.toggle('modal-open',
+                open || Boolean(document.querySelector('[role="dialog"].is-open')));
             if (open) {
                 modal._returnFocus = document.activeElement;
-                requestAnimationFrame(() => modal.querySelector('button')?.focus());
+                requestAnimationFrame(() => {
+                    const focusable = getDialogFocusable(modal);
+                    (modal.querySelector('[autofocus]') || focusable[0])?.focus();
+                });
             } else if (modal._returnFocus?.focus) {
                 modal._returnFocus.focus();
                 modal._returnFocus = null;
             }
+        }
+
+        function getDialogFocusable(modal) {
+            return [...modal.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )].filter(element => !element.hidden && element.getClientRects().length > 0);
+        }
+
+        function trapDialogFocus(event, modal) {
+            const focusable = getDialogFocusable(modal);
+            if (!focusable.length) {
+                event.preventDefault();
+                modal.focus();
+                return;
+            }
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+
+        function initSidebarLabels() {
+            document.querySelectorAll('#sidebar .nav-btn').forEach(button => {
+                const textNode = [...button.childNodes].find(node =>
+                    node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+                if (!textNode) return;
+                const label = textNode.textContent.trim().replace(/\s+/g, ' ');
+                const span = document.createElement('span');
+                span.className = 'nav-label';
+                span.textContent = label;
+                button.replaceChild(span, textNode);
+                button.title = label;
+            });
+        }
+
+        function setSidebarCollapsed(collapsed) {
+            const next = Boolean(collapsed);
+            document.body.classList.toggle('sidebar-collapsed', next);
+            localStorage.setItem('sidebarCollapsed.v1', next ? '1' : '0');
+            const button = document.getElementById('sidebar-collapse-toggle');
+            if (button) {
+                button.setAttribute('aria-expanded', next ? 'false' : 'true');
+                button.setAttribute('aria-label', next ? '展開側邊欄' : '收合側邊欄');
+                button.title = next ? '展開側邊欄' : '收合側邊欄';
+            }
+        }
+
+        function toggleSidebarCollapse() {
+            setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
         }
 
         function persistUiPreference(key, value) {
@@ -5257,6 +5332,8 @@
         }
         function initUiSystem() {
             document.querySelectorAll('button:not([type])').forEach(button => { button.type = 'button'; });
+            initSidebarLabels();
+            setSidebarCollapsed(localStorage.getItem('sidebarCollapsed.v1') === '1');
             document.querySelector('.nav-btn[data-page="overview"]')?.setAttribute('aria-current', 'page');
             document.querySelector('header button[aria-controls="sidebar"]')?.setAttribute('aria-expanded', 'false');
             document.getElementById('sidebar')?.setAttribute('aria-hidden', window.innerWidth < 1024 ? 'true' : 'false');
@@ -5284,21 +5361,77 @@
             }));
             observer.observe(document.querySelector('main'), { childList: true, characterData: true, subtree: true });
             document.addEventListener('keydown', event => {
+                const openDialog = [...document.querySelectorAll('[role="dialog"].is-open')].at(-1);
+                if (event.key === 'Tab' && openDialog) {
+                    trapDialogFocus(event, openDialog);
+                    return;
+                }
                 if (event.key !== 'Escape') return;
                 if (!document.getElementById('client-modal').classList.contains('hidden')) closeClientDetail();
                 else if (!document.getElementById('smart-modal').classList.contains('hidden')) closeDiskSmart();
                 else if (!document.getElementById('docker-log-modal').classList.contains('hidden')) closeDockerLog();
+                else if (window.innerWidth < 1024 && !document.getElementById('sidebar').classList.contains('-translate-x-full')) {
+                    toggleSidebar(false);
+                }
             });
             restoreUiPreferences();
         }
 
+        function mapConsoleChartColor(value, light) {
+            if (Array.isArray(value)) return value.map(color => mapConsoleChartColor(color, light));
+            if (typeof value !== 'string') return value;
+            const exact = light ? {
+                '#3b82f6': '#526f90', '#60a5fa': '#405f82', '#2563eb': '#526f90',
+                '#8b5cf6': '#766a9c', '#a78bfa': '#766a9c', '#7c3aed': '#6f6097',
+                '#10b981': '#3f8065', '#34d399': '#4c8e73', '#22c55e': '#3f8065',
+                '#f59e0b': '#9a6f2f', '#fbbf24': '#a47a3c',
+                '#ef4444': '#a6515d', '#f87171': '#b15d68', '#fb7185': '#a6515d',
+                '#64748b': '#6b7788', '#94a3b8': '#64748b', '#cbd5e1': '#475569'
+            } : {
+                '#3b82f6': '#7697bf', '#60a5fa': '#94b6de', '#2563eb': '#6688b0',
+                '#8b5cf6': '#9386bb', '#a78bfa': '#a69ac9', '#7c3aed': '#8375ad',
+                '#10b981': '#79b99d', '#34d399': '#87c3aa', '#22c55e': '#79b99d',
+                '#f59e0b': '#c9a369', '#fbbf24': '#d3b277',
+                '#ef4444': '#d79098', '#f87171': '#dda0a7', '#fb7185': '#d79098',
+                '#64748b': '#758195', '#94a3b8': '#8c98aa', '#cbd5e1': '#aab5c4'
+            };
+            const normalized = value.toLowerCase();
+            if (exact[normalized]) return exact[normalized];
+            const replacements = light ? [
+                [/rgba?\(\s*59\s*,\s*130\s*,\s*246\s*,/gi, 'rgba(82,111,144,'],
+                [/rgba?\(\s*139\s*,\s*92\s*,\s*246\s*,/gi, 'rgba(118,106,156,'],
+                [/rgba?\(\s*16\s*,\s*185\s*,\s*129\s*,/gi, 'rgba(63,128,101,'],
+                [/rgba?\(\s*245\s*,\s*158\s*,\s*11\s*,/gi, 'rgba(154,111,47,'],
+                [/rgba?\(\s*239\s*,\s*68\s*,\s*68\s*,/gi, 'rgba(166,81,93,']
+            ] : [
+                [/rgba?\(\s*59\s*,\s*130\s*,\s*246\s*,/gi, 'rgba(118,151,191,'],
+                [/rgba?\(\s*139\s*,\s*92\s*,\s*246\s*,/gi, 'rgba(147,134,187,'],
+                [/rgba?\(\s*16\s*,\s*185\s*,\s*129\s*,/gi, 'rgba(121,185,157,'],
+                [/rgba?\(\s*245\s*,\s*158\s*,\s*11\s*,/gi, 'rgba(201,163,105,'],
+                [/rgba?\(\s*239\s*,\s*68\s*,\s*68\s*,/gi, 'rgba(215,144,152,']
+            ];
+            return replacements.reduce((color, [pattern, replacement]) =>
+                color.replace(pattern, replacement), value);
+        }
+
+        function applyConsoleChartPalette(chart, light) {
+            (chart.data?.datasets || []).forEach(dataset => {
+                ['borderColor', 'backgroundColor', 'pointBackgroundColor', 'pointBorderColor'].forEach(key => {
+                    const originalKey = `$consoleOriginal${key[0].toUpperCase()}${key.slice(1)}`;
+                    if (!(originalKey in dataset)) dataset[originalKey] = dataset[key];
+                    dataset[key] = mapConsoleChartColor(dataset[originalKey], light);
+                });
+            });
+        }
+
         function refreshChartTheme(theme) {
             const light = theme === 'light';
-            const muted = light ? '#475569' : '#94a3b8';
-            const grid = light ? 'rgba(100,116,139,.18)' : 'rgba(51,65,85,.28)';
+            const muted = light ? '#64748b' : '#8c98aa';
+            const grid = light ? 'rgba(71,85,105,.15)' : 'rgba(180,197,218,.095)';
             Chart.defaults.color = muted;
             Chart.defaults.borderColor = grid;
             Object.values(Chart.instances || {}).forEach(chart => {
+                applyConsoleChartPalette(chart, light);
                 const legendLabels = chart.config.options?.plugins?.legend?.labels;
                 if (legendLabels) legendLabels.color = muted;
                 Object.values(chart.config.options?.scales || {}).forEach(scale => {
@@ -5436,11 +5569,24 @@
         }
 
         function toggleSidebar(open) {
-            document.getElementById('sidebar').classList.toggle('-translate-x-full', !open);
-            document.getElementById('sidebar-backdrop').classList.toggle('hidden', !open);
+            const sidebar = document.getElementById('sidebar');
+            const backdrop = document.getElementById('sidebar-backdrop');
+            sidebar.classList.toggle('-translate-x-full', !open);
+            backdrop.classList.toggle('hidden', !open);
+            backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
             const trigger = document.querySelector('header button[aria-controls="sidebar"]');
             if (trigger) trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-            document.getElementById('sidebar').setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
+            sidebar.setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
+            if (window.innerWidth < 1024) {
+                if (open) {
+                    sidebar._returnFocus = document.activeElement;
+                    requestAnimationFrame(() =>
+                        sidebar.querySelector('.nav-btn[aria-current="page"], .nav-btn')?.focus());
+                } else if (sidebar._returnFocus?.focus) {
+                    sidebar._returnFocus.focus();
+                    sidebar._returnFocus = null;
+                }
+            }
         }
 
         const OVERVIEW_FLIP_NUMBER_IDS = [
