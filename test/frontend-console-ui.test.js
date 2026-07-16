@@ -5,13 +5,14 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
-const consoleCss = fs.readFileSync(path.join(root, 'public', 'assets', 'console.css'), 'utf8');
+const consoleCss = fs.readFileSync(path.join(root, 'frontend', 'console.css'), 'utf8');
+const cssBuild = fs.readFileSync(path.join(root, 'scripts', 'build-frontend-css.js'), 'utf8');
 
-test('authenticated console loads one same-origin visual layer after the legacy inline styles', () => {
-    const inlineEnd = html.indexOf('</style>');
-    const consoleLink = html.indexOf('<link rel="stylesheet" href="/assets/console.css">');
-    assert.ok(inlineEnd >= 0);
-    assert.ok(consoleLink > inlineEnd);
+test('authenticated console bundles its visual layer into the existing stylesheet request', () => {
+    assert.doesNotMatch(html, /\/assets\/console\.css/u);
+    assert.match(html, /<link rel="stylesheet" href="\/assets\/tailwind\.css">/u);
+    assert.match(cssBuild, /CONSOLE_SOURCE/u);
+    assert.match(cssBuild, /appendFileSync\(destination/u);
     assert.doesNotMatch(consoleCss, /@import/u);
     assert.doesNotMatch(consoleCss, /url\((['"]?)https?:\/\//u);
 });
@@ -57,6 +58,8 @@ test('dialogs retain Escape behavior and add focus trapping without changing mod
     assert.match(html, /if \(!document\.getElementById\('client-modal'\)\.classList\.contains\('hidden'\)\) closeClientDetail\(\)/u);
     assert.match(html, /else if \(!document\.getElementById\('smart-modal'\)\.classList\.contains\('hidden'\)\) closeDiskSmart\(\)/u);
     assert.match(html, /else if \(!document\.getElementById\('docker-log-modal'\)\.classList\.contains\('hidden'\)\) closeDockerLog\(\)/u);
+    assert.match(html, /returnFocus\.focus\(\{ preventScroll: true \}\)/u);
+    assert.match(html, /sidebar\._returnFocus = trigger \|\| document\.activeElement/u);
 });
 
 test('responsive console keeps table overflow local and touch controls usable', () => {

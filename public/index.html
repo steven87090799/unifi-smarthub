@@ -918,7 +918,6 @@
             body::before, body::after { display: none; }
         }
     </style>
-    <link rel="stylesheet" href="/assets/console.css">
 </head>
 
 <body
@@ -5252,8 +5251,11 @@
                     (modal.querySelector('[autofocus]') || focusable[0])?.focus();
                 });
             } else if (modal._returnFocus?.focus) {
-                modal._returnFocus.focus();
+                const returnFocus = modal._returnFocus;
                 modal._returnFocus = null;
+                requestAnimationFrame(() => {
+                    if (returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+                });
             }
         }
 
@@ -5579,12 +5581,15 @@
             sidebar.setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
             if (window.innerWidth < 1024) {
                 if (open) {
-                    sidebar._returnFocus = document.activeElement;
+                    sidebar._returnFocus = trigger || document.activeElement;
                     requestAnimationFrame(() =>
                         sidebar.querySelector('.nav-btn[aria-current="page"], .nav-btn')?.focus());
                 } else if (sidebar._returnFocus?.focus) {
-                    sidebar._returnFocus.focus();
+                    const returnFocus = sidebar._returnFocus;
                     sidebar._returnFocus = null;
+                    requestAnimationFrame(() => {
+                        if (returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+                    });
                 }
             }
         }
