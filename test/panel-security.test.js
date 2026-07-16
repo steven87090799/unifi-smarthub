@@ -13,6 +13,10 @@ async function createHarness(options = {}) {
         adminPassword: 'admin-secret', readonlyPassword: 'viewer-secret',
         csrfToken: 'test-csrf-token', onEvent: event => events.push(event), ...options
     });
+    app.get('/login', (_req, res) => res.type('html').send('<h1>login</h1>'));
+    app.get('/api/auth/status', boundary.status);
+    app.post('/api/auth/login', express.json({ limit: '8kb' }), boundary.login);
+    app.post('/api/auth/logout', boundary.logout);
     app.use(boundary.authenticate);
     app.get('/api/security/csrf', boundary.csrf);
     app.use(boundary.protectWrites);
@@ -40,6 +44,121 @@ test('admin can read and write with same-origin CSRF proof', async t => {
         method: 'POST', headers: { authorization, origin: harness.origin, 'x-smarthub-csrf': 'test-csrf-token', 'content-type': 'application/json' }, body: '{"safe":true}'
     });
     assert.equal(write.status, 200);
+});
+
+test('form login creates an HttpOnly session with per-session CSRF and logout revokes it', async t => {
+    const harness = await createHarness({ publicMetadata: { version: '3.0.0' } });
+    t.after(harness.close);
+    const login = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'operator', password: 'admin-secret', remember: false })
+    });
+    assert.equal(login.status, 200);
+    const body = await login.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.role, 'admin');
+    assert.equal(body.principal, 'operator');
+    assert.equal(body.version, '3.0.0');
+    assert.notEqual(body.csrfToken, 'test-csrf-token');
+    const setCookie = login.headers.get('set-cookie') || '';
+    assert.match(setCookie, /^smarthub_session=/u);
+    assert.match(setCookie, /HttpOnly/u);
+    assert.match(setCookie, /SameSite=Strict/u);
+    assert.doesNotMatch(setCookie, /Max-Age=/u);
+    const cookie = setCookie.split(';', 1)[0];
+
+    const status = await fetch(`${harness.origin}/api/auth/status`, { headers: { cookie } });
+    assert.deepEqual(await status.json(), {
+        authenticated: true, role: 'admin', principal: 'operator', version: '3.0.0'
+    });
+    const csrf = await (await fetch(`${harness.origin}/api/security/csrf`, { headers: { cookie } })).json();
+    assert.equal(csrf.role, 'admin');
+    assert.equal(csrf.csrfToken, body.csrfToken);
+    const write = await fetch(`${harness.origin}/api/settings`, {
+        method: 'POST',
+        headers: {
+            cookie,
+            origin: harness.origin,
+            'x-smarthub-csrf': csrf.csrfToken,
+            'content-type': 'application/json'
+        },
+        body: '{"session":true}'
+    });
+    assert.equal(write.status, 200);
+
+    const logout = await fetch(`${harness.origin}/api/auth/logout`, {
+        method: 'POST', headers: { cookie, origin: harness.origin }
+    });
+    assert.equal(logout.status, 200);
+    assert.match(logout.headers.get('set-cookie') || '', /Max-Age=0/u);
+    assert.equal((await fetch(`${harness.origin}/api/settings`, { headers: { cookie } })).status, 401);
+    assert.equal(harness.boundary.getState().sessions, 0);
+});
+
+test('remembered login receives a persistent bounded cookie', async t => {
+    const harness = await createHarness({ sessionRememberMs: 86_400_000 });
+    t.after(harness.close);
+    const response = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin-secret', remember: true })
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('set-cookie') || '', /Max-Age=86400/u);
+    assert.match(response.headers.get('set-cookie') || '', /Expires=/u);
+});
+
+test('non-persistent sessions extend on activity and expire after the idle window', async t => {
+    let clock = 1_000_000;
+    const harness = await createHarness({ now: () => clock, sessionIdleMs: 60_000 });
+    t.after(harness.close);
+    const login = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin-secret', remember: false })
+    });
+    const cookie = (login.headers.get('set-cookie') || '').split(';', 1)[0];
+    clock += 50_000;
+    assert.equal((await fetch(`${harness.origin}/api/settings`, { headers: { cookie } })).status, 200);
+    clock += 20_000;
+    assert.equal((await fetch(`${harness.origin}/api/settings`, { headers: { cookie } })).status, 200);
+    clock += 61_000;
+    assert.equal((await fetch(`${harness.origin}/api/settings`, { headers: { cookie } })).status, 401);
+});
+
+test('HTML navigation redirects to the custom login without a native Basic challenge', async t => {
+    const harness = await createHarness();
+    t.after(harness.close);
+    const response = await fetch(`${harness.origin}/dashboard?section=ups`, {
+        headers: { accept: 'text/html' },
+        redirect: 'manual'
+    });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get('location'), '/login?return=%2Fdashboard%3Fsection%3Dups');
+    assert.equal(response.headers.get('www-authenticate'), null);
+});
+
+test('login rejects hostile origins and counts only credential attempts', async t => {
+    const harness = await createHarness({ maxFailures: 2, cooldownMs: 1000 });
+    t.after(harness.close);
+    const hostile = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: 'https://attacker.invalid', 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin-secret' })
+    });
+    assert.equal(hostile.status, 403);
+    assert.equal(harness.boundary.getState().failures, 0);
+
+    assert.equal((await fetch(`${harness.origin}/api/settings`)).status, 401);
+    assert.equal(harness.boundary.getState().failures, 0);
+    const login = body => fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    assert.equal((await login({ username: 'admin', password: 'wrong' })).status, 401);
+    assert.equal((await login({ username: 'admin', password: 'wrong' })).status, 429);
 });
 
 test('readonly can read but every unsafe API method is denied server-side', async t => {

@@ -1115,6 +1115,14 @@
                                 d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
                         </svg>
                     </button>
+                    <button id="panel-logout" onclick="logoutPanel()" title="安全登出" aria-label="安全登出"
+                        class="p-2 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8"
+                            viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round"
+                                d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4m5-4 3-3-3-3m3 3H9" />
+                        </svg>
+                    </button>
                 </div>
             </header>
 
@@ -4618,6 +4626,34 @@
         /* ==================== API security boundary ==================== */
         const nativeFetch = window.fetch.bind(window);
         let panelSecurityContextPromise = null;
+        let panelAuthRedirecting = false;
+        function panelLoginUrl() {
+            const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+            const returnPath = /^\/(?!\/)/.test(current) ? current : '/';
+            return `/login?return=${encodeURIComponent(returnPath)}`;
+        }
+        function redirectToPanelLogin() {
+            if (panelAuthRedirecting) return;
+            panelAuthRedirecting = true;
+            window.location.replace(panelLoginUrl());
+        }
+        async function redirectIfUnauthorized(response, url) {
+            if (response.status !== 401 || url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) return response;
+            const failure = await response.clone().json().catch(() => ({}));
+            if (!failure.code || String(failure.code).startsWith('API-AUTH-')) redirectToPanelLogin();
+            return response;
+        }
+        async function logoutPanel() {
+            const button = document.getElementById('panel-logout');
+            if (button) button.disabled = true;
+            try {
+                await nativeFetch('/api/auth/logout', {
+                    method: 'POST', credentials: 'same-origin', cache: 'no-store'
+                });
+            } catch { /* 即使網路中斷也回登入頁，避免保留過期 UI */ }
+            panelSecurityContextPromise = null;
+            window.location.replace('/login');
+        }
         async function loadPanelSecurityContext(force = false) {
             if (force) panelSecurityContextPromise = null;
             if (!panelSecurityContextPromise) {
@@ -4640,7 +4676,10 @@
             const url = new URL(request ? request.url : String(input), window.location.href);
             const method = String(init.method || request?.method || 'GET').toUpperCase();
             const protectedWrite = url.origin === window.location.origin && url.pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(method);
-            if (!protectedWrite) return nativeFetch(input, init);
+            if (!protectedWrite) {
+                const response = await nativeFetch(input, init);
+                return redirectIfUnauthorized(response, url);
+            }
             const send = async forceRefresh => {
                 const security = await loadPanelSecurityContext(forceRefresh);
                 const headers = new Headers(request?.headers || undefined);
@@ -4653,7 +4692,7 @@
                 const failure = await response.clone().json().catch(() => ({}));
                 if (failure.code === 'API-CSRF-001') response = await send(true);
             }
-            return response;
+            return redirectIfUnauthorized(response, url);
         };
 
         /* ==================== Debug 工具 ==================== */

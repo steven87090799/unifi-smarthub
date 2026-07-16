@@ -61,6 +61,21 @@ function parseBasicCredentials(header) {
     return { username: decoded.slice(0, separator), password: decoded.slice(separator + 1) };
 }
 
+function parseCookies(header) {
+    if (typeof header !== 'string' || !header) return {};
+    const cookies = {};
+    for (const part of header.split(';')) {
+        const separator = part.indexOf('=');
+        if (separator <= 0) continue;
+        const name = part.slice(0, separator).trim();
+        const value = part.slice(separator + 1).trim();
+        if (!name || Object.hasOwn(cookies, name)) continue;
+        try { cookies[name] = decodeURIComponent(value); }
+        catch { cookies[name] = value; }
+    }
+    return cookies;
+}
+
 function createPanelSecurity(options = {}) {
     const adminPassword = options.adminPassword || '';
     const readonlyPassword = options.readonlyPassword || '';
@@ -79,6 +94,13 @@ function createPanelSecurity(options = {}) {
     const cooldownMs = positiveInteger(options.cooldownMs, 5 * 60 * 1000);
     const maxTrackedClients = positiveInteger(options.maxTrackedClients, 1000);
     const eventCooldownMs = positiveInteger(options.eventCooldownMs, 60 * 1000);
+    const sessionIdleMs = positiveInteger(options.sessionIdleMs, 12 * 60 * 60 * 1000, 60 * 1000);
+    const sessionRememberMs = positiveInteger(options.sessionRememberMs, 30 * 24 * 60 * 60 * 1000, sessionIdleMs);
+    const maxSessions = positiveInteger(options.maxSessions, 1000);
+    const sessionCookieName = String(options.sessionCookieName || 'smarthub_session');
+    if (!/^[A-Za-z0-9_-]{1,64}$/u.test(sessionCookieName)) throw new Error('Invalid panel session cookie name');
+    const publicMetadata = options.publicMetadata && typeof options.publicMetadata === 'object'
+        ? Object.freeze({ ...options.publicMetadata }) : Object.freeze({});
     const csrfHeader = String(options.csrfHeader || 'x-smarthub-csrf').toLowerCase();
     const csrfToken = options.csrfToken || crypto.randomBytes(32).toString('base64url');
     const healthPaths = new Set(options.healthPaths || ['/health', '/healthz', '/health/ready']);
@@ -86,6 +108,7 @@ function createPanelSecurity(options = {}) {
     const protectedSafePaths = new Set(options.protectedSafePaths || []);
     const failures = new Map();
     const eventLog = new Map();
+    const sessions = new Map();
 
     function clientAddress(req) {
         return String(req.ip || req.socket?.remoteAddress || 'unknown');
@@ -107,6 +130,12 @@ function createPanelSecurity(options = {}) {
         }
         for (const [key, timestamp] of eventLog) {
             if (timestamp + eventCooldownMs <= current) eventLog.delete(key);
+        }
+    }
+
+    function pruneSessions(current = now()) {
+        for (const [key, session] of sessions) {
+            if (session.expiresAt <= current) sessions.delete(key);
         }
     }
 
@@ -133,33 +162,66 @@ function createPanelSecurity(options = {}) {
         return null;
     }
 
-    function authenticate(req, res, next) {
-        if (healthPaths.has(req.path)) {
-            req.panelAuth = { role: 'public', principal: 'health' };
-            return next();
-        }
-        if (!adminPassword && !readonlyPassword) {
-            req.panelAuth = { role: 'admin', principal: 'development', authenticationDisabled: true };
-            return next();
-        }
+    function sessionKey(token) {
+        return digest(token).toString('base64url');
+    }
 
+    function sessionFromRequest(req, current = now()) {
+        pruneSessions(current);
+        const token = parseCookies(req.headers.cookie)[sessionCookieName];
+        if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{32,180}$/u.test(token)) return null;
+        const key = sessionKey(token);
+        const session = sessions.get(key);
+        if (!session || session.expiresAt <= current) {
+            sessions.delete(key);
+            return null;
+        }
+        if (!session.remember) session.expiresAt = current + sessionIdleMs;
+        touch(sessions, key, session);
+        return { key, token, ...session };
+    }
+
+    function basicAuthentication(req) {
+        const credentials = parseBasicCredentials(req.headers.authorization);
+        const role = resolveRole(credentials);
+        if (!role) return null;
+        return {
+            role,
+            principal: role === 'readonly' ? readonlyUsername : (credentials.username || 'admin'),
+            source: 'basic'
+        };
+    }
+
+    function resolveAuthentication(req) {
+        const session = sessionFromRequest(req);
+        if (session) {
+            return {
+                auth: { role: session.role, principal: session.principal, source: 'session' },
+                session
+            };
+        }
+        const auth = basicAuthentication(req);
+        return auth ? { auth, session: null } : null;
+    }
+
+    function credentialAttempt(req, credentials) {
         const current = now();
         pruneFailures(current);
         const key = clientAddress(req);
         const existing = failures.get(key);
         if (existing?.blockedUntil > current) {
             const retryAfter = Math.max(Math.ceil((existing.blockedUntil - current) / 1000), 1);
-            res.set('Retry-After', String(retryAfter));
-            emit('auth_throttled', req, { retry_after_seconds: retryAfter });
-            return send(res, 429, 'Too many authentication failures', options.rateLimitCode || 'API-AUTH-429', getRequestId(), { retry_after_seconds: retryAfter });
+            return { ok: false, status: 429, retryAfter, event: 'auth_throttled' };
         }
 
-        const credentials = parseBasicCredentials(req.headers.authorization);
         const role = resolveRole(credentials);
         if (role) {
             failures.delete(key);
-            req.panelAuth = { role, principal: role === 'readonly' ? readonlyUsername : (credentials.username || 'admin') };
-            return next();
+            return {
+                ok: true,
+                role,
+                principal: role === 'readonly' ? readonlyUsername : (credentials.username || 'admin')
+            };
         }
 
         let state = existing;
@@ -171,21 +233,187 @@ function createPanelSecurity(options = {}) {
         if (state.failures >= maxFailures) state.blockedUntil = current + cooldownMs;
         if (!failures.has(key)) removeOldest(failures, maxTrackedClients);
         touch(failures, key, state);
-        res.set('WWW-Authenticate', 'Basic realm="SmartHub"');
         if (state.blockedUntil > current) {
             const retryAfter = Math.max(Math.ceil(cooldownMs / 1000), 1);
-            res.set('Retry-After', String(retryAfter));
-            emit('auth_lockout', req, { retry_after_seconds: retryAfter }, true);
-            return send(res, 429, 'Too many authentication failures', options.rateLimitCode || 'API-AUTH-429', getRequestId(), { retry_after_seconds: retryAfter });
+            return { ok: false, status: 429, retryAfter, event: 'auth_lockout', forceEvent: true };
         }
-        emit('auth_failed', req, { failures: state.failures });
-        return send(res, 401, 'Authentication required', options.authCode || 'API-AUTH-001', getRequestId());
+        return { ok: false, status: 401, failures: state.failures, event: 'auth_failed' };
+    }
+
+    function applyAttemptFailure(req, res, result, { challenge = false } = {}) {
+        if (challenge) res.set('WWW-Authenticate', 'Basic realm="SmartHub"');
+        if (result.retryAfter) res.set('Retry-After', String(result.retryAfter));
+        emit(result.event, req, result.retryAfter
+            ? { retry_after_seconds: result.retryAfter }
+            : { failures: result.failures }, result.forceEvent);
+        if (result.status === 429) {
+            return send(res, 429, 'Too many authentication failures',
+                options.rateLimitCode || 'API-AUTH-429', getRequestId(),
+                { retry_after_seconds: result.retryAfter });
+        }
+        return send(res, 401, 'Authentication required',
+            options.authCode || 'API-AUTH-001', getRequestId());
+    }
+
+    function wantsLoginPage(req) {
+        return req.method === 'GET'
+            && !req.path.startsWith('/api/')
+            && req.accepts(['html', 'json']) === 'html';
+    }
+
+    function loginReturnPath(req) {
+        const value = String(req.originalUrl || '/');
+        return /^\/(?!\/)/u.test(value) && !value.startsWith('/login') ? value : '/';
+    }
+
+    function authenticate(req, res, next) {
+        if (healthPaths.has(req.path)) {
+            req.panelAuth = { role: 'public', principal: 'health' };
+            return next();
+        }
+        if (!adminPassword && !readonlyPassword) {
+            req.panelAuth = { role: 'admin', principal: 'development', authenticationDisabled: true };
+            return next();
+        }
+
+        const session = sessionFromRequest(req);
+        if (session) {
+            req.panelAuth = { role: session.role, principal: session.principal, source: 'session' };
+            req.panelSession = session;
+            return next();
+        }
+
+        const suppliedBasic = parseBasicCredentials(req.headers.authorization);
+        if (suppliedBasic) {
+            const result = credentialAttempt(req, suppliedBasic);
+            if (!result.ok) return applyAttemptFailure(req, res, result, { challenge: true });
+            req.panelAuth = { role: result.role, principal: result.principal, source: 'basic' };
+            return next();
+        }
+
+        if (wantsLoginPage(req)) {
+            res.set('Cache-Control', 'no-store');
+            return res.redirect(302, `/login?return=${encodeURIComponent(loginReturnPath(req))}`);
+        }
+        return send(res, 401, 'Authentication required',
+            options.authCode || 'API-AUTH-001', getRequestId());
+    }
+
+    function cookieValue(token, req, { remember = false, maxAgeMs = 0, clear = false } = {}) {
+        const parts = [
+            `${sessionCookieName}=${clear ? '' : encodeURIComponent(token)}`,
+            'Path=/',
+            'HttpOnly',
+            'SameSite=Strict'
+        ];
+        if (req.secure) parts.push('Secure');
+        if (clear) {
+            parts.push('Max-Age=0', 'Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+        } else if (remember) {
+            parts.push(`Max-Age=${Math.max(Math.floor(maxAgeMs / 1000), 1)}`);
+            parts.push(`Expires=${new Date(now() + maxAgeMs).toUTCString()}`);
+        }
+        return parts.join('; ');
+    }
+
+    function createSession(req, res, auth, remember) {
+        pruneSessions();
+        removeOldest(sessions, maxSessions);
+        const token = crypto.randomBytes(32).toString('base64url');
+        const ttlMs = remember ? sessionRememberMs : sessionIdleMs;
+        const session = {
+            role: auth.role,
+            principal: auth.principal,
+            csrfToken: crypto.randomBytes(32).toString('base64url'),
+            createdAt: now(),
+            expiresAt: now() + ttlMs,
+            remember
+        };
+        sessions.set(sessionKey(token), session);
+        res.set('Set-Cookie', cookieValue(token, req, { remember, maxAgeMs: ttlMs }));
+        return session;
+    }
+
+    function sameOriginAllowed(req) {
+        const suppliedOrigin = requestOrigin(req);
+        return suppliedOrigin !== 'null'
+            && suppliedOrigin !== 'invalid'
+            && (!suppliedOrigin || expectedOrigins(req).has(suppliedOrigin));
+    }
+
+    function login(req, res) {
+        res.set('Cache-Control', 'no-store');
+        res.set('Pragma', 'no-cache');
+        if (!sameOriginAllowed(req)) {
+            emit('origin_denied', req, { origin_present: true });
+            return send(res, 403, 'Request origin is not allowed',
+                options.originCode || 'API-CSRF-002', getRequestId());
+        }
+        if (!req.is('application/json')) {
+            return send(res, 415, 'JSON request body required',
+                options.authCode || 'API-AUTH-001', getRequestId());
+        }
+        const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+        const password = typeof req.body?.password === 'string' ? req.body.password : '';
+        const remember = req.body?.remember === true;
+        if (!username || username.length > 128 || !password || password.length > 512) {
+            return send(res, 400, 'Username and password are required',
+                options.authCode || 'API-AUTH-001', getRequestId());
+        }
+        const result = credentialAttempt(req, { username, password });
+        if (!result.ok) return applyAttemptFailure(req, res, result);
+        const session = createSession(req, res, result, remember);
+        return res.json({
+            ok: true,
+            role: session.role,
+            principal: session.principal,
+            csrfToken: session.csrfToken,
+            ...publicMetadata
+        });
+    }
+
+    function status(req, res) {
+        res.set('Cache-Control', 'no-store');
+        res.set('Pragma', 'no-cache');
+        if (!adminPassword && !readonlyPassword) {
+            return res.json({
+                authenticated: true,
+                role: 'admin',
+                principal: 'development',
+                authenticationDisabled: true,
+                ...publicMetadata
+            });
+        }
+        const resolved = resolveAuthentication(req);
+        return res.json({
+            authenticated: Boolean(resolved),
+            role: resolved?.auth.role || 'public',
+            principal: resolved?.auth.principal || null,
+            ...publicMetadata
+        });
+    }
+
+    function logout(req, res) {
+        res.set('Cache-Control', 'no-store');
+        res.set('Pragma', 'no-cache');
+        if (!sameOriginAllowed(req)) {
+            emit('origin_denied', req, { origin_present: true });
+            return send(res, 403, 'Request origin is not allowed',
+                options.originCode || 'API-CSRF-002', getRequestId());
+        }
+        const token = parseCookies(req.headers.cookie)[sessionCookieName];
+        if (typeof token === 'string') sessions.delete(sessionKey(token));
+        res.set('Set-Cookie', cookieValue('', req, { clear: true }));
+        return res.json({ ok: true });
     }
 
     function csrf(req, res) {
         res.set('Cache-Control', 'no-store');
         res.set('Pragma', 'no-cache');
-        return res.json({ csrfToken, role: req.panelAuth?.role || 'unknown' });
+        return res.json({
+            csrfToken: req.panelSession?.csrfToken || csrfToken,
+            role: req.panelAuth?.role || 'unknown'
+        });
     }
 
     function requestOrigin(req) {
@@ -217,7 +445,8 @@ function createPanelSecurity(options = {}) {
             return send(res, 403, 'Request origin is not allowed', options.originCode || 'API-CSRF-002', getRequestId());
         }
         const suppliedToken = req.get(csrfHeader);
-        if (!secretEqual(suppliedToken, csrfToken)) {
+        const expectedToken = req.panelSession?.csrfToken || csrfToken;
+        if (!secretEqual(suppliedToken, expectedToken)) {
             emit('csrf_denied', req, { token_present: Boolean(suppliedToken) });
             return send(res, 403, 'CSRF token is missing or invalid', options.csrfCode || 'API-CSRF-001', getRequestId());
         }
@@ -232,12 +461,21 @@ function createPanelSecurity(options = {}) {
 
     return {
         authenticate,
+        login,
+        logout,
+        status,
         csrf,
         protectWrites,
         requireAdmin,
         pruneFailures,
-        getState: () => ({ failures: failures.size, eventKeys: eventLog.size, failureKeys: [...failures.keys()] })
+        pruneSessions,
+        getState: () => ({
+            failures: failures.size,
+            sessions: sessions.size,
+            eventKeys: eventLog.size,
+            failureKeys: [...failures.keys()]
+        })
     };
 }
 
-module.exports = { createPanelSecurity, parseTrustedProxies, parseBasicCredentials };
+module.exports = { createPanelSecurity, parseTrustedProxies, parseBasicCredentials, parseCookies };

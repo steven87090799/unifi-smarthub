@@ -79,6 +79,7 @@
 
 - `public/assets/tailwind.css`: `tailwindcss@3.4.19` 的 deterministic production output
 - `frontend/tailwind.input.css` + `tailwind.config.cjs`: CSS 建置來源；掃描 `public/index.html` 與 `public/js/**/*.js`，修改 class 後跑 `npm run build:css`
+- `public/login.html` + `public/assets/login.css` + `public/js/login.js`: 獨立登入介面；Liquid Glass、響應式、表單狀態、Session 登入與 reduced-motion，不依賴 Tailwind／Canvas
 - `public/js/web-push.js`: 第一個獨立功能模組；只公開三個明確的 `window` UI 入口，保留既有 inline 初始化/輪詢呼叫契約
 - Chart.js、D3、TopoJSON、world-atlas 由 `/vendor/<package>/<exact-version>/...` 同源提供，版本由 `package-lock.json` 與 `server/routes/frontend-asset-routes.js` 約束
 - `/sw.js` 由 `server/services/pwa-service-worker.js` 產生，production/mock 共用 cache/push/click 行為；API/health 不進 cache，push click 只接受 same-origin path

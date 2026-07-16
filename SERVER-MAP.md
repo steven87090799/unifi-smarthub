@@ -6,7 +6,7 @@
 
 | 搜尋錨點 | 區段 | 內容 |
 |---|---|---|
-| `createAppLogger`, `apiError` | 啟動與共用工具 | 結構化記錄器、錯誤代碼、請求脈絡、Basic Auth、API 錯誤契約 |
+| `createAppLogger`, `apiError` | 啟動與共用工具 | 結構化記錄器、錯誤代碼、請求脈絡、面板 Session／Basic 相容、API 錯誤契約 |
 | `unifiLogin`, `createSiteManagerClient` | UniFi 用戶端 | 本機控制器登入／cookie、有界雲端用戶端 |
 | `/api/hardware` | UCG 硬體 | 透過 SSH 取得 CPU／記憶體／磁碟／網路資料 |
 | `/api/clients`, `/api/wifi-networks`, `/api/threats` | UniFi 網路 | 用戶端、交換器、WiFi、威脅事件 |
@@ -115,6 +115,7 @@
 ### 前端執行期信任邊界
 
 - `server/routes/frontend-asset-routes.js`：只公開由 lockfile 鎖定且 URL 帶版本的 Chart／D3／TopoJSON／world-atlas 檔案，並集中設定 CSP／防框架／referrer headers
+- `server/routes/panel-auth-routes.js` + `server/middleware/panel-security.js`：公開登入資產與同源登入／登出／狀態端點；HttpOnly SameSite Session、登入節流、角色、per-session CSRF，並保留 Basic Auth 相容
 - `server/services/wifi-qr.js`：同源訪客 WiFi QR SVG；不把 SSID／密碼送往第三方
 - `POST /api/wifi/qr`：僅限管理員、Origin／CSRF、嚴格 SSID／WPA 驗證、`no-store`
 

@@ -10,6 +10,7 @@ const { ERROR_CODES } = require('./observability/error-codes');
 const { createPanelSecurity } = require('./server/middleware/panel-security');
 const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
+const { registerPanelAuthRoutes } = require('./server/routes/panel-auth-routes');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
@@ -39,12 +40,18 @@ const mockSecurity = createPanelSecurity({
     readonlyPassword: process.env.PANEL_READONLY_PASSWORD,
     readonlyUsername: process.env.PANEL_READONLY_USERNAME || 'readonly',
     requireAdminPassword: process.env.NODE_ENV === 'production',
+    allowedOrigins: process.env.PANEL_ALLOWED_ORIGINS,
+    sessionIdleMs: (Number(process.env.PANEL_SESSION_IDLE_SECONDS) || 43200) * 1000,
+    sessionRememberMs: (Number(process.env.PANEL_SESSION_REMEMBER_SECONDS) || 2592000) * 1000,
+    maxSessions: Number(process.env.PANEL_SESSION_MAX) || 1000,
+    publicMetadata: { version: APP_VERSION },
     authCode: ERROR_CODES.API_AUTH_FAILED,
     rateLimitCode: ERROR_CODES.API_AUTH_RATE_LIMITED,
     authorizationCode: ERROR_CODES.API_AUTHORIZATION_FAILED,
     csrfCode: ERROR_CODES.API_CSRF_FAILED,
     originCode: ERROR_CODES.API_ORIGIN_FAILED
 });
+registerPanelAuthRoutes(app, { rootDir: __dirname, security: mockSecurity });
 app.use(mockSecurity.authenticate);
 app.get('/api/security/csrf', mockSecurity.csrf);
 app.use(mockSecurity.protectWrites);
@@ -740,6 +747,22 @@ let mockAlertConfig = [
     { metric: 'disk_temperature', threshold: 50, condition: 'above', enabled: true },
     { metric: 'volume_usage', threshold: 85, condition: 'above', enabled: true }
 ];
+const mockNasSseClients = new Set();
+app.get('/api/nas/stream', (req, res) => {
+    res.set({
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive'
+    });
+    res.flushHeaders();
+    mockNasSseClients.add(res);
+    res.write(': smarthub mock stream ready\n\n');
+    const heartbeat = setInterval(() => res.write(': keepalive\n\n'), 25_000);
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        mockNasSseClients.delete(res);
+    });
+});
 app.get('/api/nas/docker', (req, res) => {
     mockDocker.forEach(c => {
         if (c.state === 'running') c.cpu_percent = +(Math.random() * 5).toFixed(1);
@@ -1518,6 +1541,10 @@ app.use((error, req, res, next) => {
 const PORT = process.env.PORT || 3005;
 const mockServer = app.listen(PORT, () => console.log(`Mock Server listening on port ${PORT}`));
 function stopMock() {
+    for (const client of mockNasSseClients) {
+        try { client.end(); } catch { }
+    }
+    mockNasSseClients.clear();
     mockServer.close(() => {
         try { mockBackupDb.close(); } catch { }
         fs.rmSync(MOCK_BACKUP_DIR, { recursive: true, force: true });

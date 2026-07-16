@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#050814">
+    <meta name="color-scheme" content="dark">
+    <meta name="robots" content="noindex, nofollow">
+    <title>登入 SmartHub 控制中心</title>
+    <link rel="stylesheet" href="/assets/login.css">
+    <script src="/js/login.js" defer></script>
+</head>
+
+<body>
+    <div class="liquid-scene" aria-hidden="true">
+        <div class="liquid-scene__grid"></div>
+        <div class="liquid-scene__orb liquid-scene__orb--blue"></div>
+        <div class="liquid-scene__orb liquid-scene__orb--indigo"></div>
+        <div class="liquid-scene__orb liquid-scene__orb--cyan"></div>
+        <div class="liquid-scene__glow"></div>
+        <div class="liquid-scene__noise"></div>
+    </div>
+
+    <main class="login-shell">
+        <section class="brand-panel" aria-labelledby="brand-title">
+            <div class="brand-panel__top">
+                <div class="brand-lockup">
+                    <div class="brand-mark" aria-hidden="true">
+                        <svg viewBox="0 0 48 48" fill="none">
+                            <path d="M24 5.5 7.5 13.75 24 22l16.5-8.25L24 5.5Z" />
+                            <path d="m7.5 25.2 16.5 8.25 16.5-8.25M7.5 19.45 24 27.7l16.5-8.25" />
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="brand-lockup__eyebrow">SMART OPERATIONS</p>
+                        <p class="brand-lockup__name">Smart<span>Hub</span></p>
+                    </div>
+                </div>
+
+                <div class="brand-copy">
+                    <p class="brand-copy__kicker">
+                        <span></span>
+                        Unified Intelligence
+                    </p>
+                    <h1 id="brand-title">讓每一項系統訊號，<br>都變成清晰的決策。</h1>
+                    <p>安全、快速且可靠的智慧管理平台。從網路、儲存到關鍵設備，集中掌握整個環境的即時狀態。</p>
+                </div>
+            </div>
+
+            <ul class="feature-list" aria-label="SmartHub 系統特色">
+                <li>
+                    <span class="feature-list__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                            <path d="M4 13.5h3l2-7 4 12 2-5h5" />
+                        </svg>
+                    </span>
+                    <span>
+                        <strong>即時系統監控</strong>
+                        <small>掌握跨設備健康狀態與關鍵事件</small>
+                    </span>
+                </li>
+                <li>
+                    <span class="feature-list__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                            <path d="M12 3 5 6v5c0 4.5 2.8 8.6 7 10 4.2-1.4 7-5.5 7-10V6l-7-3Z" />
+                            <path d="m9.2 12 1.8 1.8 3.8-4" />
+                        </svg>
+                    </span>
+                    <span>
+                        <strong>安全身分驗證</strong>
+                        <small>受保護的 Session、角色與操作邊界</small>
+                    </span>
+                </li>
+                <li>
+                    <span class="feature-list__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                            <rect x="4" y="5" width="16" height="5" rx="2" />
+                            <rect x="4" y="14" width="16" height="5" rx="2" />
+                            <path d="M8 7.5h.01M8 16.5h.01M16 7.5h1M16 16.5h1" />
+                        </svg>
+                    </span>
+                    <span>
+                        <strong>集中式設備管理</strong>
+                        <small>單一控制中心管理網路與基礎設施</small>
+                    </span>
+                </li>
+            </ul>
+
+            <div class="brand-meta">
+                <div class="service-state" id="service-state" role="status" aria-live="polite">
+                    <span class="service-state__dot" aria-hidden="true"></span>
+                    <span id="service-state-text">正在確認服務狀態</span>
+                </div>
+                <span class="brand-meta__divider" aria-hidden="true"></span>
+                <span class="brand-meta__version">SmartHub <span data-app-version>v--</span></span>
+            </div>
+        </section>
+
+        <section class="login-stage" aria-labelledby="login-title">
+            <article class="login-card" id="login-card">
+                <div class="login-card__edge" aria-hidden="true"></div>
+
+                <div class="mobile-brand" aria-label="SmartHub">
+                    <span class="mobile-brand__mark" aria-hidden="true">
+                        <svg viewBox="0 0 48 48" fill="none">
+                            <path d="M24 5.5 7.5 13.75 24 22l16.5-8.25L24 5.5Z" />
+                            <path d="m7.5 25.2 16.5 8.25 16.5-8.25M7.5 19.45 24 27.7l16.5-8.25" />
+                        </svg>
+                    </span>
+                    <span>Smart<strong>Hub</strong></span>
+                </div>
+
+                <header class="login-card__header">
+                    <div class="login-card__context">
+                        <span class="login-card__context-dot" aria-hidden="true"></span>
+                        SECURE ACCESS
+                    </div>
+                    <h2 id="login-title">歡迎回來</h2>
+                    <p>請登入以進入 SmartHub 系統控制中心</p>
+                </header>
+
+                <form id="login-form" class="login-form" novalidate>
+                    <div class="form-alert-slot">
+                        <div id="form-alert" class="form-alert" role="alert" aria-live="assertive" aria-atomic="true">
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M12 8v4m0 4h.01" />
+                                <path d="M10.3 4.2 2.5 18a2 2 0 0 0 1.75 3h15.5a2 2 0 0 0 1.75-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
+                            </svg>
+                            <span id="form-alert-text"></span>
+                        </div>
+                    </div>
+
+                    <div class="form-field" id="username-field">
+                        <label for="username">帳號</label>
+                        <div class="input-shell">
+                            <span class="input-shell__icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none">
+                                    <circle cx="12" cy="8" r="3.5" />
+                                    <path d="M5 20a7 7 0 0 1 14 0" />
+                                </svg>
+                            </span>
+                            <input id="username" name="username" type="text" placeholder="輸入管理帳號"
+                                autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="128"
+                                aria-label="帳號" aria-describedby="username-error" aria-invalid="false" required>
+                            <span class="input-shell__valid" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none">
+                                    <path d="m7 12.5 3.2 3.2L17.5 8.5" />
+                                </svg>
+                            </span>
+                        </div>
+                        <p class="field-error" id="username-error" aria-live="polite"></p>
+                    </div>
+
+                    <div class="form-field" id="password-field">
+                        <label for="password">密碼</label>
+                        <div class="input-shell">
+                            <span class="input-shell__icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none">
+                                    <rect x="5" y="10" width="14" height="10" rx="3" />
+                                    <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10M12 14v2" />
+                                </svg>
+                            </span>
+                            <input id="password" name="password" type="password" placeholder="輸入登入密碼"
+                                autocomplete="current-password" maxlength="512" aria-label="密碼"
+                                aria-describedby="password-error" aria-invalid="false" required>
+                            <button class="password-toggle" id="password-toggle" type="button" aria-label="顯示密碼"
+                                aria-pressed="false">
+                                <svg class="password-toggle__show" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                                    <circle cx="12" cy="12" r="2.5" />
+                                </svg>
+                                <svg class="password-toggle__hide" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="m4 4 16 16M10.7 6.1A9.6 9.6 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.3 3.1M6.2 7.1A15.8 15.8 0 0 0 2.5 12s3.5 6 9.5 6c1 0 2-.2 2.9-.5M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+                                </svg>
+                            </button>
+                        </div>
+                        <p class="field-error" id="password-error" aria-live="polite"></p>
+                    </div>
+
+                    <div class="form-options">
+                        <label class="remember-control" for="remember">
+                            <input id="remember" name="remember" type="checkbox">
+                            <span class="remember-control__box" aria-hidden="true">
+                                <svg viewBox="0 0 16 16" fill="none">
+                                    <path d="m3.5 8 3 3 6-6" />
+                                </svg>
+                            </span>
+                            <span>記住登入狀態</span>
+                        </label>
+                        <button class="text-action" id="forgot-password" type="button" aria-expanded="false"
+                            aria-controls="security-help">忘記密碼？</button>
+                    </div>
+
+                    <div class="security-help" id="security-help" role="note" hidden>
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" />
+                            <path d="M12 10v4m0 3h.01" />
+                        </svg>
+                        <p><strong>需要重設登入資訊？</strong><span>SmartHub 不經由電子郵件傳送密碼。請聯絡系統管理員更新安全設定。</span></p>
+                    </div>
+
+                    <button class="login-submit" id="login-submit" type="submit">
+                        <span class="login-submit__surface" aria-hidden="true"></span>
+                        <span class="login-submit__content">
+                            <span class="login-submit__spinner" aria-hidden="true"></span>
+                            <svg class="login-submit__success" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="m5.5 12.5 4 4 9-9" />
+                            </svg>
+                            <span id="login-submit-label">安全登入</span>
+                            <svg class="login-submit__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <path d="M5 12h14m-5-5 5 5-5 5" />
+                            </svg>
+                        </span>
+                    </button>
+                </form>
+
+                <div class="security-note">
+                    <span class="security-note__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" fill="none">
+                            <rect x="5" y="10" width="14" height="10" rx="3" />
+                            <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" />
+                        </svg>
+                    </span>
+                    <p><strong>受保護的內部系統</strong><span>登入資訊將透過同源安全連線送出，密碼不會寫入瀏覽器日誌。</span></p>
+                </div>
+
+                <footer class="login-card__footer">
+                    <span>© 2026 SmartHub</span>
+                    <span aria-hidden="true">•</span>
+                    <span data-app-version>v--</span>
+                </footer>
+            </article>
+        </section>
+    </main>
+</body>
+
+</html>

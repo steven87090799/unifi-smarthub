@@ -1,7 +1,9 @@
 'use strict';
 
 const PWA_SHELL = Object.freeze([
-    '/',
+    '/login',
+    '/assets/login.css',
+    '/js/login.js',
     '/assets/tailwind.css',
     '/js/web-push.js',
     '/vendor/chart.js/4.5.1/chart.umd.js',
@@ -23,7 +25,14 @@ self.addEventListener('fetch',event=>{
   if(event.request.method!=='GET')return;
   const url=new URL(event.request.url);
   if(url.pathname.startsWith('/api/')||url.pathname.startsWith('/health'))return;
-  event.respondWith(fetch(event.request).then(response=>{const copy=response.clone();caches.open(C).then(cache=>cache.put(event.request,copy));return response}).catch(()=>caches.match(event.request).then(match=>match||caches.match('/'))));
+  if(event.request.mode==='navigate'){
+    event.respondWith(fetch(event.request).catch(()=>caches.match('/login')));
+    return;
+  }
+  event.respondWith(fetch(event.request).then(response=>{
+    if(response.ok&&!response.redirected){const copy=response.clone();caches.open(C).then(cache=>cache.put(event.request,copy))}
+    return response
+  }).catch(()=>caches.match(event.request)));
 });
 self.addEventListener('push',event=>{
   let payload={title:'SmartHub',body:'有新的系統通知',url:'/',tag:'smarthub'};

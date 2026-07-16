@@ -43,6 +43,7 @@ const { createActivityLease } = require('./activity-lease');
 const { TelegramCommandBot } = require('./telegram-command-bot');
 const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
+const { registerPanelAuthRoutes } = require('./server/routes/panel-auth-routes');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const { createSiteManagerClient } = require('./server/integrations/site-manager-client');
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
@@ -242,6 +243,10 @@ const panelSecurity = createPanelSecurity({
     failureWindowMs: (Number(process.env.PANEL_AUTH_WINDOW_SECONDS) || 300) * 1000,
     cooldownMs: (Number(process.env.PANEL_AUTH_COOLDOWN_SECONDS) || 300) * 1000,
     maxTrackedClients: Number(process.env.PANEL_AUTH_MAX_CLIENTS) || 1000,
+    sessionIdleMs: (Number(process.env.PANEL_SESSION_IDLE_SECONDS) || 43200) * 1000,
+    sessionRememberMs: (Number(process.env.PANEL_SESSION_REMEMBER_SECONDS) || 2592000) * 1000,
+    maxSessions: Number(process.env.PANEL_SESSION_MAX) || 1000,
+    publicMetadata: { version: APP_VERSION },
     getRequestId: () => logger.getContext().request_id,
     authCode: ERROR_CODES.API_AUTH_FAILED,
     rateLimitCode: ERROR_CODES.API_AUTH_RATE_LIMITED,
@@ -256,6 +261,7 @@ const panelSecurity = createPanelSecurity({
         message: 'Panel security request denied', fields
     })
 });
+registerPanelAuthRoutes(app, { rootDir: __dirname, security: panelSecurity });
 app.use(panelSecurity.authenticate);
 app.get('/api/security/csrf', panelSecurity.csrf);
 app.use(panelSecurity.protectWrites);

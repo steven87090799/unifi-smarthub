@@ -58,7 +58,7 @@ open http://<主機IP>:3000
 | **9. AdGuard Home** | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` | 建議使用 HTTPS origin；啟用 DNS 防護頁 |
 | | `ADGUARD_ALLOW_INSECURE_HTTP`, `ADGUARD_TLS_VERIFY`, `ADGUARD_CA_FILE` | 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可掛自簽 CA。舊 `ADGUARD_HOST/PORT` 仍可用但同樣受傳輸政策保護 |
 | **10. Linux 小主機** | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_PORT` | 任何 Linux 主機的 SSH,啟用硬體監控頁 |
-| **11. 面板密碼** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：整站 Basic Auth(帳號隨意、密碼為此值) |
+| **11. 面板登入** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：正式登入頁使用安全 Session；帳號可自訂、密碼決定管理員角色。Basic Auth 保留給既有測試／工具相容 |
 | **12. Web Push** | `WEB_PUSH_SUBJECT`, `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` | 選填的瀏覽器通知；VAPID 三欄必須同時設定，private key 只存於 `config/.env`。 |
 
 AdGuard 頁的管理員控制可對 persistent client 的精確 IP/MAC 套用 YouTube、TikTok、Gaming 服務政策。每日「允許時段」代表暫停 blocked-service filtering 的區間，時段外維持封鎖；政策以 SQLite 保存並在重啟或 AdGuard 恢復後重新協調。SmartHub 只在政策有效期間接管 blocked-services 欄位，移除時會還原首次套用前保存的基準。
@@ -217,7 +217,8 @@ docker run --rm -v <volume-name>:/d:ro -v "$PWD":/b alpine \
 | SSH 硬體頁失敗 | UCG 的 SSH 密碼是**獨立設定**的,不是 UniFi 登入密碼;主控台 → Console Settings → Advanced → SSH |
 | 封鎖設備回 NoPermission | UniFi 本地帳號是唯讀角色,到 Admins 改為 Full Management |
 | 報表在錯的時間發送 | compose 的 `TZ` 沒設或設錯 |
-| 打開網頁跳登入框 | `PANEL_PASSWORD` 已設定,帳號隨意、密碼填該值 |
+| 開啟網頁進入 SmartHub 登入頁 | 使用任意非空管理員帳號與 `PANEL_PASSWORD`；唯讀帳號需符合 `PANEL_READONLY_USERNAME` |
+| Session 過期或主動登出 | 系統會回到 `/login`；未勾選「記住登入狀態」預設 12 小時，勾選後預設 30 天 |
 | 雲端頁顯示未設定 | `UNIFI_API_KEY` 未填,屬正常回退 |
 | NAS 欄位顯示 `--` | NAS 頁底部「Raw JSON」對照實際欄位名回報即可修 |
 | UPS 事件「通訊中斷」頻繁 | macOS 電源管理與 PowerPanel 搶 USB HID 的已知問題,見 `cyberpower-ups-api.md` |
