@@ -11,6 +11,7 @@ const { createPanelSecurity } = require('./server/middleware/panel-security');
 const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerPanelAuthRoutes } = require('./server/routes/panel-auth-routes');
+const { createPublicSystemHealthService } = require('./server/services/public-system-health');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const writeInput = require('./server/policies/write-input-policy');
 const queryInput = require('./server/policies/query-input-policy');
@@ -51,7 +52,13 @@ const mockSecurity = createPanelSecurity({
     csrfCode: ERROR_CODES.API_CSRF_FAILED,
     originCode: ERROR_CODES.API_ORIGIN_FAILED
 });
-registerPanelAuthRoutes(app, { rootDir: __dirname, security: mockSecurity });
+const mockPublicSystemHealth = createPublicSystemHealthService();
+mockPublicSystemHealth.update(Array.from({ length: 8 }, () => ({ online: true })));
+registerPanelAuthRoutes(app, {
+    rootDir: __dirname,
+    security: mockSecurity,
+    publicSystemHealth: mockPublicSystemHealth
+});
 app.use(mockSecurity.authenticate);
 app.get('/api/security/csrf', mockSecurity.csrf);
 app.use(mockSecurity.protectWrites);
@@ -659,8 +666,13 @@ let mockTrendHistory = (() => {
 // 自適應取樣：依正式後端預設值，有前端活躍時每 30 秒、閒置時每 30 分鐘。
 let lastClientActivity = 0, lastSampleTs = 0;
 let ACTIVE_SAMPLE_MS = 30000, IDLE_SAMPLE_MS = 30 * 60 * 1000, ACTIVE_WINDOW_MS = 30000;
+let lastMockPublicHealthTs = Date.now();
 setInterval(() => {
     const now = Date.now();
+    if (now - lastMockPublicHealthTs >= 30_000) {
+        lastMockPublicHealthTs = now;
+        mockPublicSystemHealth.update(Array.from({ length: 8 }, () => ({ online: true })), now);
+    }
     const active = (now - lastClientActivity) < ACTIVE_WINDOW_MS;
     if (now - lastSampleTs >= (active ? ACTIVE_SAMPLE_MS : IDLE_SAMPLE_MS)) {
         lastSampleTs = now;

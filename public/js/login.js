@@ -1,5 +1,9 @@
 'use strict';
 
+const SNAPSHOT_MAX_AGE_MS = 3 * 60 * 1000;
+const SNAPSHOT_CLOCK_INTERVAL_MS = 15 * 1000;
+const PUBLIC_SNAPSHOT_STATUSES = new Set(['operational', 'degraded', 'critical', 'unknown']);
+
 const form = document.getElementById('login-form');
 const card = document.getElementById('login-card');
 const usernameInput = document.getElementById('username');
@@ -14,12 +18,30 @@ const forgotPassword = document.getElementById('forgot-password');
 const securityHelp = document.getElementById('security-help');
 const submitButton = document.getElementById('login-submit');
 const submitLabel = document.getElementById('login-submit-label');
+const sessionState = document.getElementById('session-state');
 const formAlert = document.getElementById('form-alert');
 const formAlertText = document.getElementById('form-alert-text');
+const snapshotPanel = document.getElementById('system-snapshot');
+const snapshotBadge = document.getElementById('snapshot-badge');
+const snapshotDescription = document.getElementById('snapshot-description');
+const snapshotSecondary = document.getElementById('snapshot-secondary');
+const snapshotOnline = document.getElementById('snapshot-online');
+const snapshotTotal = document.getElementById('snapshot-total');
+const snapshotOffline = document.getElementById('snapshot-offline');
+const snapshotTime = document.getElementById('snapshot-time');
+const snapshotExpiry = document.getElementById('snapshot-expiry');
+const snapshotReload = document.getElementById('snapshot-reload');
+const snapshotAnnouncement = document.getElementById('snapshot-announcement');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
 let submitting = false;
 let pointerFrame = 0;
 let pointerState = null;
+let snapshotClock = 0;
+let snapshotData = null;
+let snapshotAnnouncementKey = null;
+let publicSystemHealthRequest = null;
+let cardStateTimer = 0;
 
 async function fetchWithTimeout(input, init = {}, timeoutMs = 4500) {
     const controller = new AbortController();
@@ -36,11 +58,180 @@ function safeReturnPath() {
     return /^\/(?!\/)/u.test(value) && !value.startsWith('/login') ? value : '/';
 }
 
-function setVersion(version) {
-    const label = typeof version === 'string' && version ? `v${version.replace(/^v/u, '')}` : 'v--';
-    document.querySelectorAll('[data-app-version]').forEach(element => {
-        element.textContent = label;
-    });
+function normalizePublicSnapshot(payload) {
+    if (!payload || typeof payload !== 'object' || !PUBLIC_SNAPSHOT_STATUSES.has(payload.status)) {
+        throw new TypeError('Invalid public system health response');
+    }
+    const total = Number(payload.total);
+    const online = Number(payload.online);
+    const offline = Number(payload.offline);
+    if (![total, online, offline].every(value => Number.isSafeInteger(value) && value >= 0)
+        || online + offline !== total) {
+        throw new TypeError('Invalid public system health counts');
+    }
+    if (payload.status === 'unknown' || payload.snapshotAt == null) {
+        return { status: 'unknown', total: 0, online: 0, offline: 0, snapshotAt: null };
+    }
+    const snapshotTimestamp = Date.parse(payload.snapshotAt);
+    if (!Number.isFinite(snapshotTimestamp)) throw new TypeError('Invalid public system health timestamp');
+    return {
+        status: payload.status,
+        total,
+        online,
+        offline,
+        snapshotAt: new Date(snapshotTimestamp).toISOString()
+    };
+}
+
+function requestPublicSystemHealthOnce() {
+    if (!publicSystemHealthRequest) {
+        publicSystemHealthRequest = fetchWithTimeout('/api/public/system-health', {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { Accept: 'application/json' }
+        }, 5000).then(async response => {
+            if (!response.ok) throw new Error('Public system health request failed');
+            return normalizePublicSnapshot(await response.json());
+        });
+    }
+    return publicSystemHealthRequest;
+}
+
+function formatSnapshotTime(timestamp) {
+    return new Intl.DateTimeFormat('zh-TW', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).format(new Date(timestamp));
+}
+
+function formatRemaining(milliseconds) {
+    const totalSeconds = Math.max(Math.ceil(milliseconds / 1000), 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function setSnapshotVisualState(state) {
+    snapshotPanel.classList.remove(
+        'is-loading',
+        'is-operational',
+        'is-degraded',
+        'is-critical',
+        'is-unknown',
+        'is-expired'
+    );
+    snapshotPanel.classList.add(`is-${state}`);
+}
+
+function announceSnapshot(key, message) {
+    if (snapshotAnnouncementKey === key) return;
+    snapshotAnnouncementKey = key;
+    snapshotAnnouncement.textContent = message;
+}
+
+function showSnapshotUnavailable() {
+    snapshotData = null;
+    window.clearInterval(snapshotClock);
+    snapshotClock = 0;
+    setSnapshotVisualState('unknown');
+    snapshotBadge.textContent = '無法取得';
+    snapshotDescription.textContent = '暫時無法取得狀態快照';
+    snapshotSecondary.textContent = 'STATUS SNAPSHOT UNAVAILABLE';
+    snapshotOnline.textContent = '--';
+    snapshotTotal.textContent = '--';
+    snapshotOffline.textContent = '離線數量 --';
+    snapshotTime.textContent = '快照時間 --:--:--';
+    snapshotExpiry.textContent = '請重新整理頁面後再試';
+    snapshotReload.hidden = false;
+    announceSnapshot('unavailable', '暫時無法取得核心服務狀態快照，登入功能仍可正常使用。');
+}
+
+function showExpiredSnapshot(data) {
+    window.clearInterval(snapshotClock);
+    snapshotClock = 0;
+    setSnapshotVisualState('expired');
+    snapshotBadge.textContent = '已過期';
+    snapshotDescription.textContent = '狀態快照已過期';
+    snapshotSecondary.textContent = 'STATUS SNAPSHOT EXPIRED';
+    snapshotOnline.textContent = String(data.online);
+    snapshotTotal.textContent = String(data.total);
+    snapshotOffline.textContent = `取得快照時 ${data.offline} 個節點離線`;
+    snapshotTime.textContent = `資料取得於 ${formatSnapshotTime(data.snapshotAt)}`;
+    snapshotExpiry.textContent = '請重新整理頁面取得最新狀態';
+    snapshotReload.hidden = false;
+    announceSnapshot('expired', '核心服務狀態快照已過期，頁面不會自動重新查詢。');
+}
+
+function renderSnapshotClock() {
+    if (!snapshotData?.snapshotAt) return;
+    const expiresAt = Date.parse(snapshotData.snapshotAt) + SNAPSHOT_MAX_AGE_MS;
+    const remaining = Math.max(0, expiresAt - Date.now());
+    if (remaining <= 0) {
+        showExpiredSnapshot(snapshotData);
+        return;
+    }
+    snapshotExpiry.textContent = `快照有效時間 ${formatRemaining(remaining)}`;
+}
+
+function startSnapshotClock() {
+    window.clearInterval(snapshotClock);
+    snapshotClock = 0;
+    renderSnapshotClock();
+    if (!snapshotData || document.hidden || snapshotPanel.classList.contains('is-expired')) return;
+    snapshotClock = window.setInterval(renderSnapshotClock, SNAPSHOT_CLOCK_INTERVAL_MS);
+}
+
+function showSnapshot(data) {
+    if (data.status === 'unknown' || !data.snapshotAt) {
+        showSnapshotUnavailable();
+        return;
+    }
+    snapshotData = data;
+    const expired = Date.now() >= Date.parse(data.snapshotAt) + SNAPSHOT_MAX_AGE_MS;
+    if (expired) {
+        showExpiredSnapshot(data);
+        return;
+    }
+
+    const messages = {
+        operational: {
+            badge: '正常',
+            primary: '所有核心服務正常',
+            secondary: 'ALL CORE SERVICES OPERATIONAL'
+        },
+        degraded: {
+            badge: '部分異常',
+            primary: '偵測到部分節點離線',
+            secondary: 'DEGRADED SERVICE'
+        },
+        critical: {
+            badge: '嚴重異常',
+            primary: '核心服務狀態異常',
+            secondary: 'CRITICAL SERVICE CONDITION'
+        }
+    };
+    const message = messages[data.status];
+    setSnapshotVisualState(data.status);
+    snapshotBadge.textContent = message.badge;
+    snapshotDescription.textContent = message.primary;
+    snapshotSecondary.textContent = message.secondary;
+    snapshotOnline.textContent = String(data.online);
+    snapshotTotal.textContent = String(data.total);
+    snapshotOffline.textContent = `${data.offline} 個節點離線`;
+    snapshotTime.textContent = `快照取得於 ${formatSnapshotTime(data.snapshotAt)}`;
+    snapshotReload.hidden = true;
+    startSnapshotClock();
+    announceSnapshot(data.status, `${message.primary}，${data.online} / ${data.total} 個節點在線。`);
+}
+
+async function loadSystemSnapshot() {
+    try {
+        showSnapshot(await requestPublicSystemHealthOnce());
+    } catch {
+        showSnapshotUnavailable();
+    }
 }
 
 async function checkExistingSession() {
@@ -51,7 +242,6 @@ async function checkExistingSession() {
         });
         if (!response.ok) return;
         const status = await response.json();
-        setVersion(status.version);
         if (status.authenticated) {
             document.body.classList.add('is-authenticated');
             window.setTimeout(() => window.location.replace(safeReturnPath()), reducedMotion.matches ? 0 : 120);
@@ -96,24 +286,34 @@ function clearAlert() {
     formAlertText.textContent = '';
 }
 
+function setCardTransientState(state) {
+    window.clearTimeout(cardStateTimer);
+    card.classList.remove('is-error-state', 'is-success-state');
+    if (!state) return;
+    card.classList.add(state);
+    if (state === 'is-error-state') {
+        cardStateTimer = window.setTimeout(() => card.classList.remove(state), 700);
+    }
+}
+
 function showAlert(message) {
     formAlertText.textContent = message;
     formAlert.classList.add('is-visible');
+    setCardTransientState('is-error-state');
 }
 
-function shakeCard() {
+function shakeForm() {
     if (reducedMotion.matches || typeof form.animate !== 'function') return;
     form.getAnimations().forEach(animation => {
         if (animation.id === 'login-form-shake') animation.cancel();
     });
     const animation = form.animate([
         { transform: 'translateX(0)' },
-        { transform: 'translateX(-5px)', offset: 0.22 },
-        { transform: 'translateX(4px)', offset: 0.46 },
-        { transform: 'translateX(-2px)', offset: 0.68 },
-        { transform: 'translateX(1px)', offset: 0.86 },
+        { transform: 'translateX(-4px)', offset: 0.24 },
+        { transform: 'translateX(3px)', offset: 0.48 },
+        { transform: 'translateX(-2px)', offset: 0.7 },
         { transform: 'translateX(0)' }
-    ], { duration: 340, easing: 'ease-in-out' });
+    ], { duration: 300, easing: 'ease-in-out' });
     animation.id = 'login-form-shake';
 }
 
@@ -121,20 +321,30 @@ function setSubmitting(active) {
     submitting = active;
     submitButton.disabled = active;
     submitButton.classList.toggle('is-loading', active);
+    card.classList.toggle('is-authenticating', active);
     usernameInput.disabled = active;
     passwordInput.disabled = active;
     rememberInput.disabled = active;
     passwordToggle.disabled = active;
     forgotPassword.disabled = active;
-    if (active) submitLabel.textContent = '登入中';
+    if (active) {
+        submitLabel.textContent = '驗證中';
+        sessionState.textContent = 'ESTABLISHING SECURE SESSION';
+    } else {
+        submitLabel.textContent = '驗證身分';
+        sessionState.textContent = 'ENCRYPTED SESSION REQUIRED';
+    }
 }
 
 function finishSuccess() {
+    card.classList.remove('is-authenticating');
+    setCardTransientState('is-success-state');
     submitButton.classList.remove('is-loading');
     submitButton.classList.add('is-success');
     submitLabel.textContent = '驗證成功';
-    window.setTimeout(() => document.body.classList.add('is-authenticated'), reducedMotion.matches ? 0 : 140);
-    window.setTimeout(() => window.location.replace(safeReturnPath()), reducedMotion.matches ? 0 : 360);
+    sessionState.textContent = 'ACCESS GRANTED';
+    window.setTimeout(() => document.body.classList.add('is-authenticated'), reducedMotion.matches ? 0 : 120);
+    window.setTimeout(() => window.location.replace(safeReturnPath()), reducedMotion.matches ? 0 : 320);
 }
 
 function authenticationMessage(response, payload) {
@@ -159,7 +369,8 @@ async function submitLogin(event) {
     const passwordValid = validatePassword(true);
     if (!usernameValid || !passwordValid) {
         showAlert('請完成標示的必填欄位。');
-        shakeCard();
+        sessionState.textContent = 'IDENTITY VERIFICATION INCOMPLETE';
+        shakeForm();
         (usernameValid ? passwordInput : usernameInput).focus();
         return;
     }
@@ -185,17 +396,18 @@ async function submitLogin(event) {
                 passwordInput.value = '';
                 syncFieldState(passwordField, passwordInput);
             }
-            shakeCard();
+            shakeForm();
             setSubmitting(false);
+            sessionState.textContent = 'AUTHENTICATION FAILED';
             (response.status === 401 ? passwordInput : usernameInput).focus();
             return;
         }
-        setVersion(payload.version);
         finishSuccess();
     } catch {
         showAlert('無法連線到登入服務，請檢查網路後再試。');
-        shakeCard();
+        shakeForm();
         setSubmitting(false);
+        sessionState.textContent = 'SECURE SESSION UNAVAILABLE';
         submitButton.focus();
     }
 }
@@ -222,8 +434,8 @@ function applyPointerState() {
     const { clientX, clientY } = pointerState;
     const xRatio = clientX / window.innerWidth - 0.5;
     const yRatio = clientY / window.innerHeight - 0.5;
-    document.documentElement.style.setProperty('--scene-x', `${xRatio * -8}px`);
-    document.documentElement.style.setProperty('--scene-y', `${yRatio * -6}px`);
+    document.documentElement.style.setProperty('--scene-x', `${xRatio * -6}px`);
+    document.documentElement.style.setProperty('--scene-y', `${yRatio * -4}px`);
 
     const bounds = card.getBoundingClientRect();
     const cardX = Math.max(0, Math.min(100, ((clientX - bounds.left) / bounds.width) * 100));
@@ -245,9 +457,30 @@ function resetPointerState() {
     document.documentElement.style.setProperty('--card-y', '0%');
 }
 
+function handleVisibilityChange() {
+    document.body.classList.toggle('is-page-hidden', document.hidden);
+    if (document.hidden) {
+        window.clearInterval(snapshotClock);
+        snapshotClock = 0;
+        return;
+    }
+    if (snapshotData) startSnapshotClock();
+}
+
+function submitOnEnter(event) {
+    if (event.key !== 'Enter' || event.isComposing || submitting) return;
+    if (event.target !== usernameInput && event.target !== passwordInput) return;
+    event.preventDefault();
+    form.requestSubmit();
+}
+
 form.addEventListener('submit', submitLogin);
+form.addEventListener('keydown', submitOnEnter);
 passwordToggle.addEventListener('click', togglePasswordVisibility);
 forgotPassword.addEventListener('click', toggleSecurityHelp);
+snapshotReload.addEventListener('click', () => window.location.reload());
+document.addEventListener('visibilitychange', handleVisibilityChange);
+window.addEventListener('pagehide', () => window.clearInterval(snapshotClock), { once: true });
 
 usernameInput.addEventListener('input', () => {
     clearAlert();
@@ -271,4 +504,5 @@ if (!reducedMotion.matches && window.matchMedia('(hover: hover) and (pointer: fi
     document.documentElement.addEventListener('mouseleave', resetPointerState);
 }
 
-void checkExistingSession();
+handleVisibilityChange();
+void Promise.allSettled([checkExistingSession(), loadSystemSnapshot()]);

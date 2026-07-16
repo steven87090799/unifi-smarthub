@@ -4,36 +4,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#050814">
+    <meta name="theme-color" content="#05080f">
     <meta name="color-scheme" content="dark">
     <meta name="robots" content="noindex, nofollow">
-    <title>登入 SmartHub 控制中心</title>
+    <title>SmartHub 安全登入</title>
     <link rel="stylesheet" href="/assets/login.css">
     <script src="/js/login.js" defer></script>
 </head>
 
 <body>
     <div class="liquid-scene" aria-hidden="true">
+        <div class="liquid-scene__fluid"></div>
         <div class="liquid-scene__grid"></div>
-        <div class="liquid-scene__orb liquid-scene__orb--blue"></div>
-        <div class="liquid-scene__orb liquid-scene__orb--indigo"></div>
-        <div class="liquid-scene__orb liquid-scene__orb--cyan"></div>
-        <div class="liquid-scene__glow"></div>
+        <div class="liquid-scene__coordinates"></div>
+        <div class="liquid-scene__orb liquid-scene__orb--steel"></div>
+        <div class="liquid-scene__orb liquid-scene__orb--navy"></div>
+        <div class="liquid-scene__orb liquid-scene__orb--graphite"></div>
+        <div class="liquid-scene__nodes">
+            <span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <div class="liquid-scene__scan"></div>
+        <div class="liquid-scene__vignette"></div>
         <div class="liquid-scene__noise"></div>
     </div>
 
     <main class="login-shell">
-        <section class="login-stage" aria-labelledby="login-title">
+        <section class="access-console" aria-labelledby="login-title">
             <article class="login-card" id="login-card">
                 <div class="login-card__edge" aria-hidden="true"></div>
+                <div class="login-card__scanner" aria-hidden="true"></div>
+
+                <header class="system-identity">
+                    <div class="system-mark" aria-hidden="true">
+                        <svg viewBox="0 0 48 48" fill="none">
+                            <path d="M24 6 8 14l16 8 16-8-16-8Z" />
+                            <path d="m8 25 16 8 16-8M8 19.5l16 8 16-8" />
+                        </svg>
+                    </div>
+                    <div class="system-identity__copy">
+                        <span>INFRASTRUCTURE CONTROL SYSTEM</span>
+                        <strong>SmartHub</strong>
+                    </div>
+                    <div class="channel-state" aria-label="安全通道已就緒">
+                        <span aria-hidden="true"></span>
+                        ENCRYPTED
+                    </div>
+                </header>
+
+                <div class="identity-rule" aria-hidden="true">
+                    <span></span>
+                </div>
 
                 <header class="login-card__header">
                     <div class="login-card__context">
                         <span class="login-card__context-dot" aria-hidden="true"></span>
-                        SECURE ACCESS
+                        SECURE AUTHENTICATION
                     </div>
-                    <h2 id="login-title">歡迎回來</h2>
-                    <p>請登入以進入 SmartHub 系統控制中心</p>
+                    <h1 id="login-title">歡迎回來</h1>
+                    <p>請驗證身分以進入系統控制中心</p>
                 </header>
 
                 <form id="login-form" class="login-form" novalidate>
@@ -48,8 +76,12 @@
                     </div>
 
                     <div class="form-field" id="username-field">
-                        <label for="username">帳號</label>
+                        <div class="field-heading">
+                            <label for="username">帳號</label>
+                            <span aria-hidden="true">IDENTITY CHANNEL ACTIVE</span>
+                        </div>
                         <div class="input-shell">
+                            <span class="input-shell__rail" aria-hidden="true"></span>
                             <span class="input-shell__icon" aria-hidden="true">
                                 <svg viewBox="0 0 24 24" fill="none">
                                     <circle cx="12" cy="8" r="3.5" />
@@ -69,8 +101,12 @@
                     </div>
 
                     <div class="form-field" id="password-field">
-                        <label for="password">密碼</label>
+                        <div class="field-heading">
+                            <label for="password">密碼</label>
+                            <span aria-hidden="true">ENCRYPTED INPUT ACTIVE</span>
+                        </div>
                         <div class="input-shell">
+                            <span class="input-shell__rail" aria-hidden="true"></span>
                             <span class="input-shell__icon" aria-hidden="true">
                                 <svg viewBox="0 0 24 24" fill="none">
                                     <rect x="5" y="10" width="14" height="10" rx="3" />
@@ -123,12 +159,13 @@
                             <svg class="login-submit__success" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="m5.5 12.5 4 4 9-9" />
                             </svg>
-                            <span id="login-submit-label">安全登入</span>
+                            <span id="login-submit-label">驗證身分</span>
                             <svg class="login-submit__arrow" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <path d="M5 12h14m-5-5 5 5-5 5" />
                             </svg>
                         </span>
                     </button>
+                    <p class="session-state" id="session-state" aria-live="polite">ENCRYPTED SESSION REQUIRED</p>
                 </form>
 
                 <div class="security-note">
@@ -138,15 +175,47 @@
                             <path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10" />
                         </svg>
                     </span>
-                    <p><strong>受保護的內部系統</strong><span>登入資訊將透過同源安全連線送出，密碼不會寫入瀏覽器日誌。</span></p>
+                    <p><strong>受保護的內部系統</strong><span>登入資訊僅透過同源安全連線送出，密碼不會寫入瀏覽器日誌。</span></p>
                 </div>
 
                 <footer class="login-card__footer">
-                    <span>© 2026 SmartHub</span>
+                    <span>AUTHORIZED ACCESS ONLY</span>
                     <span aria-hidden="true">•</span>
-                    <span data-app-version>v--</span>
+                    <span>INTERNAL OPERATIONS</span>
                 </footer>
             </article>
+
+            <section class="system-snapshot is-loading" id="system-snapshot"
+                aria-labelledby="snapshot-title" aria-describedby="snapshot-description">
+                <div class="system-snapshot__indicator" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M4 12h3l2-6 4 12 2-6h5" />
+                    </svg>
+                </div>
+                <div class="system-snapshot__body">
+                    <div class="system-snapshot__heading">
+                        <div>
+                            <span>SYSTEM STATUS SNAPSHOT</span>
+                            <h2 id="snapshot-title">核心服務狀態快照</h2>
+                        </div>
+                        <span class="system-snapshot__badge" id="snapshot-badge">讀取中</span>
+                    </div>
+                    <p class="system-snapshot__primary" id="snapshot-description">正在讀取既有監控摘要</p>
+                    <p class="system-snapshot__secondary" id="snapshot-secondary">SNAPSHOT INITIALIZING</p>
+                    <div class="system-snapshot__metrics">
+                        <span><strong id="snapshot-online">--</strong>/<span id="snapshot-total">--</span> 節點在線</span>
+                        <span id="snapshot-offline">離線數量 --</span>
+                    </div>
+                    <div class="system-snapshot__meta">
+                        <time id="snapshot-time">快照時間 --:--:--</time>
+                        <span id="snapshot-expiry">有效時間 --:--</span>
+                    </div>
+                    <button class="snapshot-reload" id="snapshot-reload" type="button" hidden>重新整理頁面</button>
+                </div>
+            </section>
+
+            <p class="authorization-notice">本系統僅供授權人員使用，所有操作可能被記錄。</p>
+            <p class="sr-only" id="snapshot-announcement" aria-live="polite"></p>
         </section>
     </main>
 </body>

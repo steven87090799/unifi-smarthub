@@ -97,6 +97,7 @@
 ### 健康狀態／診斷
 
 - `GET /health` / `/healthz` / `/health/ready`
+- `GET /api/public/system-health`（匿名唯讀；只回傳既有記憶體摘要的狀態、總數、在線／離線數與 `snapshotAt`；不觸發設備探測）
 - `GET /api/system/status`
 - 模組：`observability/logger.js`、`system-monitor.js`、`issue-tracker.js`、`task-tracker.js`、`health-routes.js`
 
@@ -115,7 +116,8 @@
 ### 前端執行期信任邊界
 
 - `server/routes/frontend-asset-routes.js`：只公開由 lockfile 鎖定且 URL 帶版本的 Chart／D3／TopoJSON／world-atlas 檔案，並集中設定 CSP／防框架／referrer headers
-- `server/routes/panel-auth-routes.js` + `server/middleware/panel-security.js`：公開登入資產與同源登入／登出／狀態端點；HttpOnly SameSite Session、登入節流、角色、per-session CSRF，並保留 Basic Auth 相容
+- `server/routes/panel-auth-routes.js` + `server/middleware/panel-security.js`：公開登入資產、匿名核心快照與同源登入／登出／狀態端點；HttpOnly SameSite Session、登入節流、角色、per-session CSRF，並保留 Basic Auth 相容
+- `server/services/public-system-health.js`：有界匿名快照與獨立來源限流；HTTP handler 只讀保留在記憶體的固定五欄資料，不執行 Ping、SSH、設備 API 或資料庫聚合
 - `server/services/wifi-qr.js`：同源訪客 WiFi QR SVG；不把 SSID／密碼送往第三方
 - `POST /api/wifi/qr`：僅限管理員、Origin／CSRF、嚴格 SSID／WPA 驗證、`no-store`
 

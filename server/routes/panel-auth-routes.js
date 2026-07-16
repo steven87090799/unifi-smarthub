@@ -4,12 +4,15 @@ const express = require('express');
 const path = require('node:path');
 const { setFrontendSecurityHeaders } = require('./frontend-asset-routes');
 
-function registerPanelAuthRoutes(app, { rootDir, security }) {
+function registerPanelAuthRoutes(app, { rootDir, security, publicSystemHealth }) {
     if (!app || typeof app.get !== 'function' || typeof app.post !== 'function') {
         throw new TypeError('Express app is required');
     }
     if (!security || typeof security.login !== 'function' || typeof security.authenticate !== 'function') {
         throw new TypeError('Panel security boundary is required');
+    }
+    if (!publicSystemHealth || typeof publicSystemHealth.handle !== 'function') {
+        throw new TypeError('Public system health service is required');
     }
 
     const publicDir = path.join(rootDir, 'public');
@@ -22,6 +25,10 @@ function registerPanelAuthRoutes(app, { rootDir, security }) {
     app.get('/login', sendPublicFile('login.html', 'no-store'));
     app.get('/assets/login.css', sendPublicFile(path.join('assets', 'login.css')));
     app.get('/js/login.js', sendPublicFile(path.join('js', 'login.js')));
+    app.get('/api/public/system-health', (req, res) => {
+        setFrontendSecurityHeaders(res);
+        publicSystemHealth.handle(req, res);
+    });
     app.get('/api/auth/status', security.status);
     app.post('/api/auth/login', express.json({ limit: '8kb', strict: true }), security.login);
     app.post('/api/auth/logout', security.logout);

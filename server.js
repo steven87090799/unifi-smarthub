@@ -44,6 +44,7 @@ const { TelegramCommandBot } = require('./telegram-command-bot');
 const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerPanelAuthRoutes } = require('./server/routes/panel-auth-routes');
+const { createPublicSystemHealthService } = require('./server/services/public-system-health');
 const { registerWiimCommandRoutes } = require('./server/routes/wiim-command-routes');
 const { createSiteManagerClient } = require('./server/integrations/site-manager-client');
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
@@ -261,7 +262,16 @@ const panelSecurity = createPanelSecurity({
         message: 'Panel security request denied', fields
     })
 });
-registerPanelAuthRoutes(app, { rootDir: __dirname, security: panelSecurity });
+const publicSystemHealth = createPublicSystemHealthService({
+    maxRequests: Number(process.env.PANEL_PUBLIC_HEALTH_MAX_REQUESTS) || 30,
+    windowMs: (Number(process.env.PANEL_PUBLIC_HEALTH_WINDOW_SECONDS) || 60) * 1000,
+    maxClients: Number(process.env.PANEL_PUBLIC_HEALTH_MAX_CLIENTS) || 1000
+});
+registerPanelAuthRoutes(app, {
+    rootDir: __dirname,
+    security: panelSecurity,
+    publicSystemHealth
+});
 app.use(panelSecurity.authenticate);
 app.get('/api/security/csrf', panelSecurity.csrf);
 app.use(panelSecurity.protectWrites);
@@ -1685,6 +1695,7 @@ async function scanDockerNotifications(s) {
 }
 
 async function notificationWatcher() {
+    refreshPublicSystemHealthSnapshot();
     const s = loadNotifSettings();
     if (!s.enabled) return;
     await scanSystemIssueNotifications(s);
@@ -4717,6 +4728,54 @@ app.get('/api/connections/status', async (req, res) => {
     });
 });
 
+// 匿名登入頁只讀取這份由既有排程壓縮的記憶體摘要。這裡不做任何
+// Ping、SSH、設備 API 或歷史資料聚合，也不保留節點名稱、IP 或錯誤內容。
+function refreshPublicSystemHealthSnapshot() {
+    const now = Date.now();
+    const fresh = (timestamp, seconds) => Number.isFinite(Number(timestamp))
+        && now - Number(timestamp) < seconds * 1000;
+    const system = systemMonitor.getStatus();
+    const databaseOk = system
+        ? system.database?.status !== 'critical'
+        : historyDb.diagnostics().ok;
+    const worker = system?.worker || taskTracker.getStatus();
+    const ups = upsFetchState.snapshot();
+    const wiim = wiimCache.getStatusEx;
+    publicSystemHealth.update([
+        { online: true, critical: true },
+        { online: databaseOk, critical: true },
+        { online: worker.status !== 'critical', critical: true },
+        {
+            included: Boolean(process.env.UCG_IP) && !isPlaceholder(process.env.SSH_PASSWORD),
+            online: fresh(hwCache?.ts, 180)
+        },
+        {
+            included: !isPlaceholder(process.env.UNIFI_USERNAME) && !isPlaceholder(process.env.UNIFI_PASSWORD),
+            online: Boolean(localCookie) && now < cookieExpiry
+        },
+        {
+            included: nasConfigured(),
+            online: Boolean(nasToken) && now < nasTokenExpiry
+        },
+        {
+            included: Boolean(wiimIP),
+            online: fresh(wiim?.timestamp, 180)
+        },
+        {
+            included: true,
+            online: ups.fetchHealth === FETCH_HEALTH.HEALTHY && fresh(ups.lastSuccessAt, 180)
+        },
+        {
+            included: adgConfigured(),
+            online: fresh(adgLastOkTs, 180)
+        },
+        {
+            included: linuxConfigured(),
+            online: fresh(linuxCache?.ts, 180)
+        }
+    ], now);
+}
+
 /* ===================== 重大事件警報 (前端頂部閃爍橫幅) =====================
    只放「需要立刻知道」的狀態，全部由記憶體現況計算，零上游呼叫。
    id 含事件起始時間，前端點擊關閉後記住 id；同一事件不再彈出，新事件會重新出現。 */
@@ -4859,6 +4918,7 @@ app.use((error, req, res, _next) => {
     });
 });
 
+refreshPublicSystemHealthSnapshot();
 const PORT = process.env.PORT || 3000;
 let httpServer;
 let shutdownPromise = null;
