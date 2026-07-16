@@ -1,33 +1,32 @@
-# Dependencies and lockfiles
+# 依賴與產物
 node_modules/
 package-lock.json
 
-# Secrets and local machine settings
+# 機密與 runtime
 .env
 .env.*
 !.env.example
-
-# Runtime data and history snapshots
+config/
 data/
+*.log
+.production-verification/
+_pending-delete-2026-07-17/
 
-# Very large files: read only when the task needs them
+# 大型主檔：先讀 map，再精準讀
 server.js
 public/index.html
 server-mock.js
 db.js
 observability/
 ppb-i18n-zh.json
-unifi-network-api.md
-ugreen-nas-api.md
-wiim_spec.md
-wiim-amp-api.md
-cyberpower-ups-api.md
-ROADMAP.md
-REVIEW-TODO.md
-OBSERVABILITY.md
-spec.md
 
-# Git/system noise
+# 低頻文件
+docs/ARCHITECTURE.md
+docs/integrations/
+docs/operations/
+docs/planning/
+docs/reports/
+
+# Git／系統
 .git/
 .DS_Store
-*.log

@@ -3310,7 +3310,7 @@
                             <!-- NAS Monitor -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
                                 <p class="text-[11px] font-bold text-emerald-400">📊 NAS Monitor 中介層 (選填)</p>
-                                <p class="text-[9px] text-slate-500 leading-relaxed">內建 Docker Monitor 可讀取部署主機的真實容器；完整外部服務另提供警報與進階歷史。操作方式見 <span class="mono text-blue-400">NAS-DOCKER-MONITOR-SETUP.md</span></p>
+                                <p class="text-[9px] text-slate-500 leading-relaxed">內建 Docker Monitor 可讀取部署主機的真實容器；完整外部服務另提供警報與進階歷史。操作方式見 <span class="mono text-blue-400">docs/operations/NAS-DOCKER-MONITOR-SETUP.md</span></p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">模式 <span id="connset-NAS_MONITOR_MODE" class="normal-case"></span></label><select
                                         id="conn-NAS_MONITOR_MODE"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
@@ -4542,26 +4542,24 @@
 
                     <!-- 接入指南 (未接上時顯示) -->
                     <div class="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-6" id="ups-setup-guide">
-                        <h3 class="text-sm font-bold text-blue-300 tracking-wider mb-3">🔌 如何接上真實 CyberPower UPS？(NUT
-                            架構已就緒)</h3>
+                        <h3 class="text-sm font-bold text-blue-300 tracking-wider mb-3">🔌 如何接上真實 CyberPower UPS？</h3>
                         <div class="text-xs text-slate-400 leading-relaxed space-y-2">
-                            <p>後端會依 <span class="mono text-slate-200">UPS_SOURCE</span> 自動嘗試三種來源（詳見 <span
-                                    class="mono">cyberpower-ups-api.md</span>）：</p>
-                            <p>1. <span class="text-slate-200 font-bold">NUT（建議）</span>：<span class="mono">brew install
-                                    nut</span> → <span class="mono">ups.conf</span> 設 <span class="mono">[cyberpower]
-                                    driver=usbhid-ups port=auto</span> → 關閉 PowerPanel 與 macOS 節能器的 UPS 監控（釋放 USB HID
-                                獨佔）→ <span class="mono">brew services start nut</span>。後端即自動以 <span class="mono">upsc
-                                    cyberpower@localhost</span> 讀取。</p>
-                            <p>2. <span class="text-slate-200 font-bold">pwrstat</span>：安裝官方 PowerPanel 後，後端自動回退呼叫 <span
+                            <p>後端會依 <span class="mono text-slate-200">UPS_SOURCE</span> 依序嘗試四種來源（詳見 <span
+                                    class="mono">docs/integrations/cyberpower-ups-api.md</span>）：</p>
+                            <p>1. <span class="text-slate-200 font-bold">PPB（Docker 已驗證）</span>：宿主機執行 PowerPanel Business，
+                                設定 <span class="mono">UPS_SOURCE=ppb</span>、<span class="mono">PPB_HOST=host.docker.internal</span>、
+                                <span class="mono">PPB_PORT=3052</span> 與登入帳密。</p>
+                            <p>2. <span class="text-slate-200 font-bold">NUT</span>：在容器可達的主機執行 NUT server，設定
+                                <span class="mono">NUT_HOST=&lt;實際主機 IP&gt;</span> 與 <span class="mono">NUT_UPS_NAME</span>；
+                                Docker 內不可使用 localhost。</p>
+                            <p>3. <span class="text-slate-200 font-bold">pwrstat</span>：只適合直接在已安裝 PowerPanel 的本機執行，後端呼叫 <span
                                     class="mono">pwrstat -status</span>。</p>
-                            <p>3. <span class="text-slate-200 font-bold">pmset</span>：macOS 原生 HID（僅電池容量/充電狀態，無電壓數據）。
+                            <p>4. <span class="text-slate-200 font-bold">pmset</span>：macOS 原生 HID（僅電池容量／供電狀態，無完整電壓與負載）。
                             </p>
                             <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/40">環境變數：<span
-                                    class="mono">UPS_SOURCE</span>(auto)、<span
-                                    class="mono">NUT_HOST</span>(localhost)、<span
-                                    class="mono">NUT_UPS_NAME</span>(cyberpower)、<span
-                                    class="mono">PWRSTAT_PATH</span>。Docker 部署時 NUT 建議跑在宿主機，容器透過 <span
-                                    class="mono">NUT_HOST=host.docker.internal</span> 連線。</p>
+                                    class="mono">UPS_SOURCE</span>、<span class="mono">PPB_*</span>、<span
+                                    class="mono">NUT_*</span>、<span class="mono">PWRSTAT_PATH</span>。Docker 優先使用 PPB REST，
+                                NUT 則必須填容器可達位址。</p>
                         </div>
                     </div>
                 </section>
@@ -7281,7 +7279,7 @@
                 document.getElementById('nas-docker-count').innerText = `— ${running}/${containers.length} 運行中`;
                 const tbody = document.getElementById('nas-docker-list');
                 const emptyMessage = payload.source === 'not_configured'
-                    ? '尚未設定 Docker Monitor；請依 NAS-DOCKER-MONITOR-SETUP.md 部署'
+                    ? '尚未設定 Docker Monitor；請依 docs/operations/NAS-DOCKER-MONITOR-SETUP.md 部署'
                     : '目前沒有容器';
                 tbody.innerHTML = containers.length ? containers.map((c, index) => {
                     const on = c.state === 'running';
@@ -8343,7 +8341,7 @@
         let wiimIsLive = false;
         let wiimCpuAlert = 70, wiimBoardAlert = 60; // 溫度警示門檻 (由後端 appSettings 同步) // 外部訊源 (Line-In/藍牙/光纖/同軸)：無曲目長度概念，進度顯示 LIVE
 
-        // LinkPlay mode 欄位 → 訊源名稱 (wiim-amp-api.md §2)
+        // LinkPlay mode 欄位 → 訊源名稱（docs/integrations/wiim-amp-api.md）
         function wiimModeLabel(m) {
             m = parseInt(m);
             const map = { 1: 'AirPlay', 2: 'DLNA', 10: 'WiFi 串流', 11: 'USB 隨身碟', 31: 'Spotify Connect', 32: 'TIDAL Connect', 40: 'Line-In', 41: '藍牙', 43: '光纖', 47: 'Line-In 2', 51: '同軸' };

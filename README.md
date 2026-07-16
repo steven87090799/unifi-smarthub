@@ -1,251 +1,134 @@
-# SmartHub — 家用網路/儲存/電源整合戰情室
+# SmartHub 家用基礎設施戰情室
 
-正式發布請依 [`PRODUCTION-RELEASE-CHECKLIST.md`](PRODUCTION-RELEASE-CHECKLIST.md)；Docker 容器管理的部署方式請見 [`NAS-DOCKER-MONITOR-SETUP.md`](NAS-DOCKER-MONITOR-SETUP.md)。
+SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGREEN NAS、Docker、WiiM、CyberPower UPS、AdGuard Home、Linux 主機與多種通知管道。正式環境使用 Docker；前端不直接接觸上游帳密或 API key。
 
-自架的全屋監控面板,把 **UniFi UCG-Ultra**(硬體/客戶端/WiFi/IPS 威脅/雲端)、**UGREEN UGOS Pro NAS**(CPU/硬碟/儲存/風扇/休眠)、**WiiM Amp** 串流音響、**CyberPower UPS** 電源、**AdGuard Home** DNS 防護與 **Linux 小主機** 整合到單一網頁。前後端分離,所有帳密金鑰僅存在後端 `config/.env`,前端不接觸任何上游 API。
+- 正式服務：`server.js`，port `3000`
+- 開發假資料：`server-mock.js`，port `3005`
+- 歷史資料：SQLite `data/smarthub.db`
+- 目前版本：`3.0.0`
+- 文件索引：[docs/README.md](docs/README.md)
+- 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
+- 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
 
-- **前端**:`public/index.html` — 側邊欄 SPA,13 個分頁:總覽 / 客戶端 / 資安 / WiFi / 雲端站點 / UCG 閘道器 / NAS 儲存 / WiiM 音響 / UPS 電源 / AdGuard DNS / Linux 小主機 / 工具 / 通知推播 / 設定
-- **後端**:`server.js`(Express,port 3000)— 資料來源:SSH×2、UniFi 本地 API、Site Manager 雲端 API、UGOS API、LinkPlay HTTP API、NUT/PowerPanel Business、AdGuard REST API
-- **開發預覽**:`node server-mock.js`(port 3005,純假資料免設定)
+## 主要能力
 
-主要功能:即時監控與歷史圖表(範圍 10 分鐘~7 天)、封鎖設備/關 WiFi/PoE 斷電、IPS 威脅戰情室與自動防禦、UPS 斷電事件記錄、硬碟休眠統計、客戶端自訂名稱、Discord/Telegram/Webhook 推播(56 種可獨立勾選的觸發條件)、定期報表、Structured Logging、System Diagnostics、頂部重大事件閃爍警報、PWA 手機安裝。
+- 14 個頁面：總覽、UCG、客戶端、資安、WiFi、雲端站點、NAS、WiiM、UPS、AdGuard、Linux、工具、通知、設定。
+- 3 秒活動頁更新與後端自適應取樣；離開頁面後自動回到低頻。
+- 管理員／唯讀角色、Session、CSRF、Origin 檢查、登入節流與受保護寫入路由。
+- SQLite 歷史、事件、報表、政策、Web Push、備份／還原與重啟復原。
+- Discord、Telegram、Webhook、Web Push 與 Telegram 指令中心。
+- 可選的 NAS Monitor；Docker 操作與日誌各自使用明確 allowlist。
 
----
+## 快速開始
 
-## 一、快速開始(3 分鐘跑起來)
+需求：Node.js 20+；正式部署另需 Docker Compose。
 
 ```bash
-git clone <你的 repo 網址> && cd unifi-smarthub
+git clone <repository-url>
+cd unifi-smarthub
 
-# 1. 建立專用設定目錄（必須存在且只放設定，不可掛整個 repository）
 install -d -m 700 config
 install -m 600 .env.example config/.env
-nano config/.env # PANEL_PASSWORD 必填；再填需啟用的整合設定
+# 編輯 config/.env，正式環境至少設定 PANEL_PASSWORD
 
-# 2A. 本機 Docker 預覽；正式發布必須改走 Production Release Checklist
+npm ci
 docker compose --env-file config/.env up -d --build
-docker compose --env-file config/.env logs -f
-
-# 2B. 或本機直接跑 (需 Node 20+)
-npm install && SMARTHUB_ENV_FILE=config/.env npm start
-
-# 3. 開瀏覽器
-open http://<主機IP>:3000
+docker compose --env-file config/.env ps
 ```
 
-前端的 Tailwind CSS、Chart.js、D3、TopoJSON 與世界地圖資料全部由同一個 SmartHub release image 提供，不依賴第三方 CDN。修改 `public/index.html` 的 Tailwind class 後請執行 `npm run build:css`；`npm run check:css` 會拒絕過期的生成檔。Guest WiFi QR 也在同源後端產生，SSID／密碼不會送往外部 QR 服務。
+開啟 `http://<主機 IP>:3000`。
 
-> 沒填的設備區塊會顯示「未設定」並自動略過。網頁「設定 → 連線設定」會安全寫回 `config/.env`；一般整合會即時生效，NAS Monitor URL/key/mode 為同一個 recreate-scoped 信任組，變更後必須協調重建相關容器。
-
----
-
-## 二、部署前準備的資料(依功能分組,全部選填)
-
-| 分組 | 變數 | 說明 / 從哪裡拿 |
-| :--- | :--- | :--- |
-| **1. UCG 硬體監控 (SSH)** | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD`, `SSH_PORT` | UniFi 主控台 → Console Settings → Advanced → **SSH** 開啟並設定專用密碼(不是 UniFi 登入密碼!) |
-| | `WAN_IFACE` | WAN 網卡名,UCG-Ultra 通常 `eth4` |
-| **2. UniFi 本地控制** | `UNIFI_CONTROLLER_URL` | UniFi OS 裝置通常 `https://<UCG_IP>` |
-| | `UNIFI_USERNAME` / `UNIFI_PASSWORD` | **本地**管理員帳號(建議另開一組,別用 SSO 主帳號;要用封鎖功能需 Full Management 角色) |
-| | `UNIFI_NETWORK_API_URL`, `UNIFI_NETWORK_API_KEY`, `UNIFI_NETWORK_TLS_VERIFY`, `UNIFI_NETWORK_SITE_ID`, `UNIFI_THREAT_BLOCK_LIST_ID`, `UNIFI_THREAT_BLOCK_LIST_NAME` | 選填的臨時威脅來源 IPv4 封鎖。使用獨立 Network Integration API key，以及事先建立、由 SmartHub 專用且已被防火牆 policy 引用的 `IPV4_ADDRESSES` 清單。非 loopback 必須 HTTPS；TLS 憑證預設驗證。 |
-| **3. UniFi 雲端** | `UNIFI_API_KEY` | [unifi.ui.com](https://unifi.ui.com) → API 建立。多站點/SD-WAN/ISP 指標 |
-| **4. UGREEN NAS** | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` | UGOS 管理員帳密(遙測 API 需管理員)。**密碼不可含 `#` `*` `§`**。`NAS_PORT`/`NAS_SCHEME` 預設 9443/https |
-| **5. NAS Monitor 中介層** | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY` | 選配的 Docker Monitor；內建版需明確啟用 `nas-monitor` profile |
-| **6. WiiM 音響** | `WIIM_IP` | WiiM Amp 的區網 IP |
-| **7. CyberPower UPS** | `UPS_SOURCE` | `auto`(依序試 PPB→NUT→pwrstat→pmset)或指定。**目前 Docker 已驗證路徑是 `ppb`,見下方第四節** |
-| | `NUT_HOST`, `NUT_UPS_NAME` | NUT server 位置(容器內**不可**用 localhost) |
-| **8. PowerPanel Business** | `PPB_HOST`, `PPB_PORT`, `PPB_USER`, `PPB_PASSWORD` | PPB 跑在哪台就填哪台的 IP(容器內不可 127.0.0.1) |
-| **9. AdGuard Home** | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` | 建議使用 HTTPS origin；啟用 DNS 防護頁 |
-| | `ADGUARD_ALLOW_INSECURE_HTTP`, `ADGUARD_TLS_VERIFY`, `ADGUARD_CA_FILE` | 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可掛自簽 CA。舊 `ADGUARD_HOST/PORT` 仍可用但同樣受傳輸政策保護 |
-| **10. Linux 小主機** | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_PORT` | 任何 Linux 主機的 SSH,啟用硬體監控頁 |
-| **11. 面板登入** | `PANEL_PASSWORD` | `NODE_ENV=production` 必填：正式登入頁使用安全 Session；帳號可自訂、密碼決定管理員角色。匿名登入頁只讀一次最小化核心狀態快照，Basic Auth 保留給既有測試／工具相容 |
-| **12. Web Push** | `WEB_PUSH_SUBJECT`, `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` | 選填的瀏覽器通知；VAPID 三欄必須同時設定，private key 只存於 `config/.env`。 |
-
-AdGuard 頁的管理員控制可對 persistent client 的精確 IP/MAC 套用 YouTube、TikTok、Gaming 服務政策。每日「允許時段」代表暫停 blocked-service filtering 的區間，時段外維持封鎖；政策以 SQLite 保存並在重啟或 AdGuard 恢復後重新協調。SmartHub 只在政策有效期間接管 blocked-services 欄位，移除時會還原首次套用前保存的基準。
-
-Web Push 是 Discord／Telegram／Webhook 之外的額外 fan-out，不會取代既有通道。第一次設定時在安全環境執行 `npx web-push generate-vapid-keys --json`，將同一組 key 長期保存於 `config/.env`；不要把輸出提交、貼進 log 或每次重建。瀏覽器只會在管理員按下「授權並訂閱」後要求通知權限。訂閱以 SQLite 去重保存；過期或 push service 回應 404/410 時自動清除，暫時性拒絕採有限重試與持久退避。
-
-> **安全提醒**:此面板具有斷網、關 WiFi、PoE 斷電、改 `.env` 等控制權限。只在內網部署、務必設 `PANEL_PASSWORD`,不要直接曝露到公網;遠端存取請走 VPN。
-
-### UniFi 臨時威脅來源封鎖契約
-
-資安頁的「臨時封鎖」只對管理員顯示，且只接受公網單一 IPv4。私有、loopback、link-local、文件／測試、multicast、reserved，以及目前管理設備的位址都會在伺服器端拒絕；IPv6 明確不支援於此 IPv4 清單。每筆封鎖必須設定 15 分鐘到 30 天的到期時間，desired state 與 audit 儲存在 SQLite，UniFi 暫時離線時會保留要求、以有上限的退避重試，恢復後自動 reconciliation。
-
-依 [UniFi Network Integration API](https://developer.ui.com/network/v10.3.58/gettingstarted) 建立 API key、site UUID 與一個名稱完全相符的專用 `IPV4_ADDRESSES` Traffic Matching List，再讓既有防火牆 policy 引用該清單。SmartHub 使用官方完整 `PUT` 更新契約，因此此清單不可與人工項目或其他自動化共用。官方 schema 規定至少一個 item；沒有有效封鎖時系統只保留不可路由的 TEST-NET-1 `192.0.2.1` sentinel。測試只使用 mock／loopback fake controller，不會對實際 UniFi 寫入。
-
----
-
-## 三、Docker Compose 部署邊界
-
-預設 `docker compose up` 只啟動 SmartHub，不會綁定 Docker socket。`nas-monitor` 是 opt-in profile，也不是 SmartHub 啟動的強制依賴。完整 Compose 以專案內的 `docker-compose.yml` 為準，下列是重要部署保證：
-
-```yaml
-services:
-  unifi-smarthub:
-    stop_grace_period: 20s
-    ports:
-      - "${SMARTHUB_HOST_PORT:-3000}:3000"
-    volumes:
-      # 專用目錄讓同目錄 temp+fsync+rename 成立；不可改掛 repository root
-      - type: bind
-        source: ${SMARTHUB_CONFIG_DIR:-./config}
-        target: /app/config
-        bind:
-          create_host_path: false
-
-  nas-monitor:
-    profiles: ["nas-monitor"]
-    stop_grace_period: 20s
-    user: "1000:1000"
-    read_only: true
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-```
-
-image 內建 healthcheck 對 `/health/ready` 發出最多 4 秒的 request，Docker 再以 5 秒強制截止。兩個 image 都使用 `SIGTERM`，Compose 給 20 秒 graceful-stop 時間。本專案不固定 `container_name`，volume 與容器名會跟 Compose project 隔離；同一主機部署多份時，每份都要有獨立 config 目錄，且 `SMARTHUB_CONFIG_DIR` 必須指向同一個 `--env-file` 所在目錄：
+本機直接執行：
 
 ```bash
-# 兩份 env 都要填入各自要部署的 immutable SMARTHUB_IMAGE / NAS_MONITOR_IMAGE
-docker compose --env-file config-prod/.env -p smarthub-prod up -d --no-build --pull never
-docker compose --env-file config-lab/.env -p smarthub-lab up -d --no-build --pull never
+SMARTHUB_ENV_FILE=config/.env npm start
 ```
 
-上線前用 `docker compose --env-file config/.env config --quiet` 驗證結構；請勿輸出已展開的 config，因為其中可能含機密。每次 Compose 操作都使用同一個 `--env-file`；根目錄不要再保留另一份 `.env`，否則會重新產生雙重 authority。
+純假資料預覽：
 
-此基線使用 Compose profiles、long bind `create_host_path: false` 與 Docker Engine `host-gateway`；老舊 NAS 內建的 Compose v1/Engine 若不支援，應先升級，不要刪掉 fail-closed 或 PPB host mapping 設定來迴避。
-
-正式 release 不要從 dirty checkout 直接覆蓋 `latest`。先完成測試與 commit，再執行 `npm run release:build`；它會拒絕 staged/unstaged/untracked 差異，從 `git archive HEAD` 先建置並驗證兩個 staging image，再成對發布 revision tag；既有 revision tag 一律拒絕重指向，第二個 tag 發布失敗時會回滾第一個。它也會核對 OCI version/revision/created/dirty labels。local tag 仍不是 registry digest，部署證據應另記錄 image ID/digest。把輸出的 image 名稱設為 `SMARTHUB_IMAGE` / `NAS_MONITOR_IMAGE`，再用 `docker compose --env-file config/.env up -d --no-build --pull never` rehearsal。普通開發 build 的 `/health` 會標示 incomplete，不能當正式 release 證據。完整 gate、兩個 image 的 identity、隔離 rehearsal 與 rollback 步驟以 [`PRODUCTION-RELEASE-CHECKLIST.md`](PRODUCTION-RELEASE-CHECKLIST.md) 為準。
-
-**部署檢查清單**:
-
-1. ☑ `config/` 為專用目錄、`config/.env` 是 regular file，目錄可讓 container UID 1000 建立/rename temp；檔案權限為 `0600`
-2. ☑ `TZ` 改成你的時區
-3. ☑ `config/.env` 內已設 `PANEL_PASSWORD`，所有 Compose 指令都帶同一個 `--env-file config/.env`
-4. ☑ UPS 來源已照第四節設定(容器內 pwrstat/pmset 不可用)
-5. ☑ 所有 `*_HOST` 都是**實際 IP**,沒有任何 localhost/127.0.0.1(容器內的 localhost 是容器自己)
-6. ☑ 只有需要 Docker 管理時才照 `NAS-DOCKER-MONITOR-SETUP.md` 啟用 monitor profile
-
----
-
-## 四、UPS 在 Docker 裡的正確接法(最常踩的坑)
-
-`UPS_SOURCE=auto` 的四個來源中,**pwrstat 與 pmset 在容器內不存在**,只剩兩條路:
-
-**方案 A — PowerPanel Business(目前 Docker 已驗證路徑)**
-
-1. 宿主機跑 CyberPower PowerPanel Business，REST discovery port 使用預設 `3052`
-2. `config/.env` 設:`UPS_SOURCE=ppb`、`PPB_HOST=host.docker.internal`、`PPB_PORT=3052`，並填 `PPB_USER`/`PPB_PASSWORD`
-3. Compose 已保留 `host.docker.internal:host-gateway` mapping，可同時適用 Docker Desktop/OrbStack 與新版 Linux Engine。不要在容器內改用 `pwrstat`
-
-**方案 B — NUT(UPS USB 接 NAS 且已有 NUT server 時)**
-
-1. 在跑 Docker 的主機(NAS)上安裝並設定 NUT server,UPS USB 接這台
-2. 容器已內建 `upsc` 客戶端(Dockerfile 已裝 `nut`)
-3. `config/.env` 設:`UPS_SOURCE=nut`、`NUT_HOST=<NAS 的區網 IP>`(不能 localhost)、`NUT_UPS_NAME=<ups.conf 裡的名稱>`
-
-啟動後看 `docker compose logs | grep Diag`,UPS 那行會直接告訴你連上了沒、失敗原因為何。
-
----
-
-## Telegram 指令中心
-
-到「通知推播」選擇 Telegram，填入 Bot Token 與 Chat ID 後勾選「啟用 Telegram 指令中心」。Bot 使用 long polling 主動連線 Telegram，不需要開放 webhook port。它只接受設定中的單一 Chat ID；控制指令還要在 60 秒內輸入一次性確認碼。
-
-常用查詢：`/status`（完整 24H 報表）、`/health`、`/network`、`/clients [關鍵字]`、`/threats`、`/nas`、`/docker [名稱]`、`/ups`、`/wiim`、`/alerts`。控制指令：`/speedtest`、`/docker_restart <名稱>`、`/wiim_toggle`、`/wiim_stop`、`/wiim_volume <0-100>`。傳送 `/help` 可在 Telegram 內查看完整清單。
-
-若同一個 Bot Token 被另一個程式或 webhook 同時接收更新，Telegram 的 `getUpdates` 會互相競爭；請讓 SmartHub 獨占該 Bot，或另外向 BotFather 建一個 Bot。
-
----
-
-## 五、歷史資料與持久化
-
-**統計資料使用 SQLite，資料庫檔 `smarthub.db` 存於 volume `smarthub-data`**。設定類資料仍使用 JSON，方便人工檢查與編輯。
-
-| 類別 | 檔案 | 說明 |
-| :--- | :--- | :--- |
-| 歷史序列 | `smarthub.db` 的 `history` table | 六組時間序列，WAL + 索引查詢，**保存天數統一由設定頁控制(預設 30 天)** |
-| 事件 | `smarthub.db` 的 `ups_events` / `block_history` | 斷電事件與封鎖時間軸，SQLite transaction 即時寫入 |
-| 設定 | `app-settings / security-settings / notification-settings / client-aliases .json` | 取樣間隔、報表、推播、客戶端別名 |
-
-**寫入策略**:一般歷史樣本先放入有上限的記憶體 queue，預設每 10 分鐘（或累積 1,000 筆 / 1 MiB）以單一 SQLite transaction 批次寫入 WAL。查詢會合併尚未落盤的資料；正常關機與 UPS 斷電轉態會強制 flush。UPS 斷電事件、封鎖紀錄、報表及 NAS 日誌手機推播不經過此緩衝。資料庫每小時清理過期資料並執行增量 vacuum。
-
-**取樣頻率是裝置感知的自適應模式**:總覽或 UCG／NAS／WiiM／UPS／AdGuard／Linux 設備頁可見時，該頁全部前端資訊每 3 秒更新；總覽會同步加速其顯示的 UCG、NAS、WiiM 與趨勢後端取樣。切頁會立即撤銷上一個設備 scope，分頁進背景也主動釋放；心跳意外中斷時仍有伺服器短租約保護，租約到期即回到各項原本預設。UPS 的斷電歷史取樣獨立持續運作，不因頁面狀態降頻。
-
-線上安全備份（建議）：以 admin 開啟「設定 → 設定備份與還原 → 下載安全備份」。後端會透過 SQLite snapshot API 產生一致快照，連同應用／介面 JSON 設定輸出；`.env` 只記錄遮罩後的設定狀態，**不含密碼、token、API key 或 webhook**。備份檔上限 64 MiB（SQLite snapshot 上限 43 MiB）。
-
-還原會先驗證格式、應用程式 major version、每個檔案的 SHA-256、SQLite `quick_check` 與必要資料表，再 staging 到資料 volume。它不會還原 `.env` 或通知管道機密；下一次 restart/recreate 取得 `DATA_DIR` 單一實例鎖後才套用，並在 `restore-backups/` 保留 pre-restore rollback copy。中斷的多檔交易會在下次啟動先回滾。
-
-完整離線 volume 備份（包含所有本機檔案與機密設定時，由操作者自行保護備份檔）：
 ```bash
-docker volume ls --filter label=com.docker.compose.volume=smarthub-data --format '{{.Name}}'
-# 從上一行確認正確 project 的 volume 後再替換 <volume-name>；自訂 -p 時名稱會不同。
-docker run --rm -v <volume-name>:/d:ro -v "$PWD":/b alpine \
-  tar czf /b/smarthub-backup.tar.gz -C /d .
+node server-mock.js
 ```
 
-離線備份時需包含 `smarthub.db`、`smarthub.db-wal`、`smarthub.db-shm`（上述停止容器後備份的方式會完整包含）。若服務仍在執行，請使用設定頁的線上安全備份，不要直接複製開啟中的 SQLite 檔。
+## 重要設定
 
----
+完整欄位與安全預設以 [.env.example](.env.example) 為準。
 
-## 六、驗證部署成功
+| 整合 | 主要欄位 |
+|---|---|
+| UCG SSH | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD` |
+| UniFi 本地 | `UNIFI_CONTROLLER_URL`, `UNIFI_USERNAME`, `UNIFI_PASSWORD` |
+| UniFi 雲端 | `UNIFI_API_KEY` |
+| UGREEN NAS | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` |
+| NAS Monitor | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY`, `NAS_MONITOR_MODE` |
+| WiiM | `WIIM_IP` |
+| UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*` |
+| AdGuard | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` |
+| Linux SSH | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD` |
+| 面板登入 | `PANEL_PASSWORD`；唯讀帳號另設 `PANEL_READONLY_*` |
 
-1. **健康檢查**:`curl http://<主機IP>:3000/health` → `{"status":"healthy",...}`；`curl http://<主機IP>:3000/health/ready` 會再檢查 SQLite/worker；`docker compose --env-file config/.env ps` 應為 `healthy`
-2. **啟動連線診斷**(最快的除錯方式):
-   ```bash
-   docker compose --env-file config/.env logs | grep Diag
-   ```
-   啟動 3 秒後會逐台測試並輸出,例如:
-   ```
-   ✅ UCG SSH (192.168.0.1:22)：CPU 54°C，正常
-   ✅ UniFi 控制器：登入成功
-   ❌ UPS：所有來源皆無法讀取 (已嘗試: ppb, nut, ...)
-      Docker 環境 UPS 檢查清單：(1) UPS_SOURCE=ppb + PPB_HOST=host.docker.internal + PPB_PORT=3052
-   ⚠️ NUT_HOST=localhost：容器內的 localhost 是容器自己，請改成實際 IP
-   ```
-3. **網頁確認**:「設定 → System Diagnostics」顯示本服務 CPU/RAM/disk/SQLite/worker 與 Active Issues；「目前連線狀態」列出外部設備狀態
+沒有設定的整合會顯示未設定或空狀態，不應阻止主服務就緒。
 
----
+## 安全與部署邊界
 
-## 七、疑難排解
+- 只部署在可信任內網；遠端存取使用 VPN 或受信任反向代理。
+- `config/.env` 是唯一部署設定來源，權限應為 `0600`；不要在根目錄保留第二份 `.env`。
+- 所有 Compose 指令都使用同一個 `--env-file config/.env`。
+- `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
+- 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
+- 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
 
-| 現象 | 處理 |
-| :--- | :--- |
-| Compose 回報 `config` / `.env` 不存在 | 執行 `install -d -m 700 config && install -m 600 .env.example config/.env`，並確認指令帶 `--env-file config/.env` |
-| 舊版根目錄 `.env` 部署要升級 | 先停服務，再 `install -d -m 700 config && mv .env config/.env && chmod 600 config/.env`；必要時將 `config/` owner/ACL 調整成 container UID 1000 可建立檔案，之後不要保留第二份 root `.env` |
-| 某設備連不上 | 先看 `docker compose logs \| grep Diag`,每台的失敗原因(DNS/逾時/認證/埠拒絕)都有分類提示 |
-| 全部設備連不上 | 檢查 `config/.env` 裡是否有 `localhost`/`127.0.0.1` —— 容器內連不到宿主機或其他設備 |
-| SSH 硬體頁失敗 | UCG 的 SSH 密碼是**獨立設定**的,不是 UniFi 登入密碼;主控台 → Console Settings → Advanced → SSH |
-| 封鎖設備回 NoPermission | UniFi 本地帳號是唯讀角色,到 Admins 改為 Full Management |
-| 報表在錯的時間發送 | compose 的 `TZ` 沒設或設錯 |
-| 開啟網頁進入 SmartHub 登入頁 | 使用任意非空管理員帳號與 `PANEL_PASSWORD`；唯讀帳號需符合 `PANEL_READONLY_USERNAME` |
-| 登入頁狀態快照顯示過期／無法取得 | 快照每次完整頁面只查一次且三分鐘後刻意過期；重新整理整個頁面才能取得下一份，登入功能不受影響 |
-| Session 過期或主動登出 | 系統會回到 `/login`；未勾選「記住登入狀態」預設 12 小時，勾選後預設 30 天 |
-| 雲端頁顯示未設定 | `UNIFI_API_KEY` 未填,屬正常回退 |
-| NAS 欄位顯示 `--` | NAS 頁底部「Raw JSON」對照實際欄位名回報即可修 |
-| UPS 事件「通訊中斷」頻繁 | macOS 電源管理與 PowerPanel 搶 USB HID 的已知問題,見 `cyberpower-ups-api.md` |
-| build 出現 cpu-features 警告 | 可忽略,ssh2 的選用加速模組,缺了走純 JS 一樣正常 |
+## Docker UPS
 
----
+已驗證路徑是 PowerPanel Business REST：
 
-## 八、常用維運指令
+```env
+UPS_SOURCE=ppb
+PPB_HOST=host.docker.internal
+PPB_PORT=3052
+PPB_USER=...
+PPB_PASSWORD=...
+```
+
+容器內沒有宿主機的 `pwrstat` 或 `pmset`。替代方案是讓容器連到可達的 NUT server；詳見 [UPS 整合摘要](docs/integrations/cyberpower-ups-api.md)。
+
+## 資料與備份
+
+- Docker volume `/app/data` 是正式 runtime 權威來源。
+- 歷史、事件、報表與政策使用 SQLite WAL。
+- 一般歷史樣本先進入有上限的記憶體佇列，再批次寫入；正常關機與 UPS 狀態轉換會強制 flush。
+- 線上安全備份由「設定 → 備份與還原」產生，不包含 secret。
+- 完整離線備份應先停止服務，再保存 DB／WAL／SHM 與設定。
+
+## 健康檢查
 
 ```bash
-docker compose --env-file config/.env logs -f
+curl -fsS http://127.0.0.1:3000/health
+curl -fsS http://127.0.0.1:3000/health/ready
 docker compose --env-file config/.env logs | grep Diag
-docker compose --env-file config/.env logs unifi-smarthub | grep 'ERROR\|CRITICAL'
-docker compose --env-file config/.env restart
-npm run release:build                 # clean HEAD → revision-tagged images + label verification
-docker compose --env-file config/.env up -d --build # 僅供本機開發；identity 為 incomplete
-docker compose --env-file config/.env down          # 停止 (歷史資料保留在 volume)
-docker volume ls                      # 確認 smarthub-data 存在
 ```
 
----
+| 路徑 | 用途 |
+|---|---|
+| `/health` | 程序存活 |
+| `/health/ready` | SQLite 與 worker 就緒 |
+| `/api/public/system-health` | 登入頁匿名最小狀態快照 |
+| `/api/system/status` | 受驗證保護的完整診斷 |
 
-## 附錄
+## 正式發布
 
-- `AGENTS.md` / `CLAUDE.md` — 精簡 AI 工作入口與讀檔路由
-- `ROADMAP.md` — 已落地能力摘要與尚未實作的產品／架構候選
-- `OBSERVABILITY.md` — Structured Logging、Status Code、Health/Diagnostics API、監控門檻與 Docker 除錯
-- `PRODUCTION-RELEASE-CHECKLIST.md` — clean build、不可變雙 image transaction、rehearsal、rollback 與 release record
-- `*-api.md` — UniFi / UGREEN / WiiM / CyberPower 各 API 規格參考
+先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate，再建立不可變成對映像：
+
+```bash
+npm run release:build
+docker compose --env-file config/.env up -d --no-build --pull never
+```
+
+`release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision 與映像身分。若使用 registry，仍需另外記錄不可變 digest。
+
+## 開發原則
+
+- 先讀 `CONTEXT.md`，再依任務讀 `SERVER-MAP.md` 或 `FRONTEND-MAP.md`。
+- 修改前端可見 API／設定時，同步 `server-mock.js` 與契約測試。
+- 新歷史資料沿用 `db.js`，不要恢復整檔 JSON 歷史寫入。
+- 大型檔案只以 `rg`／`sed` 精準讀取，避免無效上下文與測試輸出。

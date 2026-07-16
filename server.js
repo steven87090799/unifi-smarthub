@@ -4046,7 +4046,7 @@ app.get('/api/wiim/csv', (req, res) => {
 });
 
 /* ===================== CyberPower UPS 電源監控 (NUT 優先，多來源回退) ===================== */
-// 架構 (詳見 cyberpower-ups-api.md)：UPS_SOURCE=auto|nut|pwrstat|pmset
+// 架構（詳見 docs/integrations/cyberpower-ups-api.md）：UPS_SOURCE=auto|nut|pwrstat|pmset|ppb
 //   1) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 建議方案 (brew install nut)
 //   2) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
 //   3) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)

@@ -1,37 +1,32 @@
-# ── 依賴與鎖定檔 ──────────────────────────────────────────
+# 依賴與產物
 node_modules/
 package-lock.json
 
-# ── 機密與本機設定（需要 debug 時再由使用者明確提供或精準讀取）────────
+# 機密與 runtime
 .env
 .env.*
 !.env.example
-
-# ── 歷史資料 / runtime 狀態（純資料，AI 不需預設閱讀）───────────────
+config/
 data/
+*.log
+.production-verification/
+_pending-delete-2026-07-17/
 
-# ── 超大前端單檔（需要前端任務時再用 rg/sed 精準讀片段）─────────────
+# 大型主檔：先讀 map，再精準讀
 server.js
 public/index.html
-
-# ── 大型但低頻使用檔案 ─────────────────────────────────────
 server-mock.js
 db.js
 observability/
 ppb-i18n-zh.json
-unifi-network-api.md
-ugreen-nas-api.md
-wiim_spec.md
-wiim-amp-api.md
-cyberpower-ups-api.md
-ROADMAP.md
-REVIEW-TODO.md
-OBSERVABILITY.md
-spec.md
 
-# ── Git 內部資料 ──────────────────────────────────────────
+# 低頻文件
+docs/ARCHITECTURE.md
+docs/integrations/
+docs/operations/
+docs/planning/
+docs/reports/
+
+# Git／系統
 .git/
-
-# ── 系統 / IDE 檔案 ────────────────────────────────────────
 .DS_Store
-*.log

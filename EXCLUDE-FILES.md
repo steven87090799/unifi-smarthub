@@ -1,62 +1,29 @@
-# SmartHub Context Exclusion List
+# SmartHub 預設排除清單
 
-這份文件說明哪些檔案「預設不要進 AI 上下文」。這不是封鎖讀取；必要時仍可用 `rg`/`sed` 精準讀小片段。
+這些路徑預設不進 AI 上下文；任務需要時仍可先搜尋再窄範圍讀取。
 
-## 應排除
-
-| 路徑 | 原因 | 何時才讀 |
+| 路徑 | 原因 | 何時讀 |
 |---|---|---|
-| `.env`, `.env.*` | 含密碼、API key、token、內網位置 | 實機連線 debug，且只讀必要欄位 |
-| `node_modules/` | 依賴原始碼巨大且低價值 | 幾乎不讀 |
-| `package-lock.json` | lockfile 內容長 | 只有 dependency/安全性問題 |
-| `data/` | 歷史資料與 runtime 狀態，最大檔超過 1 MB | 只抽樣資料 schema 或異常紀錄 |
-| `server.js` | 正式後端大檔 | 後端任務先讀 `SERVER-MAP.md`，再切片讀 |
-| `public/index.html` | 巨型 SPA | 前端任務先讀 `FRONTEND-MAP.md`，再切片讀 |
-| `server-mock.js`, `db.js` | mock／SQLite 實作 | mock parity、測試或儲存任務 |
-| `observability/` | 診斷實作 | observability／health 問題 |
-| `ppb-i18n-zh.json` | PowerPanel 翻譯資料 | PPB 事件文字對照 |
-| `unifi-network-api.md` | UniFi 上游規格 | 修改/驗證 UniFi API 行為 |
-| `ugreen-nas-api.md` | UGREEN NAS 上游規格 | 修改/驗證 NAS API 行為 |
-| `wiim_spec.md`, `wiim-amp-api.md` | WiiM 上游規格 | 修改/驗證 WiiM 指令 |
-| `cyberpower-ups-api.md` | UPS/PPB/NUT 參考 | 修改/驗證 UPS 接入 |
-| `ROADMAP.md`, `REVIEW-TODO.md` | 規劃／待辦文件 | 規劃或待辦盤點 |
-| `spec.md` | 完整技術規格，內容密集 | 需要全量架構或 endpoint 全貌 |
-| `OBSERVABILITY.md` | 維運參考 | 診斷、log、health 任務 |
-| `.git/` | Git 內部資料 | 不直接讀 |
-| `*.log` | runtime 輸出，可能很長 | debug 時讀尾端或搜尋關鍵字 |
+| `.env`, `.env.*` | 機密 | 實機連線除錯，且只檢查必要欄位 |
+| `data/` | SQLite、設定與 runtime 歷史 | 儲存、遷移或資料異常 |
+| `node_modules/`, `package-lock.json` | 體積大 | 依賴或安全問題 |
+| `server.js`, `public/index.html` | 大型主檔 | 先讀對應 map，再切片 |
+| `server-mock.js`, `db.js`, `observability/` | 低頻實作 | mock、SQLite、診斷任務 |
+| `docs/integrations/` | 整合參考 | 修改對應設備 |
+| `docs/operations/` | 維運文件 | 部署、發布、診斷 |
+| `docs/planning/` | 規劃 | roadmap／backlog |
+| `docs/reports/` | 歷史證據 | 發布或稽核 |
+| `docs/ARCHITECTURE.md` | 全域架構 | 跨模組設計 |
+| `_pending-delete-2026-07-17/` | 待使用者確認刪除 | 只做清理確認 |
+| `.git/`, `*.log`, `.DS_Store` | 工具／系統雜訊 | 通常不讀 |
 
-## 可安全先讀
+## 可先讀
 
-| 路徑 | 用途 |
-|---|---|
-| `CONTEXT.md` | 低 token 入口 |
-| `SERVER-MAP.md` | 後端索引 |
-| `FRONTEND-MAP.md` | 前端索引 |
-| `AGENTS.md` | 常駐 AI 操作規範（已壓縮） |
-| `README.md` | 部署與維運（僅部署任務） |
-| `.env.example` | 設定欄位參考，不含真實密碼 |
+- `AGENTS.md`
+- `CONTEXT.md`
+- `SERVER-MAP.md`
+- `FRONTEND-MAP.md`
+- 任務涉及部署時才讀 `README.md`
+- 欄位參考使用 `.env.example`，不要先讀真實 `.env`
 
-## 關於 `.env`
-
-`.env` 應該排除，因為它常含：
-
-- UniFi/NAS/PPB/Telegram/Discord 密碼或 token
-- 內網 IP、port、帳號
-- Webhook URL
-
-排除後仍可以 debug：
-
-- 先讀 `.env.example` 了解應有欄位。
-- 若要確認設定是否存在，用 `rg -n '^NAS_HOST=|^NAS_USER=' .env` 這種精準搜尋。
-- 若問題與密碼/token 有關，請使用者提供遮罩版，或只在必要時讀單一欄位並避免在回覆中重印。
-
-## 建議 ignore 檔
-
-本專案已提供：
-
-- `.claudeignore`
-- `.codexignore`
-- `.gitignore`
-- `.dockerignore`
-
-`.claudeignore` / `.codexignore` 只用來降低預設上下文成本；不代表工具永遠不能讀該檔。
+`.codexignore` 與 `.claudeignore` 應維持同一套預設排除方向。

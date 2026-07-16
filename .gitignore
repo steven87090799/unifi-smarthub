@@ -5,3 +5,5 @@ config/
 *.log
 data/
 .production-verification/
+_pending-delete-2026-07-17/duplicate-tests/
+_pending-delete-2026-07-17/runtime-backups/

@@ -1,5 +1,7 @@
 # SmartHub 生產就緒報告
 
+> 這是 2026-07-16 的最終生產強化驗證報告；保留完整證據，不作一般上下文預讀。
+
 日期：2026-07-16
 分支：`production-hardening-final`
 最終審查的工程版本：`58809e9c192af3a7092665473324018e7fc8689c`
@@ -201,7 +203,7 @@ F-019 在 `601364b` 的 owner 驗收另證明：
 - NAS Monitor 需要高權限 Docker socket broker，但已設為可選服務；若停用或故障，主服務仍可 ready，但 Docker 監控／操作能力會受限。
 - 外部裝置與雲端 API 都可能失敗或逾時；程式已做有界重試與降級，但無法保證第三方服務可用性。
 
-## Commit 時序
+## 提交時序
 
 | Commit | 結果 |
 |---|---|
@@ -228,4 +230,4 @@ F-019 在 `601364b` 的 owner 驗收另證明：
 
 ## 發行決策
 
-本 repository 已可進入受控的正式部署流程，但必須遵守上述未完成驗證與已知風險。部署應依 `PRODUCTION-RELEASE-CHECKLIST.md` 執行，使用不可變成對映像交易，驗證目標主機 Docker socket GID／設定權限，完成文件所列 health／readiness／restart 檢查，並保留 rollback images 與設定備份。
+本 repository 已可進入受控的正式部署流程，但必須遵守上述未完成驗證與已知風險。部署應依 [正式發布檢查清單](../operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行，使用不可變成對映像交易，驗證目標主機 Docker socket GID／設定權限，完成文件所列 health／readiness／restart 檢查，並保留 rollback images 與設定備份。

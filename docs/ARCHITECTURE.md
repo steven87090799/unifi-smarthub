@@ -1,0 +1,50 @@
+# SmartHub 目前架構
+
+## 組成
+
+| 區域 | 實作 |
+|---|---|
+| 正式後端 | `server.js` 組裝 Express、整合、排程與生命週期 |
+| 可測試邊界 | `server/` 內的 middleware、routes、policies、services、jobs、integrations、storage |
+| 前端 | `public/index.html` SPA shell，加上獨立登入與 Web Push 模組 |
+| 假資料 | `server-mock.js`，維持前端可見契約 |
+| 儲存 | `db.js` + `better-sqlite3`，WAL、retention、backup／restore |
+| 診斷 | `observability/`，結構化 log、issue、task、resource 與 health |
+| 部署 | SmartHub 主容器；可選的 `nas-monitor` profile |
+
+## 信任邊界
+
+- 瀏覽器只呼叫 SmartHub，同源資產與 API 不直接暴露上游 credential。
+- 面板使用 Session／相容 Basic Auth、admin／readonly 角色、Origin、CSRF 與輸入政策。
+- WiiM、Docker、UniFi 威脅封鎖、AdGuard 政策等異動都由伺服器端 allowlist／policy 決定。
+- NAS Monitor API key 只送往經驗證的固定 origin；Docker mutation 與 log 各用獨立 allowlist。
+- 設定權威是部署實例的 `config/.env`；JSON 設定採同目錄暫存、fsync 與 atomic rename。
+
+## 資料與工作
+
+- SQLite 保存歷史、事件、報表 claims、政策、Web Push、audit 與 instance lock。
+- 一般歷史先進入有上限佇列，再批次寫入；查詢會合併未落盤資料。
+- 同名週期工作避免重入；報表另以 SQLite claim、lease、retry 與 fencing 保護。
+- DATA_DIR 由租約鎖保證單一 owner；失去 owner 時採安全關閉。
+- SIGTERM 會停止領取新工作、flush／close 資源並在 Compose grace period 內退出。
+
+## 更新模型
+
+- 前端以 `/api/heartbeat` 維持活動 scope。
+- 總覽與目前裝置頁使用 3 秒前端更新；對應後端取樣同步加速。
+- 切頁、背景分頁或租約到期後回到低頻。
+- UPS 狀態與斷電事件取樣不依賴瀏覽器是否開啟。
+
+## 發布模型
+
+- `npm run release:build` 從 clean `git archive HEAD` 建立 SmartHub／NAS Monitor 成對映像。
+- 兩個映像必須具有一致 version、revision、created 與 clean identity。
+- 正式部署使用不可變 tag 或 digest，並以 `--no-build --pull never` 做本機 rehearsal。
+- 完整流程見 `operations/PRODUCTION-RELEASE-CHECKLIST.md`。
+
+## 修改原則
+
+- 新 API 優先放入可測試 route／policy／service，而不是持續擴大 `server.js`。
+- 前端逐功能抽離，但先保護 navigation、polling、visibility lease、chart 與 write controls。
+- 前端可見契約同步更新 production、mock 與測試。
+- 本文件不列完整 endpoint；後端與前端權威索引分別是 `../SERVER-MAP.md` 與 `../FRONTEND-MAP.md`。
