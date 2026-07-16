@@ -16,8 +16,6 @@ const submitButton = document.getElementById('login-submit');
 const submitLabel = document.getElementById('login-submit-label');
 const formAlert = document.getElementById('form-alert');
 const formAlertText = document.getElementById('form-alert-text');
-const serviceState = document.getElementById('service-state');
-const serviceStateText = document.getElementById('service-state-text');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let submitting = false;
 let pointerFrame = 0;
@@ -43,24 +41,6 @@ function setVersion(version) {
     document.querySelectorAll('[data-app-version]').forEach(element => {
         element.textContent = label;
     });
-}
-
-function setServiceState(state, message) {
-    serviceState.classList.remove('is-ready', 'is-degraded');
-    if (state) serviceState.classList.add(state);
-    serviceStateText.textContent = message;
-}
-
-async function checkServiceHealth() {
-    try {
-        const response = await fetchWithTimeout('/health/ready', {
-            credentials: 'same-origin',
-            cache: 'no-store'
-        });
-        setServiceState(response.ok ? 'is-ready' : 'is-degraded', response.ok ? '所有核心服務正常' : '服務正在恢復中');
-    } catch {
-        setServiceState('is-degraded', '目前無法確認服務狀態');
-    }
 }
 
 async function checkExistingSession() {
@@ -291,4 +271,4 @@ if (!reducedMotion.matches && window.matchMedia('(hover: hover) and (pointer: fi
     document.documentElement.addEventListener('mouseleave', resetPointerState);
 }
 
-void Promise.allSettled([checkServiceHealth(), checkExistingSession()]);
+void checkExistingSession();
