@@ -70,4 +70,17 @@ test('responsive console keeps table overflow local and touch controls usable', 
     assert.match(consoleCss, /@media \(hover: none\), \(pointer: coarse\)[\s\S]*?min-height: 44px/u);
     assert.match(consoleCss, /#crit-alert-banner:not\(\.hidden\)/u);
     assert.match(consoleCss, /\.topbar-actions > button:not\(#crit-alert-banner\)/u);
+    assert.match(consoleCss, /#cloud-status-badge,\s*#cloud-status-badge-sec \{[\s\S]*?height: 28px/u);
+    assert.match(consoleCss, /#cloud-status-badge\.hidden \{[\s\S]*?display: none/u);
+    assert.match(consoleCss, /\[class\*="rounded-full"\]\[class\*="overflow-hidden"\]\[class\*="bg-slate-"\] \{[\s\S]*?border: 0 !important/u);
+    assert.doesNotMatch(consoleCss, /border-color: currentColor !important/u);
+    assert.match(consoleCss, /@keyframes console-ambient-sweep/u);
+    assert.match(consoleCss, /@keyframes console-progress-sheen/u);
+    assert.match(consoleCss, /input\.sr-only\.peer \+ div::after \{[\s\S]*?transform 360ms/u);
+    assert.match(consoleCss, /input\.sr-only\.peer:checked \+ div/u);
+    assert.match(consoleCss, /peer-checked:bg-blue-600/u);
+    assert.match(consoleCss, /peer-checked:bg-emerald-600/u);
+    assert.match(consoleCss, /peer-checked:bg-amber-600/u);
+    assert.match(consoleCss, /div\[class~="w-12"\]::after \{[\s\S]*?translateX\(24px\)/u);
+    assert.match(consoleCss, /div\[class~="w-9"\]::after \{[\s\S]*?translateX\(16px\)/u);
 });
