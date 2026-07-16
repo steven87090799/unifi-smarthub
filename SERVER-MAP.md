@@ -147,7 +147,7 @@
 ### Mutable configuration durability
 
 - `server/storage/json-file-store.js`: app、UI preference、client alias、security、notification JSON 的 bounded plain-object reader 與同目錄 0600 temp + fsync + atomic rename writer；API 先落盤再發布 live state
-- `server/storage/instance-lock.js`: DATA_DIR 的 transactional SQLite tokened process owner；IMMEDIATE claim/reclaim、legacy PID migration、exact-owner release，restore/主 SQLite/jobs 只在持鎖後啟動
+- `server/storage/instance-lock.js`: DATA_DIR 的 transactional SQLite leased owner；hashed runtime/container identity + PID/token、IMMEDIATE claim/reclaim、2 秒 heartbeat/8 秒 lease、legacy PID migration、exact-owner release，失去 owner 時 fail-safe shutdown
 
 ## 搜尋範例
 

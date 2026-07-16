@@ -2,19 +2,24 @@
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 
 const LOCK_FILE_MODE = 0o600;
 const MAX_LOCK_BYTES = 4096;
 const DEFAULT_INVALID_GRACE_MS = 5000;
+const DEFAULT_LEASE_MS = 8000;
+const DEFAULT_HEARTBEAT_MS = 2000;
 const OWNED_LOCKS = new Map();
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS instance_owner (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     pid INTEGER NOT NULL CHECK (pid > 0),
     token TEXT NOT NULL,
-    acquired_at TEXT NOT NULL
+    acquired_at TEXT NOT NULL,
+    runtime_id TEXT NOT NULL DEFAULT '',
+    lease_expires_at INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 `;
 
@@ -47,17 +52,25 @@ function parseLegacyOwner(content) {
     return Number.isSafeInteger(pid) ? pid : null;
 }
 
-function ownerIsAlive(owner, lockFile, currentPid, kill) {
-    const locallyOwned = OWNED_LOCKS.get(lockFile);
-    if (owner.pid === currentPid) return Boolean(locallyOwned && locallyOwned.token === owner.token);
-    try {
-        kill(owner.pid, 0);
-        return true;
-    } catch (error) {
-        if (error?.code === 'ESRCH') return false;
-        if (error?.code === 'EPERM') return true;
-        throw lockError('INSTANCE_LOCK_LIVENESS_UNKNOWN', 'existing owner liveness could not be determined', lockFile, error, owner.pid);
+function canonicalRuntimeId(value) {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) {
+        throw new TypeError('instance lock runtime identity must be a bounded non-empty string');
     }
+    return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function ownerIsAlive(owner, lockFile, timestamp) {
+    const locallyOwned = OWNED_LOCKS.get(lockFile);
+    if (locallyOwned && locallyOwned.token === owner.token) return true;
+    if (!Number.isSafeInteger(owner.leaseExpiresAt) || owner.leaseExpiresAt < 0) {
+        throw new InstanceLockError(
+            'INSTANCE_LOCK_OWNER_INVALID',
+            'existing owner lease metadata is invalid',
+            lockFile,
+            { ownerPid: owner.pid }
+        );
+    }
+    return owner.leaseExpiresAt > timestamp;
 }
 
 function inspectLegacyLock({ legacyLockFile, currentPid, kill, now, invalidGraceMs }) {
@@ -122,6 +135,9 @@ function openLockDatabase(lockFile) {
         database.pragma('journal_mode = DELETE');
         database.pragma('synchronous = FULL');
         database.exec(SCHEMA);
+        const columns = new Set(database.pragma('table_info(instance_owner)').map(column => column.name));
+        if (!columns.has('runtime_id')) database.exec("ALTER TABLE instance_owner ADD COLUMN runtime_id TEXT NOT NULL DEFAULT ''");
+        if (!columns.has('lease_expires_at')) database.exec('ALTER TABLE instance_owner ADD COLUMN lease_expires_at INTEGER NOT NULL DEFAULT 0');
         return database;
     } catch (error) {
         try { database?.close(); } catch { }
@@ -136,26 +152,45 @@ function acquireInstanceLock(options = {}) {
     const invalidGraceMs = Number.isSafeInteger(options.invalidGraceMs) && options.invalidGraceMs >= 0
         ? options.invalidGraceMs
         : DEFAULT_INVALID_GRACE_MS;
+    const leaseMs = Number.isSafeInteger(options.leaseMs) && options.leaseMs >= 4000
+        ? options.leaseMs
+        : DEFAULT_LEASE_MS;
+    const heartbeatMs = Number.isSafeInteger(options.heartbeatMs) && options.heartbeatMs > 0 && options.heartbeatMs < leaseMs
+        ? options.heartbeatMs
+        : DEFAULT_HEARTBEAT_MS;
     if (!Number.isSafeInteger(currentPid) || currentPid <= 0) throw new TypeError('instance lock PID must be a positive safe integer');
     const lockFile = resolvedLockFile(options.lockFile);
     const token = crypto.randomUUID();
-    const owner = Object.freeze({ pid: currentPid, token, acquiredAt: new Date(now()).toISOString() });
+    const runtimeId = canonicalRuntimeId(options.runtimeId || process.env.HOSTNAME || os.hostname());
+    const acquiredAtMs = now();
+    if (!Number.isSafeInteger(acquiredAtMs) || acquiredAtMs < 0) throw new TypeError('instance lock clock must return a non-negative safe integer');
+    const owner = Object.freeze({ pid: currentPid, token, runtimeId, acquiredAt: new Date(acquiredAtMs).toISOString() });
+    const ownerRecord = { ...owner, leaseExpiresAt: acquiredAtMs + leaseMs };
     const database = openLockDatabase(lockFile);
-    const selectOwner = database.prepare('SELECT pid, token, acquired_at AS acquiredAt FROM instance_owner WHERE singleton = 1');
+    const selectOwner = database.prepare(`
+        SELECT pid, token, acquired_at AS acquiredAt, runtime_id AS runtimeId, lease_expires_at AS leaseExpiresAt
+        FROM instance_owner WHERE singleton = 1
+    `);
     const replaceOwner = database.prepare(`
-        INSERT INTO instance_owner(singleton, pid, token, acquired_at)
-        VALUES (1, @pid, @token, @acquiredAt)
+        INSERT INTO instance_owner(singleton, pid, token, acquired_at, runtime_id, lease_expires_at)
+        VALUES (1, @pid, @token, @acquiredAt, @runtimeId, @leaseExpiresAt)
         ON CONFLICT(singleton) DO UPDATE SET
             pid = excluded.pid,
             token = excluded.token,
-            acquired_at = excluded.acquired_at
+            acquired_at = excluded.acquired_at,
+            runtime_id = excluded.runtime_id,
+            lease_expires_at = excluded.lease_expires_at
     `);
-    const deleteOwned = database.prepare('DELETE FROM instance_owner WHERE singleton = 1 AND pid = ? AND token = ?');
+    const renewOwned = database.prepare(`
+        UPDATE instance_owner SET lease_expires_at = MAX(lease_expires_at, ?)
+        WHERE singleton = 1 AND pid = ? AND token = ? AND runtime_id = ?
+    `);
+    const deleteOwned = database.prepare('DELETE FROM instance_owner WHERE singleton = 1 AND pid = ? AND token = ? AND runtime_id = ?');
 
     try {
         database.transaction(() => {
             const existing = selectOwner.get();
-            if (existing && ownerIsAlive(existing, lockFile, currentPid, kill)) {
+            if (existing && ownerIsAlive(existing, lockFile, acquiredAtMs)) {
                 throw new InstanceLockError(
                     'INSTANCE_LOCK_HELD',
                     'another process already owns this data directory',
@@ -163,7 +198,7 @@ function acquireInstanceLock(options = {}) {
                     { ownerPid: existing.pid }
                 );
             }
-            replaceOwner.run(owner);
+            replaceOwner.run(ownerRecord);
         }).immediate();
         OWNED_LOCKS.set(lockFile, owner);
         try {
@@ -175,7 +210,7 @@ function acquireInstanceLock(options = {}) {
                 invalidGraceMs
             });
         } catch (error) {
-            database.transaction(() => deleteOwned.run(currentPid, token)).immediate();
+            database.transaction(() => deleteOwned.run(currentPid, token, runtimeId)).immediate();
             OWNED_LOCKS.delete(lockFile);
             throw error;
         }
@@ -187,14 +222,22 @@ function acquireInstanceLock(options = {}) {
 
     let released = false;
     return Object.freeze({
+        heartbeatMs,
+        leaseMs,
         lockFile,
         owner,
+        renew() {
+            if (released) return false;
+            const timestamp = now();
+            if (!Number.isSafeInteger(timestamp) || timestamp < 0) throw new TypeError('instance lock clock must return a non-negative safe integer');
+            return database.transaction(() => renewOwned.run(timestamp + leaseMs, currentPid, token, runtimeId).changes === 1).immediate();
+        },
         release() {
             if (released) return false;
             released = true;
             OWNED_LOCKS.delete(lockFile);
             let removed = false;
-            try { removed = database.transaction(() => deleteOwned.run(currentPid, token).changes === 1).immediate(); }
+            try { removed = database.transaction(() => deleteOwned.run(currentPid, token, runtimeId).changes === 1).immediate(); }
             catch { removed = false; }
             try { database.close(); } catch { }
             return removed;
@@ -203,10 +246,13 @@ function acquireInstanceLock(options = {}) {
 }
 
 module.exports = {
+    DEFAULT_HEARTBEAT_MS,
     DEFAULT_INVALID_GRACE_MS,
+    DEFAULT_LEASE_MS,
     LOCK_FILE_MODE,
     MAX_LOCK_BYTES,
     InstanceLockError,
     acquireInstanceLock,
+    canonicalRuntimeId,
     parseLegacyOwner
 };

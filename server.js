@@ -703,8 +703,8 @@ catch (error) {
 /* ===================== 單一實例鎖 =====================
    防止同一份 DATA_DIR 被多個 server.js 同時使用：每個實例都有自己的推播監看器，
    多開會導致同一事件重複推播 N 次 (實際發生過：4 個測試殘留實例 + 正式 = 同則警報×5)。
-   以獨立 SQLite authority 在 IMMEDIATE transaction 內寫入 PID + random owner token；
-   持鎖程序已死 (stale) 才可接管，舊版 PID lock 只在取得 transaction owner 後遷移。
+   以獨立 SQLite authority 在 IMMEDIATE transaction 內寫入 runtime/PID/token + renewable lease；
+   lease 過期才可接管，舊版 PID lock 只在取得 transaction owner 後遷移。
    設 ALLOW_MULTI_INSTANCE=1 可跳過 (僅限隔離測試)。 */
 const LOCK_FILE = path.join(DATA_DIR, '.instance-lock.sqlite');
 const LEGACY_LOCK_FILE = path.join(DATA_DIR, '.instance.lock');
@@ -728,6 +728,19 @@ if (process.env.ALLOW_MULTI_INSTANCE !== '1') {
         });
         process.exit(1);
     }
+    const heartbeat = lifecycleInterval(() => {
+        try {
+            if (instanceLock.renew()) return;
+            throw new Error('instance lock owner row no longer matches this runtime');
+        } catch (error) {
+            logger.critical({
+                module: 'app.instanceLock', function: 'renew', code: ERROR_CODES.SYS_START_FAILED,
+                message: 'SmartHub lost DATA_DIR instance ownership; shutting down', error
+            });
+            void gracefulShutdown('instance-lock-lost', 1);
+        }
+    }, instanceLock.heartbeatMs);
+    heartbeat.unref();
     process.on('exit', () => { instanceLock?.release(); });
 }
 

@@ -12,6 +12,7 @@ const {
     LOCK_FILE_MODE,
     InstanceLockError,
     acquireInstanceLock,
+    canonicalRuntimeId,
     parseLegacyOwner
 } = require('../server/storage/instance-lock');
 
@@ -20,7 +21,9 @@ CREATE TABLE IF NOT EXISTS instance_owner (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     pid INTEGER NOT NULL CHECK (pid > 0),
     token TEXT NOT NULL,
-    acquired_at TEXT NOT NULL
+    acquired_at TEXT NOT NULL,
+    runtime_id TEXT NOT NULL DEFAULT '',
+    lease_expires_at INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 `;
 
@@ -38,28 +41,43 @@ function deadProcess(_pid, _signal) {
     throw error;
 }
 
-function seedOwner(lockFile, { pid, token }) {
+function seedOwner(lockFile, { pid, token, runtimeId = canonicalRuntimeId('stale-runtime'), leaseExpiresAt = 0 }) {
     const database = new Database(lockFile);
     database.pragma('journal_mode = DELETE');
     database.exec(OWNER_SCHEMA);
     database.prepare(`
-        INSERT INTO instance_owner(singleton, pid, token, acquired_at)
-        VALUES (1, ?, ?, ?)
-        ON CONFLICT(singleton) DO UPDATE SET pid = excluded.pid, token = excluded.token, acquired_at = excluded.acquired_at
-    `).run(pid, token, new Date().toISOString());
+        INSERT INTO instance_owner(singleton, pid, token, acquired_at, runtime_id, lease_expires_at)
+        VALUES (1, ?, ?, ?, ?, ?)
+        ON CONFLICT(singleton) DO UPDATE SET
+            pid = excluded.pid,
+            token = excluded.token,
+            acquired_at = excluded.acquired_at,
+            runtime_id = excluded.runtime_id,
+            lease_expires_at = excluded.lease_expires_at
+    `).run(pid, token, new Date().toISOString(), runtimeId, leaseExpiresAt);
     database.close();
 }
 
 function readOwner(lockFile) {
     const database = new Database(lockFile, { readonly: true, fileMustExist: true });
-    try { return database.prepare('SELECT pid, token, acquired_at AS acquiredAt FROM instance_owner WHERE singleton = 1').get() || null; }
+    try {
+        return database.prepare(`
+            SELECT pid, token, acquired_at AS acquiredAt, runtime_id AS runtimeId, lease_expires_at AS leaseExpiresAt
+            FROM instance_owner WHERE singleton = 1
+        `).get() || null;
+    }
     finally { database.close(); }
 }
 
 test('transactional acquisition admits one owner and exact release permits the next owner', t => {
     const f = fixture(t);
     const first = acquireInstanceLock({ lockFile: f.lockFile, legacyLockFile: f.legacyLockFile });
-    assert.deepEqual(readOwner(f.lockFile), first.owner);
+    const persistedFirst = readOwner(f.lockFile);
+    assert.deepEqual(
+        { pid: persistedFirst.pid, token: persistedFirst.token, runtimeId: persistedFirst.runtimeId, acquiredAt: persistedFirst.acquiredAt },
+        first.owner
+    );
+    assert.ok(persistedFirst.leaseExpiresAt > Date.now());
     assert.equal(fs.statSync(f.lockFile).mode & 0o777, LOCK_FILE_MODE);
     assert.throws(
         () => acquireInstanceLock({ lockFile: f.lockFile, legacyLockFile: f.legacyLockFile }),
@@ -89,7 +107,9 @@ test('stale legacy owners and same-PID container reuse are recoverable', t => {
 
     seedOwner(f.lockFile, {
         pid: process.pid,
-        token: '00000000-0000-4000-8000-000000000000'
+        token: '00000000-0000-4000-8000-000000000000',
+        runtimeId: canonicalRuntimeId(process.env.HOSTNAME || os.hostname()),
+        leaseExpiresAt: 0
     });
     const pidReuseRecovery = acquireInstanceLock({ lockFile: f.lockFile, legacyLockFile: f.legacyLockFile });
     assert.notEqual(pidReuseRecovery.owner.token, '00000000-0000-4000-8000-000000000000');
@@ -130,11 +150,123 @@ test('release never removes replacement owner metadata', t => {
     const lock = acquireInstanceLock({ lockFile: f.lockFile, legacyLockFile: f.legacyLockFile });
     const replacement = {
         pid: 424242,
-        token: '11111111-1111-4111-8111-111111111111'
+        token: '11111111-1111-4111-8111-111111111111',
+        runtimeId: canonicalRuntimeId('replacement-runtime'),
+        leaseExpiresAt: Date.now() + 60_000
     };
     seedOwner(f.lockFile, replacement);
     assert.equal(lock.release(), false);
     assert.equal(readOwner(f.lockFile).token, replacement.token);
+});
+
+test('cross-container equal PIDs require lease expiry and renewal is token-fenced', t => {
+    const f = fixture(t);
+    let timestamp = 10_000;
+    seedOwner(f.lockFile, {
+        pid: 1,
+        token: '33333333-3333-4333-8333-333333333333',
+        runtimeId: canonicalRuntimeId('container-a'),
+        leaseExpiresAt: timestamp + 8000
+    });
+    assert.throws(
+        () => acquireInstanceLock({
+            lockFile: f.lockFile,
+            legacyLockFile: f.legacyLockFile,
+            pid: 1,
+            runtimeId: 'container-b',
+            now: () => timestamp
+        }),
+        error => error.code === 'INSTANCE_LOCK_HELD' && error.ownerPid === 1
+    );
+
+    seedOwner(f.lockFile, {
+        pid: 1,
+        token: '66666666-6666-4666-8666-666666666666',
+        runtimeId: canonicalRuntimeId('container-b'),
+        leaseExpiresAt: timestamp + 8000
+    });
+    assert.throws(
+        () => acquireInstanceLock({
+            lockFile: f.lockFile,
+            legacyLockFile: f.legacyLockFile,
+            pid: 1,
+            runtimeId: 'container-b',
+            now: () => timestamp
+        }),
+        error => error.code === 'INSTANCE_LOCK_HELD' && error.ownerPid === 1,
+        'same runtime and PID cannot bypass an unexpired lease'
+    );
+
+    timestamp += 8001;
+    const recovered = acquireInstanceLock({
+        lockFile: f.lockFile,
+        legacyLockFile: f.legacyLockFile,
+        pid: 1,
+        runtimeId: 'container-b',
+        now: () => timestamp
+    });
+    const initialExpiry = readOwner(f.lockFile).leaseExpiresAt;
+    timestamp += 2000;
+    assert.equal(recovered.renew(), true);
+    assert.equal(readOwner(f.lockFile).leaseExpiresAt, initialExpiry + 2000);
+    timestamp -= 1000;
+    assert.equal(recovered.renew(), true);
+    assert.equal(
+        readOwner(f.lockFile).leaseExpiresAt,
+        initialExpiry + 2000,
+        'clock rollback must not shorten the accepted lease'
+    );
+    timestamp += 1000;
+    seedOwner(f.lockFile, {
+        pid: 1,
+        token: '44444444-4444-4444-8444-444444444444',
+        runtimeId: canonicalRuntimeId('replacement-container'),
+        leaseExpiresAt: timestamp + 8000
+    });
+    assert.equal(recovered.renew(), false);
+    assert.equal(recovered.release(), false);
+});
+
+test('pre-lease lock database schema migrates in place before stale takeover', t => {
+    const f = fixture(t);
+    const database = new Database(f.lockFile);
+    database.exec(`
+        CREATE TABLE instance_owner (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            pid INTEGER NOT NULL CHECK (pid > 0),
+            token TEXT NOT NULL,
+            acquired_at TEXT NOT NULL
+        ) WITHOUT ROWID;
+        INSERT INTO instance_owner(singleton, pid, token, acquired_at)
+        VALUES (1, 999999999, '55555555-5555-4555-8555-555555555555', '2026-07-15T00:00:00.000Z');
+    `);
+    database.close();
+    const migrated = acquireInstanceLock({
+        lockFile: f.lockFile,
+        legacyLockFile: f.legacyLockFile,
+        kill: deadProcess
+    });
+    const migratedDatabase = new Database(f.lockFile, { readonly: true });
+    const columns = migratedDatabase.pragma('table_info(instance_owner)').map(column => column.name);
+    migratedDatabase.close();
+    assert.ok(columns.includes('runtime_id'));
+    assert.ok(columns.includes('lease_expires_at'));
+    assert.equal(migrated.release(), true);
+});
+
+test('malformed owner lease metadata fails closed without replacing the evidence', t => {
+    const f = fixture(t);
+    const malformedToken = '88888888-8888-4888-8888-888888888888';
+    seedOwner(f.lockFile, {
+        pid: 424242,
+        token: malformedToken,
+        leaseExpiresAt: -1
+    });
+    assert.throws(
+        () => acquireInstanceLock({ lockFile: f.lockFile, legacyLockFile: f.legacyLockFile }),
+        error => error.code === 'INSTANCE_LOCK_OWNER_INVALID' && error.ownerPid === 424242
+    );
+    assert.equal(readOwner(f.lockFile).token, malformedToken);
 });
 
 test('corrupt lock authority fails closed without replacing the evidence', t => {
@@ -202,7 +334,8 @@ const poll = setInterval(() => {
         if (seedStaleOwner) {
             seedOwner(f.lockFile, {
                 pid: 999999999,
-                token: '22222222-2222-4222-8222-222222222222'
+                token: '22222222-2222-4222-8222-222222222222',
+                leaseExpiresAt: 0
             });
         }
         const contenders = Array.from({ length: 12 }, () => contender(startFile));

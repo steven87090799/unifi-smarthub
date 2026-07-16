@@ -78,7 +78,7 @@ LOG_FORMAT=json
 - `TaskTracker`、已解除 issue、手動報表、terminal schedule identity、Web Push delivery claim、subscription、authentication identity 與各 integration cooldown 都有固定容量或持久 retention。
 - Auto Defense 的成功 block marker 只保留 10 分鐘並限制 2,000 個 canonical MAC；expiry 後的新威脅可再次隔離，invalid/future alarm timestamp 不會觸發 destructive action。
 - 五個可變 JSON 設定檔以 1 MiB 上限、0600 同目錄 temporary file、file fsync、atomic rename 與 directory fsync 更新；rename 前失敗保留舊檔與 live state，rename 後 durability 不明會以結構化錯誤標示 committed/ambiguous。
-- DATA_DIR instance lock 以獨立 0600 SQLite authority 的 IMMEDIATE transaction + random owner token 取得；concurrent claim/reclaim 由 SQLite serialization，live/legacy-initializing/ambiguous owner fail closed，release 只刪除 exact owned token。
+- DATA_DIR instance lock 以獨立 0600 SQLite authority 的 IMMEDIATE transaction + hashed runtime/container identity + PID/token 取得；2 秒 heartbeat 維持 8 秒 lease，跨 PID namespace 仍拒絕 duplicate，失去 owner 會 fail-safe shutdown，release 只刪除 exact owned token。
 - Docker CPU/RAM notification cooldown 由 `server/services/docker-notification-state.js` 擁有；container 移除時釋放並以 2,000 entries 作最後防線。
 - 可恢復 integration failure 的 log cooldown 由 `server/services/recoverable-failure-state.js` 擁有；動態 Docker key 在移除時釋放並以 2,000 keys 作最後防線。
 - UI health severity、Docker log verbosity 與 push notification delivery 是三個獨立控制面。`LOG_LEVEL` 不會改變 `/api/system/status` 的 severity，也不會自行啟用推播；通知仍受各 trigger 與 channel 設定控制。

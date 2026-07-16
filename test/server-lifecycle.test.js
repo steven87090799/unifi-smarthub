@@ -45,12 +45,8 @@ async function waitForHealth(baseUrl, child, output) {
     throw new Error(`server did not become healthy\n${output()}`);
 }
 
-test('SIGTERM drains owned work, closes SQLite, and releases the instance owner row', { timeout: 30_000 }, async t => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-lifecycle-'));
-    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(dataDir, '.env'), '# isolated lifecycle config\n', { mode: 0o600 });
-    const port = await unusedPort();
-    const isolatedEnvironment = {
+function productionEnvironment(dataDir, port) {
+    return {
         ...process.env,
         NODE_ENV: 'production',
         PORT: String(port),
@@ -80,6 +76,14 @@ test('SIGTERM drains owned work, closes SQLite, and releases the instance owner 
         ADGUARD_HOST: '',
         LINUX_HOST: ''
     };
+}
+
+test('SIGTERM drains owned work, closes SQLite, and releases the instance owner row', { timeout: 30_000 }, async t => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-lifecycle-'));
+    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dataDir, '.env'), '# isolated lifecycle config\n', { mode: 0o600 });
+    const port = await unusedPort();
+    const isolatedEnvironment = productionEnvironment(dataDir, port);
     const child = spawn(process.execPath, ['--eval', BOOTSTRAP, path.join(ROOT, 'server.js')], {
         cwd: ROOT,
         env: isolatedEnvironment,
@@ -145,4 +149,56 @@ test('SIGTERM drains owned work, closes SQLite, and releases the instance owner 
     assert.deepEqual(db.pragma('quick_check'), [{ quick_check: 'ok' }]);
     assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='report_runs'").get());
     db.close();
+});
+
+test('instance owner replacement triggers fail-safe shutdown without deleting the replacement', { timeout: 30_000 }, async t => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-owner-loss-'));
+    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(dataDir, '.env'), '# isolated owner-loss config\n', { mode: 0o600 });
+    const port = await unusedPort();
+    const child = spawn(process.execPath, ['--eval', BOOTSTRAP, path.join(ROOT, 'server.js')], {
+        cwd: ROOT,
+        env: productionEnvironment(dataDir, port),
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    t.after(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    });
+    let logs = '';
+    const retain = chunk => { logs = `${logs}${chunk}`.slice(-50_000); };
+    child.stdout.on('data', retain);
+    child.stderr.on('data', retain);
+    const closed = new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+
+    await waitForHealth(`http://127.0.0.1:${port}`, child, () => logs);
+    const lockDatabasePath = path.join(dataDir, '.instance-lock.sqlite');
+    const lockDatabase = new Database(lockDatabasePath);
+    const replacementToken = '77777777-7777-4777-8777-777777777777';
+    const replaced = lockDatabase.prepare(`
+        UPDATE instance_owner SET token = ?, lease_expires_at = ? WHERE singleton = 1
+    `).run(replacementToken, Date.now() + 60_000);
+    lockDatabase.close();
+    assert.equal(replaced.changes, 1);
+
+    let timeoutHandle;
+    const timeout = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(`owner-loss shutdown timeout\n${logs}`)), 10_000);
+    });
+    let result;
+    try { result = await Promise.race([closed, timeout]); }
+    finally { clearTimeout(timeoutHandle); }
+
+    assert.deepEqual(result, { code: 1, signal: null });
+    assert.match(logs, /SmartHub lost DATA_DIR instance ownership/u);
+    assert.match(logs, /instance-lock-lost/u);
+    const replacementDatabase = new Database(lockDatabasePath, { readonly: true });
+    assert.equal(
+        replacementDatabase.prepare('SELECT token FROM instance_owner WHERE singleton = 1').get().token,
+        replacementToken,
+        'exact release must preserve the replacement owner row'
+    );
+    replacementDatabase.close();
 });
