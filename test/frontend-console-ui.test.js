@@ -60,6 +60,8 @@ test('dialogs retain Escape behavior and add focus trapping without changing mod
     assert.match(html, /else if \(!document\.getElementById\('docker-log-modal'\)\.classList\.contains\('hidden'\)\) closeDockerLog\(\)/u);
     assert.match(html, /returnFocus\.focus\(\{ preventScroll: true \}\)/u);
     assert.match(html, /sidebar\._returnFocus = trigger \|\| document\.activeElement/u);
+    assert.doesNotMatch(consoleCss, /body > \.flex/u);
+    assert.match(consoleCss, /#app-shell \{[\s\S]*?position: relative/u);
 });
 
 test('responsive console keeps table overflow local and touch controls usable', () => {

@@ -200,7 +200,7 @@ body::after {
     mix-blend-mode: soft-light;
 }
 
-body > .flex {
+#app-shell {
     position: relative;
     z-index: 0;
     width: 100%;
