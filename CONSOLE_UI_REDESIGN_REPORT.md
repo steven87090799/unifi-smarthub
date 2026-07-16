@@ -145,6 +145,17 @@ After:
 Mock values and timestamps naturally vary between captures; layout and interaction
 surfaces are the comparison target.
 
+Follow-up visual polish evidence:
+
+- `polish/overview-dark-progress-badge.png`
+- `polish/notify-toggle-semantic-on.png`
+- `polish/overview-mobile-final.png`
+
+The follow-up removes bright outer borders from all 43 detected linear progress
+tracks, compacts the Site Manager status badge, deepens the background, adds
+reduced-motion-safe ambient/grid/progress effects and gives all four existing
+switch patterns a 360ms semantic-color thumb transition.
+
 ## Frontend cost
 
 - No new package or external runtime dependency
@@ -152,7 +163,7 @@ surfaces are the comparison target.
 - Existing stylesheet requests: unchanged
 - Tailwind/console CSS:
   - before: 44,965 bytes, 8,364 bytes gzip
-  - after: 86,612 bytes, 16,674 bytes gzip
+  - after follow-up polish: 90,525 bytes, 17,353 bytes gzip
 - HTML:
   - before: 724,319 bytes
   - after: 732,701 bytes
@@ -176,6 +187,7 @@ single-file console HTML.
 - `4ea94a4 style: add operations console design system and shell`
 - `a0f2a3c style: preserve console network and focus behavior`
 - `cd9ae62 fix: keep console dialogs viewport anchored`
+- `eace9eb style: refine console motion and visual depth`
 
 ## Limitations
 
