@@ -23,6 +23,7 @@ const {
     writeJsonObjectAtomically
 } = require('./server/storage/json-file-store');
 const { acquireInstanceLock } = require('./server/storage/instance-lock');
+const { executeSshCommand } = require('./server/integrations/ssh-command-stream');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -395,19 +396,10 @@ function fetchHardwareSSH() {
     const conn = new Client();
     conn.on('ready', () => {
         sysLog('Hardware', 'SSH 連線建立成功，執行遙測指令組...');
-        conn.exec(HW_CMD, (err, stream) => {
-            if (err) {
-                sysLog('Hardware', `SSH 指令執行失敗: ${err.message}`, true);
-                conn.end();
-                return reject({ status: 500, body: { error: 'SSH Command Execution Failed' } });
-            }
-            let output = '';
-            stream.on('data', (chunk) => { output += chunk; })
-                .stderr.on('data', () => { });
-            stream.on('close', () => {
-                sysLog('Hardware', '遙測指令組執行完成，關閉 SSH 連線。');
-                conn.end();
-                try {
+        executeSshCommand(conn, HW_CMD).then(output => {
+            sysLog('Hardware', '遙測指令組執行完成，關閉 SSH 連線。');
+            conn.end();
+            try {
                     const sec = output.split('__S__');
 
                     // 1. CPU 溫度
@@ -477,12 +469,15 @@ function fetchHardwareSSH() {
                         emmcUsagePct, emmcStr, uptime, interfaces,
                         dataSource: 'real'
                     };
-                    resolve(data);
-                    sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct });
-                } catch (e) {
-                    reject({ status: 500, body: { error: 'Hardware Output Parse Failed: ' + e.message } });
-                }
-            });
+                resolve(data);
+                sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct });
+            } catch (e) {
+                reject({ status: 500, body: { error: 'Hardware Output Parse Failed: ' + e.message } });
+            }
+        }, error => {
+            sysLog('Hardware', `SSH 指令串流失敗: ${error.code || error.message}`, true);
+            conn.end();
+            reject({ status: 500, body: { error: 'SSH Command Execution Failed' } });
         });
     }).on('error', (err) => {
         const authFail = /authentication methods failed/i.test(err.message || '');
@@ -502,7 +497,8 @@ function fetchHardwareSSH() {
         port: parseInt(process.env.SSH_PORT || '22', 10),
         username: process.env.SSH_USER,
         password: process.env.SSH_PASSWORD,
-        tryKeyboard: true
+        tryKeyboard: true,
+        readyTimeout: 8000
     });
     });
 }
@@ -4592,13 +4588,9 @@ function fetchLinuxSSH() {
     return new Promise((resolve, reject) => {
         const conn = new Client();
         conn.on('ready', () => {
-            conn.exec(LINUX_CMD, (err, stream) => {
-                if (err) { conn.end(); return reject(new Error('SSH exec failed')); }
-                let out = '';
-                stream.on('data', c => out += c).stderr.on('data', () => { });
-                stream.on('close', () => {
-                    conn.end();
-                    try {
+            executeSshCommand(conn, LINUX_CMD).then(out => {
+                conn.end();
+                try {
                         const sec = out.split('__S__');
                         const hostname = sec[0].trim();
                         const upSec = parseFloat(sec[1]);
@@ -4613,7 +4605,7 @@ function fetchLinuxSSH() {
                             const dT = s2.cpu.total - s1.cpu.total, dI = s2.cpu.idle - s1.cpu.idle;
                             cpuUsage = dT > 0 ? Math.round((1 - dI / dT) * 100) : 0;
                         }
-                        resolve({
+                    resolve({
                             hostname, cpuUsage,
                             cpuTemp: temps.length ? Math.round(Math.max(...temps)) : null,
                             memUsagePct: memTotal ? Math.round(memUsed / memTotal * 100) : 0,
@@ -4623,9 +4615,11 @@ function fetchLinuxSSH() {
                             load,
                             uptime: isNaN(upSec) ? '--' : `up ${Math.floor(upSec / 86400)}d ${Math.floor((upSec % 86400) / 3600)}h`,
                             dataSource: 'real'
-                        });
-                    } catch (e) { reject(new Error('parse failed: ' + e.message)); }
-                });
+                    });
+                } catch (e) { reject(new Error('parse failed: ' + e.message)); }
+            }, error => {
+                conn.end();
+                reject(new Error(`SSH exec failed: ${error.code || error.message}`));
             });
         }).on('error', e => reject(e))
             .connect({

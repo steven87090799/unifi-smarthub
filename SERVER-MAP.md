@@ -149,6 +149,10 @@
 - `server/storage/json-file-store.js`: app、UI preference、client alias、security、notification JSON 的 bounded plain-object reader 與同目錄 0600 temp + fsync + atomic rename writer；API 先落盤再發布 live state
 - `server/storage/instance-lock.js`: DATA_DIR 的 transactional SQLite leased owner；hashed runtime/container identity + PID/token、IMMEDIATE claim/reclaim、2 秒 heartbeat/8 秒 lease、legacy PID migration、exact-owner release，失去 owner 時 fail-safe shutdown
 
+### SSH command lifecycle
+
+- `server/integrations/ssh-command-stream.js`: UCG/Linux one-shot command stream 的 12 秒 deadline、1 MiB combined stdout/stderr cap、abort 與 listener/timer cleanup
+
 ## 搜尋範例
 
 ```bash
