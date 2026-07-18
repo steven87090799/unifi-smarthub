@@ -1,6 +1,8 @@
-# SmartHub v3.0 Release Notes
+# SmartHub v3.0 發布說明
 
 發布日期：2026-07-14
+
+> 本文件保留 v3.0 發布時的歷史內容；目前部署與驗證流程以 `../operations/` 文件為準。
 
 SmartHub v3.0 將通知中心、每日營運報表與即時總覽更新整合成完整的家庭基礎設施監控版本。這個版本著重於「有事情時能立即知道」，同時保留每一種事件的獨立開關，避免不需要的推播。
 
@@ -37,12 +39,12 @@ SmartHub v3.0 將通知中心、每日營運報表與即時總覽更新整合成
 ### 維運與開發體驗
 
 - 通知設定 API 與 `server-mock.js` 保持相同欄位，可在無設備環境完整測試設定儲存。
-- 精簡 AI 工作入口文件，改由 `CONTEXT.md`、`SERVER-MAP.md`、`FRONTEND-MAP.md` 與 `OBSERVABILITY.md` 分流讀取。
+- 精簡 AI 工作入口文件，改由根目錄 maps 與 `docs/operations/OBSERVABILITY.md` 分流讀取。
 - SQLite migration 已完成，因此移除過期的遷移操作文件；既有 `data/smarthub.db` 與設定檔維持相容。
 
 ## 升級方式
 
-升級前先依 [`PRODUCTION-RELEASE-CHECKLIST.md`](PRODUCTION-RELEASE-CHECKLIST.md) 完成安全備份、repository gates 與 clean immutable release build。正式部署使用 `config/.env` 作唯一設定 authority，不再從 checkout 根目錄讀第二份 `.env`：
+升級前先依 [正式發布檢查清單](../operations/PRODUCTION-RELEASE-CHECKLIST.md) 完成安全備份、repository gates 與 clean immutable release build。正式部署使用 `config/.env` 作唯一設定 authority，不再從 checkout 根目錄讀第二份 `.env`：
 
 ```bash
 git fetch --tags

@@ -1,3 +1,5 @@
+待確認刪除：本文件的 10 秒記憶體歷史設計已被 SQLite 與 3 秒活動取樣取代。
+
 # WiiM Amp 戰情室整合 API 技術規格書 (wiim_spec.md)
 
 本規格書詳細記錄 `unifi-smarthub` 專案中整合 WiiM Amp 串流音響的 API 設計、傳輸頻率、底層指令映射以及資料欄位定義。

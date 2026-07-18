@@ -1,32 +1,25 @@
-# SmartHub Context Guide
+# SmartHub 低上下文入口
 
-目標：每次對話只送入任務所需的最小內容。`AGENTS.md` 是唯一常駐工作規則；本檔是唯一預設閱讀文件。
+目標：每次只讀完成任務需要的最少內容。
 
-## 讀取分級
+## 讀取順序
 
-| 分級 | 檔案 | 使用時機 |
+| 任務 | 入口 | 接著讀 |
 |---|---|---|
-| 常駐 | `AGENTS.md` | 工具/安全/讀檔規則；已壓縮為短入口 |
-| 預設 | `CONTEXT.md` | 每次任務先讀本檔 |
-| 任務索引 | `SERVER-MAP.md`, `FRONTEND-MAP.md` | 分別處理後端或前端才讀 |
-| 條件文件 | `README.md`, `.env.example`, `OBSERVABILITY.md`, `REVIEW-TODO.md` | 部署、設定、診斷、待辦才讀 |
-| Lazy-read | 程式大檔、規格、規劃、runtime 資料 | 先搜尋符號，再讀小片段 |
+| 一般任務 | `CONTEXT.md` | 依下列分類選一份索引 |
+| 後端／SQLite | `SERVER-MAP.md` | 精準讀 `server.js`、`server/`、`db.js` |
+| 前端／輪詢 | `FRONTEND-MAP.md` | 精準讀 `public/index.html`、`public/js/` |
+| 部署／Docker | `README.md` | `docs/operations/`、Compose、Dockerfile |
+| 整合 | `SERVER-MAP.md` | `docs/integrations/` 對應摘要與相關 source |
+| 診斷 | `docs/operations/OBSERVABILITY.md` | `observability/` 與相關 route |
+| 規劃 | `docs/planning/` | 只讀尚未完成項目 |
 
-## 任務路線
+## 預設不讀
 
-| 任務 | 先讀 | 接著精準讀 |
-|---|---|---|
-| 後端 API／排程／SQLite | `SERVER-MAP.md` | `server.js`、`db.js` 相關符號 |
-| UI／圖表／輪詢 | `FRONTEND-MAP.md` | `public/index.html` 的 section/function |
-| Docker／部署 | `README.md` | `docker-compose.yml`、`Dockerfile`、`.env.example` |
-| 裝置整合 | `SERVER-MAP.md` | 對應 API 規格與後端局部 |
-| 診斷 | `OBSERVABILITY.md` | `observability/`、相關 route 局部 |
-
-## 預設排除（必要時可精準讀）
-
-- 大型程式：`server.js`、`public/index.html`、`server-mock.js`、`db.js`。
-- runtime／機密：`data/`、`.env`、`*.log`。
+- 機密／runtime：`.env`、`data/`、`*.log`。
 - 依賴／產物：`node_modules/`、`package-lock.json`、`.git/`。
-- 低頻文件：`spec.md`、`ROADMAP.md`、`*-api.md`、`*_spec.md`、`OBSERVABILITY.md`、`REVIEW-TODO.md`。
+- 大型程式：`server.js`、`public/index.html`、`server-mock.js`、`db.js`。
+- 低頻內容：`docs/integrations/`、`docs/reports/`、`docs/planning/`、`docs/ARCHITECTURE.md`。
+- 待刪除隔離區：`_pending-delete-2026-07-17/`。
 
-完整清單與例外見 `EXCLUDE-FILES.md`。排除是「預設不送入」，不是禁止 debug；先用 `rg` 找符號或欄位，再用 `sed -n` 讀窄範圍。
+排除只代表預設不送入上下文，不是禁止除錯。完整規則見 `EXCLUDE-FILES.md`。

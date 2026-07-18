@@ -10,10 +10,10 @@ const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 test('production documentation points operators to the immutable paired-image release contract', () => {
     const readme = read('README.md');
-    const checklist = read('PRODUCTION-RELEASE-CHECKLIST.md');
+    const checklist = read('docs/operations/PRODUCTION-RELEASE-CHECKLIST.md');
     const envExample = read('.env.example');
 
-    assert.match(readme, /PRODUCTION-RELEASE-CHECKLIST\.md/);
+    assert.match(readme, /docs\/operations\/PRODUCTION-RELEASE-CHECKLIST\.md/);
     assert.match(checklist, /npm run release:build/);
     assert.match(checklist, /SMARTHUB_IMAGE=unifi-smarthub:<12-char-revision>/);
     assert.match(checklist, /NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>/);
@@ -25,14 +25,14 @@ test('production documentation points operators to the immutable paired-image re
 });
 
 test('operator documentation does not restore superseded deployment authorities', () => {
-    const observability = read('OBSERVABILITY.md');
-    const releaseNotes = read('RELEASE-NOTES-v3.0.md');
-    const spec = read('spec.md');
+    const observability = read('docs/operations/OBSERVABILITY.md');
+    const releaseNotes = read('docs/reports/RELEASE-NOTES-v3.0.md');
+    const architecture = read('docs/ARCHITECTURE.md');
 
     assert.doesNotMatch(observability, /Tailwind CDN/);
     assert.doesNotMatch(observability, /Docker \| 單一 `unifi-smarthub` service/);
     assert.doesNotMatch(releaseNotes, /docker compose up -d --build --force-recreate/);
-    assert.doesNotMatch(spec, /data\/trend-history\.json/);
-    assert.doesNotMatch(spec, /只引用 CDN 提供的 TailwindCSS/);
-    assert.match(spec, /不是 live route registry/);
+    assert.doesNotMatch(architecture, /data\/trend-history\.json/);
+    assert.doesNotMatch(architecture, /只引用 CDN 提供的 TailwindCSS/);
+    assert.match(architecture, /不列完整 endpoint/);
 });

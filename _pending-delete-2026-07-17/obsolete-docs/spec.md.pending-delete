@@ -1,3 +1,5 @@
+待確認刪除：本高密度歷史規格已由精簡的 `docs/ARCHITECTURE.md` 與前後端地圖取代。
+
 # SmartHub 專案技術規格書與 AI 導引指南 (spec.md)
 
 本文件保留高密度架構背景與歷史 API 參考，但不是 live route registry。正式契約以 `SERVER-MAP.md`、`FRONTEND-MAP.md`、共用 policy/route modules、production/mock contract tests 與實際 source 為準；部署以 `README.md` 與 `PRODUCTION-RELEASE-CHECKLIST.md` 為準。新增或修改 endpoint 時不可只更新本文件而略過 production/mock tests。
