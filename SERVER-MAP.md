@@ -14,7 +14,7 @@
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
 | WiiM | `server/policies/wiim-command-policy.js`、`server/routes/wiim-command-routes.js` |
-| UPS | `readUpsLive`, `createUpsState` |
+| UPS | `readUpsLive`, `createUpsState`, `ups-power-quality.js`, `syncPpbEvents` |
 | AdGuard | `server/integrations/adguard-client.js`、policy／service |
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
 | Web Push | `server/routes/web-push-routes.js`、`server/services/web-push.js` |
@@ -58,6 +58,7 @@
 - `instance-lock` 使用 2 秒 heartbeat／8 秒 lease 保證單一 DATA_DIR owner。
 - SSH 命令共用 12 秒期限與 1 MiB stdout／stderr 上限。
 - 歷史佇列、resource samples、cooldown maps、subscriptions 與 audit 都有容量或 retention。
+- UPS 在總覽/UPS 焦點下真實 3 秒取樣，閒置預設 10 秒；PPB 事件同步為焦點 10 秒、閒置 60 秒。
 
 ## 搜尋範例
 

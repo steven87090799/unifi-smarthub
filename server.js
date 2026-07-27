@@ -7,7 +7,6 @@ delete process.env.https_proxy;
 const express = require('express');
 const axios = require('axios');
 const webPushLibrary = require('web-push');
-const { Client } = require('ssh2');
 const fs = require('node:fs');
 const path = require('path');
 const https = require('https');
@@ -23,7 +22,7 @@ const {
     writeJsonObjectAtomically
 } = require('./server/storage/json-file-store');
 const { acquireInstanceLock } = require('./server/storage/instance-lock');
-const { executeSshCommand } = require('./server/integrations/ssh-command-stream');
+const { createSshConnectionPool } = require('./server/integrations/ssh-connection-pool');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -69,6 +68,11 @@ const { deriveDueReportSlot } = require('./server/jobs/report-schedule');
 const { createReportRunner } = require('./server/jobs/report-runner');
 const { createUpsState, FETCH_HEALTH, TRANSITION_TYPES } = require('./server/jobs/ups-state');
 const {
+    DEFAULT_SAG_THRESHOLD_V,
+    createUpsSagDetector,
+    normalizePpbEvent
+} = require('./server/services/ups-power-quality');
+const {
     BACKUP_MEDIA_TYPE,
     MAX_BACKUP_BYTES,
     BackupValidationError,
@@ -96,7 +100,7 @@ const {
 const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker');
 const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
-const FOCUSED_DEVICE_SAMPLE_MS = 3000;
+const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -117,6 +121,12 @@ function lifecycleInterval(callback, milliseconds) {
     const handle = setInterval(callback, milliseconds);
     lifecycleIntervals.add(handle);
     return handle;
+}
+
+function clearLifecycleInterval(handle) {
+    if (!handle) return;
+    clearInterval(handle);
+    lifecycleIntervals.delete(handle);
 }
 
 function lifecycleTimeout(callback, milliseconds, { unref = false } = {}) {
@@ -402,20 +412,39 @@ function parseIpLinks(txt) {
     return m;
 }
 
-// SSH 遙測含 sleep 1 且每次開新連線，加上 5 秒快取 + in-flight 去重：
-// 前端輪詢與 notificationWatcher 同時打進來時只開一條 SSH，其餘共用同一結果
+// SSH 遙測含 sleep 1；同一設備重用單一連線、命令序列化，閒置時自動釋放。
 let hwCache = null;      // { ts, data }
 let hwInflight = null;
-function fetchHardwareSSH() {
-    return new Promise((resolve, reject) => {
-    sysLog('Hardware', `發起 SSH 連線至 UCG-Ultra (${process.env.UCG_IP}:${process.env.SSH_PORT || 22})...`);
-    const conn = new Client();
-    conn.on('ready', () => {
-        sysLog('Hardware', 'SSH 連線建立成功，執行遙測指令組...');
-        executeSshCommand(conn, HW_CMD).then(output => {
-            sysLog('Hardware', '遙測指令組執行完成，關閉 SSH 連線。');
-            conn.end();
-            try {
+const ucgSshPool = createSshConnectionPool({
+    getConfig: () => ({
+        host: process.env.UCG_IP,
+        port: parseInt(process.env.SSH_PORT || '22', 10),
+        username: process.env.SSH_USER,
+        password: process.env.SSH_PASSWORD,
+        tryKeyboard: true
+    }),
+    onKeyboardInteractive: (_name, _instructions, _lang, prompts, finish) => {
+        finish(prompts.map(() => process.env.SSH_PASSWORD));
+    }
+});
+
+async function fetchHardwareSSH() {
+    sysLog('Hardware', `透過共用 SSH 連線讀取 UCG-Ultra (${process.env.UCG_IP}:${process.env.SSH_PORT || 22})...`);
+    let output;
+    try { output = await ucgSshPool.execute(HW_CMD); }
+    catch (error) {
+        const authFail = /authentication methods failed/i.test(error.message || '');
+        sysLog('Hardware', `SSH 指令或連線失敗: ${error.code || error.message}`, true);
+        throw {
+            status: 500, body: {
+                error: 'SSH Connection Failed',
+                details: authFail
+                    ? 'SSH 密碼被 UCG 拒絕。注意：SSH 密碼是獨立的，不是 UniFi 登入密碼 — 請到 UniFi 主控台 → Console Settings → Advanced → SSH，在那裡「設定 SSH 專用密碼」後填入本頁'
+                    : error.message
+            }
+        };
+    }
+    try {
                     const sec = output.split('__S__');
 
                     // 1. CPU 溫度
@@ -485,46 +514,18 @@ function fetchHardwareSSH() {
                         emmcUsagePct, emmcStr, uptime, interfaces,
                         dataSource: 'real'
                     };
-                resolve(data);
-                sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct });
-            } catch (e) {
-                reject({ status: 500, body: { error: 'Hardware Output Parse Failed: ' + e.message } });
-            }
-        }, error => {
-            sysLog('Hardware', `SSH 指令串流失敗: ${error.code || error.message}`, true);
-            conn.end();
-            reject({ status: 500, body: { error: 'SSH Command Execution Failed' } });
-        });
-    }).on('error', (err) => {
-        const authFail = /authentication methods failed/i.test(err.message || '');
-        reject({
-            status: 500, body: {
-                error: 'SSH Connection Failed',
-                details: authFail
-                    ? 'SSH 密碼被 UCG 拒絕。注意：SSH 密碼是獨立的，不是 UniFi 登入密碼 — 請到 UniFi 主控台 → Console Settings → Advanced → SSH，在那裡「設定 SSH 專用密碼」後填入本頁'
-                    : err.message
-            }
-        });
-    }).on('keyboard-interactive', (name, instructions, lang, prompts, finish) => {
-        // UniFi OS 的 sshd 只開放 keyboard-interactive，不接受純 password 認證
-        finish(prompts.map(() => process.env.SSH_PASSWORD));
-    }).connect({
-        host: process.env.UCG_IP,
-        port: parseInt(process.env.SSH_PORT || '22', 10),
-        username: process.env.SSH_USER,
-        password: process.env.SSH_PASSWORD,
-        tryKeyboard: true,
-        readyTimeout: 8000
-    });
-    });
+        return data;
+    } catch (error) {
+        throw { status: 500, body: { error: 'Hardware Output Parse Failed: ' + error.message } };
+    }
 }
 
 // 行程內共用入口 (route / notificationWatcher / buildReport 皆走這裡，不再自打 HTTP)
-async function getHardwareCached() {
-    // Focused UCG page refreshes every 3s. Keep the active cache slightly shorter
-    // so each visible refresh can obtain a fresh SSH sample.
-    const cacheMs = isDeviceSamplingActive('ucg') ? 2000 : 15000;
-    if (hwCache && Date.now() - hwCache.ts < cacheMs) return hwCache.data;
+async function getHardwareCached({ force = false } = {}) {
+    const cacheMs = isDeviceSamplingActive('general')
+        ? Math.max(1, appSettings.deviceActiveBackendSampleSec - 1) * 1000
+        : 15000;
+    if (!force && hwCache && Date.now() - hwCache.ts < cacheMs) return hwCache.data;
     if (!hwInflight) hwInflight = fetchHardwareSSH().finally(() => { hwInflight = null; });
     const data = await hwInflight;
     hwCache = { ts: Date.now(), data };
@@ -894,9 +895,20 @@ const systemMonitor = new SystemMonitor({
 /* ===================== 應用程式設定 (可於「設定」頁調整所有伺服器端輪詢間隔) ===================== */
 const APP_SETTINGS_FILE = path.join(DATA_DIR, 'app-settings.json');
 const APP_DEFAULTS = {
-    trendActiveSec: 30,     // 有人瀏覽時趨勢取樣間隔
-    trendIdleSec: 1800,     // 閒置時趨勢取樣間隔 (30 分鐘)
-    activeWindowSec: 30,    // 最近幾秒內有活動視為「有人瀏覽」
+    deviceActiveFrontendPollSec: 5,
+    deviceActiveBackendSampleSec: 5,
+    deviceIdleBackendSampleSec: 600,
+    heartbeatSec: 5,
+    activeLeaseSec: 30,
+    // Preserve the previous UPS defaults: live status was 3s while viewed and
+    // its unattended collector was 10s.
+    upsFrontendPollSec: 3,
+    upsActiveBackendSampleSec: 3,
+    upsIdleBackendSampleSec: 10,
+    upsHistoryFrontendPollSec: 10,
+    upsPpbEventsFrontendPollSec: 10,
+    upsPpbEventActiveBackendSampleSec: 10,
+    upsPpbEventIdleBackendSampleSec: 60,
     watcherSec: 20,         // 通知監看器間隔
     toastSec: 10,           // 右下角通知泡泡顯示秒數
     autoDefenseSec: 30,     // 自動防禦掃描間隔
@@ -904,28 +916,52 @@ const APP_DEFAULTS = {
     reportFreq: 'daily',    // daily | weekly
     reportHour: 8,          // 每日幾點發送 (0-23)
     reportHour2: 20,        // 「每日兩次」的第二次發送時間 (0-23)
-    upsSampleSec: 30,       // UPS 電壓/電池取樣間隔 (不做閒置降頻，持續記錄)
     wiimCpuAlert: 70,       // WiiM CPU 溫度警示門檻 (°C，圖上門檻線 + 超標推播)
     wiimBoardAlert: 60,     // WiiM 主機板溫度警示門檻 (°C)
     historyFlushMin: 10,    // 一般遙測先存記憶體，再批次寫入 SQLite
     historyKeepDays: 30     // 歷史資料保存天數 (trend/UCG/NAS/UPS/WiiM 統一)
 };
 const APP_SETTING_RANGES = {
-    trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600],
+    deviceActiveFrontendPollSec: [1, 3600], deviceActiveBackendSampleSec: [1, 3600],
+    deviceIdleBackendSampleSec: [1, 86400], heartbeatSec: [1, 3600], activeLeaseSec: [2, 3600],
+    upsFrontendPollSec: [1, 3600], upsActiveBackendSampleSec: [1, 3600], upsIdleBackendSampleSec: [1, 3600],
+    upsHistoryFrontendPollSec: [1, 3600], upsPpbEventsFrontendPollSec: [1, 3600],
+    upsPpbEventActiveBackendSampleSec: [1, 3600], upsPpbEventIdleBackendSampleSec: [1, 3600],
+    // Deprecated API aliases remain accepted for existing API clients.  The
+    // settings page only exposes the replacement fields above.
+    trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600], upsSampleSec: [5, 3600],
     watcherSec: [5, 3600], autoDefenseSec: [5, 3600], reportHour: [0, 23], reportHour2: [0, 23],
-    upsSampleSec: [5, 3600], wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
+    wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
     toastSec: [1, 60], historyFlushMin: [1, 60], historyKeepDays: [1, 365]
 };
-function normalizeAppSettings(settings) {
+function normalizeAppSettings(settings, incoming = {}) {
+    // One-time migration and old API compatibility.  Keep aliases in the
+    // response/file so older clients continue to work, but all schedulers read
+    // only the canonical settings.
+    if (!Object.hasOwn(settings, 'deviceActiveBackendSampleSec')) settings.deviceActiveBackendSampleSec = settings.trendActiveSec;
+    if (!Object.hasOwn(settings, 'deviceIdleBackendSampleSec')) settings.deviceIdleBackendSampleSec = settings.trendIdleSec;
+    if (!Object.hasOwn(settings, 'activeLeaseSec')) settings.activeLeaseSec = settings.activeWindowSec;
+    if (!Object.hasOwn(settings, 'upsIdleBackendSampleSec')) settings.upsIdleBackendSampleSec = settings.upsSampleSec;
+    if (Object.hasOwn(incoming, 'trendActiveSec') && !Object.hasOwn(incoming, 'deviceActiveBackendSampleSec')) settings.deviceActiveBackendSampleSec = incoming.trendActiveSec;
+    if (Object.hasOwn(incoming, 'trendIdleSec') && !Object.hasOwn(incoming, 'deviceIdleBackendSampleSec')) settings.deviceIdleBackendSampleSec = incoming.trendIdleSec;
+    if (Object.hasOwn(incoming, 'activeWindowSec') && !Object.hasOwn(incoming, 'activeLeaseSec')) settings.activeLeaseSec = incoming.activeWindowSec;
+    if (Object.hasOwn(incoming, 'upsSampleSec') && !Object.hasOwn(incoming, 'upsIdleBackendSampleSec')) settings.upsIdleBackendSampleSec = incoming.upsSampleSec;
     for (const [key, [min, max]] of Object.entries(APP_SETTING_RANGES)) {
         if (typeof settings[key] === 'number' && Number.isFinite(settings[key])) {
             settings[key] = Math.min(max, Math.max(min, settings[key]));
         }
     }
+    settings.trendActiveSec = settings.deviceActiveBackendSampleSec;
+    settings.trendIdleSec = settings.deviceIdleBackendSampleSec;
+    settings.activeWindowSec = settings.activeLeaseSec;
+    settings.upsSampleSec = settings.upsIdleBackendSampleSec;
     return settings;
 }
 let appSettings = normalizeAppSettings((() => {
-    try { return { ...APP_DEFAULTS, ...readJsonObjectFile(APP_SETTINGS_FILE) }; }
+    try {
+        const stored = readJsonObjectFile(APP_SETTINGS_FILE);
+        return normalizeAppSettings({ ...APP_DEFAULTS, ...stored }, stored);
+    }
     catch (error) {
         if (error.cause?.code !== 'ENOENT') logger.warning({
             module: 'config.app', function: 'loadAppSettings', code: ERROR_CODES.SYS_CONFIG_INVALID,
@@ -1354,7 +1390,7 @@ const NOTIF_DEFAULTS = {
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,
     triggerWanDown: false, triggerWanLatency: false, wanLatencyAlert: 100,
     triggerUnifiOffline: false, triggerNasLog: true, triggerNasSleepWake: false,
-    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerUpsOffline: true,
+    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSag: true, upsSagThresholdV: DEFAULT_SAG_THRESHOLD_V, triggerUpsSourceChange: false, triggerUpsOffline: true,
     triggerAdgProtection: true, triggerAdgOffline: false, triggerAdgHighBlockRate: false, adgBlockRateAlert: 50,
     triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90, triggerLinuxHighCpu: false, linuxCpuAlert: 90, triggerLinuxHighMemory: false, linuxMemoryAlert: 90, triggerLinuxHighLoad: false, linuxLoadAlert: 4,
     triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHealth: true, triggerDockerRestart: true, triggerDockerInventory: false, triggerDockerOom: true,
@@ -1510,7 +1546,7 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerUcgTemp: !!s.triggerUcgTemp, ucgTempAlert: s.ucgTempAlert ?? 75,
         triggerUcgHighCpu: !!s.triggerUcgHighCpu, ucgCpuAlert: s.ucgCpuAlert ?? 90, triggerUcgHighMemory: !!s.triggerUcgHighMemory, ucgMemoryAlert: s.ucgMemoryAlert ?? 90, triggerUcgDisk: !!s.triggerUcgDisk, ucgDiskAlert: s.ucgDiskAlert ?? 85,
         triggerWanDown: !!s.triggerWanDown, triggerWanLatency: !!s.triggerWanLatency, wanLatencyAlert: s.wanLatencyAlert ?? 100, triggerUnifiOffline: !!s.triggerUnifiOffline, triggerNasLog: !!s.triggerNasLog, triggerNasSleepWake: !!s.triggerNasSleepWake,
-        triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsLowRuntime: !!s.triggerUpsLowRuntime, upsRuntimeAlertMin: s.upsRuntimeAlertMin ?? 10, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSourceChange: !!s.triggerUpsSourceChange, triggerUpsOffline: s.triggerUpsOffline !== false,
+        triggerUpsHighLoad: !!s.triggerUpsHighLoad, upsLoadAlert: s.upsLoadAlert ?? 80, triggerUpsLowRuntime: !!s.triggerUpsLowRuntime, upsRuntimeAlertMin: s.upsRuntimeAlertMin ?? 10, triggerUpsVoltAbnormal: !!s.triggerUpsVoltAbnormal, upsVoltDeviationPct: s.upsVoltDeviationPct ?? 10, triggerUpsSag: s.triggerUpsSag !== false, upsSagThresholdV: s.upsSagThresholdV ?? DEFAULT_SAG_THRESHOLD_V, triggerUpsSourceChange: !!s.triggerUpsSourceChange, triggerUpsOffline: s.triggerUpsOffline !== false,
         triggerAdgProtection: s.triggerAdgProtection !== false, triggerAdgOffline: !!s.triggerAdgOffline, triggerAdgHighBlockRate: !!s.triggerAdgHighBlockRate, adgBlockRateAlert: s.adgBlockRateAlert ?? 50,
         triggerLinuxTemp: s.triggerLinuxTemp !== false, linuxTempAlert: s.linuxTempAlert ?? 70,
         triggerLinuxOffline: !!s.triggerLinuxOffline, triggerLinuxDisk: !!s.triggerLinuxDisk, linuxDiskAlert: s.linuxDiskAlert ?? 90, triggerLinuxHighCpu: !!s.triggerLinuxHighCpu, linuxCpuAlert: s.linuxCpuAlert ?? 90, triggerLinuxHighMemory: !!s.triggerLinuxHighMemory, linuxMemoryAlert: s.linuxMemoryAlert ?? 90, triggerLinuxHighLoad: !!s.triggerLinuxHighLoad, linuxLoadAlert: s.linuxLoadAlert ?? 4,
@@ -2173,39 +2209,61 @@ runSerialJob('threatBlockReconcile', () => threatIpBlockingService.reconcile());
 lifecycleInterval(() => runSerialJob('adguardPolicyReconcile', () => adguardServicePolicyService.reconcile()), 15000);
 runSerialJob('adguardPolicyReconcile', () => adguardServicePolicyService.reconcile());
 function scheduleServerJobs() {
-    clearInterval(jobTimers.watcher);
-    clearInterval(jobTimers.autodef);
+    clearLifecycleInterval(jobTimers.watcher);
+    clearLifecycleInterval(jobTimers.autodef);
     if (shuttingDown) return;
-    jobTimers.watcher = setInterval(() => runSerialJob('notificationWatcher', notificationWatcher), Math.max(appSettings.watcherSec, 5) * 1000);
-    jobTimers.autodef = setInterval(() => runSerialJob('autoDefenseSweep', autoDefenseSweep), Math.max(appSettings.autoDefenseSec, 5) * 1000);
+    jobTimers.watcher = lifecycleInterval(() => runSerialJob('notificationWatcher', notificationWatcher), Math.max(appSettings.watcherSec, 5) * 1000);
+    jobTimers.autodef = lifecycleInterval(() => runSerialJob('autoDefenseSweep', autoDefenseSweep), Math.max(appSettings.autoDefenseSec, 5) * 1000);
 }
 
-/* ===================== 歷史趨勢取樣器 (自適應頻率) ===================== */
-// 記錄一筆：客戶端數、24h 威脅數、ISP 延遲。
-// 取樣頻率隨「是否有人正在看網頁」自動切換 (間隔取自 appSettings，可於設定頁調整)。
-let lastSampleTs = 0;                    // 上一次取樣時間戳
-let lastSchedulerState = null;           // 前端最後一狀態 (活躍/閒置)
-const deviceActivity = createActivityLease({ maxLeaseMs: 180000 });
-function requestPromptSampling(scopes) {
-    // This deliberately only clears scheduler guards. Existing interval loops and
-    // runSerialJob still control I/O and prevent concurrent duplicate sampling.
-    if (scopes.includes('trend')) lastSampleTs = 0;
-    if (scopes.includes('ucg')) {
-        hwCache = null;
-        lastUcgSampleTs = 0;
-    }
-    if (scopes.includes('nas')) lastNasSampleTs = 0;
-    if (scopes.includes('wiim')) lastWiimPollTs = 0;
-    if (scopes.includes('linux')) lastLinuxSampleTs = 0;
+/* ===================== 歷史取樣器 (可見分頁自適應頻率) ===================== */
+// A visible tab maintains `general`; UPS retains its own scope so its high
+// frequency collector is independent from the normal-device idle interval.
+const deviceActivity = createActivityLease({ maxLeaseMs: 3600 * 1000 });
+const backendSamplers = new Map();
+function normalDeviceSampleMs() {
+    return (isDeviceSamplingActive('general')
+        ? appSettings.deviceActiveBackendSampleSec
+        : appSettings.deviceIdleBackendSampleSec) * 1000;
 }
-function markClientActivity(scopes = 'trend', { focus = false } = {}) {
-    const requestedMs = (appSettings.activeWindowSec || 30) * 1000;
-    // A focus heartbeat replaces the previous page's scopes immediately.
-    const activity = deviceActivity.mark(scopes, requestedMs, { replace: focus });
+function upsSampleMs() {
+    return (isDeviceSamplingActive('ups')
+        ? appSettings.upsActiveBackendSampleSec
+        : appSettings.upsIdleBackendSampleSec) * 1000;
+}
+function ppbEventSyncMs() {
+    return (isDeviceSamplingActive('ups')
+        ? appSettings.upsPpbEventActiveBackendSampleSec
+        : appSettings.upsPpbEventIdleBackendSampleSec) * 1000;
+}
+function registerBackendSampler(name, collect, getDelayMs) {
+    backendSamplers.get(name)?.stop();
+    const sampler = createAdaptiveSampler({
+        collect: () => runSerialJob(name, collect),
+        getDelayMs,
+        setTimeoutFn: (callback, delay) => lifecycleTimeout(callback, delay),
+        clearTimeoutFn: clearLifecycleTimeout
+    });
+    backendSamplers.set(name, sampler);
+    sampler.start();
+    return sampler;
+}
+function rebuildBackendSamplers({ immediate = false } = {}) {
+    for (const sampler of backendSamplers.values()) sampler.rebuild({ immediate });
+}
+function requestPromptSampling(scopes) {
+    if (scopes.length) rebuildBackendSamplers({ immediate: true });
+}
+function markClientActivity(scopes = 'general', { focus = false, session = 'legacy' } = {}) {
+    const requestedMs = appSettings.activeLeaseSec * 1000;
+    // Focus/release applies only to this tab; another visible session stays
+    // active until it releases or its own lease expires.
+    const activity = deviceActivity.mark(scopes, requestedMs, { replace: focus, sessionId: session });
     // A page focus gets one prompt sample. A lease which had already expired
     // receives the same treatment, while normal heartbeat renewals do not.
     const promptScopes = focus ? activity.accepted : activity.activated;
     if (promptScopes.length) requestPromptSampling(promptScopes);
+    else if (focus) rebuildBackendSamplers();
     return { ...activity, promptScopes };
 }
 function isDeviceSamplingActive(scope) { return deviceActivity.isActive(scope); }
@@ -2249,31 +2307,13 @@ async function sampleTrends() {
     historyDb.insertPoint('trend', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
 }
 
-// 排程器：每秒檢查一次，依活躍/閒置狀態與設定的間隔決定是否該取樣
-async function trendScheduler() {
-    const now = Date.now();
-    const active = isDeviceSamplingActive('trend');
-    const stateStr = active ? 'Active (活躍模式)' : 'Idle (閒置模式)';
-    if (stateStr !== lastSchedulerState) {
-        sysLog('Scheduler', `取樣頻率切換至：${stateStr}。取樣間隔：${active ? FOCUSED_DEVICE_SAMPLE_MS / 1000 : appSettings.trendIdleSec} 秒`);
-        lastSchedulerState = stateStr;
-    }
-    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : appSettings.trendIdleSec * 1000;
-    if (now - lastSampleTs >= gap) {
-        lastSampleTs = now;
-        sysLog('Scheduler', '開始執行趨勢遙測資料取樣...');
-        await sampleTrends();
-        sysLog('Scheduler', '趨勢遙測資料取樣完成。');
-    }
-}
-lifecycleInterval(() => runSerialJob('trendScheduler', trendScheduler), 1000);
-runSerialJob('trendScheduler', trendScheduler);
+registerBackendSampler('trendHistory', sampleTrends, normalDeviceSampleMs);
 scheduleServerJobs();
 systemMonitor.start();
 logger.info({
     module: 'scheduler', function: 'scheduleServerJobs', code: ERROR_CODES.WORKER_READY,
     message: 'Background schedulers ready', fields: {
-        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendScheduler', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
+        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendHistory', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
     }
 });
 
@@ -2283,7 +2323,6 @@ app.get('/api/history', (req, res) => {
         module: 'api.history', function: 'listTrend'
     });
     if (!query) return;
-    markClientActivity('trend');
     const cutoff = Date.now() - query.hours * 3600000;
     res.json({ history: historyDb.getSince('trend', cutoff) });
 });
@@ -2294,7 +2333,7 @@ app.get('/api/heartbeat', (req, res) => {
         module: 'api.heartbeat', function: 'renewActivity'
     });
     if (!query) return;
-    const activity = markClientActivity(query.scope, { focus: query.focus });
+    const activity = markClientActivity(query.scope, { focus: query.focus, session: query.session });
     res.json({ ok: true, activeScopes: deviceActivity.activeScopes(), expiresAt: activity.expiresAt, promptScopes: activity.promptScopes });
 });
 
@@ -2699,19 +2738,18 @@ app.get('/api/nas/ups-usb', async (req, res) => {
     }
 });
 
-/* ===================== UCG 歷史自建取樣器 =====================
-   跟 /api/hardware 的 SSH 輪詢共生：每次前端拉硬體資訊成功時順手記一筆；
-   UCG 頁可見時每 3 秒，離頁後恢復原本 30 秒節流，
-   不需要額外開 SSH 連線。*/
-let lastUcgSampleTs = 0;
+/* ===================== UCG 歷史自建取樣器 ===================== */
 function sampleUcgHistory({ cpuTemp, cpuUsage, cores, memUsagePct }) {
-    const gap = isDeviceSamplingActive('ucg') ? FOCUSED_DEVICE_SAMPLE_MS : 30000;
-    if (Date.now() - lastUcgSampleTs < gap) return;
-    lastUcgSampleTs = Date.now();
     historyDb.insertPoint('ucg', { t: new Date().toISOString(), cpuTemp, cpuUsage, memUsagePct, cores }, {
         keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP
     });
 }
+async function collectUcgHistory() {
+    if (isPlaceholder(process.env.SSH_PASSWORD) || !process.env.UCG_IP) return;
+    const data = await getHardwareCached({ force: true });
+    sampleUcgHistory(data);
+}
+registerBackendSampler('ucgHistory', collectUcgHistory, normalDeviceSampleMs);
 app.get('/api/hardware/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
         module: 'api.hardware', function: 'listHistory'
@@ -2724,8 +2762,6 @@ app.get('/api/hardware/history', (req, res) => {
 /* ===================== NAS 歷史自建取樣器 =====================
    UGOS 沒有提供歷史 API (只有即時快照 get_all)，這裡自己定期取樣 get_all + volume/list 並持久化，
    讓「系統負載 / 網路流量 / 散熱 / 儲存趨勢」四張圖有真實歷史可畫，不需要另外部署 NAS Monitor (系統 B)。 */
-let lastNasSampleTs = 0;
-
 async function sampleNasHistory() {
     if (!nasConfigured()) return;
     try {
@@ -2775,15 +2811,7 @@ async function sampleNasHistory() {
         historyDb.insertPoint('nas', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
     } catch (e) { throw e; }
 }
-// 自適應：正在看 NAS 頁時每 3 秒、閒置時每 15 分鐘。
-lifecycleInterval(() => {
-    const active = isDeviceSamplingActive('nas');
-    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : 900000;
-    if (Date.now() - lastNasSampleTs >= gap) {
-        lastNasSampleTs = Date.now();
-        runSerialJob('nasHistory', sampleNasHistory);
-    }
-}, 1000);
+registerBackendSampler('nasHistory', sampleNasHistory, normalDeviceSampleMs);
 
 function nasHistorySince(hours) {
     return historyDb.getSince('nas', Date.now() - hours * 3600000);
@@ -3150,12 +3178,22 @@ app.post('/api/settings', (req, res) => {
     });
     if (!input) return;
     const next = { ...appSettings, ...input };
+    normalizeAppSettings(next, input);
+    if (next.activeLeaseSec <= next.heartbeatSec) {
+        return apiError(res, new writeInput.InputValidationError('activeLeaseSec must be greater than heartbeatSec', { field: 'activeLeaseSec' }), {
+            status: 400, code: ERROR_CODES.API_VALIDATION_FAILED, module: 'api.settings', function: 'saveAppSettings', logMessage: 'Invalid heartbeat lease configuration'
+        });
+    }
     try { saveAppSettings(next); }
     catch (error) {
-        if (error.committed) scheduleServerJobs();
+        if (error.committed) {
+            scheduleServerJobs();
+            rebuildBackendSamplers();
+        }
         return apiError(res, error, { code: ERROR_CODES.SYS_CONFIG_INVALID, module: 'api.settings', function: 'saveAppSettings', logMessage: 'App settings persistence failed' });
     }
-    scheduleServerJobs();   // 立即套用新的伺服器端間隔
+    scheduleServerJobs();
+    rebuildBackendSamplers(); // Clear old timers before scheduling with new values.
     res.json({ ok: true, settings: appSettings });
 });
 
@@ -3533,7 +3571,7 @@ async function buildReport() {
 
     // ── UPS ──
     try {
-        const upsPoll = await pollUpsIfDue((appSettings.upsSampleSec || 30) * 1000);
+        const upsPoll = await sampleUpsIfDue(upsSampleMs());
         const ups = upsPoll.snapshot.lastGood;
         if (ups) {
             L.push('\n━━ 🔋 UPS ━━');
@@ -3753,7 +3791,7 @@ async function telegramDockerSummary(args) {
     return lines.join('\n');
 }
 async function telegramUpsSummary() {
-    const result = await pollUpsIfDue((appSettings.upsSampleSec || 30) * 1000);
+    const result = await sampleUpsIfDue(upsSampleMs());
     const ups = result.snapshot.lastGood;
     if (!ups) return `🔌 UPS 無法讀取 (${result.snapshot.fetchHealth} ${result.snapshot.consecutiveFailures}/${result.snapshot.failureThreshold})\n${result.snapshot.failureReason || upsLastReason}`;
     return [
@@ -3921,17 +3959,7 @@ async function pollWiimTemp() {
     });
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
-// 自適應排程：正在看 WiiM 頁時每 3 秒取樣，閒置時降為 trendIdleSec。
-let lastWiimPollTs = 0;
-lifecycleInterval(() => {
-    const now = Date.now();
-    const active = isDeviceSamplingActive('wiim');
-    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : appSettings.trendIdleSec * 1000;
-    if (now - lastWiimPollTs >= gap) {
-        lastWiimPollTs = now;
-        runSerialJob('wiimTemperature', pollWiimTemp);
-    }
-}, 1000);
+registerBackendSampler('wiimTemperature', pollWiimTemp, normalDeviceSampleMs);
 
 app.get('/api/wiim/history', (req, res) => {
     res.json({
@@ -4176,15 +4204,68 @@ async function ppbGet(path) {
 // ppb-i18n-zh.json 即擷取自 PowerPanel Business 網頁的官方 zh 語系檔
 // (assets/i18n/zh.json 的 eventDescription/eventName 全部 332 句)，翻譯結果與官方介面一模一樣。
 const ppbZhMap = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'ppb-i18n-zh.json'), 'utf8')); } catch { return {}; } })();
+let ppbEventSyncInFlight = null;
+let lastPpbEventSyncTs = 0;
+let lastPpbEventSyncAttemptTs = 0;
+let ppbEventSyncInitialized = historyDb.listUpsPowerEvents(1).length > 0;
+
+function ppbConfigured() {
+    return !!(process.env.PPB_USER && process.env.PPB_PASSWORD);
+}
+
+async function syncPpbEvents() {
+    if (ppbEventSyncInFlight) return ppbEventSyncInFlight;
+    const sync = (async () => {
+        lastPpbEventSyncAttemptTs = Date.now();
+        const raw = await ppbGet('/local/rest/v1/eventlogs/report');
+        const normalized = (Array.isArray(raw) ? raw : [])
+            .map(event => normalizePpbEvent(event, {
+                translate: description => ppbZhMap[description.trim()] || description
+            }))
+            .filter(Boolean);
+        const created = [];
+        for (const event of normalized) {
+            const result = historyDb.recordUpsPowerEvent(event);
+            if (result.created && result.event) created.push({ ...result.event, sag: event.sag });
+        }
+        const shouldNotify = ppbEventSyncInitialized;
+        ppbEventSyncInitialized = true;
+        lastPpbEventSyncTs = Date.now();
+        const settings = loadNotifSettings();
+        if (shouldNotify && settings.enabled && settings.triggerUpsSag !== false) {
+            for (const event of created.filter(item => item.sag).slice(0, 3)) {
+                await notify('⚠️ UPS 原廠記錄到市電壓降', event.description);
+            }
+        }
+        return { created: created.length, events: historyDb.listUpsPowerEvents(200) };
+    })();
+    ppbEventSyncInFlight = sync;
+    try { return await sync; }
+    finally { if (ppbEventSyncInFlight === sync) ppbEventSyncInFlight = null; }
+}
+
+async function syncPpbEventsIfDue(maxAgeMs) {
+    if (lastPpbEventSyncAttemptTs && Date.now() - lastPpbEventSyncAttemptTs < maxAgeMs) {
+        return { created: 0, events: historyDb.listUpsPowerEvents(200), cached: true };
+    }
+    return { ...await syncPpbEvents(), cached: false };
+}
+
 app.get('/api/ups/ppb-events', async (req, res) => {
     try {
-        const raw = await ppbGet('/local/rest/v1/eventlogs/report');
-        const events = (Array.isArray(raw) ? raw : []).map(e => ({
-            id: e.id, ts: e.logTime24H,
-            desc: ppbZhMap[(e.description || '').trim()] || e.description,
-            level: /failure|lost|fault/i.test(e.description) ? 'error' : /test/i.test(e.description) ? 'test' : /resumed|restored/i.test(e.description) ? 'ok' : 'info'
+        const result = ppbConfigured()
+            ? await syncPpbEventsIfDue(isDeviceSamplingActive('ups') ? 10000 : 60000)
+            : { events: historyDb.listUpsPowerEvents(200), cached: true };
+        const events = result.events.map(event => ({
+            id: event.externalId,
+            ts: event.eventTs ? new Date(event.eventTs).toISOString() : new Date(event.observedTs).toISOString(),
+            desc: event.description,
+            level: event.severity,
+            source: event.source,
+            type: event.type,
+            inputV: event.inputV
         }));
-        res.json({ events, source: 'ppb' });
+        res.json({ events, source: ppbConfigured() ? 'ppb' : 'local', ppbConfigured: ppbConfigured(), cached: result.cached, syncedAt: lastPpbEventSyncTs || null });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_UPS_FAILED, module: 'api.ups', function: 'getPpbEvents', logMessage: 'Failed to fetch PowerPanel events' });
     }
@@ -4327,21 +4408,6 @@ function lastUpsAttemptAt(snapshot) {
     return Math.max(snapshot.lastSuccessAt || 0, snapshot.lastFailureAt || 0);
 }
 
-// UI、報表與啟動診斷可共用近期結果，避免它們各自加速 failure counter。
-async function pollUpsIfDue(maxAgeMs) {
-    const before = upsFetchState.snapshot();
-    const lastAttemptAt = lastUpsAttemptAt(before);
-    if (lastAttemptAt && Date.now() - lastAttemptAt < maxAgeMs) {
-        return {
-            live: before.fetchHealth === FETCH_HEALTH.HEALTHY ? before.lastGood : null,
-            snapshot: before,
-            transitions: [],
-            polled: false
-        };
-    }
-    return { ...await pollUpsFetchState(), polled: true };
-}
-
 function upsStatusPayload(snapshot, { cached = false } = {}) {
     const lastGood = snapshot.lastGood ? { ...snapshot.lastGood } : null;
     const payload = lastGood || {};
@@ -4351,7 +4417,8 @@ function upsStatusPayload(snapshot, { cached = false } = {}) {
         source: snapshot.fetchHealth === FETCH_HEALTH.OFFLINE || !lastGood ? 'unreachable' : lastGood.source,
         lastKnown: snapshot.dataIsStale ? lastGood : undefined,
         cached,
-        sampleSec: appSettings.upsSampleSec || 30,
+        sampleSec: isDeviceSamplingActive('ups') ? appSettings.upsActiveBackendSampleSec : appSettings.upsIdleBackendSampleSec,
+        focusedSampling: isDeviceSamplingActive('ups'),
         fetchHealth: snapshot.fetchHealth,
         consecutiveFailures: snapshot.consecutiveFailures,
         failureThreshold: snapshot.failureThreshold,
@@ -4365,8 +4432,38 @@ function upsStatusPayload(snapshot, { cached = false } = {}) {
     };
 }
 
-// 取樣 + 斷電事件偵測 (皆持久化)
-async function sampleUps() {
+let upsSagDetector = null;
+let upsSagDetectorThreshold = null;
+let upsSampleInFlight = null;
+
+function currentUpsSagDetector(settings) {
+    const threshold = settings.upsSagThresholdV ?? DEFAULT_SAG_THRESHOLD_V;
+    if (!upsSagDetector || upsSagDetectorThreshold !== threshold) {
+        upsSagDetector = createUpsSagDetector({ thresholdV: threshold });
+        upsSagDetectorThreshold = threshold;
+    }
+    return upsSagDetector;
+}
+
+function persistLocalUpsPowerEvent(event, live) {
+    const isStart = event.type === 'sag_started';
+    const occurredAt = isStart ? event.at : event.startedAt;
+    return historyDb.recordUpsPowerEvent({
+        source: live.actualSource || live.source || 'ups',
+        externalId: `${event.type}:${occurredAt}`,
+        type: isStart ? 'voltage_sag' : 'voltage_recovered',
+        eventTs: event.at,
+        observedTs: Date.now(),
+        inputV: isStart ? event.inputV : event.minimumV,
+        severity: isStart ? 'warning' : 'ok',
+        description: isStart
+            ? `市電輸入瞬間降至 ${event.inputV}V（門檻 ${event.thresholdV}V）`
+            : `市電輸入恢復至 ${event.inputV}V；最低 ${event.minimumV}V，持續約 ${(event.durationMs / 1000).toFixed(1)} 秒`
+    });
+}
+
+// 取樣 + 電力品質/斷電事件偵測 (皆持久化)
+async function performUpsSample() {
     const { live, snapshot } = await pollUpsFetchState();
     if (!live) {
         sysLog('UPS', `本次取樣失敗 (${snapshot.fetchHealth} ${snapshot.consecutiveFailures}/${snapshot.failureThreshold})，保留最後有效資料`, true);
@@ -4378,6 +4475,21 @@ async function sampleUps() {
         t: new Date().toISOString(), inV: live.inputV, outV: live.outputV,
         batt: live.battery, load: live.loadPct, rt: live.runtimeSec, ob: live.onBattery ? 1 : 0
     }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+
+    const notificationSettings = loadNotifSettings();
+    const sagEvent = currentUpsSagDetector(notificationSettings).observe(live);
+    if (sagEvent.type) {
+        const stored = persistLocalUpsPowerEvent(sagEvent, live);
+        if (stored.created && sagEvent.type === 'sag_started') {
+            historyDb.flush();
+            sysLog('UPS', `⚠️ 偵測到市電瞬間壓降：${sagEvent.inputV}V（門檻 ${sagEvent.thresholdV}V）`, true);
+            if (notificationSettings.enabled && notificationSettings.triggerUpsSag !== false) {
+                await notify('⚠️ 偵測到市電瞬間壓降', `輸入電壓降至 ${sagEvent.inputV}V（警示門檻 ${sagEvent.thresholdV}V）`);
+            }
+        } else if (stored.created && sagEvent.type === 'sag_recovered') {
+            sysLog('UPS', `✅ 市電電壓恢復：${sagEvent.inputV}V（最低 ${sagEvent.minimumV}V）`);
+        }
+    }
 
     // 斷電事件：市電斷 → 開新事件；恢復 → 補上結束時間與時長
     if (live.onBattery && !upsWasOnBattery) {
@@ -4436,22 +4548,32 @@ async function sampleUps() {
     if (live.actualSource) lastUpsSource = live.actualSource;
     return snapshot;
 }
-let lastUpsHighLoadTs = 0, lastUpsLowRuntimeTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null;
-// UPS 取樣「不做閒置降頻」：斷電/電壓紀錄是核心需求，無人看網頁也要持續記錄 (本地指令，成本低)
-let upsLowBattNotified = false;
-let lastUpsSampleTs = 0;
-lifecycleInterval(() => {
-    const gap = (appSettings.upsSampleSec || 30) * 1000;
-    if (Date.now() - lastUpsSampleTs >= gap) {
-        lastUpsSampleTs = Date.now();
-        runSerialJob('upsSample', sampleUps);
+
+async function sampleUps() {
+    if (upsSampleInFlight) return upsSampleInFlight;
+    const sample = performUpsSample();
+    upsSampleInFlight = sample;
+    try { return await sample; }
+    finally { if (upsSampleInFlight === sample) upsSampleInFlight = null; }
+}
+
+async function sampleUpsIfDue(maxAgeMs) {
+    const before = upsFetchState.snapshot();
+    const lastAttemptAt = lastUpsAttemptAt(before);
+    if (lastAttemptAt && Date.now() - lastAttemptAt < maxAgeMs) {
+        return { snapshot: before, polled: false };
     }
-}, 1000);
+    return { snapshot: await sampleUps(), polled: true };
+}
+let lastUpsHighLoadTs = 0, lastUpsLowRuntimeTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null;
+let upsLowBattNotified = false;
+registerBackendSampler('upsSample', () => sampleUpsIfDue(upsSampleMs()), upsSampleMs);
+registerBackendSampler('ppbEventSync', async () => {
+    if (ppbConfigured()) await syncPpbEventsIfDue(ppbEventSyncMs());
+}, ppbEventSyncMs);
 
 app.get('/api/ups/status', async (req, res) => {
-    // 前端與背景取樣共用 fetch-health 狀態；失敗時回傳 last-good + 明確 stale metadata。
-    const maxAge = (appSettings.upsSampleSec || 30) * 1000;
-    const result = await pollUpsIfDue(maxAge);
+    const result = await sampleUpsIfDue(upsSampleMs());
     res.json(upsStatusPayload(result.snapshot, { cached: !result.polled }));
 });
 
@@ -4601,13 +4723,19 @@ const LINUX_CMD = [
     'cat /proc/stat', 'sleep 1; cat /proc/stat'
 ].join('; echo __S__; ');
 let linuxCache = null, linuxInflight = null;
-function fetchLinuxSSH() {
-    return new Promise((resolve, reject) => {
-        const conn = new Client();
-        conn.on('ready', () => {
-            executeSshCommand(conn, LINUX_CMD).then(out => {
-                conn.end();
-                try {
+const linuxSshPool = createSshConnectionPool({
+    getConfig: () => ({
+        host: process.env.LINUX_HOST,
+        port: parseInt(process.env.LINUX_SSH_PORT || '22', 10),
+        username: process.env.LINUX_SSH_USER,
+        password: process.env.LINUX_SSH_PASSWORD
+    })
+});
+async function fetchLinuxSSH() {
+    let out;
+    try { out = await linuxSshPool.execute(LINUX_CMD); }
+    catch (error) { throw new Error(`SSH exec failed: ${error.code || error.message}`, { cause: error }); }
+    try {
                         const sec = out.split('__S__');
                         const hostname = sec[0].trim();
                         const upSec = parseFloat(sec[1]);
@@ -4622,7 +4750,7 @@ function fetchLinuxSSH() {
                             const dT = s2.cpu.total - s1.cpu.total, dI = s2.cpu.idle - s1.cpu.idle;
                             cpuUsage = dT > 0 ? Math.round((1 - dI / dT) * 100) : 0;
                         }
-                    resolve({
+                    return {
                             hostname, cpuUsage,
                             cpuTemp: temps.length ? Math.round(Math.max(...temps)) : null,
                             memUsagePct: memTotal ? Math.round(memUsed / memTotal * 100) : 0,
@@ -4632,24 +4760,13 @@ function fetchLinuxSSH() {
                             load,
                             uptime: isNaN(upSec) ? '--' : `up ${Math.floor(upSec / 86400)}d ${Math.floor((upSec % 86400) / 3600)}h`,
                             dataSource: 'real'
-                    });
-                } catch (e) { reject(new Error('parse failed: ' + e.message)); }
-            }, error => {
-                conn.end();
-                reject(new Error(`SSH exec failed: ${error.code || error.message}`));
-            });
-        }).on('error', e => reject(e))
-            .connect({
-                host: process.env.LINUX_HOST,
-                port: parseInt(process.env.LINUX_SSH_PORT || '22', 10),
-                username: process.env.LINUX_SSH_USER,
-                password: process.env.LINUX_SSH_PASSWORD,
-                readyTimeout: 8000
-            });
-    });
+                    };
+    } catch (error) { throw new Error('parse failed: ' + error.message, { cause: error }); }
 }
 async function getLinuxCached() {
-    const cacheMs = isDeviceSamplingActive('linux') ? 2000 : 10000;
+    const cacheMs = isDeviceSamplingActive('general')
+        ? Math.max(1, appSettings.deviceActiveBackendSampleSec - 1) * 1000
+        : 10000;
     if (linuxCache && Date.now() - linuxCache.ts < cacheMs) return linuxCache.data;
     if (!linuxInflight) linuxInflight = fetchLinuxSSH().finally(() => { linuxInflight = null; });
     const data = await linuxInflight;
@@ -4664,22 +4781,15 @@ app.get('/api/linux/stats', async (req, res) => {
         res.json({ source: 'error', error: publicError(e) });
     }
 });
-// 歷史取樣 (自適應：Linux 頁可見時 3s / 閒置 15min)
-let lastLinuxSampleTs = 0;
-lifecycleInterval(() => {
+async function sampleLinuxHistory() {
     if (!linuxConfigured()) return;
-    const active = isDeviceSamplingActive('linux');
-    const gap = active ? FOCUSED_DEVICE_SAMPLE_MS : 900000;
-    if (Date.now() - lastLinuxSampleTs < gap) return;
-    lastLinuxSampleTs = Date.now();
-    runSerialJob('linuxHistory', async () => {
-        const d = await getLinuxCached();
-        historyDb.insertPoint('linux', {
-            t: new Date().toISOString(), cpu: d.cpuUsage, temp: d.cpuTemp,
-            mem: d.memUsagePct, load: d.load && d.load[0]
-        }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
-    });
-}, 1000);
+    const d = await getLinuxCached();
+    historyDb.insertPoint('linux', {
+        t: new Date().toISOString(), cpu: d.cpuUsage, temp: d.cpuTemp,
+        mem: d.memUsagePct, load: d.load && d.load[0]
+    }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+}
+registerBackendSampler('linuxHistory', sampleLinuxHistory, normalDeviceSampleMs);
 app.get('/api/linux/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
         module: 'api.linux', function: 'listHistory'
@@ -4880,7 +4990,7 @@ async function startupDiagnostics() {
 
     // 7. UPS
     warnIfLocalhost('PPB_HOST', PPB_HOST());
-    const upsPoll = await pollUpsIfDue((appSettings.upsSampleSec || 30) * 1000);
+    const upsPoll = await sampleUpsIfDue(upsSampleMs());
     const ups = upsPoll.snapshot.lastGood;
     // PPB 已成功供應資料時，未設定的 NUT 回退值與目前 UPS 無關，不應誤報為設定錯誤。
     if (!ups || upsPoll.snapshot.dataIsStale || ups.actualSource === 'nut') warnIfLocalhost('NUT_HOST', NUT_HOST());
@@ -4939,6 +5049,8 @@ function gracefulShutdown(signal, exitCode = 0) {
         lifecycleTimeouts.clear();
         Object.values(jobTimers).forEach(clearInterval);
         jobTimers = {};
+        ucgSshPool.close();
+        linuxSshPool.close();
 
         resetSseUpstream();
         for (const client of sseClients) {

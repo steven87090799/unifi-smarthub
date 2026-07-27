@@ -170,10 +170,11 @@ test('generic history parsers support route-specific integer bounds and defaults
 });
 
 test('heartbeat and WiiM status queries use exact bounded enums', () => {
-    assert.deepEqual(parseHeartbeatQuery({}), { scope: '', scopes: [], focus: false });
-    assert.deepEqual(parseHeartbeatQuery({ scope: 'trend,nas', focus: '1' }), {
-        scope: 'trend,nas', scopes: ['trend', 'nas'], focus: true
+    assert.deepEqual(parseHeartbeatQuery({}), { scope: '', scopes: [], focus: false, session: 'legacy' });
+    assert.deepEqual(parseHeartbeatQuery({ scope: 'trend,nas,ups', focus: '1' }), {
+        scope: 'trend,nas,ups', scopes: ['trend', 'nas', 'ups'], focus: true, session: 'legacy'
     });
+    assert.equal(parseHeartbeatQuery({ scope: 'general', session: 'tab-1' }).session, 'tab-1');
     assert.deepEqual(parseWiimStatusQuery({}), { type: 'all' });
     assert.deepEqual(parseWiimStatusQuery({ type: 'play' }), { type: 'play' });
 

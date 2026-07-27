@@ -11,6 +11,7 @@
 | 正式發布 | [PRODUCTION-RELEASE-CHECKLIST.md](operations/PRODUCTION-RELEASE-CHECKLIST.md) |
 | Docker 容器管理 | [NAS-DOCKER-MONITOR-SETUP.md](operations/NAS-DOCKER-MONITOR-SETUP.md) |
 | 診斷與健康狀態 | [OBSERVABILITY.md](operations/OBSERVABILITY.md) |
+| 所有前後端更新頻率 | [POLLING-INTERVALS.md](operations/POLLING-INTERVALS.md) |
 | 裝置整合 | [integrations/](integrations/) |
 | 未完成規劃 | [planning/](planning/) |
 | 最終報告與發布說明 | [reports/](reports/) |

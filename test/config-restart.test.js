@@ -173,7 +173,17 @@ test('a UI-persisted connection setting survives a real production process resta
         'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE'
     ]);
     for (const [route, body] of [
-        ['/api/settings', { watcherSec: 45, reportEnabled: false }],
+        ['/api/settings', {
+            watcherSec: 45, reportEnabled: false,
+            deviceActiveFrontendPollSec: 7,
+            deviceActiveBackendSampleSec: 8,
+            deviceIdleBackendSampleSec: 601,
+            heartbeatSec: 6,
+            activeLeaseSec: 31,
+            upsFrontendPollSec: 4,
+            upsActiveBackendSampleSec: 5,
+            upsIdleBackendSampleSec: 11
+        }],
         ['/api/ui-preferences', { preferences: { theme: 'dark' } }],
         ['/api/client-aliases', { mac: 'AA:BB:CC:DD:EE:FF', name: 'Restart Lamp' }],
         ['/api/security/settings', { autoDefense: true }],
@@ -214,8 +224,17 @@ test('a UI-persisted connection setting survives a real production process resta
     assert.deepEqual(afterOrdinaryRestart.pendingRestartFields.sort(), [
         'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'NAS_MONITOR_URL'
     ]);
-    assert.equal((await adminRead(second, '/api/settings').then(r => r.json())).watcherSec, 45);
-    assert.equal((await adminRead(second, '/api/settings').then(r => r.json())).reportEnabled, false);
+    const restartedAppSettings = await adminRead(second, '/api/settings').then(r => r.json());
+    assert.equal(restartedAppSettings.watcherSec, 45);
+    assert.equal(restartedAppSettings.reportEnabled, false);
+    assert.equal(restartedAppSettings.deviceActiveFrontendPollSec, 7);
+    assert.equal(restartedAppSettings.deviceActiveBackendSampleSec, 8);
+    assert.equal(restartedAppSettings.deviceIdleBackendSampleSec, 601);
+    assert.equal(restartedAppSettings.heartbeatSec, 6);
+    assert.equal(restartedAppSettings.activeLeaseSec, 31);
+    assert.equal(restartedAppSettings.upsFrontendPollSec, 4);
+    assert.equal(restartedAppSettings.upsActiveBackendSampleSec, 5);
+    assert.equal(restartedAppSettings.upsIdleBackendSampleSec, 11);
     assert.equal((await adminRead(second, '/api/ui-preferences').then(r => r.json())).preferences.theme, 'dark');
     assert.equal((await adminRead(second, '/api/client-aliases').then(r => r.json())).aliases['aa:bb:cc:dd:ee:ff'], 'Restart Lamp');
     assert.equal((await adminRead(second, '/api/security/settings').then(r => r.json())).autoDefense, true);
