@@ -663,9 +663,9 @@ let mockTrendHistory = (() => {
     return points;
 })();
 
-// 自適應取樣：依正式後端預設值，有前端活躍時每 30 秒、閒置時每 30 分鐘。
+// Mock trend sampling follows the production normal-device defaults.
 let lastClientActivity = 0, lastSampleTs = 0;
-let ACTIVE_SAMPLE_MS = 30000, IDLE_SAMPLE_MS = 30 * 60 * 1000, ACTIVE_WINDOW_MS = 30000;
+let ACTIVE_SAMPLE_MS = 5000, IDLE_SAMPLE_MS = 600000, ACTIVE_WINDOW_MS = 30000;
 let lastMockPublicHealthTs = Date.now();
 setInterval(() => {
     const now = Date.now();
@@ -684,7 +684,6 @@ setInterval(() => {
 app.get('/api/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
     if (!query) return;
-    lastClientActivity = Date.now();
     const cutoff = Date.now() - query.hours * 3600000;
     res.json({ history: mockTrendHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
 });
@@ -692,8 +691,8 @@ app.get('/api/history', (req, res) => {
 app.get('/api/heartbeat', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHeartbeatQuery(req.query));
     if (!query) return;
-    lastClientActivity = Date.now();
-    res.json({ ok: true, mode: 'active', activeScopes: query.scopes, promptScopes: [] });
+    lastClientActivity = query.scopes.includes('general') ? Date.now() : 0;
+    res.json({ ok: true, mode: query.scopes.includes('general') ? 'active' : 'idle', activeScopes: query.scopes, promptScopes: [], session: query.session });
 });
 
 // 15-18. UGREEN NAS 模擬端點
@@ -892,7 +891,7 @@ let mockNotif = {
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerNasDiskHealth: true, triggerNasOffline: false, triggerNasHighCpu: false, nasCpuAlert: 90, triggerNasHighMemory: false, nasMemoryAlert: 90,
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,
     triggerWanDown: false, triggerWanLatency: false, wanLatencyAlert: 100, triggerUnifiOffline: false, triggerNasLog: true, triggerNasSleepWake: false,
-    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSourceChange: false, triggerUpsOffline: true,
+    triggerUpsHighLoad: false, upsLoadAlert: 80, triggerUpsLowRuntime: false, upsRuntimeAlertMin: 10, triggerUpsVoltAbnormal: false, upsVoltDeviationPct: 10, triggerUpsSag: true, upsSagThresholdV: 105, triggerUpsSourceChange: false, triggerUpsOffline: true,
     triggerAdgProtection: true, triggerAdgOffline: false, triggerAdgHighBlockRate: false, adgBlockRateAlert: 50,
     triggerLinuxTemp: true, linuxTempAlert: 70, triggerLinuxOffline: false, triggerLinuxDisk: false, linuxDiskAlert: 90, triggerLinuxHighCpu: false, linuxCpuAlert: 90, triggerLinuxHighMemory: false, linuxMemoryAlert: 90, triggerLinuxHighLoad: false, linuxLoadAlert: 4,
     triggerDockerCriticalLog: true, triggerDockerErrorLog: false, triggerDockerState: true, triggerDockerHealth: true, triggerDockerRestart: true, triggerDockerInventory: false, triggerDockerOom: true, triggerDockerHighCpu: false, dockerCpuAlert: 90, triggerDockerHighMemory: false, dockerMemoryAlert: 90,
@@ -981,26 +980,53 @@ setInterval(() => {
 
 /* ===== 應用程式設定 (模擬) ===== */
 const MOCK_APP_SETTING_RANGES = {
-    trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600],
+    deviceActiveFrontendPollSec: [1, 3600], deviceActiveBackendSampleSec: [1, 3600],
+    deviceIdleBackendSampleSec: [1, 86400], heartbeatSec: [1, 3600], activeLeaseSec: [2, 3600],
+    upsFrontendPollSec: [1, 3600], upsActiveBackendSampleSec: [1, 3600], upsIdleBackendSampleSec: [1, 3600],
+    upsHistoryFrontendPollSec: [1, 3600], upsPpbEventsFrontendPollSec: [1, 3600],
+    upsPpbEventActiveBackendSampleSec: [1, 3600], upsPpbEventIdleBackendSampleSec: [1, 3600],
+    trendActiveSec: [5, 3600], trendIdleSec: [60, 86400], activeWindowSec: [5, 3600], upsSampleSec: [5, 3600],
     watcherSec: [5, 3600], autoDefenseSec: [5, 3600], reportHour: [0, 23], reportHour2: [0, 23],
-    upsSampleSec: [5, 3600], wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
+    wiimCpuAlert: [1, 120], wiimBoardAlert: [1, 120],
     toastSec: [1, 60], historyFlushMin: [1, 60], historyKeepDays: [1, 365]
 };
 let mockAppSettings = {
-    trendActiveSec: 30, trendIdleSec: 1800, activeWindowSec: 30, watcherSec: 20,
+    deviceActiveFrontendPollSec: 5, deviceActiveBackendSampleSec: 5, deviceIdleBackendSampleSec: 600,
+    heartbeatSec: 5, activeLeaseSec: 30,
+    upsFrontendPollSec: 3, upsActiveBackendSampleSec: 3, upsIdleBackendSampleSec: 10,
+    upsHistoryFrontendPollSec: 10, upsPpbEventsFrontendPollSec: 10,
+    upsPpbEventActiveBackendSampleSec: 10, upsPpbEventIdleBackendSampleSec: 60,
+    watcherSec: 20,
     toastSec: 10, autoDefenseSec: 30, reportEnabled: true, reportFreq: 'daily',
-    reportHour: 8, reportHour2: 20, upsSampleSec: 30, wiimCpuAlert: 70,
+    reportHour: 8, reportHour2: 20, wiimCpuAlert: 70,
     wiimBoardAlert: 60, historyFlushMin: 10, historyKeepDays: 30
 };
+function normalizeMockAppSettings(next, incoming = {}) {
+    if (Object.hasOwn(incoming, 'trendActiveSec') && !Object.hasOwn(incoming, 'deviceActiveBackendSampleSec')) next.deviceActiveBackendSampleSec = incoming.trendActiveSec;
+    if (Object.hasOwn(incoming, 'trendIdleSec') && !Object.hasOwn(incoming, 'deviceIdleBackendSampleSec')) next.deviceIdleBackendSampleSec = incoming.trendIdleSec;
+    if (Object.hasOwn(incoming, 'activeWindowSec') && !Object.hasOwn(incoming, 'activeLeaseSec')) next.activeLeaseSec = incoming.activeWindowSec;
+    if (Object.hasOwn(incoming, 'upsSampleSec') && !Object.hasOwn(incoming, 'upsIdleBackendSampleSec')) next.upsIdleBackendSampleSec = incoming.upsSampleSec;
+    next.trendActiveSec = next.deviceActiveBackendSampleSec;
+    next.trendIdleSec = next.deviceIdleBackendSampleSec;
+    next.activeWindowSec = next.activeLeaseSec;
+    next.upsSampleSec = next.upsIdleBackendSampleSec;
+    return next;
+}
+mockAppSettings = normalizeMockAppSettings(mockAppSettings);
 app.get('/api/settings', (req, res) => res.json(mockAppSettings));
 app.post('/api/settings', (req, res) => {
     const input = validatedInput(res, () => writeInput.parseAppSettings(req.body, MOCK_APP_SETTING_RANGES));
     if (!input) return;
-    Object.assign(mockAppSettings, input);
-    // 套用新的趨勢取樣間隔
-    ACTIVE_SAMPLE_MS = mockAppSettings.trendActiveSec * 1000;
-    IDLE_SAMPLE_MS = mockAppSettings.trendIdleSec * 1000;
-    ACTIVE_WINDOW_MS = mockAppSettings.activeWindowSec * 1000;
+    const next = normalizeMockAppSettings({ ...mockAppSettings, ...input }, input);
+    if (next.activeLeaseSec <= next.heartbeatSec) {
+        return mockApiError(res, new writeInput.InputValidationError('activeLeaseSec must be greater than heartbeatSec', { field: 'activeLeaseSec' }), {
+            status: 400, code: ERROR_CODES.API_VALIDATION_FAILED
+        });
+    }
+    mockAppSettings = next;
+    ACTIVE_SAMPLE_MS = mockAppSettings.deviceActiveBackendSampleSec * 1000;
+    IDLE_SAMPLE_MS = mockAppSettings.deviceIdleBackendSampleSec * 1000;
+    ACTIVE_WINDOW_MS = mockAppSettings.activeLeaseSec * 1000;
     res.json({ ok: true, settings: mockAppSettings });
 });
 
@@ -1170,7 +1196,8 @@ const mockUpsEvents = [
 app.get('/api/ups/status', (req, res) => res.json({
     source: 'nut', model: 'CyberPower CP1500PFCLCDa', status: 'OL',
     onBattery: false, inputV: +(110 + Math.random() * 2).toFixed(1), outputV: 110.2,
-    battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 30
+    battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 3,
+    focusedSampling: true, cached: false
 }));
 app.get('/api/ups/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
@@ -1179,7 +1206,10 @@ app.get('/api/ups/history', (req, res) => {
     res.json({ history: mockUpsHistory.filter(p => new Date(p.t).getTime() >= cutoff) });
 });
 app.get('/api/ups/events', (req, res) => res.json({ events: mockUpsEvents }));
-app.get('/api/ups/ppb-events', (_req, res) => res.json({ events: [], source: 'mock' }));
+app.get('/api/ups/ppb-events', (_req, res) => res.json({
+    events: [{ id: 'mock-sag-1', ts: new Date(Date.now() - 3600000).toISOString(), desc: '市電輸入瞬間壓降至 102V', level: 'warning' }],
+    source: 'ppb', cached: false, syncedAt: Date.now()
+}));
 app.get('/api/ups/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');

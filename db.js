@@ -143,6 +143,7 @@ function createHistoryDb(dataDir, options = {}) {
             data TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_history_series_ts ON history(series, ts);
+        CREATE INDEX IF NOT EXISTS idx_history_series_ts_id ON history(series, ts, id);
         CREATE TABLE IF NOT EXISTS ups_events (
             id INTEGER PRIMARY KEY,
             start_ts INTEGER NOT NULL,
@@ -152,6 +153,20 @@ function createHistoryDb(dataDir, options = {}) {
             start_voltage REAL
         );
         CREATE INDEX IF NOT EXISTS idx_ups_events_start ON ups_events(start_ts);
+        CREATE TABLE IF NOT EXISTS ups_power_events (
+            id INTEGER PRIMARY KEY,
+            source TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            event_ts INTEGER,
+            observed_ts INTEGER NOT NULL,
+            input_v REAL,
+            severity TEXT NOT NULL,
+            description TEXT NOT NULL,
+            UNIQUE(source, external_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ups_power_events_time
+            ON ups_power_events(COALESCE(event_ts, observed_ts) DESC, id DESC);
         CREATE TABLE IF NOT EXISTS block_history (
             id INTEGER PRIMARY KEY,
             ts INTEGER NOT NULL,
@@ -421,7 +436,7 @@ function createHistoryDb(dataDir, options = {}) {
 
     const insertPointStmt = db.prepare('INSERT INTO history (series, ts, data) VALUES (?, ?, ?)');
     const countSeriesStmt = db.prepare('SELECT COUNT(*) AS count FROM history WHERE series = ?');
-    const getSinceStmt = db.prepare('SELECT ts, data FROM history WHERE series = ? AND ts >= ? ORDER BY ts ASC, id ASC');
+    const getSinceStmt = db.prepare('SELECT ts, data FROM history INDEXED BY idx_history_series_ts_id WHERE series = ? AND ts >= ? ORDER BY ts ASC, id ASC');
     const getLatestStmt = db.prepare('SELECT ts, data FROM history WHERE series = ? ORDER BY ts DESC, id DESC LIMIT 1');
     const deleteSeriesStmt = db.prepare('DELETE FROM history WHERE series = ?');
     const deleteBeforeStmt = db.prepare('DELETE FROM history WHERE series = ? AND ts < ?');
@@ -446,6 +461,26 @@ function createHistoryDb(dataDir, options = {}) {
         UPDATE ups_events
         SET min_battery = @min_battery
         WHERE id = @id AND end_ts IS NULL
+    `);
+    const insertUpsPowerEventStmt = db.prepare(`
+        INSERT OR IGNORE INTO ups_power_events (
+            source, external_id, event_type, event_ts, observed_ts, input_v, severity, description
+        ) VALUES (
+            @source, @external_id, @event_type, @event_ts, @observed_ts, @input_v, @severity, @description
+        )
+    `);
+    const getUpsPowerEventStmt = db.prepare(`
+        SELECT * FROM ups_power_events WHERE source = ? AND external_id = ?
+    `);
+    const listUpsPowerEventsStmt = db.prepare(`
+        SELECT * FROM ups_power_events
+        ORDER BY COALESCE(event_ts, observed_ts) DESC, id DESC LIMIT ?
+    `);
+    const deleteOldUpsPowerEventsStmt = db.prepare(`
+        DELETE FROM ups_power_events WHERE id IN (
+            SELECT id FROM ups_power_events
+            ORDER BY COALESCE(event_ts, observed_ts) DESC, id DESC LIMIT -1 OFFSET 1000
+        )
     `);
     const deleteOldUpsEventsStmt = db.prepare(`
         DELETE FROM ups_events WHERE id IN (
@@ -1451,6 +1486,47 @@ function createHistoryDb(dataDir, options = {}) {
                 if (!open || minBattery == null) return;
                 updateUpsMinBatteryStmt.run({ id: open.id, min_battery: minBattery });
             });
+        },
+        recordUpsPowerEvent(entry) {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new TypeError('UPS power event must be an object');
+            }
+            const source = boundedRequiredString(entry.source, 32, 'UPS power event source');
+            const externalId = boundedRequiredString(entry.externalId, 200, 'UPS power event externalId');
+            const eventType = boundedRequiredString(entry.type, 64, 'UPS power event type');
+            const severity = boundedRequiredString(entry.severity || 'info', 16, 'UPS power event severity');
+            const description = boundedRequiredString(entry.description, 500, 'UPS power event description');
+            const eventTs = entry.eventTs == null ? null : Number(entry.eventTs);
+            const observedTs = Number(entry.observedTs);
+            const inputV = entry.inputV == null ? null : Number(entry.inputV);
+            if ((eventTs !== null && !Number.isInteger(eventTs)) || !Number.isInteger(observedTs)
+                || (inputV !== null && !Number.isFinite(inputV))) {
+                throw new TypeError('UPS power event timestamps or voltage are invalid');
+            }
+            return measure('recordUpsPowerEvent', 'ups_power_events', db.transaction(() => {
+                const result = insertUpsPowerEventStmt.run({
+                    source, external_id: externalId, event_type: eventType,
+                    event_ts: eventTs, observed_ts: observedTs, input_v: inputV,
+                    severity, description
+                });
+                deleteOldUpsPowerEventsStmt.run();
+                const row = getUpsPowerEventStmt.get(source, externalId);
+                return { created: result.changes === 1, event: row ? {
+                    id: row.id, source: row.source, externalId: row.external_id,
+                    type: row.event_type, eventTs: row.event_ts, observedTs: row.observed_ts,
+                    inputV: row.input_v, severity: row.severity, description: row.description
+                } : null };
+            }), { transaction: true });
+        },
+        listUpsPowerEvents(limit = 200) {
+            const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 200);
+            return measure('listUpsPowerEvents', 'ups_power_events', () => (
+                listUpsPowerEventsStmt.all(safeLimit).map(row => ({
+                    id: row.id, source: row.source, externalId: row.external_id,
+                    type: row.event_type, eventTs: row.event_ts, observedTs: row.observed_ts,
+                    inputV: row.input_v, severity: row.severity, description: row.description
+                }))
+            ));
         },
         insertBlock(entry) {
             return measure('insertBlock', 'block_history', db.transaction(() => {

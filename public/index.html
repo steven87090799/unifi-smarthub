@@ -2938,6 +2938,13 @@
                                             onclick="event.preventDefault()"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-ups-sag" class="accent-blue-500 w-4 h-4">
+                                        市電瞬間壓降低於
+                                        <input type="number" id="notif-ups-sag-threshold" min="80" max="125"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            onclick="event.preventDefault()"> V（220V 系統自動乘 2）
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-upssrc" class="accent-blue-500 w-4 h-4">
                                         UPS 資料來源切換 (例如 PowerPanel 斷線改回 pmset)
                                     </label>
@@ -3483,8 +3490,8 @@
                                 <p class="text-slate-400">你「<span
                                         class="text-slate-200 font-semibold">開著網頁時</span>」，瀏覽器每隔多久向後端要一次最新資料來更新畫面。<br><br>
                                     • 只影響<span class="text-slate-200">你眼前畫面的即時度</span>；關掉網頁就完全停止。<br>
-                                    • 存在<span class="text-slate-200">這台瀏覽器</span>，每個裝置可各自設定（手機、電腦互不影響）。<br>
-                                    • 改了<span class="text-slate-200">立即生效</span>，不用按儲存。<br>
+                                    • 使用<span class="text-slate-200">伺服器共用設定</span>，所有登入分頁讀取同一組間隔。<br>
+                                    • 改了按<span class="text-slate-200">儲存</span>後立即生效，不需重啟。<br>
                                     • 數字越小 → 畫面越即時，但越頻繁打後端。</p>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/60 rounded-xl p-4">
@@ -3494,23 +3501,16 @@
                                     • 影響<span class="text-slate-200">長期歷史記錄與自動化</span>（寫入趨勢資料庫、掃描威脅推播）。<br>
                                     • 存在<span class="text-slate-200">伺服器</span>，所有人共用、對整個系統生效。<br>
                                     • 改了要按<span class="text-slate-200">儲存</span>，後端立即重排。<br>
-                                    • 這裡的「趨勢取樣」跟前端無關，是後端寫入歷史檔的頻率。</p>
+                                    • 一般裝置使用統一 Active／Idle 間隔，UPS 保留自己的高頻間隔。</p>
                             </div>
                         </div>
                         <p class="text-[10px] text-slate-500 mt-3">💡
                             兩者的橋樑是「心跳」（在前端輪詢裡）：心跳讓後端知道有人在看，因而切到「有人瀏覽」的高頻取樣；沒心跳就用「閒置」頻率。</p>
                     </div>
 
-                    <!-- 前端輪詢間隔 -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-                        <div class="flex justify-between items-center mb-1">
-                            <h3 class="text-lg font-bold text-white tracking-wider">🖥️ 前端輪詢間隔（秒）</h3>
-                            <button onclick="resetPolling()"
-                                class="text-[10px] text-slate-400 hover:text-slate-200 font-bold">恢復預設</button>
-                        </div>
-                        <p class="text-[10px] text-slate-500 mb-4">你開著網頁時，各項資料多久向後端要一次。改了立即生效、只存在這台瀏覽器。每格下方說明它控制哪些畫面。
-                        </p>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" id="poll-config-grid"></div>
+                        <h3 class="text-lg font-bold text-white tracking-wider mb-1">🖥️ 前端更新與後端取樣</h3>
+                        <p class="text-[10px] text-slate-500">所有間隔由下方伺服器設定統一管理並立即套用；可見分頁才會輪詢與送出 heartbeat。隱藏分頁會釋放自己的 lease，不會影響其他仍可見的分頁。</p>
                     </div>
 
                     <!-- 伺服器端間隔 -->
@@ -3520,28 +3520,39 @@
                         <p class="text-[10px] text-slate-500">後端背景排程，無論誰連線都套用（存於伺服器）。每格下方說明它控制什麼。</p>
                         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
-                                <label class="text-[11px] font-bold text-slate-300 block mb-1">趨勢取樣（有人瀏覽）</label>
-                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">有人開著網頁時，後端多久把一筆「線上客戶端數 /
-                                    24H 威脅數 / ISP 延遲」寫進歷史檔。<span class="text-slate-300">決定趨勢圖的解析度</span>。</p>
-                                <div class="flex items-center gap-2"><input type="number" id="srv-trendActiveSec"
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">有人瀏覽時：前端畫面更新間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制可見 SmartHub 分頁多久向後端取得一次最新資料並更新畫面。只影響前端顯示，不直接控制歷史資料取樣。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-deviceActiveFrontendPollSec"
                                         min="1"
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
-                                <label class="text-[11px] font-bold text-slate-300 block mb-1">趨勢取樣（閒置）</label>
-                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">沒人看網頁時多久取樣一次。設長一點（如 1800
-                                    秒＝30 分）可<span class="text-slate-300">避免無人使用時仍一直打 API</span>。</p>
-                                <div class="flex items-center gap-2"><input type="number" id="srv-trendIdleSec" min="5"
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">有人瀏覽時：後端設備取樣間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制有可見 SmartHub 分頁時，伺服器多久主動向一般裝置取樣並寫入歷史資料。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-deviceActiveBackendSampleSec" min="1"
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
-                                <label class="text-[11px] font-bold text-slate-300 block mb-1">活躍判定視窗</label>
-                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">收到最後一次心跳後，<span
-                                        class="text-slate-300">幾秒內仍算「有人在看」</span>。超過就切到上面的閒置頻率。設太短切太快、太長會多打一陣子。</p>
-                                <div class="flex items-center gap-2"><input type="number" id="srv-activeWindowSec"
-                                        min="5"
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">無人瀏覽時：後端背景取樣間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制沒有任何可見 SmartHub 分頁時，伺服器多久向一般裝置取樣並寫入歷史資料。預設 600 秒。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-deviceIdleBackendSampleSec"
+                                        min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">瀏覽器 heartbeat 間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制可見分頁多久向後端回報仍在使用中，不等於設備取樣間隔。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-heartbeatSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">瀏覽器活躍判定逾時</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">後端多久沒有收到 heartbeat 後，將該分頁判定為離線。此值必須大於 heartbeat 間隔。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-activeLeaseSec" min="2"
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
@@ -3564,11 +3575,51 @@
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
-                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 電壓取樣</label>
-                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">後端多久記錄一筆 UPS
-                                    電壓/電池/負載到持久化歷史。<span
-                                        class="text-slate-300">此排程不做閒置降頻</span>——斷電與電壓紀錄無人瀏覽也要持續記錄（本地指令，成本低）。</p>
-                                <div class="flex items-center gap-2"><input type="number" id="srv-upsSampleSec" min="5"
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 前端更新間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制 UPS 頁面可見時，多久更新一次 UPS 畫面。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsFrontendPollSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS Active 後端取樣間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制有人瀏覽時，UPS 後端取樣與歷史寫入頻率。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsActiveBackendSampleSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS Idle 後端取樣間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制沒有人瀏覽時，UPS 後端取樣與歷史寫入頻率。UPS 不使用一般裝置的 600 秒設定。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsIdleBackendSampleSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 圖表與事件更新間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制 UPS 頁面歷史圖與事件列表的更新頻率，避免即時狀態更新時重複讀取大型歷史資料。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsHistoryFrontendPollSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS PPB 事件前端更新間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制 UPS 頁面向 PowerPanel Business 讀取原生事件紀錄的前端更新頻率。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsPpbEventsFrontendPollSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS PPB 事件 Active 後端同步間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制有人瀏覽 UPS 時，後端同步 PowerPanel Business 原生事件的頻率。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsPpbEventActiveBackendSampleSec" min="1"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS PPB 事件 Idle 後端同步間隔</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制沒有人瀏覽時，後端同步 PowerPanel Business 原生事件的頻率。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-upsPpbEventIdleBackendSampleSec" min="1"
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
@@ -4531,10 +4582,10 @@
                     <!-- PowerPanel Business 原生事件日誌 -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md" id="ppb-events-card">
                         <div class="flex justify-between items-center mb-1">
-                            <h3 class="text-sm font-bold text-white tracking-wider">📋 UPS 原生事件日誌 (PowerPanel Business)</h3>
+                            <h3 class="text-sm font-bold text-white tracking-wider">📋 電力品質與 UPS 原生事件</h3>
                             <span class="text-[9px] text-slate-500" id="ppb-events-count"></span>
                         </div>
-                        <p class="text-[9px] text-slate-500 mb-3">直接來自 UPS 自己記錄的事件（斷電/復電/電池自檢/通訊中斷），比本站的斷電事件表更完整</p>
+                        <p class="text-[9px] text-slate-500 mb-3">整合 SmartHub 即時壓降偵測與 PPB 原廠事件；事件會持久化、去重並保留最近 1,000 筆。</p>
                         <div class="space-y-1.5 max-h-[320px] overflow-y-auto terminal-scroll" id="ppb-events-list">
                             <p class="text-xs text-slate-500 text-center py-4">讀取中...</p>
                         </div>
@@ -4735,7 +4786,7 @@
         // 套用已儲存的排序；若區塊集合與現版 DOM 不符 (改版新增/移除區塊) 則忽略該容器的舊排序
         function layoutApplySaved() {
             let saved = {};
-            try { saved = JSON.parse(localStorage.getItem('layoutOrder.v1')) || {}; } catch { }
+            try { saved = JSON.parse(localStorage.getItem('layoutOrder.v1')) || {}; } catch (error) { console.debug('Saved layout is invalid', error); }
             layoutContainers().forEach(c => {
                 const order = saved[layoutKeyOf(c)];
                 if (!Array.isArray(order)) return;
@@ -4839,7 +4890,7 @@
             syncPinned();
         }
         function syncPinned() {
-            if (document.hidden || document.getElementById('page-overview')?.classList.contains('hidden')) return;
+            if (document.visibilityState !== 'visible' || document.getElementById('page-overview')?.classList.contains('hidden')) return;
             document.querySelectorAll('#ov-pinned [data-mirror-of]').forEach(holder => {
                 const src = document.querySelector(`[data-bid="${holder.dataset.mirrorOf}"]`);
                 const mirror = holder.querySelector('.pinned-mirror');
@@ -4853,7 +4904,7 @@
                 mirror.querySelectorAll('.pin-add-btn').forEach(e => e.remove());
                 // 圖表 canvas：把來源點陣畫到鏡像 canvas
                 const sc = src.querySelectorAll('canvas'), mc = mirror.querySelectorAll('canvas');
-                sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch { } });
+                sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch (error) { console.debug('Pinned chart copy failed', error); } });
             });
         }
         setInterval(syncPinned, 2000);
@@ -5004,7 +5055,9 @@
             })).filter(item => item.value != null);
             panel.innerHTML = `<div class="chart-detail-head"><div><p class="chart-detail-title">${escapeHtml(label)}</p><p class="text-[10px] text-slate-500 mt-0.5">已固定資料點 · 可切換上方系列比較</p></div><button type="button" class="chart-detail-close" aria-label="關閉資料點明細">✕</button></div><div class="chart-detail-grid">${items.map(item => `<div class="chart-detail-item"><div class="chart-detail-label"><span class="chart-tooltip-dot" style="background:${escapeHtml(item.color)}"></span>${escapeHtml(item.label)}</div><div class="chart-detail-value">${escapeHtml(formatChartValue(item.value, item.dataset))}</div></div>`).join('')}</div>`;
             panel.classList.add('is-open');
-            panel.querySelector('.chart-detail-close').addEventListener('click', () => panel.classList.remove('is-open'));
+            panel.onclick = event => {
+                if (event.target.closest('.chart-detail-close')) panel.classList.remove('is-open');
+            };
         }
 
         function renderHtmlChartLegend(chart) {
@@ -5520,38 +5573,27 @@
             initWiimSrcDrag();
             refreshSideUps();
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
-            renderPollConfig();
             checkLastSpeedtest();
             sendHeartbeat(true);
             applyPolling();
         };
 
-        /* ==================== 前端輪詢管理 (間隔可於設定頁調整，存 localStorage) ==================== */
+        /* ==================== 前端輪詢管理（間隔由 /api/settings 提供） ==================== */
         const POLL_JOBS = {
-            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]), def: 60, label: 'AdGuard DNS 統計', desc: '多久更新一次 AdGuard Home 的攔截統計、查詢日誌與裝置服務政策。' },
-            linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]), def: 120, label: 'Linux 小主機監控', desc: '多久 SSH 抓一次小主機的 CPU/溫度/記憶體/磁碟並更新歷史圖。' },
-            critAlerts: { fn: () => fetchCritAlerts(), def: 10, label: '重大事件警報', desc: '多久檢查一次重大事件 (UPS 斷電/WAN 斷線等)，觸發頂部紅色閃爍橫幅。' },
-            hardware: { fn: () => fetchHardware(), def: 15, label: '硬體監控 (CPU/溫度/網埠)', desc: '多久 SSH 抓一次 UCG 的 CPU 使用率、溫度、記憶體、網埠速率 → 更新總覽的硬體卡、核心負載與網埠矩陣。' },
-            ucgHist: { fn: () => fetchUcgHist(), def: 60, label: 'UCG 歷史紀錄圖', desc: '多久重新整理一次 UCG 歷史紀錄圖表 (依所選範圍)。' },
-            ucgSpikes: { fn: () => fetchUcgSpikes(), def: 300, label: 'UCG 溫度異常事件分析', desc: '多久重新掃描一次近 7 天溫度歷史，找出超過門檻的異常區段。' },
-            switches: { fn: () => fetchSwitchMatrix(), def: 60, label: '全網路裝置埠對照', desc: '多久向 UniFi 控制器抓一次所有交換器/AP 的每個實體埠狀態與接入裝置 → 更新「全網路裝置埠對照」卡。' },
-            clients: { fn: () => fetchClients(), def: 30, label: '客戶端清單', desc: '多久抓一次連線設備清單 → 更新客戶端表格、Top 5 流量排行、以及總覽的「線上設備數」KPI。' },
-            threats: { fn: () => fetchThreats(), def: 15, label: '威脅偵測 (IPS/IDS)', desc: '多久抓一次 IPS/IDS 攔截警報 → 更新資安戰情室、世界地圖、威脅事件表、每小時圖與「最近威脅」橫幅。' },
-            cloud: { fn: () => { fetchCloudSites(); fetchCloudDevices(); fetchCloudHosts(); fetchCloudSdwan(); }, def: 120, label: '雲端站點 (Site Manager)', desc: '多久抓一次 UniFi 官方雲端的站點、託管設備、控制主機與 SD-WAN VPN 清單。' },
-            isp: { fn: () => fetchIspMetrics(), def: 60, label: 'ISP 網路品質', desc: '多久抓一次延遲、丟包率、上/下載速度 → 更新雲端頁的 ISP 卡與總覽的「WAN 狀態」KPI。' },
-            nas: { fn: () => fetchNas(), def: 30, label: 'NAS 即時遙測', desc: '多久抓一次 NAS 的 CPU/記憶體/網路/UPS、硬碟健康與儲存區容量。' },
-            nasAdvanced: { fn: () => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts(), fetchNasSleepStats()]), def: 120, label: 'NAS 進階 (歷史圖/警報)', desc: '多久抓一次 NAS 的系統/流量/溫度/儲存歷史圖、滿載預估、警報事件與硬碟休眠統計（資料量較大，建議較長間隔）。' },
-            docker: { fn: () => fetchNasDocker(), def: 30, label: 'Docker 容器', desc: '多久刷新一次 Docker 容器清單與其即時 CPU/記憶體占用。' },
-            trend: { fn: () => fetchTrends(), def: 30, label: '趨勢圖重繪', desc: '多久從後端重新拉歷史趨勢資料並重畫總覽的「歷史數據趨勢」圖（讀取，不影響後端取樣頻率）。' },
-            notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]), def: 30, label: '推播紀錄刷新', desc: '多久刷新一次「通知推播」頁的近期推播紀錄與 Web Push 訂閱狀態。' },
-            reportLog: { fn: () => fetchReportLog(), def: 30, label: '報表執行紀錄', desc: '多久刷新一次定期報表的手動／排程發送紀錄與保存的報表內容。' },
-            systemStatus: { fn: () => fetchSystemStatus(), def: 30, label: 'System Diagnostics', desc: '多久更新一次本服務的 CPU、記憶體、磁碟、SQLite、背景工作與 Active Issues。後端監控間隔另由 MONITOR_INTERVAL_SECONDS 控制。' },
-            security: { fn: () => fetchSecuritySettings(), def: 30, label: '資安設定同步', desc: '多久同步一次自動防禦開關的最新狀態（避免多裝置操作時顯示不一致）。' },
-            wiimSystem: { fn: () => fetchWiimSystem(), def: 30, label: 'WiiM 系統狀態與溫度', desc: '多久抓一次 WiiM Amp 的 CPU/主機板溫度、語音遙控器電量與訊號品質。' },
-            wiimPlayback: { fn: () => fetchWiimPlayback(), def: 5, label: 'WiiM 播放狀態', desc: '多久同步一次正在播放的曲目、音量與播放進度（從手機 App 操作時面板才能跟著更新）。' },
-            ups: { fn: () => fetchUps(), def: 30, label: 'UPS 電源狀態', desc: '多久刷新一次 UPS 即時電壓/電池/負載與電壓歷史圖、斷電事件表。後端取樣寫檔頻率另由「伺服器端」的 UPS 取樣間隔控制。' },
-            ppbEvents: { fn: () => fetchPpbEvents(), def: 120, label: 'UPS 原生事件日誌 (PPB)', desc: '多久重新讀取一次 PowerPanel Business 記錄的原生事件日誌。' },
-            heartbeat: { fn: () => sendHeartbeat(), def: 5, label: '裝置檢視心跳', desc: '只在目前可見頁面替正在看的裝置續短租約；沒有續約最多 3 分鐘就回到低頻取樣。' }
+            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]) },
+            linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]) },
+            critAlerts: { fn: () => fetchCritAlerts() }, hardware: { fn: () => fetchHardware() },
+            ucgHist: { fn: () => fetchUcgHist() }, ucgSpikes: { fn: () => fetchUcgSpikes() }, switches: { fn: () => fetchSwitchMatrix() },
+            clients: { fn: () => fetchClients() }, threats: { fn: () => fetchThreats() },
+            cloud: { fn: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan()]) },
+            isp: { fn: () => fetchIspMetrics() }, nas: { fn: () => fetchNas() },
+            nasAdvanced: { fn: () => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts(), fetchNasSleepStats()]) },
+            docker: { fn: () => fetchNasDocker() }, trend: { fn: () => fetchTrends() },
+            notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]) },
+            reportLog: { fn: () => fetchReportLog() }, systemStatus: { fn: () => fetchSystemStatus() }, security: { fn: () => fetchSecuritySettings() },
+            wiimSystem: { fn: () => fetchWiimSystem() }, wiimPlayback: { fn: () => fetchWiimPlayback() },
+            ups: { fn: () => fetchUps({ includeHistory: false }) }, upsHistory: { fn: () => fetchUps() }, ppbEvents: { fn: () => fetchPpbEvents() },
+            heartbeat: { fn: () => sendHeartbeat() }
         };
         const COMMON_POLL_JOBS = new Set(['critAlerts', 'heartbeat']);
         const PAGE_POLL_JOBS = {
@@ -5559,21 +5601,24 @@
             clients: ['clients'], security: ['threats', 'security'], wifi: [], cloud: ['cloud', 'isp'],
             ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches'],
             nas: ['nas', 'nasAdvanced', 'docker'], wiim: ['wiimSystem', 'wiimPlayback'],
-            ups: ['ups', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
+            ups: ['ups', 'upsHistory', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security']
         };
         const PAGE_ACTIVITY_SCOPES = {
-            overview: ['trend', 'ucg', 'nas', 'wiim'], clients: ['trend'], security: ['trend'],
-            cloud: ['trend'], ucg: ['ucg'], nas: ['nas'], wiim: ['wiim'], linuxhost: ['linux']
+            overview: ['trend', 'ucg', 'nas', 'wiim', 'ups'], clients: ['trend'], security: ['trend'],
+            cloud: ['trend'], ucg: ['ucg'], nas: ['nas'], wiim: ['wiim'], ups: ['ups'], linuxhost: ['linux']
         };
-        const FOCUSED_DEVICE_PAGES = new Set(['overview', 'ucg', 'nas', 'wiim', 'ups', 'adguard', 'linuxhost']);
-        const FOCUSED_POLL_SEC = 3;
         let pollTimers = {};
+        let pollStartTimers = {};
         const pollRunning = new Set();
-        function getPollConfig() { try { return JSON.parse(localStorage.getItem('pollConfig')) || {}; } catch { return {}; } }
-        function getPollSec(key) { const c = getPollConfig(); return (typeof c[key] === 'number' && c[key] > 0) ? c[key] : POLL_JOBS[key].def; }
-        function getEffectivePollSec(key, pageJobs) {
-            return FOCUSED_DEVICE_PAGES.has(currentPage) && pageJobs.includes(key) ? FOCUSED_POLL_SEC : getPollSec(key);
+        let frontendPollingSettings = null;
+        function getEffectivePollSec(key) {
+            if (!frontendPollingSettings) return null;
+            if (key === 'heartbeat') return frontendPollingSettings.heartbeatSec;
+            if (key === 'ups') return frontendPollingSettings.upsFrontendPollSec;
+            if (key === 'upsHistory') return frontendPollingSettings.upsHistoryFrontendPollSec;
+            if (key === 'ppbEvents') return frontendPollingSettings.upsPpbEventsFrontendPollSec;
+            return frontendPollingSettings.deviceActiveFrontendPollSec;
         }
         async function runPollJob(key, job) {
             if (pollRunning.has(key)) return;
@@ -5583,33 +5628,42 @@
         function applyPolling(runNow = false) {
             Object.entries(POLL_JOBS).forEach(([k, j]) => {
                 clearInterval(pollTimers[k]);
+                clearTimeout(pollStartTimers[k]);
                 delete pollTimers[k];
+                delete pollStartTimers[k];
                 const pageJobs = PAGE_POLL_JOBS[currentPage] || [];
-                if (document.hidden || (!COMMON_POLL_JOBS.has(k) && !pageJobs.includes(k))) return;
+                if (document.visibilityState !== 'visible' || !frontendPollingSettings || (!COMMON_POLL_JOBS.has(k) && !pageJobs.includes(k))) return;
                 const run = () => runPollJob(k, j);
-                if (runNow) setTimeout(run, 0);
-                pollTimers[k] = setInterval(run, getEffectivePollSec(k, pageJobs) * 1000);
+                if (runNow) pollStartTimers[k] = setTimeout(run, 0);
+                pollTimers[k] = setInterval(run, getEffectivePollSec(k) * 1000);
             });
         }
-        function savePollConfig(cfg) { localStorage.setItem('pollConfig', JSON.stringify(cfg)); persistUiPreference('pollConfig', cfg); applyPolling(); }
 
-        // 心跳：僅在分頁可見時發送。切頁/回到前景只要求一次即時取樣；
-        // 後續每 5 秒續租不會反覆重設取樣計時器。
+        const heartbeatSessionId = (() => {
+            const key = 'smarthub.heartbeat-session.v1';
+            try {
+                let value = sessionStorage.getItem(key);
+                if (!value) {
+                    value = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9._:-]/g, '');
+                    sessionStorage.setItem(key, value);
+                }
+                return value;
+            } catch { return `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+        })();
+
         async function sendHeartbeat(focus = false) {
-            if (document.hidden) return;
-            const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
-            if (!scopes.length && !focus) return;
-            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + (focus ? '&focus=1' : '');
+            if (document.visibilityState !== 'visible') return;
+            const scopes = ['general', ...(PAGE_ACTIVITY_SCOPES[currentPage] || [])];
+            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + `&session=${encodeURIComponent(heartbeatSessionId)}` + (focus ? '&focus=1' : '');
             try { await fetch('/api/heartbeat' + query); } catch (e) { /* 靜默 */ }
         }
         function releaseDeviceFocus() {
-            fetch('/api/heartbeat?scope=&focus=1').catch(() => { /* 靜默 */ });
+            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}`).catch(() => { /* 靜默 */ });
         }
-        // 分頁重新可見時立即補一次心跳，讓高頻取樣馬上恢復
         document.addEventListener('visibilitychange', () => {
             applyPolling();
-            if (document.hidden) releaseDeviceFocus();
-            else sendHeartbeat(true);
+            if (document.visibilityState === 'visible') sendHeartbeat(true);
+            else releaseDeviceFocus();
         });
 
         // 共用小圖示 (線條 SVG，取代 emoji)
@@ -5654,7 +5708,7 @@
                 const st = document.getElementById('side-ups-state');
                 if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-red-500'}`;
                 if (st) st.textContent = ok ? s.source : '未連接';
-            } catch { }
+            } catch (error) { console.debug('Sidebar UPS refresh failed', error); }
         }
 
         let toastSec = 10;      // 顯示秒數，於設定頁調整 (伺服器端保存)
@@ -5996,7 +6050,7 @@
                 const res = await fetch('/api/clients');
                 if (!res.ok) throw new Error();
                 allClients = (await res.json()).clients || [];
-                const refreshSeconds = getPollSec('clients');
+                const refreshSeconds = frontendPollingSettings?.deviceActiveFrontendPollSec || 5;
                 const updatedAt = new Date().toLocaleTimeString('zh-TW', { hour12: false });
                 const intervalText = refreshSeconds < 60 ? `${refreshSeconds} 秒` : `${refreshSeconds / 60} 分鐘`;
                 const refreshEl = document.getElementById('client-refresh-interval');
@@ -6018,28 +6072,41 @@
             const term = document.getElementById('clientSearch').value.toLowerCase();
             const filtered = allClients.filter(c => c.name.toLowerCase().includes(term) || c.ip.toLowerCase().includes(term) || c.mac.toLowerCase().includes(term));
             const tbody = document.getElementById('client-table-body');
+            if (!tbody.dataset.eventsDelegated) {
+                tbody.dataset.eventsDelegated = 'true';
+                tbody.addEventListener('click', event => {
+                    const row = event.target.closest('tr[data-client-mac]');
+                    if (!row) return;
+                    const client = allClients.find(item => item.mac === row.dataset.clientMac);
+                    if (!client) return;
+                    const action = event.target.closest('[data-client-action]')?.dataset.clientAction;
+                    if (action === 'rename') renameClient(client.mac);
+                    else if (action === 'block') toggleBlock(client.mac, !client.blocked);
+                    else showClientDetail(client.mac);
+                });
+                tbody.addEventListener('keydown', event => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    if (event.target.closest('button')) return;
+                    const row = event.target.closest('tr[data-client-mac]');
+                    if (!row) return;
+                    event.preventDefault();
+                    showClientDetail(row.dataset.clientMac);
+                });
+            }
             tbody.innerHTML = '';
             document.getElementById('client-count').innerText = filtered.length;
             filtered.forEach(c => {
                 const tr = document.createElement('tr');
                 tr.className = `hover:bg-slate-800/15 cursor-pointer ${c.blocked ? 'opacity-50' : ''}`;
+                tr.dataset.clientMac = c.mac;
                 tr.tabIndex = 0;
                 tr.setAttribute('role', 'button');
                 tr.setAttribute('aria-label', `查看 ${c.name || c.ip} 的客戶端詳情`);
-                tr.onclick = (ev) => { if (!ev.target.closest('button')) showClientDetail(c.mac); };
-                tr.onkeydown = ev => {
-                    if ((ev.key === 'Enter' || ev.key === ' ') && !ev.target.closest('button')) {
-                        ev.preventDefault();
-                        showClientDetail(c.mac);
-                    }
-                };
                 tr.innerHTML = `
                 <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'} flex items-center gap-1.5">${escapeHtml(c.name)}${c.aliased ? '<span class="text-[8px] px-1 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/25 rounded font-normal">自訂</span>' : ''}<button type="button" data-client-action="rename" title="自訂名稱" class="text-slate-600 hover:text-blue-400 transition"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7m-1.5-9.5a2.12 2.12 0 013 3L12 18l-4 1 1-4 9.5-9.5z"/></svg></button></p><p class="text-[9px] text-slate-500 mono">${escapeHtml(c.mac)} | ${escapeHtml(c.ip)}</p></div></td>
                 <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold inline-flex items-center gap-1">${ICON_WIFI} Wi-Fi (${escapeHtml(c.wifi_signal)}dBm)</span>` : `<span class="text-emerald-400 font-semibold inline-flex items-center gap-1">${ICON_LAN} LAN</span>`}</td>
                 <td class="mono text-slate-400"><span class="inline-flex items-center gap-0.5">${ICON_DOWN} ${(c.rx_bytes / 1048576).toFixed(1)}MB</span> / <span class="inline-flex items-center gap-0.5">${ICON_UP} ${(c.tx_bytes / 1048576).toFixed(1)}MB</span></td>
                 <td class="text-right py-3 pr-2"><button type="button" data-client-action="block" class="px-2.5 py-1.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-lg text-[10px] transition">${c.blocked ? '解封' : '斷網'}</button></td>`;
-                tr.querySelector('[data-client-action="rename"]').addEventListener('click', () => renameClient(c.mac));
-                tr.querySelector('[data-client-action="block"]').addEventListener('click', () => toggleBlock(c.mac, !c.blocked));
                 tbody.appendChild(tr);
             });
         }
@@ -7061,17 +7128,16 @@
                         </div>
                     </button>`;
                 });
-                diskList.querySelectorAll('[data-disk-index]').forEach(button => {
-                    button.addEventListener('click', () => {
-                        const disk = disks[Number(button.dataset.diskIndex)];
-                        if (!disk) return;
-                        confirmDiskSmart(
-                            nFind(disk, ['dev_name']) || '',
-                            nFind(disk, ['name', 'label']) || 'Disk',
-                            disk.sleeping === true
-                        );
-                    });
-                });
+                diskList.onclick = event => {
+                    const button = event.target.closest('[data-disk-index]');
+                    const disk = button ? disks[Number(button.dataset.diskIndex)] : null;
+                    if (!disk) return;
+                    confirmDiskSmart(
+                        nFind(disk, ['dev_name']) || '',
+                        nFind(disk, ['name', 'label']) || 'Disk',
+                        disk.sleeping === true
+                    );
+                };
 
                 // 儲存區
                 const volList = document.getElementById('nas-volume-list');
@@ -7106,10 +7172,13 @@
                         </div>
                     </div>`;
                     });
-                    volList.querySelectorAll('[data-volume-alias-key]').forEach(input => {
-                        input.addEventListener('change', () => saveNasVolumeAlias(input.dataset.volumeAliasKey, input.value));
-                        input.addEventListener('keydown', event => { if (event.key === 'Enter') input.blur(); });
-                    });
+                    volList.onchange = event => {
+                        const input = event.target.closest('[data-volume-alias-key]');
+                        if (input) saveNasVolumeAlias(input.dataset.volumeAliasKey, input.value);
+                    };
+                    volList.onkeydown = event => {
+                        if (event.key === 'Enter' && event.target.matches('[data-volume-alias-key]')) event.target.blur();
+                    };
                 }
 
                 // 原始資料
@@ -7326,14 +7395,13 @@
                         </td>
                     </tr>`;
                 }).join('') : `<tr><td colspan="6" class="text-center py-4 text-slate-500">${emptyMessage}</td></tr>`;
-                tbody.querySelectorAll('[data-docker-index]').forEach(button => {
-                    button.addEventListener('click', () => {
-                        const c = containers[Number(button.dataset.dockerIndex)];
-                        if (!c) return;
-                        if (button.dataset.dockerAction === 'logs') showDockerLog(c.id, c.name);
-                        else dockerAction(c.id, button.dataset.dockerAction);
-                    });
-                });
+                tbody.onclick = event => {
+                    const button = event.target.closest('[data-docker-index]');
+                    const c = button ? containers[Number(button.dataset.dockerIndex)] : null;
+                    if (!c) return;
+                    if (button.dataset.dockerAction === 'logs') showDockerLog(c.id, c.name);
+                    else dockerAction(c.id, button.dataset.dockerAction);
+                };
             } catch (e) { console.error('NAS docker fetch failed', e); }
         }
 
@@ -7409,12 +7477,11 @@
                             ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button type="button" data-alert-index="${index}" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded shrink-0">確認</button>`}
                         </div>`;
                     }).join('');
-                    list.querySelectorAll('[data-alert-index]').forEach(button => {
-                        button.addEventListener('click', () => {
-                            const alert = events[Number(button.dataset.alertIndex)];
-                            if (alert) ackAlert(alert.id);
-                        });
-                    });
+                    list.onclick = event => {
+                        const button = event.target.closest('[data-alert-index]');
+                        const alert = button ? events[Number(button.dataset.alertIndex)] : null;
+                        if (alert) ackAlert(alert.id);
+                    };
                     return;
                 }
                 // 回退：UGOS 內建日誌中心 (真實系統事件)
@@ -7510,7 +7577,7 @@
                 nasSse.onopen = () => { if (dot) { dot.textContent = '● 即時'; dot.className = 'text-[9px] text-emerald-500 normal-case'; } };
                 nasSse.onerror = () => { if (dot) { dot.textContent = '○ 離線 (輪詢中)'; dot.className = 'text-[9px] text-slate-600 normal-case'; } };
                 nasSse.onmessage = () => { fetchNasAlerts(); }; // 收到任何事件就重新拉一次警報清單 (輪詢仍是保底)
-            } catch { }
+            } catch (error) { console.debug('NAS event stream setup failed', error); }
         }
 
         async function fetchNasSleepStats() {
@@ -7628,7 +7695,7 @@
             try {
                 const s = await (await fetch('/api/speedtest/status')).json();
                 if (s.download && s.status !== 'running') showSpeedtestResult(s, false);
-            } catch (e) { }
+            } catch (error) { console.debug('Last speed test status unavailable', error); }
         }
 
         async function triggerSpeedtest() {
@@ -7657,7 +7724,7 @@
                         clearInterval(speedtestTimer);
                         showSpeedtestResult(s, true);
                     }
-                } catch (e) { }
+                } catch (error) { console.debug('Speed test progress refresh failed', error); }
                 if (elapsed > 120) {
                     clearInterval(speedtestTimer);
                     showToast('測速逾時，請稍後再試', true);
@@ -7777,6 +7844,7 @@
                 setCk('notif-trig-upsload', !!s.triggerUpsHighLoad);
                 setCk('notif-trig-ups-runtime', !!s.triggerUpsLowRuntime);
                 setCk('notif-trig-upsvolt', !!s.triggerUpsVoltAbnormal);
+                setCk('notif-trig-ups-sag', s.triggerUpsSag !== false);
                 setCk('notif-trig-upssrc', !!s.triggerUpsSourceChange);
                 setCk('notif-trig-ups-offline', s.triggerUpsOffline !== false);
                 setCk('notif-trig-adgprot', s.triggerAdgProtection !== false);
@@ -7813,6 +7881,7 @@
                 setV('notif-wan-latency', s.wanLatencyAlert ?? 100);
                 setV('notif-ups-load', s.upsLoadAlert ?? 80);
                 setV('notif-ups-runtime', s.upsRuntimeAlertMin ?? 10);
+                setV('notif-ups-sag-threshold', s.upsSagThresholdV ?? 105);
                 setV('notif-ups-volt', s.upsVoltDeviationPct ?? 10);
                 setV('notif-lnx-temp', s.linuxTempAlert ?? 70);
                 setV('notif-lnx-disk', s.linuxDiskAlert ?? 90);
@@ -7872,6 +7941,7 @@
                 triggerUpsHighLoad: document.getElementById('notif-trig-upsload')?.checked ?? false,
                 triggerUpsLowRuntime: document.getElementById('notif-trig-ups-runtime')?.checked ?? false,
                 triggerUpsVoltAbnormal: document.getElementById('notif-trig-upsvolt')?.checked ?? false,
+                triggerUpsSag: document.getElementById('notif-trig-ups-sag')?.checked ?? true,
                 triggerUpsSourceChange: document.getElementById('notif-trig-upssrc')?.checked ?? false,
                 triggerUpsOffline: document.getElementById('notif-trig-ups-offline')?.checked ?? true,
                 nasDiskTempAlert: parseInt(document.getElementById('notif-nasdisk-temp')?.value, 10) || 50,
@@ -7885,6 +7955,7 @@
                 upsLoadAlert: parseInt(document.getElementById('notif-ups-load')?.value, 10) || 80,
                 upsRuntimeAlertMin: parseInt(document.getElementById('notif-ups-runtime')?.value, 10) || 10,
                 upsVoltDeviationPct: parseInt(document.getElementById('notif-ups-volt')?.value, 10) || 10,
+                upsSagThresholdV: parseInt(document.getElementById('notif-ups-sag-threshold')?.value, 10) || 105,
                 triggerAdgProtection: document.getElementById('notif-trig-adgprot')?.checked ?? true,
                 triggerAdgOffline: document.getElementById('notif-trig-adgoff')?.checked ?? false,
                 triggerAdgHighBlockRate: document.getElementById('notif-trig-adg-block-rate')?.checked ?? false,
@@ -8048,40 +8119,31 @@
             }
         }
 
-        function renderPollConfig() {
-            const grid = document.getElementById('poll-config-grid');
-            if (!grid) return;
-            grid.innerHTML = Object.entries(POLL_JOBS).map(([k, j]) => `
-            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
-                <label class="text-[11px] font-bold text-slate-300 block mb-1">${j.label}</label>
-                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">${j.desc}</p>
-                <div class="flex items-center gap-2">
-                    <input type="number" min="1" value="${getPollSec(k)}" data-poll="${k}" onchange="onPollChange(this)" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
-                    <span class="text-[10px] text-slate-600 shrink-0">秒 (預設 ${j.def})</span>
-                </div>
-            </div>`).join('');
-        }
-        function onPollChange(el) {
-            const cfg = getPollConfig();
-            const v = parseInt(el.value, 10);
-            if (v > 0) { cfg[el.dataset.poll] = v; savePollConfig(cfg); showToast(`已套用：${POLL_JOBS[el.dataset.poll].label} 每 ${v} 秒`); }
-        }
-        function resetPolling() { localStorage.removeItem('pollConfig'); applyPolling(); renderPollConfig(); showToast('前端輪詢已恢復預設'); }
-
         async function fetchAppSettings() {
             try {
                 const s = await (await fetch('/api/settings')).json();
                 const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
-                set('srv-trendActiveSec', s.trendActiveSec); set('srv-trendIdleSec', s.trendIdleSec);
-                set('srv-activeWindowSec', s.activeWindowSec); set('srv-watcherSec', s.watcherSec);
+                set('srv-deviceActiveFrontendPollSec', s.deviceActiveFrontendPollSec);
+                set('srv-deviceActiveBackendSampleSec', s.deviceActiveBackendSampleSec);
+                set('srv-deviceIdleBackendSampleSec', s.deviceIdleBackendSampleSec);
+                set('srv-heartbeatSec', s.heartbeatSec); set('srv-activeLeaseSec', s.activeLeaseSec);
+                set('srv-upsFrontendPollSec', s.upsFrontendPollSec);
+                set('srv-upsActiveBackendSampleSec', s.upsActiveBackendSampleSec);
+                set('srv-upsIdleBackendSampleSec', s.upsIdleBackendSampleSec);
+                set('srv-upsHistoryFrontendPollSec', s.upsHistoryFrontendPollSec);
+                set('srv-upsPpbEventsFrontendPollSec', s.upsPpbEventsFrontendPollSec);
+                set('srv-upsPpbEventActiveBackendSampleSec', s.upsPpbEventActiveBackendSampleSec);
+                set('srv-upsPpbEventIdleBackendSampleSec', s.upsPpbEventIdleBackendSampleSec);
+                set('srv-watcherSec', s.watcherSec);
                 set('srv-autoDefenseSec', s.autoDefenseSec);
-                set('srv-upsSampleSec', s.upsSampleSec ?? 30);
                 set('srv-toastSec', s.toastSec ?? 10); toastSec = s.toastSec ?? 10;
                 set('srv-historyFlushMin', s.historyFlushMin ?? 10);
                 set('srv-historyKeepDays', s.historyKeepDays ?? 30);
                 const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
                 set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
                 set('report-hour2', s.reportHour2 ?? 20); toggleReportHour2();
+                frontendPollingSettings = s;
+                applyPolling(true);
             } catch (e) { console.error('app settings fetch failed', e); }
         }
         /* ==================== 重大事件警報橫幅 ==================== */
@@ -8105,7 +8167,7 @@
                 let changed = false;
                 critDismissed.forEach(id => { if (!liveIds.has(id)) { critDismissed.delete(id); changed = true; } });
                 if (changed) localStorage.setItem('critDismissed', JSON.stringify([...critDismissed]));
-            } catch { }
+            } catch (error) { console.debug('Critical alert refresh failed', error); }
         }
         function dismissCritAlerts() {
             critActiveIds.forEach(id => critDismissed.add(id));
@@ -8120,10 +8182,19 @@
         async function saveServerSettings() {
             const num = id => parseInt(document.getElementById(id).value, 10);
             const body = {
-                trendActiveSec: num('srv-trendActiveSec'), trendIdleSec: num('srv-trendIdleSec'),
-                activeWindowSec: num('srv-activeWindowSec'), watcherSec: num('srv-watcherSec'),
+                deviceActiveFrontendPollSec: num('srv-deviceActiveFrontendPollSec'),
+                deviceActiveBackendSampleSec: num('srv-deviceActiveBackendSampleSec'),
+                deviceIdleBackendSampleSec: num('srv-deviceIdleBackendSampleSec'),
+                heartbeatSec: num('srv-heartbeatSec'), activeLeaseSec: num('srv-activeLeaseSec'),
+                upsFrontendPollSec: num('srv-upsFrontendPollSec'),
+                upsActiveBackendSampleSec: num('srv-upsActiveBackendSampleSec'),
+                upsIdleBackendSampleSec: num('srv-upsIdleBackendSampleSec'),
+                upsHistoryFrontendPollSec: num('srv-upsHistoryFrontendPollSec'),
+                upsPpbEventsFrontendPollSec: num('srv-upsPpbEventsFrontendPollSec'),
+                upsPpbEventActiveBackendSampleSec: num('srv-upsPpbEventActiveBackendSampleSec'),
+                upsPpbEventIdleBackendSampleSec: num('srv-upsPpbEventIdleBackendSampleSec'),
+                watcherSec: num('srv-watcherSec'),
                 autoDefenseSec: num('srv-autoDefenseSec'),
-                upsSampleSec: num('srv-upsSampleSec'),
                 toastSec: num('srv-toastSec'),
                 historyFlushMin: num('srv-historyFlushMin'),
                 historyKeepDays: num('srv-historyKeepDays'),
@@ -8134,10 +8205,13 @@
             };
             try {
                 const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-                if (!res.ok) throw new Error();
+                const result = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(result.error || '儲存失敗');
                 toastSec = num('srv-toastSec') || toastSec;
+                frontendPollingSettings = result.settings;
+                applyPolling(true);
                 showToast('伺服器設定已儲存並套用');
-            } catch (e) { showToast('儲存失敗', true); }
+            } catch (e) { showToast(`儲存失敗: ${e.message}`, true); }
         }
         /* ==================== 連線設定 (.env 網頁化) ==================== */
         async function fetchConnections() {
@@ -9160,8 +9234,8 @@
                     fetch('/api/wiim/cmd?command=getStaticIpInfo').then(r => r.json())
                 ]);
                 let s = {}, n = {};
-                try { s = JSON.parse(st.result); } catch { }
-                try { n = JSON.parse(ip.result); } catch { }
+                try { s = JSON.parse(st.result); } catch (error) { dbg('WiiM', '設備資訊格式錯誤', error); }
+                try { n = JSON.parse(ip.result); } catch (error) { dbg('WiiM', '網路資訊格式錯誤', error); }
                 dbg('WiiM', '設備資訊', s, n);
                 if (!Object.keys(s).length) { el.innerHTML = '<p class="text-slate-500 text-center py-4">裝置無回應 (檢查 WIIM_IP 與網路)</p>'; return; }
                 const row = (k, v) => v ? `<div class="flex justify-between gap-3 border-b border-slate-800/40 pb-1.5"><span class="text-slate-500 shrink-0">${escapeHtml(k)}</span><span class="text-slate-300 mono text-right break-all">${escapeHtml(v)}</span></div>` : '';
@@ -9317,7 +9391,7 @@
             dbg('UPS', '圖表初始化完成');
         }
 
-        async function fetchUps() {
+        async function fetchUps(options = {}) {
             // 即時狀態
             try {
                 const s = await (await fetch('/api/ups/status')).json();
@@ -9372,6 +9446,7 @@
                     }
                 }
             } catch (e) { dbg('UPS', '狀態讀取失敗', e); }
+            if (options.includeHistory === false) return;
             // 歷史 + 事件
             try {
                 const h = (await (await fetch(`/api/ups/history?hours=${upsRangeHours}`)).json()).history || [];
@@ -9448,10 +9523,11 @@
                 card.classList.remove('hidden');
                 const events = r.events || [];
                 document.getElementById('ppb-events-count').textContent = events.length ? `共 ${events.length} 筆` : '';
-                const cls = { error: 'text-red-400 border-red-500/20 bg-red-500/5', ok: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5', test: 'text-blue-400 border-blue-500/20 bg-blue-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
+                const cls = { error: 'text-red-400 border-red-500/20 bg-red-500/5', warning: 'text-amber-400 border-amber-500/20 bg-amber-500/5', ok: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5', test: 'text-blue-400 border-blue-500/20 bg-blue-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
                 const svgI = (d, c) => `<svg class="w-3.5 h-3.5 ${c}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg>`;
                 const icon = {
                     error: svgI('M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4m0 4h.01', 'text-red-400'),
+                    warning: svgI('M13 10V3L4 14h7v7l9-11h-7z', 'text-amber-400'),
                     ok: svgI('M22 11.08V12a10 10 0 11-5.93-9.14M22 4L12 14.01l-3-3', 'text-emerald-400'),
                     test: svgI('M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z', 'text-blue-400'),
                     info: svgI('M12 16v-4m0-4h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z', 'text-slate-400')
@@ -9459,8 +9535,9 @@
                 list.innerHTML = events.length ? events.map(e => `
                     <div class="ppb-event-row flex items-center gap-3 p-2 rounded-lg border text-[11px] ${cls[e.level] || cls.info}">
                         <span class="shrink-0">${icon[e.level] || icon.info}</span>
-                        <span class="flex-grow text-slate-300">${e.desc}</span>
-                        <span class="text-slate-500 mono shrink-0">${e.ts}</span>
+                        <span class="text-[8px] uppercase text-slate-500 mono shrink-0">${escapeHtml(e.source || 'ups')}</span>
+                        <span class="flex-grow text-slate-300">${escapeHtml(e.desc)}</span>
+                        <span class="text-slate-500 mono shrink-0">${escapeHtml(e.ts)}</span>
                     </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
             } catch (e) { list.innerHTML = '<p class="text-xs text-red-400 text-center py-4">讀取失敗</p>'; }
         }
@@ -9652,7 +9729,7 @@
                 document.getElementById('lnx-disk-str').textContent = d.diskStr || '';
                 document.getElementById('lnx-load').textContent = d.load ? d.load[0].toFixed(2) : '--';
                 document.getElementById('lnx-uptime').textContent = d.uptime || '--';
-            } catch { }
+            } catch (error) { dbg('Linux', '即時狀態讀取失敗', error); }
         }
         async function fetchLnxChart() {
             try {
@@ -9678,7 +9755,7 @@
                 lnxChart.data.datasets[1].data = plotted.map(p => p.temp);
                 lnxChart.data.datasets[2].data = plotted.map(p => p.mem);
                 updateChartWithEntrance(lnxChart);
-            } catch { }
+            } catch (error) { dbg('Linux', '歷史圖讀取失敗', error); }
         }
         function setLnxRange(hours, btn) {
             lnxRangeHours = hours;

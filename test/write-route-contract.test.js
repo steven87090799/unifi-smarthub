@@ -213,6 +213,7 @@ const INVALID_WRITES = Object.freeze([
     ['settings maximum plus one', 'POST', '/api/settings', { trendActiveSec: 3601 }],
     ['settings invalid hour', 'POST', '/api/settings', { reportHour: 24 }],
     ['settings retention maximum plus one', 'POST', '/api/settings', { historyKeepDays: 366 }],
+    ['settings lease must exceed heartbeat', 'POST', '/api/settings', { heartbeatSec: 30, activeLeaseSec: 30 }],
     ['settings unknown field', 'POST', '/api/settings', { unexpected: true }],
     ['Docker invalid identifier', 'POST', '/api/nas/docker/bad%24id/start', {}],
     ['Docker invalid action', 'POST', '/api/nas/docker/container-1/destroy', {}],
@@ -333,6 +334,28 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.settings.reportFreq, 'weekly');
     assert.equal(body.settings.reportHour, 0);
     assert.equal(body.settings.historyKeepDays, 365);
+
+    response = await client.write('POST', '/api/settings', {
+        deviceActiveFrontendPollSec: 7,
+        deviceActiveBackendSampleSec: 8,
+        deviceIdleBackendSampleSec: 601,
+        heartbeatSec: 6,
+        activeLeaseSec: 31,
+        upsFrontendPollSec: 4,
+        upsActiveBackendSampleSec: 5,
+        upsIdleBackendSampleSec: 11
+    });
+    text = await response.text();
+    assert.equal(response.status, 200, `${runtime.label} adaptive sampling settings: ${text}`);
+    body = JSON.parse(text);
+    assert.equal(body.settings.deviceActiveFrontendPollSec, 7);
+    assert.equal(body.settings.deviceActiveBackendSampleSec, 8);
+    assert.equal(body.settings.deviceIdleBackendSampleSec, 601);
+    assert.equal(body.settings.heartbeatSec, 6);
+    assert.equal(body.settings.activeLeaseSec, 31);
+    assert.equal(body.settings.upsFrontendPollSec, 4);
+    assert.equal(body.settings.upsActiveBackendSampleSec, 5);
+    assert.equal(body.settings.upsIdleBackendSampleSec, 11);
 
     response = await client.read('/api/client-aliases');
     text = await response.text();

@@ -43,3 +43,20 @@ test('focus replacement immediately releases the previous device scope', () => {
     assert.equal(lease.isActive('nas'), false);
     assert.equal(lease.isActive('ucg'), true);
 });
+
+test('one hidden session does not release another visible session, and expiry is cleaned', () => {
+    let now = 1000;
+    const lease = createActivityLease({ now: () => now, maxLeaseMs: 45000 });
+    lease.mark('general,nas', 30000, { sessionId: 'visible-tab' });
+    lease.mark('general,ups', 30000, { sessionId: 'ups-tab' });
+    lease.mark('', 30000, { sessionId: 'visible-tab', replace: true });
+
+    assert.equal(lease.isActive('general'), true);
+    assert.equal(lease.isActive('nas'), false);
+    assert.equal(lease.isActive('ups'), true);
+    assert.equal(lease.sessionCount(), 1);
+
+    now += 30000;
+    assert.deepEqual(lease.activeScopes(), []);
+    assert.equal(lease.sessionCount(), 0);
+});
