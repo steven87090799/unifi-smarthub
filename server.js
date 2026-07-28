@@ -3570,6 +3570,8 @@ app.post('/api/config/restore', panelSecurity.requireAdmin, (req, res) => {
 // 彙整過去 24 小時的關鍵指標成一段文字
 function throwIfReportAborted(signal) {
     if (!signal?.aborted) return;
+    // Some legacy SSH operations cannot be forcibly interrupted after opening;
+    // once they return, this guard stops subsequent report phases and delivery.
     const reason = signal.reason;
     throw reason instanceof Error ? reason : new Error('Report generation cancelled');
 }
