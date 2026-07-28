@@ -1,50 +1,37 @@
 # SmartHub 資料更新頻率
 
-前端只輪詢目前顯示的頁面；分頁隱藏或切到其他頁面後，該頁面的非共用工作會停止。裝置頁的「即時資料」採 3 秒更新，歷史查詢與外部雲端 API 依成本保留較低頻率。
+一般設備與 UPS 使用不同的 Active／Idle 設定。設定頁儲存後會立刻重建既有 timer；舊 timer 會先清除，collector 完成後才安排下一次，因此不會重疊累積。
 
-## 前端目前頁面
+## 一般設備
 
-| 頁面 | 工作 | 看著頁面時 |
-|---|---|---:|
-| 所有可見頁面 | 裝置焦點 heartbeat | 5 秒 |
-| 所有可見頁面 | 重大事件橫幅 | 10 秒 |
-| 總覽 | UCG、客戶端、威脅、ISP、NAS、WiiM、UPS 即時資料 | 3 秒 |
-| 總覽 | 聚合趨勢圖 | 10 秒 |
-| 客戶端 | UniFi 活躍客戶端 | 3 秒 |
-| 資安 | 威脅與資安狀態 | 3 秒 |
-| UCG | 硬體與交換器/AP 埠狀態 | 3 秒 |
-| UCG | 歷史圖 / 7 天異常分析 | 10 秒 / 60 秒 |
-| NAS | 即時遙測與 Docker | 3 秒 |
-| NAS | 歷史、警報與休眠統計 | 10 秒 |
-| WiiM | 播放與系統狀態 | 3 秒 |
-| UPS | 真實來源狀態讀取 | 3 秒 |
-| UPS | 歷史圖與事件 / PPB 原廠事件 | 10 秒 / 10 秒 |
-| AdGuard | DNS 統計、查詢日誌與政策 | 3 秒 |
-| Linux | 即時 SSH 與歷史圖 | 3 秒 |
-| 雲端 | Site Manager / ISP | 120 秒 / 60 秒 |
-| 通知 | 推播紀錄 | 30 秒 |
-| 設定 | 報表、系統診斷、資安設定 | 30 秒 |
-| WiFi、工具 | 背景輪詢 | 無；進頁或操作時讀取 |
+預設值如下：
 
-Site Manager 沒有改成 3 秒，因為單次雲端更新會呼叫多個官方端點；3 秒週期會貼近官方速率上限，反而容易造成 429 與資料中斷。
+| 設定欄位 | 預設 | 實際控制內容 |
+|---|---:|---|
+| `deviceActiveFrontendPollSec` | 5 秒 | 可見 SmartHub 分頁向 API 更新畫面的間隔。|
+| `deviceActiveBackendSampleSec` | 5 秒 | 有任一可見分頁時，後端一般 collector 的取樣與歷史寫入間隔。|
+| `deviceIdleBackendSampleSec` | 600 秒 | 沒有可見分頁時，後端一般 collector 的背景取樣與歷史寫入間隔。|
+| `heartbeatSec` | 5 秒 | 可見分頁回報仍在使用中的間隔；不等於取樣間隔。|
+| `activeLeaseSec` | 30 秒 | 後端未收到 heartbeat 後，將該 session 視為離線的時間；必須大於 heartbeat。|
 
-## 沒有觀看頁面時的後端取樣
+一般 collector 包含趨勢、UCG 背景 SSH 取樣、NAS、WiiM、Linux、UniFi clients／threats、ISP 與 AdGuard。collector 先更新 latest cache、寫入既有歷史資料，再由主要讀取 API 回傳 cache；只有 cache 不存在或已過期時，API 才會以 singleflight 補取一次。
 
-| 後端工作 | 無人觀看 | 有人觀看相關頁面 |
-|---|---:|---:|
-| 聚合趨勢 | 1,800 秒（可設定） | 3 秒 |
-| UCG 歷史 | 由請求/監看工作帶動，快取 15 秒 | 3 秒，快取 2 秒 |
-| NAS 歷史 | 900 秒 | 3 秒 |
-| WiiM 溫度 | 1,800 秒（沿用趨勢閒置設定） | 3 秒 |
-| UPS 電壓、電池、負載與事件偵測 | 10 秒（可設定） | 3 秒真實讀取 |
-| PPB 原廠事件同步 | 60 秒 | 10 秒 |
-| Linux 歷史 | 900 秒 | 3 秒，SSH 快取 2 秒 |
-| 通知監看器 | 20 秒（可設定） | 相同 |
-| 自動防禦 | 30 秒（可設定） | 相同 |
-| 威脅 IP / AdGuard 政策 reconcile | 15 秒 | 相同 |
-| 系統健康監視 | 30 秒（環境變數可設定） | 相同 |
-| 排程報表 claim 掃描 | 60 秒 | 相同 |
-| SQLite 一般遙測 flush | 10 分鐘（可設定；容量達上限會提前 flush） | 相同 |
-| SQLite retention cleanup | 1 小時 | 相同 |
+## UPS
 
-瀏覽器的 3 秒請求與裝置真實取樣是兩個不同層次。UPS、UCG、NAS、WiiM、AdGuard 與 Linux 的即時端點在焦點模式下會取得新資料；歷史圖仍使用較低頻率，避免每 3 秒重做大型 SQLite 查詢與 DOM 重繪。
+UPS 不使用一般設備的 600 秒 Idle 值，維持自己的獨立高頻設定：
+
+| 設定欄位 | 預設 | 實際控制內容 |
+|---|---:|---|
+| `upsFrontendPollSec` | 3 秒 | UPS 頁面可見時的畫面更新。|
+| `upsActiveBackendSampleSec` | 3 秒 | 有人瀏覽時 UPS 狀態與歷史取樣。|
+| `upsIdleBackendSampleSec` | 10 秒 | 無人瀏覽時 UPS 狀態與歷史取樣。|
+| `upsPpbEventActiveBackendSampleSec` | 10 秒 | 有人瀏覽時 PPB 原廠事件同步。|
+| `upsPpbEventIdleBackendSampleSec` | 60 秒 | 無人瀏覽時 PPB 原廠事件同步。|
+
+## 分頁與通知行為
+
+只有 `document.visibilityState === 'visible'` 的分頁會送 heartbeat。hidden、關閉或 lease 到期後會停止一般前端輪詢，所有 session 都失效後後端切到 Idle；任一可見 session 存在則維持 Active。
+
+通知 watcher 的掃描間隔仍由 `watcherSec` 控制，但 watcher 優先讀 collector latest cache，不自行以 20 秒週期重複查詢一般設備。cache 尚未建立時只允許一次補取，並與 API／collector 共用 in-flight Promise。UPS 仍由獨立 sampler 維持高頻監控。
+
+歷史清理保留最近 24 小時原始解析度；更舊資料壓縮為每分鐘一筆，再套用保存天數與既有 hard cap。以 Active 5 秒、Idle 600 秒、保存 30 天計算，可避免 100,000 筆上限過早刪除資料，同時維持 SQLite 容量有界與既有圖表 response schema。

@@ -6,6 +6,8 @@ const { performance } = require('perf_hooks');
 const { ERROR_CODES } = require('./observability/error-codes');
 
 const HISTORY_SERIES = ['trend', 'ucg', 'nas', 'ups', 'wiim', 'linux'];
+const HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
+const HISTORY_ROLLUP_BUCKET_MS = 60 * 1000;
 const REPORT_CLAIM_RETRY_AFTER_MS = 60 * 1000;
 const REPORT_CLAIM_STALE_MS = 5 * 60 * 1000;
 const REPORT_MAX_ATTEMPTS = 3;
@@ -446,6 +448,12 @@ function createHistoryDb(dataDir, options = {}) {
             SELECT id FROM history WHERE series = ? ORDER BY ts ASC, id ASC LIMIT ?
         )
     `);
+    const listRollupCandidatesStmt = db.prepare(`
+        SELECT id, ts, data FROM history
+        WHERE series = ? AND ts >= ? AND ts < ?
+        ORDER BY ts ASC, id ASC
+    `);
+    const deleteHistoryIdsStmt = db.prepare('DELETE FROM history WHERE id = ?');
     const insertUpsEventStmt = db.prepare(`
         INSERT INTO ups_events (start_ts, end_ts, duration_sec, min_battery, start_voltage)
         VALUES (@start_ts, @end_ts, @duration_sec, @min_battery, @start_voltage)
@@ -1286,6 +1294,40 @@ function createHistoryDb(dataDir, options = {}) {
         if (excess > 0) deleteOldestStmt.run(series, excess);
     }
 
+    function aggregateHistoryPayload(rows) {
+        const values = rows.map(row => { try { return JSON.parse(row.data); } catch { return {}; } });
+        const keys = new Set(values.flatMap(value => Object.keys(value)));
+        const output = {};
+        for (const key of keys) {
+            const nonNull = values.map(value => value[key]).filter(value => value !== null && value !== undefined);
+            const numeric = nonNull.filter(value => typeof value === 'number' && Number.isFinite(value));
+            if (numeric.length === nonNull.length && numeric.length) output[key] = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+            else if (nonNull.length) output[key] = nonNull[nonNull.length - 1];
+            else output[key] = null;
+        }
+        return output;
+    }
+
+    function downsampleSeries(series, cutoff, now = Date.now()) {
+        const rawCutoff = Math.max(cutoff, now - HISTORY_RAW_WINDOW_MS);
+        const rows = listRollupCandidatesStmt.all(series, cutoff, rawCutoff);
+        const buckets = new Map();
+        for (const row of rows) {
+            const bucket = Math.floor(row.ts / HISTORY_ROLLUP_BUCKET_MS) * HISTORY_ROLLUP_BUCKET_MS;
+            const entries = buckets.get(bucket) || [];
+            entries.push(row);
+            buckets.set(bucket, entries);
+        }
+        let compacted = 0;
+        for (const [bucket, entries] of buckets) {
+            if (entries.length < 2) continue;
+            for (const entry of entries) deleteHistoryIdsStmt.run(entry.id);
+            insertPointStmt.run(series, bucket, JSON.stringify(aggregateHistoryPayload(entries)));
+            compacted += entries.length - 1;
+        }
+        return compacted;
+    }
+
     function prune(series, keepDays = 30, hardCap = 100000) {
         flush();
         return measure('prune', 'history', db.transaction(() => pruneRaw(series, keepDays, hardCap)), { transaction: true });
@@ -1894,6 +1936,7 @@ function createHistoryDb(dataDir, options = {}) {
             const cleanup = db.transaction(() => {
                 for (const series of HISTORY_SERIES) {
                     deleteBeforeStmt.run(series, cutoff);
+                    downsampleSeries(series, cutoff);
                     const excess = countPointsStmt.get(series).count - Math.max(Number(hardCap) || 1, 1);
                     if (excess > 0) deleteOldestStmt.run(series, excess);
                 }
