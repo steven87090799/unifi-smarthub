@@ -4751,11 +4751,12 @@
             console.debug(`[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}][${module}]`, ...args);
         }
 
-        // 所有 API／裝置／使用者可控字串進入 HTML template 前都必須轉義。
+        // 既有 template 必須轉成字串時，交由 DOM 的 textContent 序列化；
+        // 新畫面優先採用 createElement/textContent（不可自行維護不完整的 escape 表）。
         function escapeHtml(value) {
-            return String(value ?? '').replace(/[&<>"']/g, ch => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            })[ch]);
+            const text = document.createElement('span');
+            text.textContent = String(value ?? '');
+            return text.innerHTML;
         }
 
         /* ==================== 版面編輯 (全站區塊 + 導航列拖曳排序，存 localStorage) ==================== */
@@ -4844,10 +4845,11 @@
         }
         function resetLayout() { localStorage.removeItem('layoutOrder.v1'); showToast('版面已重置，重新載入中...'); setTimeout(() => location.reload(), 600); }
 
-        /* ========== 釘選區塊到總覽 (跨分頁即時鏡像複製) ========== */
-        // 原理：不搬移原區塊(避免破壞原頁與 id-based 更新)，而是在總覽放一份「鏡像」。
-        // 鏡像每 2 秒把來源區塊的 innerHTML 複製過來並清除內部 id (避免重複 id 干擾 getElementById)，
-        // canvas 圖表則以 drawImage 同步點陣，達到「兩個一模一樣且都即時」的效果。
+        /* ========== 釘選區塊到總覽 (資料變更才同步) ========== */
+        // 不搬移來源區塊，且不再以固定 timer 複製完整 DOM/canvas。鏡像只在
+        // 釘選時建立一次；來源的文字資料變化由 MutationObserver 同步。
+        const pinnedObservers = new Map();
+        let pinnedSyncQueued = false;
         function loadPinned() { try { return JSON.parse(localStorage.getItem('pinnedBlocks.v1')) || []; } catch { return []; } }
         function savePinned(arr) { localStorage.setItem('pinnedBlocks.v1', JSON.stringify(arr)); persistUiPreference('pinnedBlocks.v1', arr); }
         function pageTitleOfBid(bid) {
@@ -4863,10 +4865,35 @@
             showToast('✅ 已加到總覽（總覽頁頂端）');
         }
         function unpinBlock(bid) { savePinned(loadPinned().filter(b => b !== bid)); renderPinned(); }
+        function clonePinnedContent(src) {
+            const clone = src.cloneNode(true);
+            clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+            clone.querySelectorAll('.pin-add-btn').forEach(el => el.remove());
+            clone.querySelectorAll('canvas').forEach(canvas => {
+                const placeholder = document.createElement('div');
+                placeholder.className = 'text-[9px] text-slate-500 py-2';
+                placeholder.textContent = '圖表請至原頁查看';
+                canvas.replaceWith(placeholder);
+            });
+            return clone;
+        }
+        function syncPinnedText(source, mirror) {
+            const sourceNodes = [];
+            const mirrorNodes = [];
+            const collect = (root, output) => {
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) output.push(walker.currentNode);
+            };
+            collect(source, sourceNodes); collect(mirror, mirrorNodes);
+            for (let index = 0; index < Math.min(sourceNodes.length, mirrorNodes.length); index += 1) {
+                if (mirrorNodes[index].nodeValue !== sourceNodes[index].nodeValue) mirrorNodes[index].nodeValue = sourceNodes[index].nodeValue;
+            }
+        }
         function renderPinned() {
             const wrap = document.getElementById('ov-pinned'); if (!wrap) return;
+            pinnedObservers.forEach(observer => observer.disconnect()); pinnedObservers.clear();
             const arr = loadPinned();
-            wrap.innerHTML = '';
+            wrap.replaceChildren();
             arr.forEach(bid => {
                 const src = document.querySelector(`[data-bid="${bid}"]`);
                 if (!src) return; // 來源不存在(改版) → 略過
@@ -4876,18 +4903,27 @@
                 const badge = document.createElement('div');
                 badge.className = 'pin-badge flex items-center justify-between mb-1 px-1';
                 const t = pageTitleOfBid(bid);
-                badge.innerHTML = `<span class="text-[9px] text-blue-400/80 font-bold uppercase tracking-wider">📌 釘選自 ${t || '其他分頁'}</span>`;
+                const label = document.createElement('span');
+                label.className = 'text-[9px] text-blue-400/80 font-bold uppercase tracking-wider';
+                label.textContent = `📌 釘選自 ${t || '其他分頁'}`;
+                badge.appendChild(label);
                 const rm = document.createElement('button');
                 rm.className = 'text-[9px] text-slate-500 hover:text-red-400 font-bold';
                 rm.textContent = '✕ 移除';
-                rm.onclick = () => unpinBlock(bid);
+                rm.addEventListener('click', () => unpinBlock(bid));
                 badge.appendChild(rm);
                 const mirror = document.createElement('div');
                 mirror.className = 'pinned-mirror';
+                mirror.appendChild(clonePinnedContent(src));
                 holder.appendChild(badge); holder.appendChild(mirror);
                 wrap.appendChild(holder);
+                pinnedObservers.set(bid, new MutationObserver(() => {
+                    if (pinnedSyncQueued) return;
+                    pinnedSyncQueued = true;
+                    queueMicrotask(() => { pinnedSyncQueued = false; syncPinned(); });
+                }));
+                pinnedObservers.get(bid).observe(src, { childList: true, characterData: true, subtree: true });
             });
-            syncPinned();
         }
         function syncPinned() {
             if (document.visibilityState !== 'visible' || document.getElementById('page-overview')?.classList.contains('hidden')) return;
@@ -4895,19 +4931,9 @@
                 const src = document.querySelector(`[data-bid="${holder.dataset.mirrorOf}"]`);
                 const mirror = holder.querySelector('.pinned-mirror');
                 if (!src || !mirror) return;
-                mirror.innerHTML = src.innerHTML;
-                // 保留來源元素自己的 class (例如 grid grid-cols-2)，否則鏡像只復製到子元素、外層排版跟版面比例會跑掉
-                mirror.className = `pinned-mirror ${src.className}`;
-                // 清除鏡像內部 id，避免與來源重複 (id-based 更新只會命中來源)
-                mirror.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
-                // 移除鏡像內的 + / 拖曳殘留按鈕
-                mirror.querySelectorAll('.pin-add-btn').forEach(e => e.remove());
-                // 圖表 canvas：把來源點陣畫到鏡像 canvas
-                const sc = src.querySelectorAll('canvas'), mc = mirror.querySelectorAll('canvas');
-                sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch (error) { console.debug('Pinned chart copy failed', error); } });
+                syncPinnedText(src, mirror);
             });
         }
-        setInterval(syncPinned, 2000);
 
         // 編輯模式時，為各分頁(除總覽外)的每個區塊注入「+ 加到總覽」按鈕
         function refreshPinButtons() {
@@ -5459,6 +5485,30 @@
 
         /* ==================== 導航 ==================== */
         let currentPage = 'overview';
+        const loadedPages = new Set();
+        function loadPageData(page) {
+            if (document.visibilityState !== 'visible' || loadedPages.has(page)) return Promise.resolve();
+            loadedPages.add(page);
+            const loaders = {
+                overview: () => Promise.all([fetchHardware(), fetchClients(), fetchThreats(), fetchTrends(), fetchCritAlerts()]),
+                clients: () => Promise.all([fetchClients(), fetchBlockHistory()]),
+                security: () => Promise.all([fetchThreats(), fetchSecuritySettings(), fetchBlockHistory()]),
+                wifi: () => Promise.all([fetchWiFiNetworks(), fetchSwitchMatrix()]),
+                cloud: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan(), fetchIspMetrics()]),
+                ucg: () => Promise.all([fetchHardware(), fetchUcgHist(), fetchUcgSpikes(), fetchSwitchMatrix()]),
+                nas: () => Promise.all([fetchNas(), fetchNasAdvanced(), fetchNasCharts(), fetchNasSleepStats(), fetchNasDocker(), fetchNasAlerts(), fetchAlertConfig().then(configured => { if (configured) connectNasSse(); })]),
+                wiim: () => { initWiimPage(); initWiimSrcDrag(); return Promise.all([fetchWiimDeviceInfo(), fetchWiimSystem(), fetchWiimPlayback()]); },
+                ups: () => Promise.all([fetchUps(), fetchPpbEvents()]),
+                adguard: () => Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]),
+                linuxhost: () => Promise.all([fetchLinux(), fetchLnxChart()]),
+                notify: () => Promise.all([fetchNotifSettings(), fetchWebPushState(), fetchNotifLog()]),
+                settings: () => Promise.all([fetchAppSettings(), fetchReportLog(), fetchSystemStatus(), fetchConnections(), fetchConfigBackupStatus()])
+            };
+            return Promise.resolve(loaders[page]?.()).catch(error => {
+                loadedPages.delete(page);
+                console.debug('Initial page load failed', page, error);
+            });
+        }
         function navigate(page) {
             currentPage = page;
             // 重新觸發分頁進場動畫
@@ -5478,7 +5528,7 @@
             toggleSidebar(false);
             if (page === 'overview') syncPinned();
             sendHeartbeat(true);
-            applyPolling(true);
+            loadPageData(page).finally(() => applyPolling(true));
             requestAnimationFrame(() => {
                 [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
                 replayPageChartEntrances(page);
@@ -5532,50 +5582,12 @@
             initUcgHistChart();
             initNasHeroChart();
             initUpsHeroChart();
-            fetchUcgHist();
-            fetchUcgSpikes();
-            fetchPpbEvents();
             initWorldMap();
-            fetchSecuritySettings();
-            fetchHardware();
-            fetchClients();
-            fetchWiFiNetworks();
-            fetchCloudSites();
-            fetchCloudDevices();
-            fetchCloudHosts();
-            fetchCloudSdwan();
-            fetchIspMetrics();
-            fetchThreats();
-            fetchSwitchMatrix();
-            fetchBlockHistory();
-            fetchTrends();
-            fetchNas();
-            fetchNasAdvanced();
-            fetchNasCharts();
-            fetchNasSleepStats();
-            fetchNasDocker();
-            fetchNasAlerts();
-            // NAS Monitor 為選配；未設定時不要建立 EventSource，避免每次載入留下 503 錯誤。
-            fetchAlertConfig().then(configured => { if (configured) connectNasSse(); });
-            fetchNotifSettings();
-            fetchWebPushState();
-            fetchNotifLog();
             fetchAppSettings();
-            fetchReportLog();
-            fetchSystemStatus();
-            fetchConnections();
-            fetchConfigBackupStatus();
-            fetchUps();
-            fetchAdguard(); fetchAdgLog(); fetchAdguardServicePolicies();
-            fetchLinux(); fetchLnxChart();
-            fetchWiimDeviceInfo();
-            initWiimPage();
-            initWiimSrcDrag();
-            refreshSideUps();
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
             checkLastSpeedtest();
             sendHeartbeat(true);
-            applyPolling();
+            loadPageData(currentPage).finally(() => applyPolling());
         };
 
         /* ==================== 前端輪詢管理（間隔由 /api/settings 提供） ==================== */
@@ -6574,10 +6586,17 @@
                     <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(t.port)}</td>
                     <td class="py-2.5 text-right whitespace-nowrap">
                         <span class="font-black text-red-500 text-[10px] uppercase tracking-wider">${escapeHtml(t.action_taken)}</span>
-                        ${canBlock ? `<button onclick="copySrcIp('${t.src_ip}')" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 002 2v8a2 2 0 002 2z"/></svg></button><button onclick="requestThreatBlock('${t.src_ip}')" title="加入有期限的 UniFi 封鎖清單" class="ml-1.5 px-1.5 py-0.5 rounded border border-red-900/60 text-[9px] font-bold text-red-400 hover:bg-red-950/60">臨時封鎖</button>` : ''}
+                        ${canBlock ? `<button type="button" data-threat-action="copy" data-ip="${escapeHtml(t.src_ip)}" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 002 2v8a2 2 0 002 2z"/></svg></button><button type="button" data-threat-action="block" data-ip="${escapeHtml(t.src_ip)}" title="加入有期限的 UniFi 封鎖清單" class="ml-1.5 px-1.5 py-0.5 rounded border border-red-900/60 text-[9px] font-bold text-red-400 hover:bg-red-950/60">臨時封鎖</button>` : ''}
                     </td>
                 </tr>`;
             }).join('');
+            tbody.onclick = event => {
+                const button = event.target.closest('[data-threat-action]');
+                const ip = button?.dataset.ip;
+                if (!button || !/^\d+\.\d+\.\d+\.\d+$/.test(ip || '')) return;
+                if (button.dataset.threatAction === 'copy') copySrcIp(ip);
+                if (button.dataset.threatAction === 'block') requestThreatBlock(ip);
+            };
         }
 
         function copySrcIp(ip) {
@@ -7533,16 +7552,25 @@
                 if (d.source === 'not_configured') { card.classList.add('hidden'); return false; }
                 card.classList.remove('hidden');
                 const rows = d.config || [];
-                document.getElementById('nas-alert-config-list').innerHTML = rows.length ? rows.map(c => `
-                    <div class="flex items-center gap-2 text-[11px] bg-slate-900/40 rounded-lg px-3 py-2">
-                        <span class="font-bold text-slate-200 w-32 truncate mono">${c.metric ?? '--'}</span>
-                        <span class="text-slate-500">${c.condition === 'below' ? '低於' : '高於'}</span>
-                        <span class="text-amber-400 font-bold mono">${c.threshold ?? '--'}</span>
-                        <span class="ml-auto flex items-center gap-2">
-                            ${c.enabled === false ? '<span class="text-slate-600">已停用</span>' : '<span class="text-emerald-500">啟用中</span>'}
-                            <button onclick="deleteAlertConfig('${c.metric}')" class="text-slate-500 hover:text-red-400 transition" title="刪除"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
-                        </span>
-                    </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-2">尚無自訂閾值，全部使用系統預設值</p>';
+                const list = document.getElementById('nas-alert-config-list');
+                list.replaceChildren();
+                if (!rows.length) {
+                    const empty = document.createElement('p');
+                    empty.className = 'text-xs text-slate-500 text-center py-2';
+                    empty.textContent = '尚無自訂閾值，全部使用系統預設值';
+                    list.appendChild(empty);
+                }
+                rows.forEach(config => {
+                    const row = document.createElement('div'); row.className = 'flex items-center gap-2 text-[11px] bg-slate-900/40 rounded-lg px-3 py-2';
+                    const metric = document.createElement('span'); metric.className = 'font-bold text-slate-200 w-32 truncate mono'; metric.textContent = config.metric ?? '--';
+                    const condition = document.createElement('span'); condition.className = 'text-slate-500'; condition.textContent = config.condition === 'below' ? '低於' : '高於';
+                    const threshold = document.createElement('span'); threshold.className = 'text-amber-400 font-bold mono'; threshold.textContent = config.threshold ?? '--';
+                    const actions = document.createElement('span'); actions.className = 'ml-auto flex items-center gap-2';
+                    const enabled = document.createElement('span'); enabled.className = config.enabled === false ? 'text-slate-600' : 'text-emerald-500'; enabled.textContent = config.enabled === false ? '已停用' : '啟用中';
+                    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'text-slate-500 hover:text-red-400 transition'; remove.title = '刪除'; remove.textContent = '刪除';
+                    remove.addEventListener('click', () => deleteAlertConfig(String(config.metric || '')));
+                    actions.append(enabled, remove); row.append(metric, condition, threshold, actions); list.appendChild(row);
+                });
                 return true;
             } catch { card.classList.add('hidden'); return false; }
         }
@@ -8083,7 +8111,10 @@
                     ['Memory', d.memory?.status, d.memory?.usage_percent == null ? '--' : `${d.memory.usage_percent}%`, `Process ${d.memory?.process_mb ?? '--'} MB · Available ${diagBytes(d.memory?.system_available_bytes)}`],
                     ['Disk', d.disk?.status, d.disk?.usage_percent == null ? '--' : `${d.disk.usage_percent}%`, `Free ${diagBytes(d.disk?.free_bytes)} · DATA_DIR`],
                     ['SQLite', d.database?.status, d.database?.latency_ms == null ? '--' : `${d.database.latency_ms} ms`, `Connection ${d.database?.pool?.active ?? 0}/${d.database?.pool?.size ?? 1} · Slow ${d.database?.slow_queries ?? 0} · Failed ${d.database?.failed_queries ?? 0}`],
-                    ['Worker', d.worker?.status, `${d.worker?.active_tasks ?? 0} active`, `Queued ${d.worker?.queued_tasks ?? 0} · Failed ${d.worker?.failed_tasks ?? 0} · Completed ${d.worker?.completed_tasks ?? 0} · Stuck ${d.worker?.stuck_tasks ?? 0}`]
+                    ['Worker', d.worker?.status, `${d.worker?.active_tasks ?? 0} active`, `Queued ${d.worker?.queued_tasks ?? 0} · Failed ${d.worker?.failed_tasks ?? 0} · Completed ${d.worker?.completed_tasks ?? 0} · Stuck ${d.worker?.stuck_tasks ?? 0}`],
+                    ['Node', 'healthy', `${Math.round((d.runtime?.node_memory?.rss || 0) / 1048576)} MB`, `Heap ${Math.round((d.runtime?.node_memory?.heap_used || 0) / 1048576)}/${Math.round((d.runtime?.node_memory?.heap_total || 0) / 1048576)} MB · External ${Math.round((d.runtime?.node_memory?.external || 0) / 1048576)} MB`],
+                    ['Runtime', 'healthy', `${d.runtime?.event_loop_lag_ms ?? '--'} ms`, `SSE ${d.runtime?.sse_clients ?? 0} · Browser sessions ${d.runtime?.active_browser_sessions ?? 0} · Collectors ${d.runtime?.collectors?.running ?? 0}`],
+                    ['Cleanup', d.runtime?.cleanup?.failed ? 'warning' : 'healthy', d.runtime?.cleanup?.duration_ms == null ? '--' : `${d.runtime.cleanup.duration_ms} ms`, `SQLite ${diagBytes(d.runtime?.sqlite_file_bytes)} · Artwork ${d.runtime?.artwork_cache?.entries ?? 0} / ${diagBytes(d.runtime?.artwork_cache?.total_bytes)}`]
                 ];
                 const summary = document.getElementById('sysdiag-summary');
                 if (summary) summary.innerHTML = cards.map(c => diagCard(...c)).join('');

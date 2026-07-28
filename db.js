@@ -8,6 +8,9 @@ const { ERROR_CODES } = require('./observability/error-codes');
 const HISTORY_SERIES = ['trend', 'ucg', 'nas', 'ups', 'wiim', 'linux'];
 const HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HISTORY_ROLLUP_BUCKET_MS = 60 * 1000;
+const HISTORY_FIVE_MIN_BUCKET_MS = 5 * 60 * 1000;
+const HISTORY_HOUR_BUCKET_MS = 60 * 60 * 1000;
+const HISTORY_ROLLUP_BATCH_SIZE = 1000;
 const REPORT_CLAIM_RETRY_AFTER_MS = 60 * 1000;
 const REPORT_CLAIM_STALE_MS = 5 * 60 * 1000;
 const REPORT_MAX_ATTEMPTS = 3;
@@ -404,6 +407,7 @@ function createHistoryDb(dataDir, options = {}) {
     let lastQueryLatencyMs = 0;
     let lastError = null;
     let closed = false;
+    let asyncCleanupPromise = null;
 
     function measure(operation, table, fn, { transaction = false } = {}) {
         const started = performance.now();
@@ -442,6 +446,14 @@ function createHistoryDb(dataDir, options = {}) {
     const getLatestStmt = db.prepare('SELECT ts, data FROM history WHERE series = ? ORDER BY ts DESC, id DESC LIMIT 1');
     const deleteSeriesStmt = db.prepare('DELETE FROM history WHERE series = ?');
     const deleteBeforeStmt = db.prepare('DELETE FROM history WHERE series = ? AND ts < ?');
+    const deleteBeforeBatchStmt = db.prepare(`
+        DELETE FROM history WHERE id IN (
+            SELECT id FROM history
+            WHERE series = ? AND ts < ?
+            ORDER BY ts ASC, id ASC
+            LIMIT ?
+        )
+    `);
     const countPointsStmt = db.prepare('SELECT COUNT(*) AS count FROM history WHERE series = ?');
     const deleteOldestStmt = db.prepare(`
         DELETE FROM history WHERE id IN (
@@ -450,10 +462,10 @@ function createHistoryDb(dataDir, options = {}) {
     `);
     const listRollupCandidatesStmt = db.prepare(`
         SELECT id, ts, data FROM history
-        WHERE series = ? AND ts >= ? AND ts < ?
+        WHERE series = ? AND ts >= ? AND ts < ? AND (ts > ? OR (ts = ? AND id > ?))
         ORDER BY ts ASC, id ASC
+        LIMIT ?
     `);
-    const deleteHistoryIdsStmt = db.prepare('DELETE FROM history WHERE id = ?');
     const insertUpsEventStmt = db.prepare(`
         INSERT INTO ups_events (start_ts, end_ts, duration_sec, min_battery, start_voltage)
         VALUES (@start_ts, @end_ts, @duration_sec, @min_battery, @start_voltage)
@@ -1233,6 +1245,7 @@ function createHistoryDb(dataDir, options = {}) {
     function decodePoint(row, series) {
         let data;
         try { data = JSON.parse(row.data); } catch { data = {}; }
+        delete data.__smarthubRollupCounts;
         if (series === 'wiim') data.ts = Math.floor(row.ts / 1000);
         else data.t = new Date(row.ts).toISOString();
         return data;
@@ -1298,34 +1311,118 @@ function createHistoryDb(dataDir, options = {}) {
         const values = rows.map(row => { try { return JSON.parse(row.data); } catch { return {}; } });
         const keys = new Set(values.flatMap(value => Object.keys(value)));
         const output = {};
+        const counts = {};
         for (const key of keys) {
+            if (key === '__smarthubRollupCounts') continue;
             const nonNull = values.map(value => value[key]).filter(value => value !== null && value !== undefined);
             const numeric = nonNull.filter(value => typeof value === 'number' && Number.isFinite(value));
-            if (numeric.length === nonNull.length && numeric.length) output[key] = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+            if (numeric.length === nonNull.length && numeric.length) {
+                let total = 0, weight = 0;
+                values.forEach(value => {
+                    if (!Number.isFinite(value[key])) return;
+                    const entryWeight = Math.max(1, Number(value.__smarthubRollupCounts?.[key]) || 1);
+                    total += value[key] * entryWeight;
+                    weight += entryWeight;
+                });
+                output[key] = total / weight;
+                counts[key] = weight;
+            }
             else if (nonNull.length) output[key] = nonNull[nonNull.length - 1];
             else output[key] = null;
         }
+        if (Object.keys(counts).length) output.__smarthubRollupCounts = counts;
         return output;
     }
 
-    function downsampleSeries(series, cutoff, now = Date.now()) {
-        const rawCutoff = Math.max(cutoff, now - HISTORY_RAW_WINDOW_MS);
-        const rows = listRollupCandidatesStmt.all(series, cutoff, rawCutoff);
+    function deleteHistoryBatch(series, ids) {
+        if (!ids.length) return;
+        db.prepare(`DELETE FROM history WHERE series = ? AND id IN (${ids.map(() => '?').join(',')})`).run(series, ...ids);
+    }
+
+    function downsampleSeries(series, fromTs, toTs, bucketMs) {
+        const completeTo = Math.floor(toTs / bucketMs) * bucketMs;
+        if (completeTo <= fromTs) return { processed: 0, compacted: 0, deleted: 0 };
+        let lastTs = fromTs - 1, lastId = 0, compacted = 0, processed = 0, deleted = 0;
         const buckets = new Map();
+        function flushBuckets(final = false) {
+            for (const [bucket, entries] of buckets) {
+                if (!final && bucket >= Math.floor(lastTs / bucketMs) * bucketMs) continue;
+                buckets.delete(bucket);
+                if (entries.length < 2) continue;
+                deleteHistoryBatch(series, entries.map(entry => entry.id));
+                deleted += entries.length;
+                insertPointStmt.run(series, bucket, JSON.stringify(aggregateHistoryPayload(entries)));
+                compacted += entries.length - 1;
+            }
+        }
+        while (true) {
+            const rows = listRollupCandidatesStmt.all(series, fromTs, completeTo, lastTs, lastTs, lastId, HISTORY_ROLLUP_BATCH_SIZE);
+            if (!rows.length) break;
+            processed += rows.length;
+            for (const row of rows) {
+                const bucket = Math.floor(row.ts / bucketMs) * bucketMs;
+                const entries = buckets.get(bucket) || [];
+                entries.push(row); buckets.set(bucket, entries);
+            }
+            const last = rows[rows.length - 1];
+            lastTs = last.ts; lastId = last.id;
+            flushBuckets(false);
+            if (rows.length < HISTORY_ROLLUP_BATCH_SIZE) break;
+        }
+        flushBuckets(true);
+        return { processed, compacted, deleted };
+    }
+
+    function createRollupState(series, fromTs, toTs, bucketMs) {
+        return {
+            series, fromTs, bucketMs,
+            completeTo: Math.floor(toTs / bucketMs) * bucketMs,
+            lastTs: fromTs - 1, lastId: 0,
+            buckets: new Map(), processed: 0, compacted: 0, deleted: 0, done: false
+        };
+    }
+
+    // A single bounded SQLite batch. cleanupYielding() gives the event loop a
+    // turn between batches so a large retention pass cannot monopolise Node.
+    function downsampleSeriesBatch(state, batchSize) {
+        if (state.done || state.completeTo <= state.fromTs) {
+            state.done = true;
+            return state;
+        }
+        const flushBuckets = final => {
+            for (const [bucket, entries] of state.buckets) {
+                if (!final && bucket >= Math.floor(state.lastTs / state.bucketMs) * state.bucketMs) continue;
+                state.buckets.delete(bucket);
+                if (entries.length < 2) continue;
+                deleteHistoryBatch(state.series, entries.map(entry => entry.id));
+                state.deleted += entries.length;
+                insertPointStmt.run(state.series, bucket, JSON.stringify(aggregateHistoryPayload(entries)));
+                state.compacted += entries.length - 1;
+            }
+        };
+        const rows = listRollupCandidatesStmt.all(
+            state.series, state.fromTs, state.completeTo, state.lastTs, state.lastTs, state.lastId, batchSize
+        );
+        if (!rows.length) {
+            flushBuckets(true);
+            state.done = true;
+            return state;
+        }
+        state.processed += rows.length;
         for (const row of rows) {
-            const bucket = Math.floor(row.ts / HISTORY_ROLLUP_BUCKET_MS) * HISTORY_ROLLUP_BUCKET_MS;
-            const entries = buckets.get(bucket) || [];
+            const bucket = Math.floor(row.ts / state.bucketMs) * state.bucketMs;
+            const entries = state.buckets.get(bucket) || [];
             entries.push(row);
-            buckets.set(bucket, entries);
+            state.buckets.set(bucket, entries);
         }
-        let compacted = 0;
-        for (const [bucket, entries] of buckets) {
-            if (entries.length < 2) continue;
-            for (const entry of entries) deleteHistoryIdsStmt.run(entry.id);
-            insertPointStmt.run(series, bucket, JSON.stringify(aggregateHistoryPayload(entries)));
-            compacted += entries.length - 1;
-        }
-        return compacted;
+        const last = rows[rows.length - 1];
+        state.lastTs = last.ts;
+        state.lastId = last.id;
+        if (rows.length < batchSize) {
+            flushBuckets(true);
+            state.done = true;
+        } else flushBuckets(false);
+        return state;
     }
 
     function prune(series, keepDays = 30, hardCap = 100000) {
@@ -1932,17 +2029,78 @@ function createHistoryDb(dataDir, options = {}) {
         },
         cleanup(keepDays = 30, hardCap = 100000) {
             flush();
-            const cutoff = Date.now() - Math.max(Number(keepDays) || 1, 1) * 86400000;
+            const now = Date.now();
+            const days = Math.min(Math.max(Number(keepDays) || 1, 1), 365);
+            const cutoff = now - days * 86400000;
             const cleanup = db.transaction(() => {
+                const totals = { processed: 0, compacted: 0, deleted: 0 };
                 for (const series of HISTORY_SERIES) {
-                    deleteBeforeStmt.run(series, cutoff);
-                    downsampleSeries(series, cutoff);
-                    const excess = countPointsStmt.get(series).count - Math.max(Number(hardCap) || 1, 1);
-                    if (excess > 0) deleteOldestStmt.run(series, excess);
+                    totals.deleted += deleteBeforeStmt.run(series, cutoff).changes;
+                    const rawCutoff = Math.max(cutoff, now - HISTORY_RAW_WINDOW_MS);
+                    for (const bucketMs of [HISTORY_ROLLUP_BUCKET_MS]) {
+                        const result = downsampleSeries(series, cutoff, rawCutoff, bucketMs);
+                        totals.processed += result.processed; totals.compacted += result.compacted; totals.deleted += result.deleted;
+                    }
+                    const cap = Math.max(Number(hardCap) || 1, 1);
+                    if (countPointsStmt.get(series).count > cap) {
+                        const result = downsampleSeries(series, cutoff, rawCutoff, HISTORY_FIVE_MIN_BUCKET_MS);
+                        totals.processed += result.processed; totals.compacted += result.compacted; totals.deleted += result.deleted;
+                    }
+                    if (countPointsStmt.get(series).count > cap) {
+                        const result = downsampleSeries(series, cutoff, rawCutoff, HISTORY_HOUR_BUCKET_MS);
+                        totals.processed += result.processed; totals.compacted += result.compacted; totals.deleted += result.deleted;
+                    }
+                    const excess = countPointsStmt.get(series).count - cap;
+                    if (excess > 0) totals.deleted += deleteOldestStmt.run(series, excess).changes;
                 }
+                return totals;
             });
-            measure('cleanup', 'history', cleanup, { transaction: true });
+            const result = measure('cleanup', 'history', cleanup, { transaction: true });
             try { db.pragma('incremental_vacuum(200)'); } catch { }
+            return result;
+        },
+        cleanupYielding(keepDays = 30, hardCap = 100000, { batchSize = HISTORY_ROLLUP_BATCH_SIZE, yieldToLoop = () => new Promise(resolve => setImmediate(resolve)) } = {}) {
+            if (asyncCleanupPromise) return asyncCleanupPromise;
+            const safeBatchSize = Math.max(1, Math.floor(Number(batchSize) || HISTORY_ROLLUP_BATCH_SIZE));
+            const days = Math.min(Math.max(Number(keepDays) || 1, 1), 365);
+            const cap = Math.max(Number(hardCap) || 1, 1);
+            asyncCleanupPromise = (async () => {
+                flush();
+                const now = Date.now();
+                const cutoff = now - days * 86400000;
+                const rawCutoff = Math.max(cutoff, now - HISTORY_RAW_WINDOW_MS);
+                const totals = { processed: 0, compacted: 0, deleted: 0 };
+                const yieldBatch = async () => { await yieldToLoop(); };
+                const rollup = async (series, bucketMs) => {
+                    const state = createRollupState(series, cutoff, rawCutoff, bucketMs);
+                    while (!state.done) {
+                        downsampleSeriesBatch(state, safeBatchSize);
+                        await yieldBatch();
+                    }
+                    totals.processed += state.processed;
+                    totals.compacted += state.compacted;
+                    totals.deleted += state.deleted;
+                };
+                for (const series of HISTORY_SERIES) {
+                    let deleted;
+                    do {
+                        deleted = deleteBeforeBatchStmt.run(series, cutoff, safeBatchSize).changes;
+                        totals.deleted += deleted;
+                        if (deleted) await yieldBatch();
+                    } while (deleted === safeBatchSize);
+                    await rollup(series, HISTORY_ROLLUP_BUCKET_MS);
+                    if (countPointsStmt.get(series).count > cap) await rollup(series, HISTORY_FIVE_MIN_BUCKET_MS);
+                    if (countPointsStmt.get(series).count > cap) await rollup(series, HISTORY_HOUR_BUCKET_MS);
+                    while (countPointsStmt.get(series).count > cap) {
+                        const excess = Math.min(countPointsStmt.get(series).count - cap, safeBatchSize);
+                        totals.deleted += deleteOldestStmt.run(series, excess).changes;
+                        await yieldBatch();
+                    }
+                }
+                try { db.pragma('incremental_vacuum(200)'); } catch { }
+                return totals;
+            })().finally(() => { asyncCleanupPromise = null; });
+            return asyncCleanupPromise;
         },
         diagnostics() {
             const started = performance.now();

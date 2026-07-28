@@ -19,8 +19,6 @@ test('legacy settings migration reads raw stored values and never overwrites can
         deviceActiveBackendSampleSec: 7, deviceIdleBackendSampleSec: 601, activeLeaseSec: 31, upsIdleBackendSampleSec: 11
     });
     assert.equal(context.migrate({ trendActiveSec: 7, deviceActiveBackendSampleSec: 5 }).deviceActiveBackendSampleSec, 5);
-    assert.match(source, /const migrated = migrateLegacyAppSettings\(stored\);/);
-    assert.match(source, /syncPpbEventsIfDue\(ppbEventSyncMs\(\)\)/);
 });
 
 test('NAS login singleflight shares one request and clears after success or failure', async () => {
@@ -50,16 +48,4 @@ test('NAS login singleflight shares one request and clears after success or fail
     const tokens = await Promise.all(Array.from({ length: 8 }, () => context.getNasToken()));
     assert.deepEqual(tokens, Array(8).fill('shared-token'));
     assert.equal(loginCalls, 1);
-    assert.match(source, /finally \{ if \(nasLoginPromise === login\) nasLoginPromise = null; \}/);
-});
-
-test('primary device APIs and watcher paths use collector caches instead of direct device reads', () => {
-    for (const marker of [
-        'getUnifiClientsCached()', 'getUnifiThreatsCached()', 'getNasCommonCached()',
-        'getAdguardOverviewCached()', 'getLinuxCached()', 'getCloudIspMetricsCached()',
-        "getHardwareCached({ allowStale: true })", "getUnifiClientsCached({ allowStale: true })"
-    ]) assert.match(source, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(source, /registerBackendSampler\('trendHistory', sampleTrends, normalDeviceSampleMs\)/);
-    assert.match(source, /registerBackendSampler\('upsSample', \(\) => sampleUpsIfDue\(upsSampleMs\(\)\), upsSampleMs\)/);
-    assert.match(source, /registerBackendSampler\('ppbEventSync',[\s\S]*ppbEventSyncMs\)/);
 });

@@ -103,6 +103,7 @@ const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createSseBackpressure } = require('./server/services/sse-backpressure');
 const { createArtworkCache, fetchArtwork } = require('./server/services/wiim-art-proxy');
+const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -118,6 +119,8 @@ const APP_STARTED_AT = Date.now();
 let shuttingDown = false;
 const lifecycleIntervals = new Set();
 const lifecycleTimeouts = new Set();
+let eventLoopLagMs = 0;
+let eventLoopExpectedAt = Date.now() + 1000;
 
 function lifecycleInterval(callback, milliseconds) {
     const handle = setInterval(callback, milliseconds);
@@ -130,6 +133,12 @@ function clearLifecycleInterval(handle) {
     clearInterval(handle);
     lifecycleIntervals.delete(handle);
 }
+
+lifecycleInterval(() => {
+    const now = Date.now();
+    eventLoopLagMs = Math.max(0, now - eventLoopExpectedAt);
+    eventLoopExpectedAt = now + 1000;
+}, 1000).unref?.();
 
 function lifecycleTimeout(callback, milliseconds, { unref = false } = {}) {
     let handle;
@@ -289,6 +298,7 @@ app.get('/api/security/csrf', panelSecurity.csrf);
 app.use(panelSecurity.protectWrites);
 app.use('/api/config/restore', express.raw({ type: BACKUP_MEDIA_TYPE, limit: MAX_BACKUP_BYTES }));
 app.use(express.json({ limit: '256kb', strict: true }));
+app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
 // 託管前端靜態網頁
 registerFrontendAssetRoutes(app, { rootDir: __dirname });
@@ -415,8 +425,6 @@ function parseIpLinks(txt) {
 }
 
 // SSH 遙測含 sleep 1；同一設備重用單一連線、命令序列化，閒置時自動釋放。
-let hwCache = null;      // { ts, data }
-let hwInflight = null;
 const ucgSshPool = createSshConnectionPool({
     getConfig: () => ({
         host: process.env.UCG_IP,
@@ -522,38 +530,23 @@ async function fetchHardwareSSH() {
     }
 }
 
-const deviceCollectorCache = new Map();
 function generalCollectorCacheAgeMs() {
     return Math.max(normalDeviceSampleMs() * 2, 1000);
 }
+const deviceCollectorCache = createDeviceCollectorCache({ cacheAgeMs: generalCollectorCacheAgeMs });
 async function readDeviceCollector(name, collect, { refresh = false, allowStale = false } = {}) {
-    const current = deviceCollectorCache.get(name);
-    if (current?.data !== undefined && (!refresh && (allowStale || Date.now() - current.ts <= generalCollectorCacheAgeMs()))) return current.data;
-    if (current?.inflight) return current.inflight;
-    const next = current || {};
-    const inflight = Promise.resolve().then(collect).then(data => {
-        deviceCollectorCache.set(name, { data, ts: Date.now(), inflight: null });
-        return data;
-    }).finally(() => {
-        const entry = deviceCollectorCache.get(name);
-        if (entry?.inflight === inflight) entry.inflight = null;
-    });
-    next.inflight = inflight;
-    deviceCollectorCache.set(name, next);
-    return inflight;
+    return deviceCollectorCache.read(name, collect, { refresh, allowStale });
 }
 function latestDeviceCollector(name) {
-    return deviceCollectorCache.get(name)?.data;
+    return deviceCollectorCache.snapshot(name)?.data;
+}
+function deviceCollectorSnapshot(name) {
+    return deviceCollectorCache.snapshot(name);
 }
 
 // 行程內共用入口 (route / notificationWatcher / buildReport 皆走這裡，不再自打 HTTP)
 async function getHardwareCached({ force = false, allowStale = false } = {}) {
-    const cacheMs = generalCollectorCacheAgeMs();
-    if (!force && hwCache && (allowStale || Date.now() - hwCache.ts < cacheMs)) return hwCache.data;
-    if (!hwInflight) hwInflight = fetchHardwareSSH().finally(() => { hwInflight = null; });
-    const data = await hwInflight;
-    hwCache = { ts: Date.now(), data };
-    return data;
+    return readDeviceCollector('ucg.hardware', fetchHardwareSSH, { refresh: force, allowStale });
 }
 
 app.get('/api/hardware', async (req, res) => {
@@ -587,7 +580,7 @@ async function collectUnifiNetworkDevices() {
 async function collectUnifiHealth() {
     const cookie = await getLocalSession();
     const response = await unifiClient.get('/proxy/network/api/s/default/stat/health', { headers: { 'Cookie': cookie } });
-    return response.data;
+    return { ok: true, payload: response.data };
 }
 function getUnifiHealthCached(options) {
     return readDeviceCollector('unifi.health', collectUnifiHealth, options);
@@ -950,6 +943,7 @@ app.delete('/api/security/threat-blocks/:id', panelSecurity.requireAdmin, async 
     }
 });
 const HISTORY_HARD_CAP = 100000;
+let lastHistoryCleanup = { durationMs: null, failed: false, completedAt: null };
 const systemMonitor = new SystemMonitor({
     dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger,
     version: APP_VERSION, buildIdentity: buildIdentity.public
@@ -1089,8 +1083,24 @@ app.post('/api/ui-preferences', (req, res) => {
 });
 
 // SQLite 以資料庫端清理取代舊的記憶體陣列 prune；清理後保留增量 vacuum，避免檔案無限膨脹。
-historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP);
-lifecycleInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP)), 60 * 60 * 1000);
+async function runHistoryCleanup() {
+    const startedAt = Date.now();
+    try {
+        const result = await historyDb.cleanupYielding(appSettings.historyKeepDays, HISTORY_HARD_CAP);
+        lastHistoryCleanup = { durationMs: Date.now() - startedAt, failed: false, completedAt: new Date().toISOString(), ...result };
+    } catch (error) {
+        lastHistoryCleanup = { durationMs: Date.now() - startedAt, failed: true, completedAt: new Date().toISOString(), processed: 0, compacted: 0, deleted: 0 };
+        throw error;
+    }
+}
+const startupHistoryCleanupPromise = runHistoryCleanup().catch(error => {
+    logger.error({
+        module: 'history.cleanup', function: 'startup', code: ERROR_CODES.DB_QUERY_FAILED,
+        message: 'Startup history cleanup failed', error
+    });
+    return false;
+});
+lifecycleInterval(() => runSerialJob('historyCleanup', runHistoryCleanup), 60 * 60 * 1000);
 let lastHistoryFlushTs = Date.now();
 lifecycleInterval(() => {
     const gap = Math.max(Number(appSettings.historyFlushMin) || 10, 1) * 60 * 1000;
@@ -1450,20 +1460,24 @@ function dockerLogFindings(raw, container, max = 8) {
 async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
     if (!nasMonConfigured()) return [];
     const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
-    const results = await Promise.all(selected.map(async container => {
-        try {
-            const data = await nasMonGet(`/api/docker/containers/${encodeURIComponent(container.id)}/logs`, { lines });
-            const raw = typeof data === 'string' ? data : (data?.logs || JSON.stringify(data || ''));
-            return dockerLogFindings(raw, container, maxPerContainer);
-        } catch (error) {
-            logRecoverableFailure(`watcher.dockerLogs:${container.id}`, error, {
-                module: 'watcher.notifications', function: 'scanDockerLogs', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
-                fields: { container: container.name || container.id }
-            });
-            return [];
-        }
-    }));
+    const results = selected.map(container => {
+        const data = deviceCollectorSnapshot(`nasMonitor.dockerLog.${container.id}`)?.data;
+        if (data === undefined) return [];
+        const raw = typeof data === 'string' ? data : (data?.logs || JSON.stringify(data || ''));
+        return dockerLogFindings(raw, container, maxPerContainer);
+    });
     return results.flat();
+}
+
+async function warmDockerLogCaches(s, containers, { lines = 120, maxContainers = 12 } = {}) {
+    if (!(s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog)) return;
+    const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
+    await Promise.all(selected.map(container => readDeviceCollector(`nasMonitor.dockerLog.${container.id}`, () =>
+        nasMonGet(`/api/docker/containers/${encodeURIComponent(container.id)}/logs`, { lines }), { refresh: true })
+        .catch(error => logRecoverableFailure(`watcher.dockerLogs:${container.id}`, error, {
+            module: 'watcher.notifications', function: 'sampleDockerLogs', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
+            fields: { container: container.name || container.id }
+        }))));
 }
 
 /* ===================== 通知推播中心 ===================== */
@@ -1739,14 +1753,13 @@ async function scanSystemIssueNotifications(s) {
 async function scanDockerNotifications(s) {
     const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHealth !== false || s.triggerDockerRestart !== false || s.triggerDockerInventory || s.triggerDockerOom !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
     if (!usesDockerMonitor || !nasMonConfigured()) return;
-    let containers;
-    try {
-        const data = await nasMonGet('/api/docker/containers');
-        containers = Array.isArray(data) ? data : (data.containers || data.data || []);
-    } catch (error) {
-        logRecoverableFailure('watcher.dockerContainers', error, { module: 'watcher.notifications', function: 'scanDocker', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
+    const snapshot = deviceCollectorSnapshot('nasMonitor.dockerContainers');
+    if (!snapshot?.data) return;
+    if (snapshot.lastErrorAt) {
+        logRecoverableFailure('watcher.dockerContainers', snapshot.lastError, { module: 'watcher.notifications', function: 'scanDocker', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED });
         return;
     }
+    const containers = Array.isArray(snapshot.data) ? snapshot.data : (snapshot.data.containers || snapshot.data.data || []);
     const firstBaseline = !dockerWatcherBootstrapped;
     const currentIds = new Set();
     for (const container of containers) {
@@ -1845,13 +1858,8 @@ async function notificationWatcher() {
     }
     // UniFi 本地控制器離線 / 恢復 (只在使用者開啟時額外做驗證，避免增加預設輪詢成本)
     if (s.triggerUnifiOffline) {
-        let ok = false;
-        try {
-            ok = !!(await getUnifiHealthCached({ allowStale: true })).ok;
-        }
-        catch (error) {
-            logRecoverableFailure('watcher.unifiOffline', error, { module: 'watcher.notifications', function: 'checkUnifiOnline', code: ERROR_CODES.EXT_UNIFI_FAILED });
-        }
+        const snapshot = deviceCollectorSnapshot('unifi.health');
+        const ok = Boolean(snapshot?.data?.ok) && !snapshot?.lastErrorAt;
         if (unifiWasOnline !== null && ok !== unifiWasOnline && notifBootstrapped) {
             await notify(ok ? '✅ UniFi 控制器已恢復連線' : '🌐 UniFi 控制器失去連線', ok ? '本地控制器登入驗證恢復正常' : '無法向本地控制器建立登入 Session，請檢查控制器、網路與帳密');
         }
@@ -1902,8 +1910,9 @@ async function notificationWatcher() {
     // Site Manager Cloud 離線 / 恢復；checkCloudStatus 已有 60 秒節流。
     if (s.triggerCloudOffline) {
         try {
-            const status = await getCloudHealthCached({ allowStale: true });
-            const cloud = { configured: cloudConfigured(), ok: status.ok, detail: status.ok ? '連線正常' : '連線失敗 (API Key 無效或被限流)' };
+            const snapshot = deviceCollectorSnapshot('cloud.health');
+            const status = snapshot?.data;
+            const cloud = { configured: cloudConfigured(), ok: !snapshot?.lastErrorAt && status?.ok === true, detail: status?.ok ? '連線正常' : '連線失敗 (API Key 無效或被限流)' };
             if (cloud.configured && cloudLastOnline !== null && cloud.ok !== cloudLastOnline && notifBootstrapped) {
                 await notify(cloud.ok ? '☁️ Site Manager 已恢復連線' : '☁️ Site Manager 連線失敗', cloud.detail || (cloud.ok ? '雲端 API 回應正常' : '請檢查 API Key 與外網連線'));
             }
@@ -1928,11 +1937,8 @@ async function notificationWatcher() {
     }
     // NAS 原生 API 離線 / 恢復
     if (s.triggerNasOffline && nasConfigured()) {
-        let ok = false;
-        try { await getNasCommonCached({ allowStale: true }); ok = true; }
-        catch (error) {
-            logRecoverableFailure('watcher.nasOffline', error, { module: 'watcher.notifications', function: 'checkNasOnline', code: ERROR_CODES.EXT_NAS_FAILED });
-        }
+        const snapshot = deviceCollectorSnapshot('nas.common');
+        const ok = snapshot?.data !== undefined && !snapshot.lastErrorAt;
         if (nasWasOnline !== null && ok !== nasWasOnline && notifBootstrapped) {
             await notify(ok ? '✅ NAS 已恢復連線' : '💾 NAS 失去連線', ok ? 'UGOS Pro API 恢復回應' : 'NAS 原生 API 無回應，請檢查 NAS、網路與帳密');
         }
@@ -2170,7 +2176,8 @@ async function notificationWatcher() {
     // AdGuard：保護被暫停 / 失聯 (轉態通知)
     if ((s.triggerAdgProtection !== false || s.triggerAdgOffline || s.triggerAdgHighBlockRate) && adgConfigured()) {
         let on = null;
-        try { on = !!(await getAdguardOverviewCached({ allowStale: true })).status.protection_enabled; }
+        const adguardSnapshot = deviceCollectorSnapshot('adguard.overview');
+        try { on = adguardSnapshot?.lastErrorAt ? null : !!adguardSnapshot?.data?.status?.protection_enabled; }
         catch (error) {
             on = null;
             logRecoverableFailure('watcher.adguard', error, { module: 'watcher.notifications', function: 'checkAdguard', code: ERROR_CODES.EXT_ADGUARD_FAILED });
@@ -2183,7 +2190,8 @@ async function notificationWatcher() {
         }
         if (s.triggerAdgHighBlockRate && on !== null && Date.now() - lastAdgBlockRateTs > 30 * 60 * 1000) {
             try {
-                const stats = await adgReq('/control/stats');
+                const stats = adguardSnapshot?.data?.stats;
+                if (!stats) throw new Error('AdGuard stats cache is not ready');
                 const queries = Number(stats.num_dns_queries || 0);
                 const blocked = Number(stats.num_blocked_filtering || 0);
                 const rate = queries > 0 ? blocked / queries * 100 : 0;
@@ -2199,12 +2207,8 @@ async function notificationWatcher() {
     }
     // Linux 小主機：過熱 / 磁碟滿 (30 分鐘冷卻)、離線/恢復 (轉態)
     if ((s.triggerLinuxTemp !== false || s.triggerLinuxOffline || s.triggerLinuxDisk || s.triggerLinuxHighCpu || s.triggerLinuxHighMemory || s.triggerLinuxHighLoad) && linuxConfigured()) {
-        let d = null;
-        try { d = await getLinuxCached({ allowStale: true }); }
-        catch (error) {
-            d = null;
-            logRecoverableFailure('watcher.linux', error, { module: 'watcher.notifications', function: 'checkLinux', code: ERROR_CODES.EXT_LINUX_FAILED });
-        }
+        const linuxSnapshot = deviceCollectorSnapshot('linux.stats');
+        const d = linuxSnapshot?.lastErrorAt ? null : linuxSnapshot?.data || null;
         if (s.triggerLinuxOffline && lnxWasOnline !== null && (!!d) !== lnxWasOnline && notifBootstrapped) {
             await notify(d ? '🖥️ 小主機已恢復連線' : '🖥️ 小主機失去連線', `${process.env.LINUX_HOST} (SSH)`);
         }
@@ -2305,6 +2309,7 @@ function scheduleServerJobs() {
 // frequency collector is independent from the normal-device idle interval.
 const deviceActivity = createActivityLease({ maxLeaseMs: 3600 * 1000 });
 const backendSamplers = new Map();
+const collectorMetrics = new Map();
 function normalDeviceSampleMs() {
     return (isDeviceSamplingActive('general')
         ? appSettings.deviceActiveBackendSampleSec
@@ -2323,7 +2328,19 @@ function ppbEventSyncMs() {
 function registerBackendSampler(name, collect, getDelayMs) {
     backendSamplers.get(name)?.stop();
     const sampler = createAdaptiveSampler({
-        collect: () => runSerialJob(name, collect),
+        collect: async () => {
+            const startedAt = Date.now();
+            const previous = collectorMetrics.get(name) || {};
+            collectorMetrics.set(name, { ...previous, running: true, lastStartedAt: startedAt });
+            try { return await runSerialJob(name, collect); }
+            finally {
+                collectorMetrics.set(name, {
+                    ...collectorMetrics.get(name), running: false,
+                    lastDurationMs: Date.now() - startedAt,
+                    lastFinishedAt: Date.now()
+                });
+            }
+        },
         getDelayMs,
         setTimeoutFn: (callback, delay) => lifecycleTimeout(callback, delay),
         clearTimeoutFn: clearLifecycleTimeout
@@ -2402,6 +2419,7 @@ async function sampleNotificationSourceCaches() {
     if (s.triggerUnifiOffline) jobs.push(getUnifiHealthCached({ refresh: true }));
     if (s.triggerCloudOffline && cloudConfigured()) jobs.push(getCloudHealthCached({ refresh: true }));
     if (nasMonAdvancedConfigured() && s.triggerNasAlerts) jobs.push(getNasMonitorCached('alerts24h', '/api/alerts/events', { hours: 24 }, { refresh: true }));
+    if (nasMonConfigured()) jobs.push(getNasMonitorDockerCached({ refresh: true }));
     if (nasConfigured()) {
         if (s.triggerNasOffline) jobs.push(getNasCommonCached({ refresh: true }));
         if (s.triggerNasHighCpu || s.triggerNasHighMemory) jobs.push(getNasStatsCached({ refresh: true }));
@@ -2409,8 +2427,11 @@ async function sampleNotificationSourceCaches() {
         if (s.triggerNasSpace) jobs.push(getNasApiCached('volumes', '/ugreen/v1/storage/volume/list', { start: 0, size: 50 }, { refresh: true }));
         if (s.triggerNasLog || s.triggerNasSleepWake) jobs.push(getNasApiCached('logs', '/ugreen/v1/log/query', { visualizer: false, page: 0, size: 50, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' }, { refresh: true }));
     }
-    await scanDockerNotifications(s);
     await Promise.all(jobs);
+    const dockerSnapshot = deviceCollectorSnapshot('nasMonitor.dockerContainers');
+    const containers = Array.isArray(dockerSnapshot?.data) ? dockerSnapshot.data : (dockerSnapshot?.data?.containers || dockerSnapshot?.data?.data || []);
+    await warmDockerLogCaches(s, containers);
+    await scanDockerNotifications(s);
 }
 
 registerBackendSampler('trendHistory', sampleTrends, normalDeviceSampleMs);
@@ -2637,7 +2658,7 @@ let diskSleepCache = { ts: 0, map: {} };
 async function getDiskSleepFromLogs() {
     if (Date.now() - diskSleepCache.ts < 60 * 1000) return diskSleepCache.map;
     try {
-        const data = await nasGet('/ugreen/v1/log/query', { visualizer: false, page: 0, size: 200, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
+        const data = await getNasApiCached('logs.sleep', '/ugreen/v1/log/query', { visualizer: false, page: 0, size: 200, order: 'down', log_type: 0, from_time: '', to_time: '', order_param: '', log_id: '' });
         const latest = {}; // 硬碟N → { t, sleeping }
         for (const l of (data.log_list || [])) {
             const m = (l.content || '').match(/Hard Drive (\d+) (started|stopped) sleeping/i);
@@ -2654,7 +2675,7 @@ async function getDiskSleepFromLogs() {
 app.get('/api/nas/disks', async (req, res) => {
     if (!nasConfigured()) return res.json({ disks: [], source: 'not_configured' });
     try {
-        const data = await nasGet('/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
+        const data = await getNasApiCached('disks', '/ugreen/v1/storage/disk/list', { start: 0, size: 50 });
         let disks = deepFind({ d: data }, ['result', 'list', 'disks']) || (Array.isArray(data) ? data : []);
         const sleepMap = await getDiskSleepFromLogs();
         // UGOS 1.17 實機：status 為數字 (1=健康)、size 為 bytes、顯示名稱在 label (硬碟1...)
@@ -2717,7 +2738,7 @@ app.get('/api/nas/logs', async (req, res) => {
     if (!nasConfigured()) return res.json({ logs: [], total: 0, source: 'not_configured' });
     try {
         const { page, size } = query;
-        const data = await nasGet('/ugreen/v1/log/query', {
+        const data = await getNasApiCached(`logs.${page}.${size}`, '/ugreen/v1/log/query', {
             visualizer: false, page, size, order: 'down', log_type: 0,
             from_time: '', to_time: '', order_param: '', log_id: ''
         });
@@ -2819,7 +2840,7 @@ app.get('/api/nas/sleep-stats', async (req, res) => {
 app.get('/api/nas/volumes', async (req, res) => {
     if (!nasConfigured()) return res.json({ volumes: [], source: 'not_configured' });
     try {
-        const data = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
+        const data = await getNasApiCached('volumes', '/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
         let volumes = deepFind({ d: data }, ['result', 'list', 'volumes']) || (Array.isArray(data) ? data : []);
         // UGOS 1.17 實機：total/used 為 bytes、health 0 = 正常、顯示名稱在 label (儲存空間1...)
         volumes = volumes.map(v => ({
@@ -2887,7 +2908,7 @@ app.get('/api/hardware/history', (req, res) => {
 async function sampleNasHistory() {
     if (!nasConfigured()) return;
     try {
-        const raw = await getNasStatsCached({ refresh: true });
+        const raw = await getNasStatsCached();
         if (!raw || !raw.cpu) return;
         const cpu = (raw.cpu.series && raw.cpu.series[0]) || {};
         const mem = (raw.mem && raw.mem.series && raw.mem.series[0]) || {};
@@ -2905,7 +2926,7 @@ async function sampleNasHistory() {
         // 容量：另外讀 volume/list 加總 (get_all 的 used_percent 常為 0)
         let volUsedGb = null, volTotalGb = null;
         try {
-            const vdata = await nasGet('/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
+            const vdata = await getNasApiCached('volumes', '/ugreen/v1/storage/volume/list', { start: 0, size: 50 });
             const vols = (deepFind({ d: vdata }, ['result', 'list', 'volumes']) || []).filter(v => v.total);
             if (vols.length) {
                 volUsedGb = Math.round(vols.reduce((a, v) => a + (v.used || 0), 0) / 1073741824);
@@ -2965,6 +2986,9 @@ async function nasMonGet(p, params) { const r = await nasMonClient.get(p, { para
 function getNasMonitorCached(name, pathName, params, options) {
     return readDeviceCollector(`nasMonitor.${name}`, () => nasMonGet(pathName, params), options);
 }
+function getNasMonitorDockerCached(options) {
+    return getNasMonitorCached('dockerContainers', '/api/docker/containers', undefined, options);
+}
 function allowLegacyNasMonActions() { return process.env.NAS_MONITOR_ALLOW_LEGACY_ACTIONS === 'true'; }
 async function authorizeNasMonDockerAction(id, action) {
     const inventory = await nasMonGet('/api/docker/containers');
@@ -2989,7 +3013,7 @@ async function nasMonProxy(res, path, params, fallback) {
 app.get('/api/nas/docker', async (req, res) => {
     if (!nasMonConfigured()) return res.json({ containers: [], source: 'not_configured' });
     try {
-        const data = await nasMonGet('/api/docker/containers');
+        const data = await getNasMonitorDockerCached();
         const containers = containersFromPayload(data);
         res.json({
             containers,
@@ -3544,7 +3568,14 @@ app.post('/api/config/restore', panelSecurity.requireAdmin, (req, res) => {
 
 /* ===================== 定期報表 ===================== */
 // 彙整過去 24 小時的關鍵指標成一段文字
-async function buildReport() {
+function throwIfReportAborted(signal) {
+    if (!signal?.aborted) return;
+    const reason = signal.reason;
+    throw reason instanceof Error ? reason : new Error('Report generation cancelled');
+}
+
+async function buildReport({ signal } = {}) {
+    throwIfReportAborted(signal);
     const L = [];
     const dayAgo = Date.now() - 86400000;
     const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
@@ -3597,6 +3628,7 @@ async function buildReport() {
             if (www.xput_down) L.push(`• 最近測速：↓${www.xput_down} / ↑${www.xput_up} Mbps，ping ${www.speedtest_ping} ms${www.speedtest_lastrun ? ` (${new Date(www.speedtest_lastrun * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })})` : ''}`);
         } catch { }
     } catch { L.push('• 本地控制器未連線'); }
+    throwIfReportAborted(signal);
     const trends = historyDb.getSince('trend', dayAgo);
     const lat = trends.map(p => p.latency).filter(v => v != null);
     if (lat.length) L.push(`• ISP 延遲：平均 ${avg(lat).toFixed(1)} ms (最高 ${Math.max(...lat)} ms)`);
@@ -3604,6 +3636,7 @@ async function buildReport() {
     if (cli.length) L.push(`• 客戶端數 24H：平均 ${Math.round(avg(cli))} / 最高 ${Math.max(...cli)} 台`);
 
     // ── UCG 硬體 ──
+    throwIfReportAborted(signal);
     if (!isPlaceholder(process.env.SSH_PASSWORD)) {
         try {
             const hw = await getHardwareCached();
@@ -3622,6 +3655,7 @@ async function buildReport() {
     }
 
     // ── NAS ──
+    throwIfReportAborted(signal);
     if (nasConfigured()) {
         try {
             L.push('\n━━ 💾 UGREEN NAS ━━');
@@ -3670,6 +3704,7 @@ async function buildReport() {
     }
 
     // ── Docker（NAS Monitor 選配）──
+    throwIfReportAborted(signal);
     if (nasMonConfigured()) {
         try {
             const data = await nasMonGet('/api/docker/containers');
@@ -3702,6 +3737,7 @@ async function buildReport() {
     }
 
     // ── UPS ──
+    throwIfReportAborted(signal);
     try {
         const upsPoll = await sampleUpsIfDue(upsSampleMs());
         const ups = upsPoll.snapshot.lastGood;
@@ -3731,6 +3767,7 @@ async function buildReport() {
     }
 
     // ── AdGuard DNS ──
+    throwIfReportAborted(signal);
     if (adgConfigured()) {
         try {
             const [ast, asts] = await Promise.all([adgReq('/control/status'), adgReq('/control/stats')]);
@@ -3743,6 +3780,7 @@ async function buildReport() {
     }
 
     // ── Linux 小主機 ──
+    throwIfReportAborted(signal);
     if (linuxConfigured()) {
         try {
             const d = await getLinuxCached();
@@ -3757,6 +3795,7 @@ async function buildReport() {
     }
 
     // ── WiiM ──
+    throwIfReportAborted(signal);
     const wiim24h = historyDb.getSince('wiim', dayAgo);
     if (wiim24h.length) {
         const cpus = wiim24h.map(h => h.cpu).filter(v => v !== null);
@@ -3772,6 +3811,7 @@ async function buildReport() {
     }
 
     // ── 面板本身 ──
+    throwIfReportAborted(signal);
     L.push('\n━━ ⚙️ 面板 ━━');
     try {
         const diag = await systemMonitor.ensureSample();
@@ -3784,6 +3824,7 @@ async function buildReport() {
     } catch {
         L.push(`• 面板運行：${fmtDur(Math.round(process.uptime()))}　記憶體 ${(process.memoryUsage().rss / 1048576).toFixed(0)} MB`);
     }
+    throwIfReportAborted(signal);
     return L.join('\n') || '（無可彙整的資料）';
 }
 
@@ -4149,7 +4190,7 @@ registerWiimCommandRoutes(app, {
     })
 });
 
-// 專輯封面代理只接受公開 HTTP(S) 圖片；每個 redirect 都重新 DNS 驗證。
+// 專輯封面代理只接受公開 HTTP(S) 圖片；僅目前 WiiM 的精確位址可走私有網段。
 const wiimArtCache = createArtworkCache();
 app.get('/api/wiim/art', async (req, res) => {
     const query = validatedInput(res, () => queryInput.parseWiimArtQuery(req.query), {
@@ -4164,7 +4205,7 @@ app.get('/api/wiim/art', async (req, res) => {
         res.set('Content-Type', hit.type); return res.send(hit.buffer);
     }
     try {
-        const image = await fetchArtwork(u, { axiosInstance: axios });
+        const image = await fetchArtwork(u, { axiosInstance: axios, allowedPrivateAddresses: [wiimIP] });
         wiimArtCache.set(key, image);
         res.set('Content-Type', image.type); res.send(image.buffer);
     } catch (e) {
@@ -4849,7 +4890,6 @@ const LINUX_CMD = [
     'cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null',
     'cat /proc/stat', 'sleep 1; cat /proc/stat'
 ].join('; echo __S__; ');
-let linuxCache = null, linuxInflight = null;
 const linuxSshPool = createSshConnectionPool({
     getConfig: () => ({
         host: process.env.LINUX_HOST,
@@ -4891,12 +4931,7 @@ async function fetchLinuxSSH() {
     } catch (error) { throw new Error('parse failed: ' + error.message, { cause: error }); }
 }
 async function getLinuxCached({ refresh = false, allowStale = false } = {}) {
-    const cacheMs = generalCollectorCacheAgeMs();
-    if (!refresh && linuxCache && (allowStale || Date.now() - linuxCache.ts < cacheMs)) return linuxCache.data;
-    if (!linuxInflight) linuxInflight = fetchLinuxSSH().finally(() => { linuxInflight = null; });
-    const data = await linuxInflight;
-    linuxCache = { ts: Date.now(), data };
-    return data;
+    return readDeviceCollector('linux.stats', fetchLinuxSSH, { refresh, allowStale });
 }
 app.get('/api/linux/stats', async (req, res) => {
     if (!linuxConfigured()) return res.json({ source: 'not_configured' });
@@ -4943,9 +4978,10 @@ app.get('/api/connections/status', async (req, res) => {
     const upsDetail = upsSnapshot.lastGood
         ? `${(upsSnapshot.lastGood.actualSource || '').toUpperCase()} · 電池 ${upsSnapshot.lastGood.battery ?? '--'}%${upsSnapshot.dataIsStale ? ` · 資料已過 ${Math.round((upsSnapshot.staleAgeMs || 0) / 1000)} 秒` : ''}`
         : (upsSnapshot.failureReason ? `尚無有效資料 · ${upsSnapshot.fetchHealth} ${upsSnapshot.consecutiveFailures}/${upsSnapshot.failureThreshold}` : '尚無資料');
+    const hardwareSnapshot = deviceCollectorSnapshot('ucg.hardware');
     res.json({
         devices: [
-            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: fresh(hwCache && hwCache.ts, 120), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
+            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: hardwareSnapshot?.lastErrorAt ? false : fresh(hardwareSnapshot?.lastSuccessAt, 120), detail: hardwareSnapshot?.data ? `CPU ${hardwareSnapshot.data.cpuTemp}°C / ${hardwareSnapshot.data.cpuUsage}%` : '尚無資料' },
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
@@ -4955,7 +4991,7 @@ app.get('/api/connections/status', async (req, res) => {
             { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), detail: upsDetail },
             { name: 'AdGuard Home', configured: adgConfigured(), ok: fresh(adgLastOkTs, 180), detail: adgLastOkTs ? '有回應' : '尚無資料' },
             { name: 'AdGuard 裝置政策', configured: adguardPolicies.policies.length > 0, ok: adguardPolicies.reconcile.status === 'healthy' ? true : (adguardPolicies.reconcile.status === 'degraded' ? false : null), detail: `${adguardPolicies.policies.length} 筆 · ${adguardPolicies.reconcile.status}` },
-            { name: 'Linux 小主機', configured: linuxConfigured(), ok: fresh(linuxCache && linuxCache.ts, 180), detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
+            { name: 'Linux 小主機', configured: linuxConfigured(), ok: (() => { const snapshot = deviceCollectorSnapshot('linux.stats'); return snapshot?.lastErrorAt ? false : fresh(snapshot?.lastSuccessAt, 180); })(), detail: (() => { const data = deviceCollectorSnapshot('linux.stats')?.data; return data ? `${data.hostname} · ${data.cpuTemp ?? '--'}°C` : '尚無資料'; })() }
         ]
     });
 });
@@ -4973,13 +5009,14 @@ function refreshPublicSystemHealthSnapshot() {
     const worker = system?.worker || taskTracker.getStatus();
     const ups = upsFetchState.snapshot();
     const wiim = wiimCache.getStatusEx;
+    const hardwareSnapshot = deviceCollectorSnapshot('ucg.hardware');
     publicSystemHealth.update([
         { online: true, critical: true },
         { online: databaseOk, critical: true },
         { online: worker.status !== 'critical', critical: true },
         {
             included: Boolean(process.env.UCG_IP) && !isPlaceholder(process.env.SSH_PASSWORD),
-            online: fresh(hwCache?.ts, 180)
+            online: !hardwareSnapshot?.lastErrorAt && fresh(hardwareSnapshot?.lastSuccessAt, 180)
         },
         {
             included: !isPlaceholder(process.env.UNIFI_USERNAME) && !isPlaceholder(process.env.UNIFI_PASSWORD),
@@ -5003,7 +5040,7 @@ function refreshPublicSystemHealthSnapshot() {
         },
         {
             included: linuxConfigured(),
-            online: fresh(linuxCache?.ts, 180)
+            online: (() => { const snapshot = deviceCollectorSnapshot('linux.stats'); return !snapshot?.lastErrorAt && fresh(snapshot?.lastSuccessAt, 180); })()
         }
     ], now);
 }
@@ -5031,7 +5068,7 @@ app.get('/api/alerts/critical', (req, res) => {
         alerts.push({ id: 'ups-unreachable-' + upsSnapshot.offlineSince, level: 'warning', msg: `UPS 無法讀取 (連續 ${upsSnapshot.consecutiveFailures} 次全來源失敗；${staleLabel})` });
     }
     // WAN 斷線 (取自最近一次硬體快取)
-    const hw = hwCache && hwCache.data;
+    const hw = deviceCollectorSnapshot('ucg.hardware')?.data;
     if (hw) {
         const wan = (hw.interfaces || []).find(i => i.name.startsWith('WAN'));
         if (wan && wan.status !== 'connected') alerts.push({ id: 'wan-down', level: 'critical', msg: 'WAN 對外連線中斷！請檢查數據機/ISP' });
@@ -5043,7 +5080,31 @@ app.get('/api/alerts/critical', (req, res) => {
 // Liveness / readiness / 完整 diagnostics；/api/system/status 會沿用上方 Basic Auth。
 registerHealthRoutes(app, {
     monitor: systemMonitor, db: historyDb, taskTracker,
-    version: APP_VERSION, buildIdentity: buildIdentity.public
+    version: APP_VERSION, buildIdentity: buildIdentity.public,
+    runtimeDiagnostics: () => {
+        const memory = process.memoryUsage();
+        let sqliteBytes = null;
+        try { sqliteBytes = fs.statSync(path.join(DATA_DIR, 'smarthub.db')).size; } catch { }
+        return {
+            node_memory: {
+                rss: memory.rss, heap_used: memory.heapUsed, heap_total: memory.heapTotal,
+                external: memory.external, array_buffers: memory.arrayBuffers
+            },
+            event_loop_lag_ms: eventLoopLagMs,
+            sse_clients: sseClients.size,
+            active_browser_sessions: deviceActivity.sessionCount(),
+            collectors: {
+                running: [...collectorMetrics.values()].filter(metric => metric.running).length,
+                recent: Object.fromEntries([...collectorMetrics.entries()].map(([name, metric]) => [name, {
+                    running: !!metric.running, last_duration_ms: metric.lastDurationMs ?? null,
+                    last_finished_at: metric.lastFinishedAt ? new Date(metric.lastFinishedAt).toISOString() : null
+                }]))
+            },
+            sqlite_file_bytes: sqliteBytes,
+            cleanup: { duration_ms: lastHistoryCleanup.durationMs, failed: lastHistoryCleanup.failed, completed_at: lastHistoryCleanup.completedAt, processed: lastHistoryCleanup.processed ?? 0, compacted: lastHistoryCleanup.compacted ?? 0, deleted: lastHistoryCleanup.deleted ?? 0 },
+            artwork_cache: { entries: wiimArtCache.size(), total_bytes: wiimArtCache.totalBytes() }
+        };
+    }
 });
 
 /* ===================== 啟動連線自我診斷 =====================
@@ -5171,6 +5232,8 @@ function gracefulShutdown(signal, exitCode = 0) {
         lifecycleTimeouts.clear();
         Object.values(jobTimers).forEach(clearInterval);
         jobTimers = {};
+        for (const sampler of backendSamplers.values()) sampler.stop();
+        backendSamplers.clear();
         ucgSshPool.close();
         linuxSshPool.close();
 
@@ -5193,7 +5256,7 @@ function gracefulShutdown(signal, exitCode = 0) {
                 resolve(!error);
             });
         });
-        const drainJobs = Promise.allSettled([...runningJobPromises]).then(() => true);
+        const drainJobs = Promise.allSettled([...runningJobPromises, startupHistoryCleanupPromise]).then(() => true);
         const stopReportRunner = reportRunner.stop().then(() => true, error => {
             logger.error({
                 module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.WORKER_TASK_FAILED,
@@ -5256,6 +5319,13 @@ httpServer = app.listen(PORT, () => {
         }
     }, 5000, { unref: true });
 });
+// Keep slow NAS/SSH/Cloud requests viable while bounding header drips and
+// indefinitely reused sockets. SSE has no request body and remains open after
+// the response starts, so these values do not terminate its stream.
+httpServer.headersTimeout = 66_000;
+httpServer.requestTimeout = 120_000;
+httpServer.keepAliveTimeout = 65_000;
+httpServer.maxRequestsPerSocket = 1_000;
 
 httpServer.on('error', error => {
     logger.critical({

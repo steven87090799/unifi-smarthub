@@ -5,7 +5,7 @@ const net = require('node:net');
 const http = require('node:http');
 const https = require('node:https');
 
-const IMAGE_TYPE = /^image\/(?:avif|bmp|gif|jpeg|png|svg\+xml|webp)$/i;
+const IMAGE_TYPE = /^image\/(?:avif|bmp|gif|jpeg|png|webp)$/i;
 
 function ipv4ToInteger(address) {
     const parts = address.split('.').map(Number);
@@ -22,7 +22,28 @@ function inIpv4Range(address, start, maskBits) {
     return (value & mask) === (base & mask);
 }
 
+function ipv4MappedIpv6(address) {
+    const lower = String(address || '').toLowerCase();
+    if (!lower.includes(':')) return null;
+    const [left, right = ''] = lower.split('::');
+    const leftParts = left ? left.split(':') : [];
+    const rightParts = right ? right.split(':') : [];
+    const missing = 8 - leftParts.length - rightParts.length;
+    if (missing < 0) return null;
+    const parts = [...leftParts, ...Array(missing).fill('0'), ...rightParts];
+    if (parts.length !== 8 || parts.some(part => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+    const nums = parts.map(part => parseInt(part, 16));
+    if (!nums.slice(0, 5).every(value => value === 0) || nums[5] !== 0xffff) return null;
+    return `${nums[6] >> 8}.${nums[6] & 255}.${nums[7] >> 8}.${nums[7] & 255}`;
+}
+
+function canonicalAddress(address) {
+    const mapped = ipv4MappedIpv6(address);
+    return mapped || String(address || '').toLowerCase();
+}
+
 function isBlockedAddress(address) {
+    address = canonicalAddress(address);
     const family = net.isIP(address);
     if (family === 4) {
         return [
@@ -48,22 +69,24 @@ function parseArtworkUrl(value) {
     return url;
 }
 
-async function resolvePublicArtworkUrl(value, { lookup = dns.lookup } = {}) {
+async function resolvePublicArtworkUrl(value, { lookup = dns.lookup, allowedPrivateAddresses = [] } = {}) {
     const url = value instanceof URL ? value : parseArtworkUrl(value);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     const records = net.isIP(hostname)
         ? [{ address: hostname, family: net.isIP(hostname) }]
         : await lookup(hostname, { all: true, verbatim: true });
-    if (!Array.isArray(records) || records.length === 0 || records.some(record => isBlockedAddress(record.address))) {
+    const allowed = new Set(allowedPrivateAddresses.map(canonicalAddress));
+    if (!Array.isArray(records) || records.length === 0 || records.some(record => isBlockedAddress(record.address) && !allowed.has(canonicalAddress(record.address)))) {
         throw new Error('Artwork host resolves to a blocked address');
     }
-    return { url, address: records[0].address, family: records[0].family || net.isIP(records[0].address) };
+    const address = records[0].address;
+    return { url, address, family: records[0].family || net.isIP(address), allowSelfSigned: isBlockedAddress(address) && allowed.has(canonicalAddress(address)) };
 }
 
 function pinnedAgent(target) {
     const lookup = (_hostname, _options, callback) => callback(null, target.address, target.family);
     return target.url.protocol === 'https:'
-        ? new https.Agent({ lookup })
+        ? new https.Agent({ lookup, rejectUnauthorized: !target.allowSelfSigned })
         : new http.Agent({ lookup });
 }
 
@@ -91,14 +114,15 @@ async function fetchArtwork(value, {
     lookup,
     maxRedirects = 3,
     maxBytes = 2 * 1024 * 1024,
-    timeoutMs = 6000
+    timeoutMs = 6000,
+    allowedPrivateAddresses = []
 } = {}) {
     if (!axiosInstance) throw new TypeError('axiosInstance is required');
     let current = parseArtworkUrl(value);
     for (let redirect = 0; redirect <= maxRedirects; redirect += 1) {
-        const target = await resolvePublicArtworkUrl(current, { lookup });
+        const target = await resolvePublicArtworkUrl(current, { lookup, allowedPrivateAddresses });
         const response = await axiosInstance.get(target.url.toString(), {
-            responseType: 'stream', maxRedirects: 0, timeout: timeoutMs,
+            responseType: 'stream', maxRedirects: 0, timeout: timeoutMs, proxy: false,
             validateStatus: () => true,
             [target.url.protocol === 'https:' ? 'httpsAgent' : 'httpAgent']: pinnedAgent(target),
             headers: { 'User-Agent': 'wiim-temp/2.0' }
@@ -162,4 +186,4 @@ function createArtworkCache({ maxEntries = 20, maxItemBytes = 2 * 1024 * 1024, m
     };
 }
 
-module.exports = { createArtworkCache, fetchArtwork, isBlockedAddress, parseArtworkUrl, resolvePublicArtworkUrl };
+module.exports = { canonicalAddress, createArtworkCache, fetchArtwork, isBlockedAddress, parseArtworkUrl, resolvePublicArtworkUrl };
