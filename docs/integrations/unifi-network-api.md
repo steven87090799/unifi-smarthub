@@ -2,11 +2,12 @@
 
 本文件只描述 SmartHub 目前使用的 UniFi 契約，不是完整上游 API 規格。修改上游路徑時應同時核對官方文件、source 與測試。
 
-## 三種連線
+## 四種連線
 
 | 用途 | 設定 | 實作 |
 |---|---|---|
 | 本地控制器 | `UNIFI_CONTROLLER_URL`, `UNIFI_USERNAME`, `UNIFI_PASSWORD` | 登入 `/api/auth/login`，快取 cookie／CSRF；讀取 clients、WiFi、threats，執行封鎖、PoE、speedtest |
+| Device SSH 溫度（選填） | `UNIFI_DEVICE_SSH_*` | 只對 Controller 已知、MAC allowlist 內且 online 的 Literal IP 執行固定唯讀 thermal command |
 | Site Manager | `UNIFI_API_KEY` | `https://api.ui.com/v1`；站點、設備、ISP、hosts、SD-WAN |
 | Network Integration API | `UNIFI_NETWORK_*`, `UNIFI_THREAT_BLOCK_LIST_*` | 專用 traffic matching list，用於暫時封鎖外部 IPv4 |
 
@@ -15,11 +16,20 @@
 ## 本地與雲端路由
 
 - `/api/clients`, `/api/network/switches`, `/api/wifi-networks`
+- `/api/network/devices/telemetry`, `/api/network/devices/telemetry/history`
 - `/api/threats`, `/api/device/restrict`, `/api/poe/power-cycle`
 - `/api/speedtest`, `/api/speedtest/status`
 - `/api/cloud/sites`, `/devices`, `/isp-metrics`, `/hosts`, `/sdwan`
 
 Site Manager client 有頁數／項目上限、重複 token 防護、429 `Retry-After` 與有界退避。未設定 `UNIFI_API_KEY` 時回 `not_configured`。
+
+## 裝置遙測與溫度真值
+
+Controller 提供 online、model、firmware、IP、uptime、uplink／link、流量、radio／channel、VAP／SSID、client、packet／error／drop 與 CPU。只有 `has_temperature=true` 且值在合理範圍內的 Controller 溫度才採用；不由 CPU 推算，也不把 offline 殘留值寫入歷史。
+
+Device SSH 是選配 fallback：`UNIFI_DEVICE_SSH_TARGET_IDS` 最多 32 個 canonical MAC；目標必須同時存在於 Controller、online 且有安全 Literal IPv4／IPv6。命令固定、12 秒 timeout、128 KiB output cap、per-device cache／singleflight、全域最多兩個工作。`UNIFI_DEVICE_SSH_HOST_KEYS` 可用 `mac=SHA256:...` 逐台釘選；設定輪替與 shutdown 都會取消舊候選連線。密碼、MAC allowlist 與 fingerprint 在 Settings GET、diagnostics、log、backup 都只顯示是否設定或數量。
+
+U7 Pro、USW Flex 2.5G 或其他設備若 Controller／SSH 都沒有真實溫度，狀態是 `unsupported`，UI 顯示「不支援」而不是 `0°C`。API 只讀專用 snapshot；獨立 sampler 預設 UCG 頁可見時 60 秒、閒置 300 秒更新並以 SQLite transaction 保存，stale 樣本不入庫也不觸發通知。
 
 ## 暫時威脅來源封鎖
 
