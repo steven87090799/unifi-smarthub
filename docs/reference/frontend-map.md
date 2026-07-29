@@ -28,8 +28,8 @@
 | `renderHtmlChartLegend()` | 可鍵盤操作圖例 |
 | `initUiSystem()` | 表格、卡片、Modal、Loading／Empty／Error |
 
-總覽或目前裝置頁可見時，相關前端資料與後端取樣使用 3 秒節奏；heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope，不送 `general`。切頁、背景分頁或租約到期後立即回到低頻。
-大型歷史查詢不跟著全部加速：UPS/NAS/UCG 歷史圖使用 10 秒以上節奏，完整表見 `docs/operations/POLLING-INTERVALS.md`。
+總覽或目前裝置頁可見時，相關一般資料與後端取樣由設定值驅動，預設為 5 秒；UPS 狀態獨立預設 3 秒。heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope，不送 `general`。切頁、背景分頁或租約到期後立即回到低頻。
+UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLING-INTERVALS.md](../operations/POLLING-INTERVALS.md)。
 
 ## 主要功能錨點
 

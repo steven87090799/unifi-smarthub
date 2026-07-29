@@ -7,13 +7,14 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - 歷史資料：SQLite `data/smarthub.db`
 - 目前版本：`3.0.0`
 - 文件索引：[docs/README.md](docs/README.md)
+- 完整操作與文件規格：[SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html](SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html)
 - 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
 - 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
 
 ## 主要能力
 
 - 14 個頁面：總覽、UCG、客戶端、資安、WiFi、雲端站點、NAS、WiiM、UPS、AdGuard、Linux、工具、通知、設定。
-- 3 秒活動頁更新與後端自適應取樣；離開頁面後自動回到低頻。
+- 設定驅動的活動頁更新與後端自適應取樣；一般裝置預設 5 秒、UPS 即時狀態預設 3 秒，離開頁面後自動回到低頻。
 - 管理員／唯讀角色、Session、CSRF、Origin 檢查、登入節流與受保護寫入路由。
 - SQLite 歷史、事件、報表、政策、Web Push、備份／還原與重啟復原。
 - Discord、Telegram、Webhook、Web Push 與 Telegram 指令中心。
@@ -145,7 +146,7 @@ docker compose --env-file config/.env up -d --no-build --pull never
 
 ## 開發原則
 
-- 先讀 `CONTEXT.md`，再依任務讀 `SERVER-MAP.md` 或 `FRONTEND-MAP.md`。
+- 先讀 `CONTEXT.md`，再依任務讀 `docs/reference/backend-map.md` 或 `docs/reference/frontend-map.md`。
 - 修改前端可見 API／設定時，同步 `server-mock.js` 與契約測試。
 - 新歷史資料沿用 `db.js`，不要恢復整檔 JSON 歷史寫入。
 - 大型檔案只以 `rg`／`sed` 精準讀取，避免無效上下文與測試輸出。

@@ -11,7 +11,7 @@ WIIM_IP=192.168.0.170
 - 先嘗試 `https://<ip>/httpapi.asp?command=...`，再回退 HTTP；單次 timeout 3 秒。
 - HTTPS 目前接受設備自簽憑證，只應在可信內網使用。
 - 常用唯讀指令有 2 秒快取；失聯時可回最後一筆快取，但正式狀態標示來源／不可達。
-- `getStatusEx` 的溫度寫入 SQLite；WiiM 頁活動時約 3 秒，閒置時回到設定的低頻。
+- `getStatusEx` 的溫度寫入 SQLite；WiiM 頁活動時使用一般裝置取樣設定，預設 5 秒，閒置時回到設定的低頻。
 - 正式服務不把模擬數據寫入歷史。
 
 ## SmartHub 路由

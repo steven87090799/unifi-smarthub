@@ -32,8 +32,8 @@ UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。直
 
 UGOS 主要提供即時快照，SmartHub 自行取樣 CPU、記憶體、溫度、風扇、流量、硬碟與容量並寫入 SQLite：
 
-- NAS 頁活動時約 3 秒。
-- 閒置時約 15 分鐘。
+- NAS 頁活動時使用一般裝置取樣設定，預設 5 秒。
+- 閒置時使用一般裝置取樣設定，預設 10 分鐘。
 - 休眠硬碟溫度記為 `null`，避免為量測喚醒硬碟。
 - 保存天數由應用設定控制。
 
@@ -60,4 +60,4 @@ NAS_MONITOR_MODE=docker_only
 - `/api/nas/*-history`, `/storage-forecast`, `/downtime`
 - `/api/nas/docker*`, `/alerts*`, `/stream`
 
-變更前先查 `SERVER-MAP.md` 與 `server/integrations/nas-monitor-client.js`，並保持 production／mock 契約一致。
+變更前先查 [backend-map.md](../reference/backend-map.md) 與 `server/integrations/nas-monitor-client.js`，並保持 production／mock 契約一致。

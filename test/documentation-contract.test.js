@@ -27,7 +27,7 @@ test('production documentation points operators to the immutable paired-image re
 test('operator documentation does not restore superseded deployment authorities', () => {
     const observability = read('docs/operations/OBSERVABILITY.md');
     const releaseNotes = read('docs/reports/RELEASE-NOTES-v3.0.md');
-    const architecture = read('docs/ARCHITECTURE.md');
+    const architecture = read('docs/reference/architecture.md');
 
     assert.doesNotMatch(observability, /Tailwind CDN/);
     assert.doesNotMatch(observability, /Docker \| 單一 `unifi-smarthub` service/);
@@ -35,4 +35,42 @@ test('operator documentation does not restore superseded deployment authorities'
     assert.doesNotMatch(architecture, /data\/trend-history\.json/);
     assert.doesNotMatch(architecture, /只引用 CDN 提供的 TailwindCSS/);
     assert.match(architecture, /不列完整 endpoint/);
+});
+
+function markdownFiles(relativeDir = '') {
+    const directory = path.join(ROOT, relativeDir);
+    return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+        const relativePath = path.posix.join(relativeDir, entry.name);
+        if (entry.isDirectory()) {
+            if (new Set(['.git', '.codex', '.production-verification', 'config', 'data', 'node_modules']).has(entry.name)) return [];
+            return markdownFiles(relativePath);
+        }
+        return entry.isFile() && entry.name.endsWith('.md') ? [relativePath] : [];
+    });
+}
+
+test('the complete operation manual links every maintained Markdown file', () => {
+    const manual = read('SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html');
+    const expected = markdownFiles().sort();
+    const indexed = [...manual.matchAll(/data-doc-path="([^"]+)"/gu)].map(match => match[1]).sort();
+
+    assert.deepEqual(indexed, expected);
+    for (const file of expected) {
+        assert.match(manual, new RegExp(`data-doc-path="${file.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}" href="${file.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}"`, 'u'));
+    }
+});
+
+test('the manual chapter directory gives every chapter a summary and Markdown reference', () => {
+    const manual = read('SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html');
+    const chapterIds = [...manual.matchAll(/<section id="([^"]+)">/gu)].map(match => match[1]);
+    const toc = manual.match(/<nav class="toc"[^>]*>([\s\S]*?)<\/nav>/u)?.[1] || '';
+
+    assert.match(manual, /color-scheme:dark/u);
+    assert.equal((toc.match(/class="toc-title"/gu) || []).length, chapterIds.length);
+    assert.equal((toc.match(/class="toc-summary"/gu) || []).length, chapterIds.length);
+    assert.equal((toc.match(/class="toc-ref"/gu) || []).length, chapterIds.length);
+
+    for (const chapterId of chapterIds) {
+        assert.match(toc, new RegExp(`href="#${chapterId}"`, 'u'));
+    }
 });
