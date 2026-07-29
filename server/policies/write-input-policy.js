@@ -218,7 +218,7 @@ const NOTIFICATION_BOOLEAN_FIELDS = Object.freeze([
     'enabled', 'webPushEnabled', 'telegramCommandsEnabled', 'triggerThreats', 'triggerNasAlerts', 'triggerWiimTemp',
     'triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange',
     'triggerClientWeakSignal', 'triggerClientConnectivity', 'triggerNetworkDeviceOffline',
-    'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerWiimOffline',
+    'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerUnifiDeviceTemp', 'triggerWiimOffline',
     'triggerWiimHighVolume', 'triggerWiimPlaybackChange', 'triggerBlockAction', 'triggerNasDiskTemp',
     'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerNasHighCpu',
     'triggerNasHighMemory', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerUcgHighMemory',
@@ -234,6 +234,7 @@ const NOTIFICATION_BOOLEAN_FIELDS = Object.freeze([
 
 const NOTIFICATION_NUMBER_FIELDS = Object.freeze({
     clientSignalAlert: Object.freeze({ min: 50, max: 95, integer: true }),
+    unifiDeviceTempAlert: Object.freeze({ min: 40, max: 100, integer: true }),
     wiimVolumeAlert: Object.freeze({ min: 10, max: 100, integer: true }),
     nasDiskTempAlert: Object.freeze({ min: 30, max: 70, integer: true }),
     nasSpaceAlert: Object.freeze({ min: 50, max: 99, integer: true }),
@@ -299,6 +300,7 @@ const UI_PREFERENCE_KEYS = Object.freeze([
 ]);
 const UI_POLL_KEYS = Object.freeze([
     'adguard', 'linuxMon', 'critAlerts', 'hardware', 'ucgHist', 'ucgSpikes', 'switches',
+    'unifiTelemetry',
     'clients', 'threats', 'cloud', 'isp', 'nas', 'nasAdvanced', 'docker', 'trend', 'notifLog',
     'reportLog', 'systemStatus', 'security', 'wiimSystem', 'wiimPlayback', 'ups', 'ppbEvents',
     'heartbeat'
@@ -388,7 +390,7 @@ function parseAppSettings(body, ranges) {
     return parsed;
 }
 
-const PORT_FIELDS = new Set(['SSH_PORT', 'NAS_PORT', 'PPB_PORT', 'ADGUARD_PORT', 'LINUX_SSH_PORT']);
+const PORT_FIELDS = new Set(['SSH_PORT', 'NAS_PORT', 'PPB_PORT', 'ADGUARD_PORT', 'LINUX_SSH_PORT', 'UNIFI_DEVICE_SSH_PORT']);
 const URL_FIELDS = new Set(['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'NAS_MONITOR_URL', 'ADGUARD_URL']);
 const UUID_FIELDS = new Set(['UNIFI_NETWORK_SITE_ID', 'UNIFI_THREAT_BLOCK_LIST_ID']);
 const HOST_FIELDS = new Set([
@@ -414,6 +416,33 @@ function canonicalPort(value, field) {
     return normalized;
 }
 
+function unifiDeviceSshTargetIdsValue(value, field = 'UNIFI_DEVICE_SSH_TARGET_IDS') {
+    const raw = stringValue(value, { field, min: 1, max: 2048 });
+    const entries = raw.split(',').map(entry => entry.trim()).filter(Boolean);
+    if (entries.length > 32) reject(`${field} supports at most 32 MAC addresses`, field);
+    const normalized = entries.map((entry, index) => macValue(entry, `${field}[${index}]`));
+    return [...new Set(normalized)].join(',');
+}
+
+function unifiDeviceSshHostKeysValue(value, field = 'UNIFI_DEVICE_SSH_HOST_KEYS') {
+    const raw = stringValue(value, { field, min: 1, max: 4096 });
+    const entries = raw.split(',').map(entry => entry.trim()).filter(Boolean);
+    if (entries.length > 32) reject(`${field} supports at most 32 device fingerprints`, field);
+    const seen = new Set();
+    return entries.map((entry, index) => {
+        const separator = entry.indexOf('=');
+        if (separator <= 0) reject(`${field}[${index}] must use mac=SHA256:fingerprint`, `${field}[${index}]`);
+        const mac = macValue(entry.slice(0, separator).trim(), `${field}[${index}].mac`);
+        const fingerprint = entry.slice(separator + 1).trim();
+        if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)) {
+            reject(`${field}[${index}] must be a SHA256 SSH host key fingerprint`, `${field}[${index}]`);
+        }
+        if (seen.has(mac)) reject(`${field} cannot contain duplicate device MAC addresses`, field);
+        seen.add(mac);
+        return `${mac}=${fingerprint.replace(/=+$/u, '')}`;
+    }).join(',');
+}
+
 function parseConnectionUpdates(body, fields) {
     const definitions = new Map(fields.map(field => [field.key, field]));
     exactObject(body, { allowed: [...definitions.keys()] });
@@ -425,6 +454,11 @@ function parseConnectionUpdates(body, fields) {
         const max = definition.secret ? 4096 : 2048;
         let value = stringValue(raw, { field: key, min: 1, max });
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
+        else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(value, key);
+        else if (key === 'UNIFI_DEVICE_SSH_HOST_KEYS') value = unifiDeviceSshHostKeysValue(value, key);
+        else if (key === 'UNIFI_DEVICE_SSH_USER') {
+            value = stringValue(value, { field: key, min: 1, max: 128, pattern: /^[A-Za-z0-9._-]+$/u });
+        }
         else if (URL_FIELDS.has(key)) {
             value = key === 'UNIFI_NETWORK_API_URL'
                 ? unifiNetworkApiUrlValue(value, key)
@@ -522,5 +556,7 @@ module.exports = {
     parseUiPreferences,
     quoteEnvValue,
     stringValue,
+    unifiDeviceSshHostKeysValue,
+    unifiDeviceSshTargetIdsValue,
     validatePpbTlsSettings
 };
