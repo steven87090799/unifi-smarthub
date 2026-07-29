@@ -1,0 +1,67 @@
+name: SmartHub CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smarthub-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Repository gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run check:js
+
+      - name: Run unit, integration, contract, and security tests
+        run: npm test
+
+      - name: Verify checked-in CSS
+        run: npm run check:css
+
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high
+
+      - name: Prepare isolated Compose configuration
+        run: |
+          mkdir -p config
+          cp .env.example config/.env
+          if ! grep -q '^PANEL_PASSWORD=' config/.env; then
+            printf '\nPANEL_PASSWORD=ci-only-strong-test-password\n' >> config/.env
+          fi
+
+      - name: Validate Compose profiles
+        run: |
+          docker compose --env-file config/.env config --quiet
+          docker compose --env-file config/.env --profile nas-monitor config --quiet
+
+      - name: Build production images without starting containers
+        run: |
+          docker compose --env-file config/.env build unifi-smarthub
+          docker compose --env-file config/.env --profile nas-monitor build
+
+      - name: Verify repository hygiene
+        run: |
+          git diff --check
+          test -z "$(git status --short --untracked-files=no)"
