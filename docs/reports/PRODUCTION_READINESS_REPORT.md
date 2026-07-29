@@ -8,6 +8,8 @@
 
 CI Workflow：`SmartHub CI`（check：`Repository gate`）
 
+文件基線：`c860af27 docs: consolidate SmartHub documentation and manual` 為刻意保留的正式變更；HTML 操作手冊與現行文件搬移不得回復。
+
 ## 結論
 
 狀態：**READY FOR DRAFT PR WITH KNOWN DEPLOYMENT GAPS**
@@ -41,25 +43,23 @@ Docker 主映像與 NAS Monitor 映像都以目前 worktree 建置；沒有啟�
 | CSP 過寬 | inline 行為使 `script-src` 不能收緊 | `script-src 'self'`，不含 `unsafe-inline`／`unsafe-eval`；Service Worker 納入所有新資產 |
 | 缺少 hosted repository gate | PR 只能依賴手動本機敘述 | 新增 `SmartHub CI / Repository gate`，涵蓋 install、syntax、test、CSS、audit、Compose、雙映像 build 與 hygiene |
 | Low dependency advisory | Express 的單一 transitive `body-parser@1.20.5` 命中 `GHSA-v422-hmwv-36x6` | 在 Express 4 相容範圍內最小更新至 `body-parser@1.20.6`；未使用 override、major upgrade 或 `--force` |
-| Hosted runtime 缺口 | 原 runtime smoke 沒有成為 PR 的 blocking gate | 新增共用 `npm run test:smoke`；以正式 `server.js`、臨時資料／設定／port、loopback 假整合驗證完整啟停契約 |
+| Hosted runtime 缺口 | Runtime smoke 原檔名同時符合 Node test discovery，使 `npm test` 與獨立 smoke step 重複執行 | 保留 blocking `npm run test:smoke`，將正式程序改為不可被 test discovery 發現的 `scripts/runtime-smoke.js`，並新增掃描契約 |
 | 維護風險 | `server.js` 與 `index.html` 同時承擔生命週期與實作細節 | 抽離 sampler registry、PPB client／sync service 與 Dashboard executable assets |
 
 ## 測試與 Gate
 
-| 命令／驗證 | Exit Code | 結果 |
-|---|---:|---|
-| `npm ci` | 0 | PASS；安裝 282 packages |
-| `npm test` | 0 | PASS；542/542，0 fail |
-| `npm run check:css` | 0 | PASS |
-| `npm run check:js` | 0 | PASS；133 files |
-| `npm run test:smoke` | 0 | PASS；正式 server 兩次 SIGTERM Exit 0 與重啟持久化 |
-| `npm audit --audit-level=low` | 0 | PASS；0 low／moderate／high／critical |
-| 主 profile `docker compose ... config --quiet` | 0 | PASS；使用臨時假設定 |
-| NAS Monitor profile `docker compose ... config --quiet` | 0 | PASS；使用臨時假設定 |
-| `docker compose ... build unifi-smarthub` | 0 | PASS |
-| `docker compose ... --profile nas-monitor build` | 0 | PASS |
-| GitHub Actions final Head | 0 | PASS；`SmartHub CI / Repository gate` 包含 blocking runtime smoke step |
-| `git diff --check` | 0 | PASS |
+| Gate | 證據 |
+|---|---|
+| `npm ci` | PASS；安裝 282 packages，Exit 0 |
+| `npm run check:js` | PASS；133 files，Exit 0 |
+| `npm test` | Unit／Integration／Contract／Security；PASS，545/545，0 fail，輸出中 `Runtime smoke PASS` 為 0 次 |
+| `npm run check:css` | PASS，Exit 0 |
+| `npm run test:smoke` | 獨立 Runtime Smoke；PASS，`Runtime smoke PASS` 與 cleanup 標記各 1 次，兩次 SIGTERM Exit 0 |
+| `npm audit --audit-level=low` | PASS；0 vulnerabilities，Exit 0 |
+| Docker Compose profiles | 主 profile 與 NAS Monitor profile 都 PASS；使用臨時假設定 |
+| Docker builds | SmartHub 與 NAS Monitor 兩個映像都 PASS |
+| `git diff --check` | PASS |
+| Hosted CI | Final Head 對應的 `SmartHub CI / Repository gate` 成功 run；完整 SHA 與 URL 同步於 PR #5 Body |
 
 Dependency Audit：**0 low、0 moderate、0 high、0 critical**。唯一的 `body-parser` 由 Express 帶入且鎖定為修復版 `1.20.6`；未使用 override，也未使用 `npm audit fix --force`。
 

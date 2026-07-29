@@ -60,6 +60,30 @@ test('the complete operation manual links every maintained Markdown file', () =>
     }
 });
 
+test('Claude Code keeps a thin auto-loaded project entrypoint', () => {
+    const claude = read('CLAUDE.md');
+
+    assert.match(claude, /@AGENTS\.md/u);
+    assert.match(claude, /@CONTEXT\.md/u);
+    assert.match(claude, /@docs\/reference\/backend-map\.md/u);
+    assert.match(claude, /@docs\/reference\/frontend-map\.md/u);
+    assert.doesNotMatch(claude, /SERVER-MAP\.md|FRONTEND-MAP\.md|docs\/ARCHITECTURE\.md/u);
+});
+
+test('the operation manual matches the enforced production gates', () => {
+    const manual = read('SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html');
+
+    assert.match(manual, /npm ci/u);
+    assert.match(manual, /npm run check:js/u);
+    assert.match(manual, /npm test/u);
+    assert.match(manual, /npm run check:css/u);
+    assert.match(manual, /npm run test:smoke/u);
+    assert.match(manual, /npm audit --audit-level=low/u);
+    assert.match(manual, /docker compose --env-file config\/\.env build unifi-smarthub/u);
+    assert.match(manual, /--profile nas-monitor build/u);
+    assert.doesNotMatch(manual, /npm audit --audit-level=high/u);
+});
+
 test('the manual chapter directory gives every chapter a summary and Markdown reference', () => {
     const manual = read('SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html');
     const chapterIds = [...manual.matchAll(/<section id="([^"]+)">/gu)].map(match => match[1]);

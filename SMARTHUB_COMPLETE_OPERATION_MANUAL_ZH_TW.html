@@ -140,7 +140,18 @@ docker compose --env-file config/.env ps
 curl -fsS http://127.0.0.1:3000/health
 curl -fsS http://127.0.0.1:3000/health/ready</pre><p>開啟 <code>http://&lt;主機 IP&gt;:3000</code>。<code>config/</code> 建議 0700、<code>config/.env</code> 必須 0600，且根目錄不要留下第二份 <code>.env</code>。Docker 容器內上游不能填 <code>localhost</code>／<code>127.0.0.1</code>。</p><h3>開發與假資料</h3><pre>SMARTHUB_ENV_FILE=config/.env npm start
 # 另一個終端：純假資料預覽（port 3005）
-node server-mock.js</pre><h3>正式不可變發布</h3><ol><li>確認工作樹完全乾淨，完成安全備份，並以 <code>npm ci</code>、<code>npm test</code>、<code>npm audit --audit-level=high</code>、<code>npm run check:css</code>、<code>npm run check:js</code>、<code>git diff --check</code> 驗證。</li><li>執行 <code>npm run release:build</code>。它拒絕任何 staged、unstaged、untracked 差異，從 <code>git archive HEAD</code> 建立 SmartHub 與 NAS Monitor 成對不可變映像。</li><li>把輸出的 revision image tags（或 registry immutable digests）填入 <code>config/.env</code> 的 <code>SMARTHUB_IMAGE</code>、<code>NAS_MONITOR_IMAGE</code>。</li><li>用相同 config／project 啟動：<pre>docker compose --env-file config/.env -p smarthub-prod up -d --no-build --pull never
+node server-mock.js</pre><h3>正式不可變發布</h3><ol><li>確認工作樹完全乾淨並完成安全備份，再執行完整 gate：<pre>npm ci
+npm run check:js
+npm test
+npm run check:css
+npm run test:smoke
+npm audit --audit-level=low
+git diff --check
+
+docker compose --env-file config/.env config --quiet
+docker compose --env-file config/.env --profile nas-monitor config --quiet
+docker compose --env-file config/.env build unifi-smarthub
+docker compose --env-file config/.env --profile nas-monitor build</pre><p><code>npm test</code> 只負責 Unit、Integration、Contract 與 Security 測試；<code>npm run test:smoke</code> 是獨立的正式 <code>server.js</code> 啟動、登入、CSRF、權限、SIGTERM 與重啟持久化 gate。Low、Moderate、High 或 Critical 任一漏洞都會阻擋正式發布。</p></li><li>執行 <code>npm run release:build</code>。它拒絕任何 staged、unstaged、untracked 差異，從 <code>git archive HEAD</code> 建立 SmartHub 與 NAS Monitor 成對不可變映像。</li><li>把輸出的 revision image tags（或 registry immutable digests）填入 <code>config/.env</code> 的 <code>SMARTHUB_IMAGE</code>、<code>NAS_MONITOR_IMAGE</code>。</li><li>用相同 config／project 啟動：<pre>docker compose --env-file config/.env -p smarthub-prod up -d --no-build --pull never
 # 只有需要 NAS Monitor 時
 docker compose --env-file config/.env -p smarthub-prod --profile nas-monitor up -d --no-build --pull never</pre></li><li>比對執行中的 image ID 與 release JSON，執行 health、登入角色、SQLite、整合與重啟驗證，並保留發布紀錄。</li></ol><h3>NAS Monitor profile</h3><p>預設沒有啟用。只有必須看／控 Docker 時才設定 <code>COMPOSE_PROFILES=nas-monitor</code> 或加 <code>--profile nas-monitor</code>。它以非 root 運行但可寫 Docker socket 仍等同宿主 root；必須先啟用 mutations／logs，並設定各自的 allowlist／managed label。</p><h3>回滾</h3><ol><li>把 SmartHub 與 NAS Monitor 同時改回上一組已驗證的 image tag／digest。</li><li>使用同一個 project、config dir、env file、profile 執行 <code>up -d --no-build --pull never</code>。</li><li>重新檢查 health、角色、SQLite、重要整合、重啟與還原狀態。</li></ol><div class="danger">不要以 <code>docker compose down -v</code> 回滾；<code>-v</code> 會刪除持久 volume 與資料。</div></section>
 
@@ -181,6 +192,7 @@ curl --user admin http://127.0.0.1:3000/api/system/status</pre><table><thead><tr
       <div class="grid">
         <article class="doc-card"><h4><a data-doc-path="README.md" href="README.md">README.md</a></h4><p>專案介紹、安裝、設定、安全邊界、健康檢查與正式發布入口。</p><p class="small">給使用者、部署者與第一次接手專案的人。</p></article>
         <article class="doc-card"><h4><a data-doc-path="AGENTS.md" href="AGENTS.md">AGENTS.md</a></h4><p>AI 協作規則、資料安全與任務路由。</p><p class="small">修改程式前先確認範圍與必守契約。</p></article>
+        <article class="doc-card"><h4><a data-doc-path="CLAUDE.md" href="CLAUDE.md">CLAUDE.md</a></h4><p>Claude Code 自動載入的精簡專案入口。</p><p class="small">以 @path 導入共用規則與現行前後端地圖，不重複維護內容。</p></article>
         <article class="doc-card"><h4><a data-doc-path="CONTEXT.md" href="CONTEXT.md">CONTEXT.md</a></h4><p>低上下文閱讀入口，指示不同任務先讀哪一份索引。</p><p class="small">日常定位後端、前端、部署、整合與診斷工作。</p></article>
         <article class="doc-card"><h4><a data-doc-path="EXCLUDE-FILES.md" href="EXCLUDE-FILES.md">EXCLUDE-FILES.md</a></h4><p>不應預讀的機密、runtime、大型檔案與低頻文件規則。</p><p class="small">需要時可精準讀取，不是永久禁止。</p></article>
       </div>

@@ -6,12 +6,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
+const DISCOVERABLE_SCRIPT_PATTERN = /(?:^test-.*|[-_.]test)\.[cm]?js$/u;
 
 test('runtime smoke uses the production entrypoint with isolated restart and cleanup boundaries', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-    const source = fs.readFileSync(path.join(ROOT, 'scripts', 'runtime-smoke-test.js'), 'utf8');
+    const smokePath = path.join(ROOT, 'scripts', 'runtime-smoke.js');
+    const source = fs.readFileSync(smokePath, 'utf8');
 
-    assert.equal(packageJson.scripts['test:smoke'], 'node scripts/runtime-smoke-test.js');
+    assert.equal(packageJson.scripts['test:smoke'], 'node scripts/runtime-smoke.js');
+    assert.equal(fs.existsSync(path.join(ROOT, 'scripts', 'runtime-smoke-test.js')), false);
+    assert.equal(fs.existsSync(smokePath), true);
+    assert.doesNotMatch(path.basename(smokePath), DISCOVERABLE_SCRIPT_PATTERN);
     assert.match(source, /server\.js/u);
     assert.doesNotMatch(source, /server-mock\.js/u);
     assert.match(source, /mkdtemp/u);
@@ -29,4 +34,11 @@ test('runtime smoke uses the production entrypoint with isolated restart and cle
     assert.match(source, /finally/u);
     assert.match(source, /uncaughtException/u);
     assert.match(source, /unhandledRejection/u);
+});
+
+test('scripts contain no files that Node test discovery can execute accidentally', () => {
+    const scriptFiles = fs.readdirSync(path.join(ROOT, 'scripts'));
+    const accidentallyDiscoverable = scriptFiles.filter(file => DISCOVERABLE_SCRIPT_PATTERN.test(file));
+
+    assert.deepEqual(accidentallyDiscoverable, []);
 });
