@@ -1,6 +1,6 @@
 # SmartHub 前端地圖
 
-`public/index.html` 是大型 SPA shell。先用本檔找 section／function，再讀附近片段；登入頁與 Web Push 已拆成獨立資產。
+`public/index.html` 是 SPA 的純 HTML shell；Dashboard 行為在 `public/js/app.js`，啟動主題／Service Worker 在 `public/js/bootstrap.js`，安全的動態操作分派在 `public/js/action-dispatcher.js`。HTML 不含 inline script 或 inline event handler。
 
 ## 頁面
 
@@ -28,8 +28,8 @@
 | `renderHtmlChartLegend()` | 可鍵盤操作圖例 |
 | `initUiSystem()` | 表格、卡片、Modal、Loading／Empty／Error |
 
-總覽或目前裝置頁可見時，相關前端資料與後端取樣使用 3 秒節奏；切頁、背景分頁或租約到期後立即回到低頻。
-大型歷史查詢不跟著全部加速：UPS/NAS/UCG 歷史圖使用 10 秒以上節奏，完整表見 `docs/operations/POLLING-INTERVALS.md`。
+總覽或目前裝置頁可見時，相關一般資料與後端取樣由設定值驅動，預設為 5 秒；UPS 狀態獨立預設 3 秒。heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope，不送 `general`。切頁、背景分頁或租約到期後立即回到低頻。
+UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLING-INTERVALS.md](../operations/POLLING-INTERVALS.md)。
 
 ## 主要功能錨點
 
@@ -54,10 +54,14 @@
 ## 獨立資產
 
 - `public/login.html`, `public/assets/login.css`, `public/js/login.js`：Session 登入與一次性匿名核心快照。
+- `public/js/bootstrap.js`：首屏主題與 Service Worker 註冊。
+- `public/js/action-dispatcher.js`：以 `data-action` 與 escaped data 分派動態操作，readonly 不執行 admin action。
+- `public/js/app.js`：Dashboard 輪詢、渲染、設定與互動主程式。
 - `public/js/web-push.js`：瀏覽器訂閱／取消訂閱；Web Push 是額外通知 fan-out。
 - `public/assets/tailwind.css`：由 `npm run build:css` 產生；`npm run check:css` 驗證。
 - Chart.js、D3、TopoJSON、world-atlas：由 `/vendor/<package>/<version>/...` 同源提供。
 - `/sw.js`：由後端產生；API／health 不進 cache，通知點擊只接受 same-origin path。
+- CSP `script-src 'self'`，不含 `unsafe-inline`／`unsafe-eval`；新增 executable asset 時必須同步 CSP contract 與 PWA shell。
 
 ## 修改注意
 
@@ -67,6 +71,6 @@
 - 新前端 API／設定欄位同步 production、mock 與契約測試。
 
 ```bash
-rg -n "page-nas|fetchNas|initNasCharts" public/index.html
-rg -n "POLL_JOBS|applyPolling|heartbeat" public/index.html
+rg -n "page-nas" public/index.html
+rg -n "fetchNas|initNasCharts|POLL_JOBS|applyPolling|sendHeartbeat" public/js/app.js
 ```

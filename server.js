@@ -49,6 +49,7 @@ const { createSiteManagerClient } = require('./server/integrations/site-manager-
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
 const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
+const { createPpbClient, normalizeConfig: normalizePpbClientConfig } = require('./server/integrations/ppb-client');
 const {
     PartialNotificationDeliveryError,
     createNotificationDispatcher,
@@ -101,6 +102,8 @@ const { renderPwaServiceWorker } = require('./server/services/pwa-service-worker
 const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
+const { createBackendSamplerRegistry } = require('./server/services/backend-sampler-registry');
+const { createPpbEventSync } = require('./server/services/ppb-event-sync');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -522,7 +525,7 @@ async function fetchHardwareSSH() {
 
 // 行程內共用入口 (route / notificationWatcher / buildReport 皆走這裡，不再自打 HTTP)
 async function getHardwareCached({ force = false } = {}) {
-    const cacheMs = isDeviceSamplingActive('general')
+    const cacheMs = isDeviceSamplingActive('ucg')
         ? Math.max(1, appSettings.deviceActiveBackendSampleSec - 1) * 1000
         : 15000;
     if (!force && hwCache && Date.now() - hwCache.ts < cacheMs) return hwCache.data;
@@ -2217,12 +2220,14 @@ function scheduleServerJobs() {
 }
 
 /* ===================== 歷史取樣器 (可見分頁自適應頻率) ===================== */
-// A visible tab maintains `general`; UPS retains its own scope so its high
-// frequency collector is independent from the normal-device idle interval.
-const deviceActivity = createActivityLease({ maxLeaseMs: 3600 * 1000 });
-const backendSamplers = new Map();
-function normalDeviceSampleMs() {
-    return (isDeviceSamplingActive('general')
+const deviceActivity = createActivityLease({
+    maxLeaseMs: 3600 * 1000,
+    maxSessions: 1000,
+    maxScopesPerSession: 8
+});
+const backendSamplers = createBackendSamplerRegistry();
+function deviceSampleMs(scope) {
+    return (isDeviceSamplingActive(scope)
         ? appSettings.deviceActiveBackendSampleSec
         : appSettings.deviceIdleBackendSampleSec) * 1000;
 }
@@ -2236,23 +2241,22 @@ function ppbEventSyncMs() {
         ? appSettings.upsPpbEventActiveBackendSampleSec
         : appSettings.upsPpbEventIdleBackendSampleSec) * 1000;
 }
-function registerBackendSampler(name, collect, getDelayMs) {
-    backendSamplers.get(name)?.stop();
+function registerBackendSampler({ name, scopes, collect, getDelayMs }) {
     const sampler = createAdaptiveSampler({
         collect: () => runSerialJob(name, collect),
         getDelayMs,
         setTimeoutFn: (callback, delay) => lifecycleTimeout(callback, delay),
         clearTimeoutFn: clearLifecycleTimeout
     });
-    backendSamplers.set(name, sampler);
+    backendSamplers.register({ name, scopes, sampler });
     sampler.start();
     return sampler;
 }
 function rebuildBackendSamplers({ immediate = false } = {}) {
-    for (const sampler of backendSamplers.values()) sampler.rebuild({ immediate });
+    return backendSamplers.rebuildAll({ immediate });
 }
 function requestPromptSampling(scopes) {
-    if (scopes.length) rebuildBackendSamplers({ immediate: true });
+    return backendSamplers.requestPromptSampling(scopes);
 }
 function markClientActivity(scopes = 'general', { focus = false, session = 'legacy' } = {}) {
     const requestedMs = appSettings.activeLeaseSec * 1000;
@@ -2263,7 +2267,6 @@ function markClientActivity(scopes = 'general', { focus = false, session = 'lega
     // receives the same treatment, while normal heartbeat renewals do not.
     const promptScopes = focus ? activity.accepted : activity.activated;
     if (promptScopes.length) requestPromptSampling(promptScopes);
-    else if (focus) rebuildBackendSamplers();
     return { ...activity, promptScopes };
 }
 function isDeviceSamplingActive(scope) { return deviceActivity.isActive(scope); }
@@ -2307,7 +2310,12 @@ async function sampleTrends() {
     historyDb.insertPoint('trend', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
 }
 
-registerBackendSampler('trendHistory', sampleTrends, normalDeviceSampleMs);
+registerBackendSampler({
+    name: 'trendHistory',
+    scopes: ['trend'],
+    collect: sampleTrends,
+    getDelayMs: () => deviceSampleMs('trend')
+});
 scheduleServerJobs();
 systemMonitor.start();
 logger.info({
@@ -2749,7 +2757,12 @@ async function collectUcgHistory() {
     const data = await getHardwareCached({ force: true });
     sampleUcgHistory(data);
 }
-registerBackendSampler('ucgHistory', collectUcgHistory, normalDeviceSampleMs);
+registerBackendSampler({
+    name: 'ucgHistory',
+    scopes: ['ucg'],
+    collect: collectUcgHistory,
+    getDelayMs: () => deviceSampleMs('ucg')
+});
 app.get('/api/hardware/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
         module: 'api.hardware', function: 'listHistory'
@@ -2811,7 +2824,12 @@ async function sampleNasHistory() {
         historyDb.insertPoint('nas', point, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
     } catch (e) { throw e; }
 }
-registerBackendSampler('nasHistory', sampleNasHistory, normalDeviceSampleMs);
+registerBackendSampler({
+    name: 'nasHistory',
+    scopes: ['nas'],
+    collect: sampleNasHistory,
+    getDelayMs: () => deviceSampleMs('nas')
+});
 
 function nasHistorySince(hours) {
     return historyDb.getSince('nas', Date.now() - hours * 3600000);
@@ -3214,6 +3232,7 @@ const CONN_FIELDS = [
     { key: 'WIIM_IP' },
     { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
+    { key: 'PPB_TLS_VERIFY' }, { key: 'PPB_TLS_INSECURE' }, { key: 'PPB_CA_FILE' },
     { key: 'ADGUARD_URL' }, { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' },
     { key: 'ADGUARD_ALLOW_INSECURE_HTTP' }, { key: 'ADGUARD_TLS_VERIFY' }, { key: 'ADGUARD_CA_FILE' },
     { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
@@ -3264,7 +3283,7 @@ function rebuildClients() {
     wiimIP = process.env.WIIM_IP || wiimIP;
     localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
     nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
-    ppbToken = null; ppbHttpsPort = null; // 重置 PPB session (PPB_HOST/PORT 可能已變更)
+    ppbClient.reset();                    // 重置 PPB session/Agent (host/TLS/CA 可能已變更)
     Object.keys(wiimCache).forEach(k => delete wiimCache[k]);
     sysLog('Connections', '連線設定已更新，所有客戶端已熱重建');
 }
@@ -3301,6 +3320,28 @@ app.post('/api/connections', (req, res) => {
     });
     if (!updates) return;
     if (!Object.keys(updates).length) return res.json({ ok: true, changed: 0 });
+    if (Object.keys(updates).some(key => key.startsWith('PPB_'))) {
+        try {
+            const desired = parseDesiredEnvFile(ENV_FILE);
+            const effective = { ...process.env, ...desired, ...updates };
+            writeInput.validatePpbTlsSettings(effective);
+            normalizePpbClientConfig({
+                host: effective.PPB_HOST,
+                httpPort: effective.PPB_PORT,
+                tlsVerify: effective.PPB_TLS_VERIFY,
+                tlsInsecure: effective.PPB_TLS_INSECURE,
+                caFile: effective.PPB_CA_FILE
+            }, fs);
+        } catch (error) {
+            return apiError(res, error, {
+                status: 400,
+                code: ERROR_CODES.API_VALIDATION_FAILED,
+                module: 'api.connections',
+                function: 'validatePpbConnection',
+                publicMessage: error.message
+            });
+        }
+    }
     if (Object.keys(updates).some(key => key.startsWith('ADGUARD_'))) {
         try { createAdGuardConnection({ env: { ...process.env, ...updates }, axios }); }
         catch (error) {
@@ -3959,7 +4000,12 @@ async function pollWiimTemp() {
     });
     sysLog('WiiM Poll', `溫度採樣完成 (CPU: ${cpu}°C, Board: ${board}°C)`);
 }
-registerBackendSampler('wiimTemperature', pollWiimTemp, normalDeviceSampleMs);
+registerBackendSampler({
+    name: 'wiimTemperature',
+    scopes: ['wiim'],
+    collect: pollWiimTemp,
+    getDelayMs: () => deviceSampleMs('wiim')
+});
 
 app.get('/api/wiim/history', (req, res) => {
     res.json({
@@ -4141,35 +4187,23 @@ async function readPwrstat() {
 // 必須以 PPB_HOST 指向實際跑 PowerPanel Business 的機器 IP
 const PPB_HOST = () => process.env.PPB_HOST || '127.0.0.1';
 const PPB_HTTP_PORT = () => process.env.PPB_PORT || '3052';
-let ppbToken = null, ppbHttpsPort = null;
-async function ppbDiscoverPort() {
-    if (ppbHttpsPort) return ppbHttpsPort;
-    const r = await axios.get(`http://${PPB_HOST()}:${PPB_HTTP_PORT()}/local/`, { maxRedirects: 0, validateStatus: () => true, timeout: 5000 });
-    const loc = r.headers.location || '';
-    const m = loc.match(/^https:\/\/[^:/]+:(\d+)/);
-    if (m) ppbHttpsPort = m[1];
-    return ppbHttpsPort;
-}
-async function ppbLogin() {
-    const port = await ppbDiscoverPort();
-    if (!port) return null;
-    const r = await axios.post(`https://${PPB_HOST()}:${port}/local/rest/v1/login/verify`,
-        { userName: process.env.PPB_USER, password: process.env.PPB_PASSWORD },
-        { httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true });
-    if (r.status !== 200) return null;
-    ppbToken = r.data; return ppbToken;
-}
+const ppbClient = createPpbClient({
+    axios,
+    logger,
+    getConfig: () => ({
+        host: PPB_HOST(),
+        httpPort: PPB_HTTP_PORT(),
+        user: process.env.PPB_USER || '',
+        password: process.env.PPB_PASSWORD || '',
+        tlsInsecure: process.env.PPB_TLS_INSECURE || 'false',
+        tlsVerify: process.env.PPB_TLS_VERIFY,
+        caFile: process.env.PPB_CA_FILE || ''
+    })
+});
 async function readPpb() {
     if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) return null;
     try {
-        const port = await ppbDiscoverPort();
-        if (!port) return null;
-        if (!ppbToken) await ppbLogin();
-        const opts = { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true };
-        let resp = await axios.get(`https://${PPB_HOST()}:${port}/local/rest/v1/ups/status`, opts);
-        if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://${PPB_HOST()}:${port}/local/rest/v1/ups/status`, { ...opts, headers: { Authorization: ppbToken } }); }
-        if (resp.status !== 200) return null;
-        const d = resp.data;
+        const d = await ppbClient.get('/local/rest/v1/ups/status');
         const numV = s => { const m = (s || '').toString().match(/[\d.]+/); return m ? parseFloat(m[0]) : null; };
         return {
             source: 'ppb', model: 'CyberPower UPS (PowerPanel Business)',
@@ -4182,70 +4216,39 @@ async function readPpb() {
             loadPct: numV(d.output?.loads?.[0])
         };
     } catch {
-        // PPB 服務重啟後 HTTPS 埠可能改變，清掉快取讓下次重新探索
-        ppbHttpsPort = null; ppbToken = null;
+        // PPB 服務重啟後 HTTPS 埠可能改變，清掉 session 讓下次重新探索。
+        ppbClient.reset();
         return null;
     }
 }
 
 // 通用 PowerPanel Business API GET (自動登入/token 失效重試一次)
 async function ppbGet(path) {
-    if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) throw new Error('ppb_not_configured');
-    const port = await ppbDiscoverPort();
-    if (!port) throw new Error(`PowerPanel Business 服務未偵測到 (${PPB_HOST()}:${PPB_HTTP_PORT()})`);
-    if (!ppbToken) await ppbLogin();
-    const opts = { headers: { Authorization: ppbToken }, httpsAgent: new https.Agent({ rejectUnauthorized: false }), timeout: 8000, validateStatus: () => true };
-    let resp = await axios.get(`https://${PPB_HOST()}:${port}${path}`, opts);
-    if (resp.status === 401 || resp.status === 403) { await ppbLogin(); resp = await axios.get(`https://${PPB_HOST()}:${port}${path}`, { ...opts, headers: { Authorization: ppbToken } }); }
-    if (resp.status !== 200) throw new Error(`PPB API ${resp.status}`);
-    return resp.data;
+    return ppbClient.get(path);
 }
 // PPB API 固定回英文 (Accept-Language 無效)；官方網頁是前端用語系檔翻譯。
 // ppb-i18n-zh.json 即擷取自 PowerPanel Business 網頁的官方 zh 語系檔
 // (assets/i18n/zh.json 的 eventDescription/eventName 全部 332 句)，翻譯結果與官方介面一模一樣。
 const ppbZhMap = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'ppb-i18n-zh.json'), 'utf8')); } catch { return {}; } })();
-let ppbEventSyncInFlight = null;
-let lastPpbEventSyncTs = 0;
-let lastPpbEventSyncAttemptTs = 0;
-let ppbEventSyncInitialized = historyDb.listUpsPowerEvents(1).length > 0;
-
 function ppbConfigured() {
     return !!(process.env.PPB_USER && process.env.PPB_PASSWORD);
 }
 
-async function syncPpbEvents() {
-    if (ppbEventSyncInFlight) return ppbEventSyncInFlight;
-    const sync = (async () => {
-        lastPpbEventSyncAttemptTs = Date.now();
-        const raw = await ppbGet('/local/rest/v1/eventlogs/report');
-        const normalized = (Array.isArray(raw) ? raw : [])
-            .map(event => normalizePpbEvent(event, {
-                translate: description => ppbZhMap[description.trim()] || description
-            }))
-            .filter(Boolean);
-        const created = [];
-        for (const event of normalized) {
-            const result = historyDb.recordUpsPowerEvent(event);
-            if (result.created && result.event) created.push({ ...result.event, sag: event.sag });
-        }
-        const shouldNotify = ppbEventSyncInitialized;
-        ppbEventSyncInitialized = true;
-        lastPpbEventSyncTs = Date.now();
-        const settings = loadNotifSettings();
-        if (shouldNotify && settings.enabled && settings.triggerUpsSag !== false) {
-            for (const event of created.filter(item => item.sag).slice(0, 3)) {
-                await notify('⚠️ UPS 原廠記錄到市電壓降', event.description);
-            }
-        }
-        return { created: created.length, events: historyDb.listUpsPowerEvents(200) };
-    })();
-    ppbEventSyncInFlight = sync;
-    try { return await sync; }
-    finally { if (ppbEventSyncInFlight === sync) ppbEventSyncInFlight = null; }
-}
+const ppbEventSync = createPpbEventSync({
+    db: historyDb,
+    fetchEvents: () => ppbGet('/local/rest/v1/eventlogs/report'),
+    normalizeEvent: event => normalizePpbEvent(event, {
+        translate: description => ppbZhMap[description.trim()] || description
+    }),
+    loadSettings: loadNotifSettings,
+    notify
+});
+
+async function syncPpbEvents() { return ppbEventSync.run(); }
 
 async function syncPpbEventsIfDue(maxAgeMs) {
-    if (lastPpbEventSyncAttemptTs && Date.now() - lastPpbEventSyncAttemptTs < maxAgeMs) {
+    const snapshot = ppbEventSync.snapshot();
+    if (snapshot.lastAttemptAt && Date.now() - snapshot.lastAttemptAt < maxAgeMs) {
         return { created: 0, events: historyDb.listUpsPowerEvents(200), cached: true };
     }
     return { ...await syncPpbEvents(), cached: false };
@@ -4265,7 +4268,13 @@ app.get('/api/ups/ppb-events', async (req, res) => {
             type: event.type,
             inputV: event.inputV
         }));
-        res.json({ events, source: ppbConfigured() ? 'ppb' : 'local', ppbConfigured: ppbConfigured(), cached: result.cached, syncedAt: lastPpbEventSyncTs || null });
+        res.json({
+            events,
+            source: ppbConfigured() ? 'ppb' : 'local',
+            ppbConfigured: ppbConfigured(),
+            cached: result.cached,
+            syncedAt: ppbEventSync.snapshot().lastSuccessAt || null
+        });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_UPS_FAILED, module: 'api.ups', function: 'getPpbEvents', logMessage: 'Failed to fetch PowerPanel events' });
     }
@@ -4567,10 +4576,20 @@ async function sampleUpsIfDue(maxAgeMs) {
 }
 let lastUpsHighLoadTs = 0, lastUpsLowRuntimeTs = 0, lastUpsVoltAbnormalTs = 0, lastUpsSource = null;
 let upsLowBattNotified = false;
-registerBackendSampler('upsSample', () => sampleUpsIfDue(upsSampleMs()), upsSampleMs);
-registerBackendSampler('ppbEventSync', async () => {
-    if (ppbConfigured()) await syncPpbEventsIfDue(ppbEventSyncMs());
-}, ppbEventSyncMs);
+registerBackendSampler({
+    name: 'upsSample',
+    scopes: ['ups'],
+    collect: () => sampleUpsIfDue(upsSampleMs()),
+    getDelayMs: upsSampleMs
+});
+registerBackendSampler({
+    name: 'ppbEventSync',
+    scopes: ['ups'],
+    collect: async () => {
+        if (ppbConfigured()) await syncPpbEventsIfDue(ppbEventSyncMs());
+    },
+    getDelayMs: ppbEventSyncMs
+});
 
 app.get('/api/ups/status', async (req, res) => {
     const result = await sampleUpsIfDue(upsSampleMs());
@@ -4764,7 +4783,7 @@ async function fetchLinuxSSH() {
     } catch (error) { throw new Error('parse failed: ' + error.message, { cause: error }); }
 }
 async function getLinuxCached() {
-    const cacheMs = isDeviceSamplingActive('general')
+    const cacheMs = isDeviceSamplingActive('linux')
         ? Math.max(1, appSettings.deviceActiveBackendSampleSec - 1) * 1000
         : 10000;
     if (linuxCache && Date.now() - linuxCache.ts < cacheMs) return linuxCache.data;
@@ -4789,7 +4808,12 @@ async function sampleLinuxHistory() {
         mem: d.memUsagePct, load: d.load && d.load[0]
     }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
 }
-registerBackendSampler('linuxHistory', sampleLinuxHistory, normalDeviceSampleMs);
+registerBackendSampler({
+    name: 'linuxHistory',
+    scopes: ['linux'],
+    collect: sampleLinuxHistory,
+    getDelayMs: () => deviceSampleMs('linux')
+});
 app.get('/api/linux/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
         module: 'api.linux', function: 'listHistory'
@@ -4921,7 +4945,22 @@ app.get('/api/alerts/critical', (req, res) => {
 // Liveness / readiness / 完整 diagnostics；/api/system/status 會沿用上方 Basic Auth。
 registerHealthRoutes(app, {
     monitor: systemMonitor, db: historyDb, taskTracker,
-    version: APP_VERSION, buildIdentity: buildIdentity.public
+    version: APP_VERSION, buildIdentity: buildIdentity.public,
+    runtimeDiagnostics: () => ({
+        activityLease: deviceActivity.snapshot(),
+        backendSampling: {
+            ...backendSamplers.snapshot(),
+            activeScopes: deviceActivity.activeScopes()
+        },
+        sshPools: {
+            ucg: ucgSshPool.snapshot(),
+            linux: linuxSshPool.snapshot()
+        },
+        ppb: {
+            client: ppbClient.snapshot(),
+            sync: ppbEventSync.snapshot()
+        }
+    })
 });
 
 /* ===================== 啟動連線自我診斷 =====================
@@ -5049,8 +5088,10 @@ function gracefulShutdown(signal, exitCode = 0) {
         lifecycleTimeouts.clear();
         Object.values(jobTimers).forEach(clearInterval);
         jobTimers = {};
+        backendSamplers.stopAll();
         ucgSshPool.close();
         linuxSshPool.close();
+        ppbClient.close();
 
         resetSseUpstream();
         for (const client of sseClients) {

@@ -399,6 +399,8 @@ const ENUM_FIELDS = Object.freeze({
     NAS_SCHEME: ['http', 'https'],
     NAS_MONITOR_MODE: ['docker_only', 'full'],
     UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
+    PPB_TLS_VERIFY: ['true', 'false'],
+    PPB_TLS_INSECURE: ['true', 'false'],
     ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
     ADGUARD_TLS_VERIFY: ['true', 'false'],
     UPS_SOURCE: ['auto', 'nut', 'pwrstat', 'pmset', 'ppb']
@@ -444,6 +446,13 @@ function parseConnectionUpdates(body, fields) {
             value = stringValue(value, { field: key, min: 1, max: 32, pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u });
         } else if (key === 'NUT_UPS_NAME') {
             value = stringValue(value, { field: key, min: 1, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u });
+        } else if (key === 'PPB_CA_FILE') {
+            value = stringValue(value, {
+                field: key,
+                min: 2,
+                max: 1024,
+                pattern: /^\/(?:[A-Za-z0-9._+-]+\/)*[A-Za-z0-9._+-]+$/u
+            });
         } else if (key === 'PWRSTAT_PATH' || key === 'ADGUARD_CA_FILE') {
             value = stringValue(value, {
                 field: key,
@@ -457,6 +466,18 @@ function parseConnectionUpdates(body, fields) {
         updates[key] = value;
     }
     return updates;
+}
+
+function validatePpbTlsSettings(values) {
+    const source = values && typeof values === 'object' ? values : {};
+    const verify = source.PPB_TLS_VERIFY === undefined ? 'true' : source.PPB_TLS_VERIFY;
+    const insecure = source.PPB_TLS_INSECURE === undefined ? 'false' : source.PPB_TLS_INSECURE;
+    if (!['true', 'false'].includes(verify)) reject('PPB_TLS_VERIFY must be true or false', 'PPB_TLS_VERIFY');
+    if (!['true', 'false'].includes(insecure)) reject('PPB_TLS_INSECURE must be true or false', 'PPB_TLS_INSECURE');
+    if (verify === 'false' && insecure !== 'true') {
+        reject('PPB_TLS_INSECURE=true is required to explicitly disable PPB certificate verification', 'PPB_TLS_INSECURE');
+    }
+    return source;
 }
 
 function quoteEnvValue(value) {
@@ -500,5 +521,6 @@ module.exports = {
     parseWifiQrRequest,
     parseUiPreferences,
     quoteEnvValue,
-    stringValue
+    stringValue,
+    validatePpbTlsSettings
 };

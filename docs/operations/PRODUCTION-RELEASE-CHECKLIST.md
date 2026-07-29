@@ -10,6 +10,7 @@
 - 已設定 `PANEL_PASSWORD`；唯讀密碼不得等於管理員密碼。
 - 容器內 upstream 位址不是 `localhost`／`127.0.0.1`。
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
+- PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false`；私有／自簽 CA 使用容器內絕對路徑 `PPB_CA_FILE`，並確認不是 symlink。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
 
@@ -20,12 +21,15 @@
 ```bash
 npm ci
 npm test
-npm audit --audit-level=high
+npm run check:js
 npm run check:css
-git ls-files -z '*.js' | xargs -0 -n1 node --check
+npm run test:smoke
+npm audit --audit-level=low
 git diff --check
 docker compose --env-file config/.env config --quiet
 docker compose --env-file config/.env --profile nas-monitor config --quiet
+docker compose --env-file config/.env build unifi-smarthub
+docker compose --env-file config/.env --profile nas-monitor build
 ```
 
 若只需快速定位安全／Docker／restart／release 契約：
@@ -44,7 +48,9 @@ node --test \
   test/release-build.test.js
 ```
 
-任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Critical／High audit finding 不得無說明放行。
+任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。
+
+Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 的 branch protection／ruleset 應將 `SmartHub CI / Repository gate` 設為 Required Check，要求分支為最新並禁止 CI 未通過時 merge。Workflow 檔存在不代表 repository 規則已啟用；沒有管理權限驗證時記為 `NOT RUN`。
 
 ## 3. 建立不可變成對映像
 

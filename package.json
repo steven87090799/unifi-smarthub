@@ -6,8 +6,10 @@
   "scripts": {
     "build:css": "node scripts/build-frontend-css.js",
     "check:css": "node scripts/build-frontend-css.js --check",
+    "check:js": "node scripts/check-js-syntax.js",
     "start": "node server.js",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=4",
+    "test:smoke": "node scripts/runtime-smoke.js",
     "release:build": "node scripts/release-build.js"
   },
   "dependencies": {

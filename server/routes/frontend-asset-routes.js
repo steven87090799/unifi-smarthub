@@ -20,7 +20,7 @@ const FRONTEND_CSP = [
     "img-src 'self' data: blob:",
     "manifest-src 'self'",
     "object-src 'none'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "worker-src 'self'"
 ].join('; ');

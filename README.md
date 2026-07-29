@@ -7,13 +7,14 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - 歷史資料：SQLite `data/smarthub.db`
 - 目前版本：`3.0.0`
 - 文件索引：[docs/README.md](docs/README.md)
+- 完整操作與文件規格：[SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html](SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html)
 - 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
 - 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
 
 ## 主要能力
 
 - 14 個頁面：總覽、UCG、客戶端、資安、WiFi、雲端站點、NAS、WiiM、UPS、AdGuard、Linux、工具、通知、設定。
-- 3 秒活動頁更新與後端自適應取樣；離開頁面後自動回到低頻。
+- 設定驅動的活動頁更新與後端自適應取樣；一般裝置預設 5 秒、UPS 即時狀態預設 3 秒，離開頁面後自動回到低頻。
 - 管理員／唯讀角色、Session、CSRF、Origin 檢查、登入節流與受保護寫入路由。
 - SQLite 歷史、事件、報表、政策、Web Push、備份／還原與重啟復原。
 - Discord、Telegram、Webhook、Web Push 與 Telegram 指令中心。
@@ -62,7 +63,7 @@ node server-mock.js
 | UGREEN NAS | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` |
 | NAS Monitor | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY`, `NAS_MONITOR_MODE` |
 | WiiM | `WIIM_IP` |
-| UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*` |
+| UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*`；PPB TLS 見下節 |
 | AdGuard | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` |
 | Linux SSH | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD` |
 | 面板登入 | `PANEL_PASSWORD`；唯讀帳號另設 `PANEL_READONLY_*` |
@@ -76,6 +77,7 @@ node server-mock.js
 - 所有 Compose 指令都使用同一個 `--env-file config/.env`。
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
+- Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
 - 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
 
 ## Docker UPS
@@ -88,7 +90,13 @@ PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...
 PPB_PASSWORD=...
+PPB_TLS_VERIFY=true
+PPB_TLS_INSECURE=false
+# 私有／自簽 CA 建議掛載後使用：
+# PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
+
+未設定 TLS 新欄位時仍會驗證憑證。只有明確設定 `PPB_TLS_INSECURE=true` 才會停用驗證並產生警告；`PPB_TLS_VERIFY=false` 不會單獨關閉驗證。CA 必須是容器內可讀的絕對路徑、一般檔案且不得為 symlink。
 
 容器內沒有宿主機的 `pwrstat` 或 `pmset`。替代方案是讓容器連到可達的 NUT server；詳見 [UPS 整合摘要](docs/integrations/cyberpower-ups-api.md)。
 
@@ -117,6 +125,16 @@ docker compose --env-file config/.env logs | grep Diag
 
 ## 正式發布
 
+Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 20 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
+
+本機也可獨立重跑同一個隔離 smoke：
+
+```bash
+npm run test:smoke
+```
+
+Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI / Repository gate` 設為 Required Check，並禁止 CI 未通過的 PR merge；若尚未設定，不能把 workflow 存在誤稱為 branch protection 已啟用。
+
 先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate，再建立不可變成對映像：
 
 ```bash
@@ -128,7 +146,7 @@ docker compose --env-file config/.env up -d --no-build --pull never
 
 ## 開發原則
 
-- 先讀 `CONTEXT.md`，再依任務讀 `SERVER-MAP.md` 或 `FRONTEND-MAP.md`。
+- 先讀 `CONTEXT.md`，再依任務讀 `docs/reference/backend-map.md` 或 `docs/reference/frontend-map.md`。
 - 修改前端可見 API／設定時，同步 `server-mock.js` 與契約測試。
 - 新歷史資料沿用 `db.js`，不要恢復整檔 JSON 歷史寫入。
 - 大型檔案只以 `rg`／`sed` 精準讀取，避免無效上下文與測試輸出。

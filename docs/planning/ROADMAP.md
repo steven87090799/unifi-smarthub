@@ -1,6 +1,6 @@
 # SmartHub 產品路線圖
 
-只保留尚未落地的方向；目前能力以 [README](../../README.md)、[後端地圖](../../SERVER-MAP.md)、[前端地圖](../../FRONTEND-MAP.md) 與測試為準。
+只保留尚未落地的方向；目前能力以 [README](../../README.md)、[後端地圖](../reference/backend-map.md)、[前端地圖](../reference/frontend-map.md) 與測試為準。
 
 ## 近期
 

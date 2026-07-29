@@ -16,6 +16,7 @@ const loginHtml = fs.readFileSync(path.join(ROOT, 'public', 'login.html'), 'utf8
 const loginCss = fs.readFileSync(path.join(ROOT, 'public', 'assets', 'login.css'), 'utf8');
 const loginJs = fs.readFileSync(path.join(ROOT, 'public', 'js', 'login.js'), 'utf8');
 const dashboardHtml = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+const dashboardJs = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const mockSource = fs.readFileSync(path.join(ROOT, 'server-mock.js'), 'utf8');
 
@@ -78,8 +79,9 @@ test('production and mock register the same panel auth routes and dashboard expo
         .split('/* ===================== 重大事件警報')[0];
     assert.match(publicSnapshotSource, /publicSystemHealth\.update\(/u);
     assert.doesNotMatch(publicSnapshotSource, /await|axios\.|getLocalSession\(|fetchHardwareSSH\(|getNasToken\(|wiimGet\(/u);
-    assert.match(dashboardHtml, /id="panel-logout"[\s\S]+onclick="logoutPanel\(\)"/u);
-    assert.match(dashboardHtml, /function redirectToPanelLogin/u);
+    assert.match(dashboardHtml, /id="panel-logout"[\s\S]+data-handler-click=/u);
+    assert.match(dashboardJs, /logoutPanel\(\)/u);
+    assert.match(dashboardJs, /function redirectToPanelLogin/u);
 });
 
 test('public login assets work before authentication and protected HTML redirects to login', async t => {

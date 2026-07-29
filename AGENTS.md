@@ -4,7 +4,7 @@ Node.js／Express 後端為 `server.js`，SPA 前端為 `public/index.html`；�
 
 ## 必守規則
 
-- 先讀 `CONTEXT.md`；後端再讀 `SERVER-MAP.md`，前端再讀 `FRONTEND-MAP.md`。
+- 先讀 `CONTEXT.md`；後端再讀 `docs/reference/backend-map.md`，前端再讀 `docs/reference/frontend-map.md`。
 - `server.js`、`public/index.html`、`data/`、`.env` 與低頻文件都採按需精準讀取。
 - `.env` 含機密；先看 `.env.example`，必要時只檢查欄位是否存在，不回印值。
 - 歷史資料使用 `db.js` 與 SQLite `data/smarthub.db`，不要恢復 JSON 整檔寫入。
@@ -16,11 +16,11 @@ Node.js／Express 後端為 `server.js`，SPA 前端為 `public/index.html`；�
 
 | 任務 | 先讀 |
 |---|---|
-| 後端 API／排程／SQLite | `SERVER-MAP.md` |
-| UI／圖表／輪詢 | `FRONTEND-MAP.md` |
+| 後端 API／排程／SQLite | `docs/reference/backend-map.md` |
+| UI／圖表／輪詢 | `docs/reference/frontend-map.md` |
 | Docker／部署 | `README.md`、`docs/operations/` |
-| UniFi／NAS／WiiM／UPS | `SERVER-MAP.md`、`docs/integrations/` 對應摘要 |
+| UniFi／NAS／WiiM／UPS | `docs/reference/backend-map.md`、`docs/integrations/` 對應摘要 |
 | 診斷／log／health | `docs/operations/OBSERVABILITY.md` |
-| 全域架構 | `docs/ARCHITECTURE.md` |
+| 全域架構 | `docs/reference/architecture.md` |
 
-重要實況：Docker UPS 使用 `UPS_SOURCE=ppb` 與 `host.docker.internal:3052`；`/health/ready` 檢查 SQLite／worker；活動頁資料更新為 3 秒。
+重要實況：Docker UPS 使用 `UPS_SOURCE=ppb` 與 `host.docker.internal:3052`；`/health/ready` 檢查 SQLite／worker；一般活動頁預設 5 秒，UPS 狀態預設 3 秒，均可在設定頁調整。

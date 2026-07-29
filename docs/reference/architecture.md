@@ -18,7 +18,7 @@
 - 面板使用 Session／相容 Basic Auth、admin／readonly 角色、Origin、CSRF 與輸入政策。
 - WiiM、Docker、UniFi 威脅封鎖、AdGuard 政策等異動都由伺服器端 allowlist／policy 決定。
 - NAS Monitor API key 只送往經驗證的固定 origin；Docker mutation 與 log 各用獨立 allowlist。
-- 設定權威是部署實例的 `config/.env`；JSON 設定採同目錄暫存、fsync 與 atomic rename。
+- 部署與連線設定的權威是 `config/.env`；可調整的面板設定（例如輪詢）持久化於 `DATA_DIR/app-settings.json`，以暫存、fsync 與 atomic rename 寫入。
 
 ## 資料與工作
 
@@ -31,7 +31,7 @@
 ## 更新模型
 
 - 前端以 `/api/heartbeat` 維持活動 scope。
-- 總覽與目前裝置頁使用 3 秒前端更新；對應後端取樣同步加速。
+- 前端只輪詢目前頁面。一般裝置更新與對應後端取樣預設為 5 秒；UPS 狀態獨立預設為 3 秒，兩者都可在設定頁調整。
 - 切頁、背景分頁或租約到期後回到低頻。
 - UPS 狀態與斷電事件取樣不依賴瀏覽器是否開啟。
 
@@ -47,4 +47,4 @@
 - 新 API 優先放入可測試 route／policy／service，而不是持續擴大 `server.js`。
 - 前端逐功能抽離，但先保護 navigation、polling、visibility lease、chart 與 write controls。
 - 前端可見契約同步更新 production、mock 與測試。
-- 本文件不列完整 endpoint；後端與前端權威索引分別是 `../SERVER-MAP.md` 與 `../FRONTEND-MAP.md`。
+- 本文件不列完整 endpoint；後端與前端權威索引分別是 [backend-map.md](backend-map.md) 與 [frontend-map.md](frontend-map.md)。

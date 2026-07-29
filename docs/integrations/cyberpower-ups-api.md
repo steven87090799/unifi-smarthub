@@ -25,6 +25,9 @@ PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...
 PPB_PASSWORD=...
+PPB_TLS_VERIFY=true
+PPB_TLS_INSECURE=false
+# 私有／自簽 CA：PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
 
 流程：
@@ -34,7 +37,7 @@ PPB_PASSWORD=...
 3. 讀取 `/local/rest/v1/ups/status` 與事件 API。
 4. 401／403 時重新登入一次；服務重啟後重新探索 port。
 
-PPB 的本機 HTTPS 使用設備自簽憑證，程式目前不驗證 CA；只應在可信內網／宿主機路徑使用。容器內不要改用宿主機的 `pwrstat`。
+PPB HTTPS 預設驗證憑證；私有／自簽 CA 應以容器內可讀、絕對路徑且非 symlink 的 `PPB_CA_FILE` 提供。只有明確設定 `PPB_TLS_INSECURE=true` 才會停用驗證並記錄警告；`PPB_TLS_VERIFY=false` 本身不會關閉驗證。容器內不要改用宿主機的 `pwrstat`。
 
 ## NUT
 

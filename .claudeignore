@@ -10,7 +10,6 @@ config/
 data/
 *.log
 .production-verification/
-_pending-delete-2026-07-17/
 
 # 大型主檔：先讀 map，再精準讀
 server.js
@@ -21,7 +20,7 @@ observability/
 ppb-i18n-zh.json
 
 # 低頻文件
-docs/ARCHITECTURE.md
+docs/reference/architecture.md
 docs/integrations/
 docs/operations/
 docs/planning/

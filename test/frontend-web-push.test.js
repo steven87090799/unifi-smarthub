@@ -14,8 +14,8 @@ test('Web Push UI requires an explicit admin user gesture and never receives pri
     for (const token of [
         'id="web-push-card"',
         'id="notif-webpush-enabled"',
-        'onclick="subscribeWebPush()"',
-        'onclick="unsubscribeWebPush()"',
+        'id="web-push-subscribe"',
+        'id="web-push-unsubscribe"',
         '<script src="/js/web-push.js"></script>'
     ]) assert.ok(html.includes(token), `missing ${token}`);
     for (const token of [

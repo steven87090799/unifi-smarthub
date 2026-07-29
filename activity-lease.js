@@ -4,11 +4,25 @@ const DEFAULT_SCOPES = ['general', 'trend', 'ucg', 'nas', 'wiim', 'linux', 'ups'
 
 // A short server-timed lease prevents a stale browser tab from keeping device
 // polling fast forever. Client clocks are never trusted.
-function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now = () => Date.now() } = {}) {
+function createActivityLease({
+    scopes = DEFAULT_SCOPES,
+    maxLeaseMs = 180000,
+    maxSessions = 1000,
+    maxScopesPerSession = 8,
+    now = () => Date.now()
+} = {}) {
+    if (!Number.isSafeInteger(maxSessions) || maxSessions <= 0) {
+        throw new TypeError('maxSessions must be a positive integer');
+    }
+    if (!Number.isSafeInteger(maxScopesPerSession) || maxScopesPerSession <= 0) {
+        throw new TypeError('maxScopesPerSession must be a positive integer');
+    }
     const allowed = new Set(scopes);
     // Each browser tab owns its own set of leases.  Releasing one hidden tab
     // must not make another visible tab look idle.
     const sessions = new Map();
+    let evictions = 0;
+    let expiredSessionsRemoved = 0;
 
     function duration(requestedMs) {
         const requested = Number(requestedMs);
@@ -21,8 +35,24 @@ function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now
             for (const [scope, expiresAt] of leases) {
                 if (expiresAt <= nowMs) leases.delete(scope);
             }
-            if (leases.size === 0) sessions.delete(sessionId);
+            if (leases.size === 0) {
+                sessions.delete(sessionId);
+                expiredSessionsRemoved += 1;
+            }
         }
+    }
+
+    function refreshSession(key, leases) {
+        sessions.delete(key);
+        sessions.set(key, leases);
+    }
+
+    function ensureCapacity(key) {
+        if (sessions.has(key) || sessions.size < maxSessions) return;
+        const oldest = sessions.keys().next().value;
+        if (oldest === undefined) return;
+        sessions.delete(oldest);
+        evictions += 1;
     }
 
     function mark(scopeList, requestedMs, { replace = false, sessionId = 'legacy' } = {}) {
@@ -30,7 +60,8 @@ function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now
         prune(nowMs);
         const expiresAt = nowMs + duration(requestedMs);
         const requested = String(scopeList || '').split(',').map(scope => scope.trim()).filter(Boolean);
-        const accepted = [...new Set(requested.filter(scope => allowed.has(scope)))];
+        const accepted = [...new Set(requested.filter(scope => allowed.has(scope)))]
+            .slice(0, maxScopesPerSession);
         // Distinguish a newly opened/returned page from its regular heartbeat.
         // The caller can use this to take one prompt sample without letting every
         // five-second heartbeat continually reset its sampling interval.
@@ -40,7 +71,9 @@ function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now
         if (accepted.length) {
             const leases = sessions.get(key) || new Map();
             accepted.forEach(scope => leases.set(scope, expiresAt));
-            sessions.set(key, leases);
+            while (leases.size > maxScopesPerSession) leases.delete(leases.keys().next().value);
+            ensureCapacity(key);
+            refreshSession(key, leases);
         }
         return { accepted, activated, expiresAt };
     }
@@ -57,7 +90,31 @@ function createActivityLease({ scopes = DEFAULT_SCOPES, maxLeaseMs = 180000, now
         return [...allowed].filter(isActive);
     }
 
-    return { mark, isActive, activeScopes, prune, sessionCount: () => { prune(); return sessions.size; }, maxLeaseMs };
+    function snapshot() {
+        prune();
+        return {
+            sessionCount: sessions.size,
+            activeScopes: activeScopes(),
+            evictions,
+            maxSessions,
+            expiredSessionsRemoved
+        };
+    }
+
+    return {
+        mark,
+        isActive,
+        activeScopes,
+        prune,
+        snapshot,
+        sessionCount: () => {
+            prune();
+            return sessions.size;
+        },
+        maxLeaseMs,
+        maxSessions,
+        maxScopesPerSession
+    };
 }
 
 module.exports = { createActivityLease, DEFAULT_SCOPES };

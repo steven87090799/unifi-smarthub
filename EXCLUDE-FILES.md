@@ -13,16 +13,15 @@
 | `docs/operations/` | 維運文件 | 部署、發布、診斷 |
 | `docs/planning/` | 規劃 | roadmap／backlog |
 | `docs/reports/` | 歷史證據 | 發布或稽核 |
-| `docs/ARCHITECTURE.md` | 全域架構 | 跨模組設計 |
-| `_pending-delete-2026-07-17/` | 待使用者確認刪除 | 只做清理確認 |
+| `docs/reference/architecture.md` | 全域架構 | 跨模組設計 |
 | `.git/`, `*.log`, `.DS_Store` | 工具／系統雜訊 | 通常不讀 |
 
 ## 可先讀
 
 - `AGENTS.md`
 - `CONTEXT.md`
-- `SERVER-MAP.md`
-- `FRONTEND-MAP.md`
+- `docs/reference/backend-map.md`
+- `docs/reference/frontend-map.md`
 - 任務涉及部署時才讀 `README.md`
 - 欄位參考使用 `.env.example`，不要先讀真實 `.env`
 

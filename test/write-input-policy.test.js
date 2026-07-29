@@ -202,6 +202,9 @@ test('connection updates reject .env injection, bad types, oversized values, and
         { key: 'NUT_HOST' },
         { key: 'NUT_UPS_NAME' },
         { key: 'PWRSTAT_PATH' },
+        { key: 'PPB_TLS_VERIFY' },
+        { key: 'PPB_TLS_INSECURE' },
+        { key: 'PPB_CA_FILE' },
         { key: 'WAN_IFACE' },
         { key: 'PASSWORD', secret: true }
     ];
@@ -218,6 +221,9 @@ test('connection updates reject .env injection, bad types, oversized values, and
         ADGUARD_TLS_VERIFY: 'true',
         ADGUARD_CA_FILE: '/app/config/adguard-ca.pem',
         UPS_SOURCE: 'ppb',
+        PPB_TLS_VERIFY: 'true',
+        PPB_TLS_INSECURE: 'false',
+        PPB_CA_FILE: '/app/config/ppb-ca.pem',
         PASSWORD: ' spaces and # are data '
     }, fields), {
         SSH_PORT: '22',
@@ -232,6 +238,9 @@ test('connection updates reject .env injection, bad types, oversized values, and
         ADGUARD_TLS_VERIFY: 'true',
         ADGUARD_CA_FILE: '/app/config/adguard-ca.pem',
         UPS_SOURCE: 'ppb',
+        PPB_TLS_VERIFY: 'true',
+        PPB_TLS_INSECURE: 'false',
+        PPB_CA_FILE: '/app/config/ppb-ca.pem',
         PASSWORD: 'spaces and # are data'
     });
     assert.deepEqual(parseConnectionUpdates({ PASSWORD: '   ' }, fields), {});
@@ -256,6 +265,8 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ ADGUARD_URL: 'https://adguard.internal?key=leak' }, fields), 'ADGUARD_URL');
     validationError(() => parseConnectionUpdates({ ADGUARD_ALLOW_INSECURE_HTTP: '1' }, fields), 'ADGUARD_ALLOW_INSECURE_HTTP');
     validationError(() => parseConnectionUpdates({ ADGUARD_TLS_VERIFY: 'FALSE' }, fields), 'ADGUARD_TLS_VERIFY');
+    validationError(() => parseConnectionUpdates({ PPB_TLS_INSECURE: 'TRUE' }, fields), 'PPB_TLS_INSECURE');
+    validationError(() => parseConnectionUpdates({ PPB_CA_FILE: 'relative.pem' }, fields), 'PPB_CA_FILE');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_SITE_ID: '../site' }, fields), 'UNIFI_NETWORK_SITE_ID');
     validationError(() => parseConnectionUpdates({ UNIFI_THREAT_BLOCK_LIST_ID: '0'.repeat(36) }, fields), 'UNIFI_THREAT_BLOCK_LIST_ID');
     validationError(() => parseConnectionUpdates({ UNIFI_THREAT_BLOCK_LIST_NAME: 'x'.repeat(129) }, fields), 'UNIFI_THREAT_BLOCK_LIST_NAME');

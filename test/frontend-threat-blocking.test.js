@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
 
 test('security UI exposes admin-only expiring IPv4 block state and dedicated Integration API configuration', () => {
     assert.match(html, /id="threat-block-panel"/);
@@ -24,12 +25,12 @@ test('security UI exposes admin-only expiring IPv4 block state and dedicated Int
 });
 
 test('block and removal flows require a UI confirmation plus the exact server confirmation contract', () => {
-    const addStart = html.indexOf('async function requestThreatBlock');
-    const removeStart = html.indexOf('async function removeThreatBlock', addStart);
-    const end = html.indexOf('function exportThreatsCSV', removeStart);
+    const addStart = app.indexOf('async function requestThreatBlock');
+    const removeStart = app.indexOf('async function removeThreatBlock', addStart);
+    const end = app.indexOf('function exportThreatsCSV', removeStart);
     assert.ok(addStart > 0 && removeStart > addStart && end > removeStart);
-    const add = html.slice(addStart, removeStart);
-    const remove = html.slice(removeStart, end);
+    const add = app.slice(addStart, removeStart);
+    const remove = app.slice(removeStart, end);
     assert.match(add, /prompt\(/);
     assert.match(add, /expiresInMinutes < 15 \|\| expiresInMinutes > 43200/);
     assert.match(add, /confirm\(/);
@@ -41,11 +42,11 @@ test('block and removal flows require a UI confirmation plus the exact server co
 });
 
 test('readonly users receive no block controls and remote block state is escaped before HTML rendering', () => {
-    const renderStart = html.indexOf('function renderThreatTable');
-    const end = html.indexOf('function exportThreatsCSV', renderStart);
-    const source = html.slice(renderStart, end);
+    const renderStart = app.indexOf('function renderThreatTable');
+    const end = app.indexOf('function exportThreatsCSV', renderStart);
+    const source = app.slice(renderStart, end);
     assert.match(source, /dataset\.panelRole === 'admin'/);
     assert.match(source, /security\.role !== 'admin'/);
     assert.match(source, /escapeHtml\(block\.ip\)/);
-    assert.match(source, /escapeHtml\(block\.id\)/);
+    assert.match(source, /escapeActionData\(block\.id\)/);
 });

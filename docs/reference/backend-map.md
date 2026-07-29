@@ -9,17 +9,18 @@
 | 面板安全 | `server/middleware/panel-security.js`、`server/routes/panel-auth-routes.js` |
 | 公開登入快照 | `server/services/public-system-health.js` |
 | UniFi 本地／雲端 | `unifiLogin`、`server/integrations/site-manager-client.js` |
-| UCG／Linux SSH | `server/integrations/ssh-command-stream.js` |
+| UCG／Linux SSH | `server/integrations/ssh-command-stream.js`、`ssh-connection-pool.js` |
 | SQLite／設定 | `DATA_DIR`, `historyDb`, `db.js`, `server/storage/` |
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
 | WiiM | `server/policies/wiim-command-policy.js`、`server/routes/wiim-command-routes.js` |
-| UPS | `readUpsLive`, `createUpsState`, `ups-power-quality.js`, `syncPpbEvents` |
+| UPS | `readUpsLive`, `createUpsState`, `ups-power-quality.js`, `server/integrations/ppb-client.js`, `server/services/ppb-event-sync.js` |
 | AdGuard | `server/integrations/adguard-client.js`、policy／service |
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
 | Web Push | `server/routes/web-push-routes.js`、`server/services/web-push.js` |
 | PWA／同源資產 | `server/services/pwa-service-worker.js`、`server/routes/frontend-asset-routes.js` |
 | 健康與診斷 | `observability/health-routes.js` |
+| Scope 取樣 | `activity-lease.js`、`server/services/backend-sampler-registry.js`、`adaptive-sampler.js` |
 | 啟停生命週期 | `startServer`, `shutdown`, `server/storage/instance-lock.js` |
 
 ## 路由快查
@@ -49,14 +50,18 @@
 - UniFi 威脅封鎖只接受公網 IPv4、強制到期，並只管理專用 `IPV4_ADDRESSES` 清單。
 - Docker mutation 與 logs 使用不同 allowlist；SmartHub／broker 容器永久 protected。
 - AdGuard 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可使用私有 CA。
+- PPB HTTPS 預設驗證；私有 CA 只接受有界的絕對一般檔案，停用驗證必須明確設定 `PPB_TLS_INSECURE=true`。
+- PPB 首次成功同步只建立 source-specific 初始化狀態，不通知歷史事件；失敗不會誤標初始化。
 - 一般整合失敗不會阻止 readiness；SQLite 或 worker 異常才使 `/health/ready` 回 503。
 - 前端可見 endpoint／欄位變更必須同步 `server-mock.js`。
 
 ## 長期執行邊界
 
 - `runSerialJob()` 阻止同名工作重入；報表另以 SQLite claim、lease、retry、deadline、fencing 管理。
+- Scope registry 只重排匹配 `trend`／`ucg`／`nas`／`wiim`／`ups`／`linux` 的 sampler；`general` 不會加速設備取樣，設定變更才全量重排。
+- 活動 lease 以分頁 session 隔離，最多 1,000 sessions、每 session 8 scopes，過期優先清理後才以 LRU 淘汰；診斷不回傳 session ID。
 - `instance-lock` 使用 2 秒 heartbeat／8 秒 lease 保證單一 DATA_DIR owner。
-- SSH 命令共用 12 秒期限與 1 MiB stdout／stderr 上限。
+- SSH 命令共用 12 秒期限與 1 MiB stdout／stderr 上限；pool shutdown 會拒絕 pending／queued command，late ready 不得復活連線。
 - 歷史佇列、resource samples、cooldown maps、subscriptions 與 audit 都有容量或 retention。
 - UPS 在總覽/UPS 焦點下真實 3 秒取樣，閒置預設 10 秒；PPB 事件同步為焦點 10 秒、閒置 60 秒。
 
