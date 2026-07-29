@@ -103,7 +103,7 @@ const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createSseBackpressure } = require('./server/services/sse-backpressure');
 const { createArtworkCache, fetchArtwork } = require('./server/services/wiim-art-proxy');
-const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
+const { createDeviceCollectorCache, DISCARDED_COLLECTOR_RESULT } = require('./server/services/device-collector-cache');
 const { createUnifiDeviceTelemetrySnapshot } = require('./server/services/unifi-device-telemetry-snapshot');
 const { createUnifiDeviceThermalSshCollector, normalizeDeviceId, managementIp } = require('./server/integrations/unifi-device-thermal-ssh');
 const { createUnifiDeviceTemperatureAlertState } = require('./server/services/unifi-device-temperature-alert-state');
@@ -664,7 +664,8 @@ async function refreshUnifiDeviceThermals(rawDevices) {
     const targets = new Set(unifiDeviceThermalCollector.parseTargetIds());
     const selected = (Array.isArray(rawDevices) ? rawDevices : []).filter(device => {
         const id = normalizeDeviceId(device?.mac || device?._id);
-        return id && targets.has(id) && !findTemperature(device);
+        const online = device?.state === 1 || device?.state === '1' || String(device?.state).toLowerCase() === 'connected';
+        return id && targets.has(id) && online && !findTemperature(device);
     });
     const results = await Promise.all(selected.map(async device => {
         const id = normalizeDeviceId(device.mac || device._id);
@@ -672,6 +673,7 @@ async function refreshUnifiDeviceThermals(rawDevices) {
         try {
             await unifiThermalCache.read(key, async () => {
                 const result = await unifiDeviceThermalCollector.collect(device);
+                if (result.discarded) return DISCARDED_COLLECTOR_RESULT;
                 if (result.thermal && !result.discarded) return result;
                 const error = new Error(result.errorCode || 'unknown_error');
                 error.code = result.errorCode || 'unknown_error';
@@ -2080,15 +2082,18 @@ async function notificationWatcher() {
     if (s.triggerUnifiDeviceTemp !== false) {
         try {
             const telemetry = await getUnifiDeviceTelemetryCached();
-            const threshold = s.unifiDeviceTempAlert ?? 75;
-            for (const device of telemetry.devices) {
-                const action = unifiDeviceTemperatureAlertState.evaluate(device, { threshold });
-                if (!action) continue;
-                if (action.type === 'recovered') {
-                    await notify(`✅ ${device.name} 溫度已恢復`, temperatureNotificationText(device, action));
-                } else {
-                    await notify(`${action.type === 'critical' ? '🚨' : '🔥'} ${device.name} 內部溫度過高`,
-                        temperatureNotificationText(device, action));
+            if (!telemetry.stale) {
+                const threshold = s.unifiDeviceTempAlert ?? 75;
+                for (const device of telemetry.devices) {
+                    if (device.telemetryStale || device.temperature?.stale) continue;
+                    const action = unifiDeviceTemperatureAlertState.evaluate(device, { threshold });
+                    if (!action) continue;
+                    if (action.type === 'recovered') {
+                        await notify(`✅ ${device.name} 溫度已恢復`, temperatureNotificationText(device, action));
+                    } else {
+                        await notify(`${action.type === 'critical' ? '🚨' : '🔥'} ${device.name} 內部溫度過高`,
+                            temperatureNotificationText(device, action));
+                    }
                 }
             }
         } catch (error) {
@@ -2651,7 +2656,7 @@ async function sampleNotificationSourceCaches() {
 async function sampleUnifiDeviceTelemetry() {
     try {
         const telemetry = await unifiDeviceTelemetrySnapshot.refresh();
-        if (!telemetry.devices.length) return;
+        if (telemetry.stale || !telemetry.devices.length) return;
         historyDb.insertPoint('unifiDevices', telemetryHistoryPoint(telemetry), {
             keepDays: appSettings.historyKeepDays,
             hardCap: HISTORY_HARD_CAP

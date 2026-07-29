@@ -194,6 +194,9 @@ function createUnifiDeviceThermalSshCollector({
                 return thermal ? { thermal, managementIp: host, configurationGeneration: taskGeneration }
                     : { errorCode: 'no_thermal_zone', managementIp: host };
             } catch (error) {
+                if (taskGeneration !== currentConfiguration().generation || taskEpoch !== deviceEpoch(id)) {
+                    return { errorCode: 'configuration_changed', discarded: true };
+                }
                 closeDevice(id);
                 return { errorCode: errorCode(error), managementIp: host };
             }

@@ -1,5 +1,10 @@
 'use strict';
 
+// A caller can explicitly signal that work was cancelled by a configuration
+// generation change. This is neither a successful sample nor an upstream
+// device failure, so it must not alter cache health.
+const DISCARDED_COLLECTOR_RESULT = Symbol('DISCARDED_COLLECTOR_RESULT');
+
 // Shared collector cache: stale payloads remain displayable, while the
 // snapshot exposes the latest upstream health separately for watchers.
 function createDeviceCollectorCache({ cacheAgeMs = () => 1000, now = () => Date.now() } = {}) {
@@ -16,8 +21,14 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1000, now = () => Date.
             data: undefined, lastAttemptAt: null, lastSuccessAt: null,
             lastErrorAt: null, lastError: null, consecutiveFailures: 0, inflight: null
         };
+        const previousAttemptAt = entry.lastAttemptAt;
         entry.lastAttemptAt = timestamp;
         const inflight = Promise.resolve().then(collect).then(data => {
+            if (data === DISCARDED_COLLECTOR_RESULT) {
+                if (current) entry.lastAttemptAt = previousAttemptAt;
+                else entries.delete(name);
+                return current?.data;
+            }
             entry.data = data;
             entry.lastSuccessAt = now();
             entry.lastErrorAt = null;
@@ -62,4 +73,4 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1000, now = () => Date.
     return { read, snapshot, clear };
 }
 
-module.exports = { createDeviceCollectorCache };
+module.exports = { createDeviceCollectorCache, DISCARDED_COLLECTOR_RESULT };

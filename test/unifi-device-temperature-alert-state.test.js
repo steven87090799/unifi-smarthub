@@ -22,3 +22,15 @@ test('stale values and repeated samples never advance alert state', () => {
     assert.equal(state.evaluate(device(76, '2')), null);
     assert.equal(state.evaluate(device(76, '2')), null);
 });
+
+test('telemetry-stale snapshots do not advance, recover, or clear an active alert', () => {
+    const state = createUnifiDeviceTemperatureAlertState();
+    state.evaluate(device(91, '1'));
+    assert.equal(state.snapshot('aa:bb:cc:dd:ee:ff').alertActive, true);
+    const stale = { ...device(60, '2'), telemetryStale: true };
+    assert.equal(state.evaluate(stale), null);
+    const snapshot = state.snapshot('aa:bb:cc:dd:ee:ff');
+    assert.equal(snapshot.alertActive, true);
+    assert.equal(snapshot.consecutiveRecovery, 0);
+    assert.equal(snapshot.lastSampledAt, '1');
+});

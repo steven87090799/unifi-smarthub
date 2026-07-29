@@ -35,7 +35,7 @@ Site Manager client 有頁數／項目上限、重複 token 防護、429 `Retry-
 - 未回報溫度的設備會清楚顯示未設定、未選取、找不到 allowlist MAC、Controller 離線、認證失敗、不可達或沒有 thermal zone，不使用估算值。離線設備不執行 SSH，最後成功值只以 stale 顯示。
 - 歷史寫入 SQLite `history` 表的 `unifiDevices` series；過熱通知只根據通過上述驗證的溫度。
 
-UCG 自身透過 SSH `ubnt-systool cputemp` 取得的核心溫度仍保留在既有 UCG 卡片，與控制器設備遙測分開標示來源。Device SSH pool 保存 host、port、username 與設定 generation；其中任何一項改變都先關閉舊 pool，再以新值建立連線。設定更新會作廢排隊工作與 inflight 結果，舊結果不能寫入 cache/history 或觸發通知。SSH 過期值只作資料品質提示，不會寫成新 history 點或觸發高溫通知；新的 Device SSH 取樣預設前景 60 秒、背景 300 秒、同時最多 2 台。`GET /api/network/devices/telemetry` 只讀取最後 snapshot：首次以 singleflight 初始化，後續讀取不會重新查 Controller 或建立 SSH；snapshot 超過目前 interval 三倍（最低 15 分鐘）會標示 stale。
+UCG 自身透過 SSH `ubnt-systool cputemp` 取得的核心溫度仍保留在既有 UCG 卡片，與控制器設備遙測分開標示來源。Device SSH pool 保存 host、port、username 與設定 generation；其中任何一項改變都先關閉舊 pool，再以新值建立連線。設定更新會作廢排隊工作與 inflight 結果，舊結果不能寫入 cache/history 或觸發通知；若 reset 關閉 pool 使 SSH reject，結果同樣作廢為 `configuration_changed`，不會誤記成設備錯誤。設備離線時，Controller 殘留的溫度不視為即時值，也不執行 Device SSH。SSH 過期值只作資料品質提示，不會寫成新 history 點或觸發高溫通知；新的 Device SSH 取樣預設前景 60 秒、背景 300 秒、同時最多 2 台。`GET /api/network/devices/telemetry` 只讀取最後 snapshot：首次以 singleflight 初始化，後續讀取不會重新查 Controller 或建立 SSH；snapshot 超過目前 interval 三倍（最低 15 分鐘）會標示 stale，並同步將每台設備的 telemetry/temperature 標示 stale，完全不參與高溫或恢復通知。
 
 ## 暫時威脅來源封鎖
 

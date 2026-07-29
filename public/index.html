@@ -6147,6 +6147,8 @@
                 const temperature = Number.isFinite(device.temperature?.value) ? `${device.temperature.value.toFixed(1)}°C` : '--';
                 const statusText = {
                     controller_reported: `Controller API · ${device.temperature?.sourceField || ''}`,
+                    controller_device_offline: 'Controller 顯示設備離線，目前沒有新鮮溫度資料',
+                    telemetry_snapshot_stale: '資料已過期；Telemetry Snapshot 停止更新',
                     controller_value_not_reported: 'Controller 宣告支援，但本次未回報數值；設備 SSH 尚未設定',
                     controller_unsupported: 'Controller 未回報，設備 SSH 尚未設定',
                     device_ssh_reported: '設備 SSH · /sys/class/thermal/thermal_zone*/temp',
@@ -6167,7 +6169,9 @@
                 if (device.type === 'udm' && !device.temperature) temperatureNote += '；UCG 的 SSH CPU 溫度顯示於上方';
                 const stateClass = device.online ? 'bg-emerald-500' : 'bg-red-500';
                 const zones = (device.temperatureZones || []).map(zone => `<li>${escapeHtml(zone.zone)} · ${escapeHtml(zone.type)} · ${escapeHtml(Number(zone.temperatureC).toFixed(1))}°C</li>`).join('');
-                const freshness = device.temperature?.sampledAt ? `${device.temperature.stale ? '資料已過期；' : ''}最後成功：${new Date(device.temperature.sampledAt).toLocaleString('zh-TW')}` : '';
+                const temperatureStale = payload.stale || device.telemetryStale || device.temperature?.stale;
+                const temperatureLabel = temperatureStale ? '上次成功溫度' : '內部最高溫度';
+                const freshness = device.temperature?.sampledAt ? `${temperatureStale ? '資料已過期；' : ''}最後成功：${new Date(device.temperature.sampledAt).toLocaleString('zh-TW')}` : '';
                 return `<article class="rounded-xl border border-slate-800/70 bg-slate-950/45 p-4">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
@@ -6183,12 +6187,12 @@
                             <p class="text-[8px] text-slate-600 mono">${escapeHtml(device.cpu?.sourceField || '未回報')}</p>
                         </div>
                         <div>
-                            <p class="text-[9px] text-slate-500 uppercase font-bold">內部最高溫度</p>
+                            <p class="text-[9px] text-slate-500 uppercase font-bold">${temperatureLabel}</p>
                             <p class="text-2xl font-black mono mt-0.5 ${device.temperature ? 'text-amber-400' : 'text-slate-600'}">${escapeHtml(temperature)}</p>
                             <p class="text-[8px] text-slate-600">${escapeHtml(temperatureNote)}</p>
                         </div>
                     </div>
-                    ${freshness ? `<p class="mt-3 text-[8px] ${device.temperature?.stale ? 'text-amber-400' : 'text-slate-600'}">${escapeHtml(freshness)}${device.temperatureSensorCount ? ` · ${device.temperatureSensorCount} 個感測器` : ''}</p>` : ''}
+                    ${freshness ? `<p class="mt-3 text-[8px] ${temperatureStale ? 'text-amber-400' : 'text-slate-600'}">${escapeHtml(freshness)}${device.temperatureSensorCount ? ` · ${device.temperatureSensorCount} 個感測器` : ''}</p>` : ''}
                     ${device.cpuTemperatureC != null ? `<p class="mt-1 text-[8px] text-slate-500">CPU／SoC 感測器 ${escapeHtml(Number(device.cpuTemperatureC).toFixed(1))}°C</p>` : ''}
                     ${zones ? `<details class="mt-2 text-[8px] text-slate-500"><summary class="cursor-pointer">thermal zones</summary><ul class="mt-1 mono space-y-0.5">${zones}</ul></details>` : ''}
                 </article>`;

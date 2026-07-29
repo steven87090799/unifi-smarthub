@@ -83,17 +83,20 @@ function presentUnifiDeviceTelemetry(rawDevices, {
     const devices = (Array.isArray(rawDevices) ? rawDevices : []).map(device => {
         const id = stableDeviceId(device);
         if (!id) return null;
+        const online = onlineState(device.state);
         const cpu = finiteNumber(readPath(device, ['system-stats', 'cpu']), { min: 0, max: 100 });
-        const controllerTemperature = findTemperature(device);
+        // The Controller can retain a previous temperature after a device goes
+        // offline. It is not evidence of a current temperature.
+        const controllerTemperature = online ? findTemperature(device) : null;
         const direct = directThermalByDevice instanceof Map
             ? directThermalByDevice.get(id)
             : directThermalByDevice?.[id];
         const temperatureCapability = device.has_temperature === true;
         const controllerSampledAt = sampledAt;
         const directTemperature = direct?.thermal;
-        const directOffline = direct?.selected && direct?.errorCode === 'device_offline';
-        const useDirect = !directOffline && !controllerTemperature && directTemperature;
-        const temperature = controllerTemperature && !directOffline
+        const directOffline = !online || (direct?.selected && direct?.errorCode === 'device_offline');
+        const useDirect = online && !directOffline && !controllerTemperature && directTemperature;
+        const temperature = online && controllerTemperature && !directOffline
             ? {
                 value: controllerTemperature.value,
                 sourceField: controllerTemperature.sourceField,
@@ -114,7 +117,9 @@ function presentUnifiDeviceTelemetry(rawDevices, {
                     cpuTemperatureC: directTemperature.cpuTemperatureC ?? null
                 }
                 : null;
-        const temperatureStatus = controllerTemperature && !directOffline
+        const temperatureStatus = !online
+            ? (direct?.selected ? 'device_ssh_device_offline' : 'controller_device_offline')
+            : controllerTemperature && !directOffline
             ? 'controller_reported'
             : useDirect
                 ? (direct.stale ? 'device_ssh_stale' : 'device_ssh_reported')
@@ -125,7 +130,7 @@ function presentUnifiDeviceTelemetry(rawDevices, {
             model: String(device.model || '').slice(0, 64),
             type: String(device.type || '').slice(0, 32),
             version: String(device.version || '').slice(0, 64),
-            online: onlineState(device.state),
+            online,
             cpu: cpu === null ? null : {
                 value: cpu,
                 unit: 'percent',

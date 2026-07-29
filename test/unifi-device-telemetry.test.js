@@ -100,6 +100,19 @@ test('uses precise missing and offline Device SSH states without treating stale 
     assert.equal(missing.devices[0].temperatureStatus, 'device_ssh_device_not_found');
 });
 
+test('rejects retained Controller temperature while offline but keeps it when the device is online', () => {
+    const retained = { mac: 'AA:BB:CC:DD:EE:FF', state: 0, has_temperature: true, general_temperature: 95, 'system-stats': { cpu: 8 } };
+    const offline = presentUnifiDeviceTelemetry([retained]);
+    assert.equal(offline.devices[0].online, false);
+    assert.equal(offline.devices[0].temperature, null);
+    assert.equal(offline.devices[0].temperatureStatus, 'controller_device_offline');
+    assert.equal(telemetryHistoryPoint(offline).devices[0].temperature, null);
+    const online = presentUnifiDeviceTelemetry([{ ...retained, state: 1 }]);
+    assert.equal(online.devices[0].temperature.value, 95);
+    assert.equal(online.devices[0].temperature.stale, false);
+    assert.equal(online.devices[0].temperatureStatus, 'controller_reported');
+});
+
 test('notification wording names Device SSH maxima and Controller fields precisely', () => {
     const action = { type: 'high', value: 78.4, threshold: 75 };
     assert.match(temperatureNotificationText({ temperature: { sourceSystem: 'device_ssh' }, temperatureSensorCount: 3 }, action), /內部最高感測器：78\.4°C[\s\S]*來源：設備 SSH[\s\S]*感測器：3 個/u);

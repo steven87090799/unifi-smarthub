@@ -104,6 +104,25 @@ test('reset cancels queued work, discards an old inflight result, and permits a 
     assert.equal(collector.status().activeConnections, 0);
 });
 
+test('a reset-caused pool rejection is discarded as configuration_changed instead of unknown_error', async () => {
+    let rejectExecute;
+    let poolClosed = 0;
+    const collector = createUnifiDeviceThermalSshCollector({
+        getEnvironment: () => ({ UNIFI_DEVICE_SSH_USER: 'monitor', UNIFI_DEVICE_SSH_PASSWORD: 'secret', UNIFI_DEVICE_SSH_TARGET_IDS: target }),
+        createPool: () => ({
+            execute: () => new Promise((_resolve, reject) => { rejectExecute = reject; }),
+            close: () => { poolClosed += 1; rejectExecute(new Error('connection closed')); }
+        })
+    });
+    const result = collector.collect(device());
+    await new Promise(resolve => setImmediate(resolve));
+    collector.reset();
+    assert.deepEqual(await result, { errorCode: 'configuration_changed', discarded: true });
+    assert.equal(poolClosed, 1);
+    assert.equal(collector.status().activeConnections, 0);
+    assert.equal(collector.status().running, 0);
+});
+
 test('limits independent device SSH work to two concurrent connections', async () => {
     let running = 0, maximum = 0;
     const collector = createUnifiDeviceThermalSshCollector({

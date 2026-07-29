@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createUnifiDeviceTelemetrySnapshot } = require('../server/services/unifi-device-telemetry-snapshot');
+const { createUnifiDeviceTelemetrySnapshot, markSnapshotDevicesStale } = require('../server/services/unifi-device-telemetry-snapshot');
 
 test('API reads are singleflight and read-only while only the sampler refreshes the telemetry snapshot', async () => {
     let clock = Date.parse('2026-07-29T00:00:00.000Z');
@@ -38,4 +38,26 @@ test('snapshot remains readable but stale after the active or idle three-interva
     assert.equal((await idle.read()).stale, false);
     clock = 900_001;
     assert.equal((await idle.read()).stale, true);
+});
+
+test('stale snapshot presentation immutably marks every temperature stale without changing its successful sample time', async () => {
+    let clock = Date.parse('2026-07-29T00:03:01.000Z');
+    const original = {
+        sampledAt: '2026-07-29T00:00:00.000Z', stale: false,
+        devices: [{ id: 'aa:bb:cc:dd:ee:ff', temperature: { value: 80, stale: false, sampledAt: '2026-07-29T00:00:00.000Z' }, temperatureStatus: 'device_ssh_reported' }]
+    };
+    const snapshot = createUnifiDeviceTelemetrySnapshot({ now: () => clock, staleAfterMs: () => 180_000, sample: async () => original });
+    const result = await snapshot.read();
+    assert.equal(result.stale, true);
+    assert.equal(result.devices[0].telemetryStale, true);
+    assert.equal(result.devices[0].temperature.stale, true);
+    assert.equal(result.devices[0].temperature.sampledAt, original.devices[0].temperature.sampledAt);
+    assert.equal(result.devices[0].temperatureStatus, 'telemetry_snapshot_stale');
+    assert.equal(original.devices[0].temperature.stale, false);
+    assert.equal(original.devices[0].temperatureStatus, 'device_ssh_reported');
+    assert.equal(markSnapshotDevicesStale(original).devices[0].temperature.value, 80);
+    clock = Date.parse('2026-07-29T00:00:01.000Z');
+    const fresh = createUnifiDeviceTelemetrySnapshot({ now: () => clock, staleAfterMs: () => 180_000, sample: async () => original });
+    assert.equal((await fresh.read()).stale, false);
+    assert.equal((await fresh.read()).devices[0].temperatureStatus, 'device_ssh_reported');
 });

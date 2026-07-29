@@ -330,6 +330,7 @@ const mockUnifiTelemetryDevices = [
     { id: '74:ac:b9:00:00:06', name: 'U6 Lite（上次資料過期）', model: 'U6LITE', type: 'uap', cpu: 1.4, thermalState: 'stale' },
     { id: '74:ac:b9:00:00:07', name: 'USW Flex（設定已更新）', model: 'USW-FLEX', type: 'usw', cpu: 5.6, thermalState: 'configuration_changed' },
     { id: '74:ac:b9:00:00:08', name: 'USW Pro（Controller 溫度）', model: 'USW-PRO', type: 'usw', cpu: 7.2, thermalState: 'controller' },
+    { id: '74:ac:b9:00:00:09', name: 'USW Lite（Controller 離線殘留值）', model: 'USW-LITE', type: 'usw', cpu: 0, thermalState: 'controller_offline' },
     { id: '74:ac:b9:00:00:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm', cpu: 38.7, thermalState: 'not_selected' }
 ];
 function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
@@ -348,13 +349,13 @@ function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
         sourceSystem: 'controller', verifiedSource: true, sampledAt, stale: false
     } : null;
     const status = {
-        reported: 'device_ssh_reported', reconnected: 'device_ssh_reported', offline: 'device_ssh_device_offline',
+        reported: 'device_ssh_reported', reconnected: 'device_ssh_reported', offline: 'device_ssh_device_offline', controller_offline: 'controller_device_offline',
         stale: 'device_ssh_stale', configuration_changed: 'device_ssh_configuration_changed',
         controller: 'controller_reported', not_selected: 'device_ssh_not_selected'
     }[device.thermalState];
     return {
         id: device.id, name: device.name, model: device.model, type: device.type,
-        version: 'mock', online: device.thermalState !== 'offline',
+        version: 'mock', online: !['offline', 'controller_offline'].includes(device.thermalState),
         cpu: { value: cpu, unit: 'percent', sourceField: 'system-stats.cpu', verifiedSource: true },
         temperature,
         temperatureZones: zones,
@@ -370,16 +371,26 @@ function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
         managementIpChanged: device.thermalState === 'reconnected'
     };
 }
-app.get('/api/network/devices/telemetry', (_req, res) => {
+app.get('/api/network/devices/telemetry', (req, res) => {
+    const snapshotStale = req.query?.scenario === 'snapshot_stale';
+    const devices = mockUnifiTelemetryDevices.map((device, index) =>
+        mockUnifiTelemetryDevice(device, +Math.max(0, device.cpu + Math.sin(Date.now() / 10000 + index) * 3).toFixed(1)));
+    if (snapshotStale && devices[0]?.temperature) {
+        devices[0] = {
+            ...devices[0], telemetryStale: true,
+            temperature: { ...devices[0].temperature, value: 82.4, stale: true },
+            temperatureStatus: 'telemetry_snapshot_stale'
+        };
+    }
     res.json({
         sampledAt: new Date().toISOString(),
+        stale: snapshotStale,
         source: {
             system: 'Mock UniFi Network Controller',
             endpoint: '/proxy/network/api/s/default/stat/device',
             interpretation: 'simulated_direct_device_report'
         },
-        devices: mockUnifiTelemetryDevices.map((device, index) =>
-            mockUnifiTelemetryDevice(device, +Math.max(0, device.cpu + Math.sin(Date.now() / 10000 + index) * 3).toFixed(1))),
+        devices,
         thermalSsh: {
             configured: true, selectedDeviceCount: 4, lastRunAt: new Date().toISOString(), running: 0,
             successfulDeviceCount: 2, failedDeviceCount: 3, notFoundDeviceCount: 1,
