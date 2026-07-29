@@ -48,3 +48,22 @@ Site Manager 沒有改成 3 秒，因為單次雲端更新會呼叫多個官方�
 | SQLite retention cleanup | 1 小時 | 相同 |
 
 瀏覽器的 3 秒請求與裝置真實取樣是兩個不同層次。UPS、UCG、NAS、WiiM、AdGuard 與 Linux 的即時端點在焦點模式下會取得新資料；歷史圖仍使用較低頻率，避免每 3 秒重做大型 SQLite 查詢與 DOM 重繪。
+
+## Scope 與 sampler 對應
+
+| Heartbeat scope | 後端 sampler |
+|---|---|
+| `trend` | `trendHistory` |
+| `ucg` | `ucgHistory` |
+| `nas` | `nasHistory` |
+| `wiim` | `wiimTemperature` |
+| `ups` | `upsSample`, `ppbEventSync` |
+| `linux` | `linuxHistory` |
+
+總覽送出 `trend,ucg,nas,wiim,ups`；各裝置頁只送自己的 scope。客戶端、資安與雲端頁只啟用 `trend`；設定、通知、WiFi、工具與 AdGuard 不會為設備 sampler 建立活動 scope。`general` 不屬於 sampler registry，不能無條件把所有設備切到 3 秒。
+
+每個瀏覽器分頁有自己的 session lease。切頁或隱藏時以空 scope 釋放該分頁，不會清掉另一個可見分頁；沒有續約時租約自行過期。容量固定為最多 1,000 sessions、每 session 8 scopes，先清過期項目，再以最近最少使用順序淘汰。
+
+頁面 focus 或已過期 scope 重新啟用時，只對匹配 scope 做一次 prompt sampling；一般 5 秒 heartbeat 只續租，不建立新 timer。設定值變更才會清除並重排全部 sampler，collector 完成後才安排下一次，因此 repeated rebuild 不重疊 collector。
+
+受保護的 `/api/system/status` 只輸出聚合診斷：活動 session 數、active scopes、淘汰與過期清理數、sampler 狀態、SSH pool 與 PPB sync 摘要；不含 session ID、token 或 credential。

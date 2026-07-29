@@ -62,7 +62,7 @@ node server-mock.js
 | UGREEN NAS | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` |
 | NAS Monitor | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY`, `NAS_MONITOR_MODE` |
 | WiiM | `WIIM_IP` |
-| UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*` |
+| UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*`；PPB TLS 見下節 |
 | AdGuard | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` |
 | Linux SSH | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD` |
 | 面板登入 | `PANEL_PASSWORD`；唯讀帳號另設 `PANEL_READONLY_*` |
@@ -76,6 +76,7 @@ node server-mock.js
 - 所有 Compose 指令都使用同一個 `--env-file config/.env`。
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
+- Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
 - 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
 
 ## Docker UPS
@@ -88,7 +89,13 @@ PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...
 PPB_PASSWORD=...
+PPB_TLS_VERIFY=true
+PPB_TLS_INSECURE=false
+# 私有／自簽 CA 建議掛載後使用：
+# PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
+
+未設定 TLS 新欄位時仍會驗證憑證。只有明確設定 `PPB_TLS_INSECURE=true` 才會停用驗證並產生警告；`PPB_TLS_VERIFY=false` 不會單獨關閉驗證。CA 必須是容器內可讀的絕對路徑、一般檔案且不得為 symlink。
 
 容器內沒有宿主機的 `pwrstat` 或 `pmset`。替代方案是讓容器連到可達的 NUT server；詳見 [UPS 整合摘要](docs/integrations/cyberpower-ups-api.md)。
 
@@ -116,6 +123,8 @@ docker compose --env-file config/.env logs | grep Diag
 | `/api/system/status` | 受驗證保護的完整診斷 |
 
 ## 正式發布
+
+Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI / Repository gate` 設為 Required Check，並禁止 CI 未通過的 PR merge；若尚未設定，不能把 workflow 存在誤稱為 branch protection 已啟用。
 
 先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate，再建立不可變成對映像：
 
