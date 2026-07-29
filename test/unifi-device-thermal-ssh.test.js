@@ -2,8 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const {
-    THERMAL_READ_COMMAND, createUnifiDeviceThermalSshCollector, managementIp, parseTargetIds, safeManagementIp
+    THERMAL_READ_COMMAND, createUnifiDeviceThermalSshCollector, hostKeysConfigurationValid, hostVerifier, managementIp, parseHostKeys, parseTargetIds, safeManagementIp
 } = require('../server/integrations/unifi-device-thermal-ssh');
 
 const zoneOutput = '__ZONE_BEGIN__\n/sys/class/thermal/thermal_zone0\nsoc\n73000\n__ZONE_END__\n';
@@ -12,7 +13,8 @@ const device = (ip = '192.168.1.20', suffix = 'ff') => ({ mac: `aa:bb:cc:dd:ee:$
 
 test('normalizes allowlist, uses a fixed readonly command, and rejects unsafe management addresses', async () => {
     assert.deepEqual(parseTargetIds('AA:BB:CC:DD:EE:FF, aa:bb:cc:dd:ee:ff'), [target]);
-    for (const value of ['0.0.0.0', '255.255.255.255', '127.0.0.1', '224.0.0.1', '::', '::1', 'ff02::1', 'router.local']) assert.equal(safeManagementIp(value), null);
+    for (const value of ['0.0.0.0', '255.255.255.255', '127.0.0.1', '224.0.0.1', '::', '0:0:0:0:0:0:0:1', 'ff02::1', '::ffff:127.0.0.1', '::ffff:0:127.0.0.1', 'fe80::1%en0', 'router.local', 'https://127.0.0.1', '192.168.1.20:22']) assert.equal(safeManagementIp(value), null);
+    assert.equal(safeManagementIp('2001:db8::20'), '2001:db8::20');
     assert.equal(managementIp({ ip: '127.0.0.1', last_ip: '192.168.1.20' }), '192.168.1.20');
     let command = null;
     const collector = createUnifiDeviceThermalSshCollector({
@@ -25,6 +27,46 @@ test('normalizes allowlist, uses a fixed readonly command, and rejects unsafe ma
     assert.deepEqual(await collector.collect(device('192.168.1.3', '66')), { errorCode: 'not_selected' });
     assert.deepEqual(await collector.collect({ ...device(), state: 0 }), { errorCode: 'device_offline' });
     assert.deepEqual(await collector.collect(device('127.0.0.1')), { errorCode: 'management_ip_missing' });
+});
+
+test('strict per-device Host Key verification accepts only the configured fingerprint and blocks the command on mismatch', async () => {
+    const publicKey = Buffer.from('test-host-public-key');
+    const fingerprint = `SHA256:${createHash('sha256').update(publicKey).digest('base64').replace(/=+$/u, '')}`;
+    assert.deepEqual([...parseHostKeys(`${target}=${fingerprint}`).entries()], [[target, fingerprint]]);
+    assert.equal(hostKeysConfigurationValid(`${target}=${fingerprint}`), true);
+    assert.equal(hostKeysConfigurationValid(`${target}=SHA256:invalid`), false);
+    assert.equal(hostVerifier(fingerprint)(publicKey), true);
+    assert.equal(hostVerifier(fingerprint)(Buffer.from('wrong-host-key')), false);
+
+    let commandExecutions = 0;
+    let capturedConfig = null;
+    const collector = createUnifiDeviceThermalSshCollector({
+        getEnvironment: () => ({
+            UNIFI_DEVICE_SSH_USER: 'monitor', UNIFI_DEVICE_SSH_PASSWORD: 'secret', UNIFI_DEVICE_SSH_TARGET_IDS: target,
+            UNIFI_DEVICE_SSH_HOST_KEYS: `${target}=${fingerprint}`
+        }),
+        createPool: ({ getConfig }) => {
+            capturedConfig = getConfig();
+            return {
+                execute: async () => {
+                    if (!capturedConfig.hostVerifier(Buffer.from('wrong-host-key'))) {
+                        const error = new Error('Host key verification failed');
+                        error.code = 'HOST_KEY_MISMATCH';
+                        throw error;
+                    }
+                    commandExecutions += 1;
+                    return zoneOutput;
+                },
+                close() {}
+            };
+        }
+    });
+    const result = await collector.collect(device());
+    assert.equal(result.errorCode, 'host_key_mismatch');
+    assert.equal(commandExecutions, 0);
+    assert.equal(capturedConfig.hostKeyFingerprint, fingerprint);
+    assert.equal(collector.status().hostKeyConfiguredDeviceCount, 1);
+    assert.equal(collector.status().unlockedDeviceCount, 0);
 });
 
 test('rebuilds the pool before collection when management IP, port, or username changes', async () => {

@@ -58,7 +58,8 @@ function directSshStatus(entry, configured, controllerCapability) {
         device_not_found: 'device_ssh_device_not_found',
         configuration_changed: 'device_ssh_configuration_changed',
         no_thermal_zone: 'device_ssh_no_thermal_zone',
-        invalid_response: 'device_ssh_invalid_response'
+        invalid_response: 'device_ssh_invalid_response',
+        host_key_mismatch: 'device_ssh_host_key_mismatch'
     };
     return codes[entry?.errorCode] || (entry?.errorCode ? 'device_ssh_invalid_response' : 'device_ssh_waiting');
 }
@@ -153,6 +154,7 @@ function presentUnifiDeviceTelemetry(rawDevices, {
             temperatureStatus,
             directSshConfigured: !!thermalSshConfigured,
             directSshSelected: !!direct?.selected,
+            directSshHostKeyLocked: !!direct?.hostKeyLocked,
             directSshLastSuccessAt: direct?.lastSuccessAt || null,
             directSshLastErrorAt: direct?.lastErrorAt || null,
             directSshErrorCode: direct?.errorCode || null

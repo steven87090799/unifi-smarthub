@@ -9,7 +9,8 @@ const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 function stableConfigKey(config) {
     return JSON.stringify([
         config.host || '', Number(config.port) || 22, config.username || '',
-        config.password || '', config.privateKey || '', config.tryKeyboard === true
+        config.password || '', config.privateKey || '', config.tryKeyboard === true,
+        config.hostKeyFingerprint || ''
     ]);
 }
 
@@ -29,6 +30,8 @@ function createSshConnectionPool({
     let connection = null;
     let connectionKey = null;
     let connecting = null;
+    let connectingCandidate = null;
+    let cancelConnecting = null;
     let idleTimer = null;
     let operationTail = Promise.resolve();
     let closed = false;
@@ -38,13 +41,12 @@ function createSshConnectionPool({
         idleTimer = null;
     }
 
-    function detachAndEnd(target) {
+    function safelyEnd(target) {
         if (!target) return;
-        target.removeAllListeners('ready');
-        target.removeAllListeners('error');
-        target.removeAllListeners('close');
-        target.removeAllListeners('end');
-        target.removeAllListeners('keyboard-interactive');
+        // A connection that is being torn down can still report a late error.
+        // Keep a one-shot listener so EventEmitter never turns that into an
+        // unhandled exception after the pool has deliberately detached it.
+        target.once?.('error', () => {});
         try { target.end(); } catch { }
     }
 
@@ -53,7 +55,7 @@ function createSshConnectionPool({
         connection = null;
         connectionKey = null;
         clearIdleTimer();
-        detachAndEnd(target);
+        safelyEnd(target);
     }
 
     function scheduleIdleClose(target) {
@@ -69,32 +71,59 @@ function createSshConnectionPool({
         if (connecting) return connecting;
 
         const candidate = createConnection();
-        connecting = new Promise((resolve, reject) => {
+        connectingCandidate = candidate;
+        const attempt = new Promise((resolve, reject) => {
             let settled = false;
-            const fail = error => {
-                if (settled) return;
-                settled = true;
-                detachAndEnd(candidate);
-                reject(error);
+            let keyboardHandler = null;
+            const removeAttemptListeners = () => {
+                candidate.removeListener?.('ready', ready);
+                candidate.removeListener?.('error', fail);
+                candidate.removeListener?.('close', closedBeforeReady);
+                candidate.removeListener?.('end', closedBeforeReady);
+                if (keyboardHandler) candidate.removeListener?.('keyboard-interactive', keyboardHandler);
             };
-            candidate.once('ready', () => {
+            const finish = (callback, value, endCandidate = false) => {
                 if (settled) return;
                 settled = true;
+                removeAttemptListeners();
+                if (connectingCandidate === candidate) connectingCandidate = null;
+                if (endCandidate) safelyEnd(candidate);
+                callback(value);
+            };
+            const fail = error => finish(reject, error, true);
+            const closedBeforeReady = () => fail(new Error('SSH connection closed before ready'));
+            const ready = () => {
+                if (closed) return fail(new Error('SSH connection pool is closed'));
+                if (settled) return;
                 connection = candidate;
                 connectionKey = key;
                 candidate.on('error', () => invalidate(candidate));
                 candidate.on('close', () => invalidate(candidate));
                 candidate.on('end', () => invalidate(candidate));
                 scheduleIdleClose(candidate);
-                resolve(candidate);
-            });
+                finish(resolve, candidate);
+            };
             candidate.once('error', fail);
+            candidate.once('ready', ready);
+            candidate.once('close', closedBeforeReady);
+            candidate.once('end', closedBeforeReady);
             if (typeof onKeyboardInteractive === 'function') {
-                candidate.on('keyboard-interactive', onKeyboardInteractive);
+                keyboardHandler = onKeyboardInteractive;
+                candidate.on('keyboard-interactive', keyboardHandler);
             }
-            try { candidate.connect({ ...config, readyTimeout: readyTimeoutMs }); }
+            cancelConnecting = error => fail(error || new Error('SSH connection pool is closed'));
+            try {
+                const { hostKeyFingerprint: _hostKeyFingerprint, ...sshConfig } = config;
+                candidate.connect({ ...sshConfig, readyTimeout: readyTimeoutMs });
+            }
             catch (error) { fail(error); }
-        }).finally(() => { connecting = null; });
+        });
+        connecting = attempt.finally(() => {
+            if (connectingCandidate === candidate) connectingCandidate = null;
+            if (cancelConnecting) cancelConnecting = null;
+            if (connecting === wrapped) connecting = null;
+        });
+        const wrapped = connecting;
         return connecting;
     }
 
@@ -124,6 +153,7 @@ function createSshConnectionPool({
     function close() {
         closed = true;
         clearIdleTimer();
+        if (connectingCandidate) cancelConnecting?.(new Error('SSH connection pool is closed'));
         if (connection) invalidate(connection);
     }
 

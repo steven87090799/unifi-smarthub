@@ -1,5 +1,6 @@
 'use strict';
 
+const { createHash, timingSafeEqual } = require('node:crypto');
 const net = require('node:net');
 const { createSshConnectionPool } = require('./ssh-connection-pool');
 const { parseThermalZones } = require('../services/unifi-device-thermal');
@@ -13,6 +14,7 @@ const THERMAL_READ_COMMAND = 'for z in /sys/class/thermal/thermal_zone*; do\n'
     + '    echo "__ZONE_END__"\n'
     + 'done';
 const MAC = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/iu;
+const HOST_KEY_FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}=?$/u;
 
 function normalizeDeviceId(value) {
     const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -26,19 +28,103 @@ function parseTargetIds(value) {
     return [...new Set(targets)].slice(0, 32);
 }
 
+function parseIpv4(value) {
+    if (net.isIP(value) !== 4) return null;
+    return value.split('.').map(Number);
+}
+
+function unsafeIpv4(octets) {
+    return !octets || octets[0] === 0 || octets[0] === 127 || octets[0] >= 224
+        || octets.every(octet => octet === 255);
+}
+
+function ipv6Bytes(value) {
+    let address = value.toLowerCase();
+    const dottedIndex = address.lastIndexOf(':');
+    if (address.includes('.')) {
+        const dotted = address.slice(dottedIndex + 1);
+        const octets = parseIpv4(dotted);
+        if (!octets) return null;
+        address = `${address.slice(0, dottedIndex)}${(octets[0] * 256 + octets[1]).toString(16)}:${(octets[2] * 256 + octets[3]).toString(16)}`;
+    }
+    const halves = address.split('::');
+    if (halves.length > 2) return null;
+    const left = halves[0] ? halves[0].split(':') : [];
+    const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    if ([...left, ...right].some(part => !/^[0-9a-f]{1,4}$/u.test(part))) return null;
+    const missing = 8 - left.length - right.length;
+    if ((halves.length === 1 && missing !== 0) || missing < 0) return null;
+    const groups = [...left, ...Array(missing).fill('0'), ...right];
+    const bytes = [];
+    groups.forEach(group => {
+        const numeric = Number.parseInt(group, 16);
+        bytes.push(numeric >> 8, numeric & 0xff);
+    });
+    return bytes.length === 16 ? bytes : null;
+}
+
+function bytesAreZero(bytes, count) {
+    return bytes.slice(0, count).every(byte => byte === 0);
+}
+
+function unsafeIpv6(host) {
+    const bytes = ipv6Bytes(host);
+    if (!bytes) return true;
+    if (bytes.every(byte => byte === 0)) return true; // unspecified
+    if (bytesAreZero(bytes, 15) && bytes[15] === 1) return true; // loopback
+    if (bytes[0] === 0xff) return true; // multicast
+    const mapped = bytesAreZero(bytes, 10) && bytes[10] === 0xff && bytes[11] === 0xff;
+    const compatible = bytesAreZero(bytes, 12);
+    if ((mapped || compatible) && unsafeIpv4(bytes.slice(12))) return true;
+    // A dotted IPv4 tail is an IPv4-address notation. Treat unsafe values as
+    // unsafe even when a device reports a non-canonical translated form.
+    const dotted = host.slice(host.lastIndexOf(':') + 1);
+    return host.includes('.') && unsafeIpv4(parseIpv4(dotted));
+}
+
 function safeManagementIp(value) {
     const host = typeof value === 'string' ? value.trim() : '';
+    if (!host || /[%\[\]/@]/u.test(host)) return null;
     const family = net.isIP(host);
     if (!family) return null;
     if (family === 4) {
-        const octets = host.split('.').map(Number);
-        if (octets[0] === 0 || octets[0] === 127 || octets[0] >= 224
-            || octets.every(octet => octet === 255)) return null;
-    } else {
-        const normalized = host.toLowerCase();
-        if (normalized === '::' || normalized === '::1' || normalized.startsWith('ff')) return null;
+        if (unsafeIpv4(parseIpv4(host))) return null;
+    } else if (unsafeIpv6(host)) {
+        return null;
     }
     return host;
+}
+
+function parseHostKeys(value) {
+    if (typeof value !== 'string' || !value.trim()) return new Map();
+    const hostKeys = new Map();
+    const entries = value.split(',').map(entry => entry.trim()).filter(Boolean);
+    if (entries.length > 32) return new Map();
+    for (const entry of entries) {
+        const separator = entry.indexOf('=');
+        const id = normalizeDeviceId(separator > 0 ? entry.slice(0, separator) : '');
+        const fingerprint = separator > 0 ? entry.slice(separator + 1) : '';
+        if (!id || !HOST_KEY_FINGERPRINT.test(fingerprint) || hostKeys.has(id)) return new Map();
+        hostKeys.set(id, fingerprint.replace(/=+$/u, ''));
+    }
+    return hostKeys;
+}
+
+function hostKeysConfigurationValid(value) {
+    if (typeof value !== 'string' || !value.trim()) return true;
+    const entries = value.split(',').map(entry => entry.trim()).filter(Boolean);
+    return entries.length > 0 && entries.length <= 32 && parseHostKeys(value).size === entries.length;
+}
+
+function hostVerifier(expectedFingerprint) {
+    if (!HOST_KEY_FINGERPRINT.test(expectedFingerprint || '')) return null;
+    const expected = expectedFingerprint.replace(/=+$/u, '');
+    return key => {
+        const actual = `SHA256:${createHash('sha256').update(key).digest('base64').replace(/=+$/u, '')}`;
+        const expectedBuffer = Buffer.from(expected);
+        const actualBuffer = Buffer.from(actual);
+        return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+    };
 }
 
 function managementIp(device) {
@@ -55,6 +141,7 @@ function online(device) {
 
 function errorCode(error) {
     const text = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
+    if (/host.*key|host.*verif|host_key_mismatch/.test(text)) return 'host_key_mismatch';
     if (/auth|authentication|permission denied/.test(text)) return 'authentication_failed';
     if (/command/.test(text) && /timed? ?out|timeout/.test(text)) return 'command_timeout';
     if (/timed? ?out|timeout/.test(text)) return 'connection_timeout';
@@ -62,8 +149,8 @@ function errorCode(error) {
     return 'unknown_error';
 }
 
-function createPoolIdentity({ host, port, username, generation }) {
-    return `${host}|${port}|${username}|${generation}`;
+function createPoolIdentity({ host, port, username, generation, hostKeyFingerprint = '' }) {
+    return `${host}|${port}|${username}|${hostKeyFingerprint}|${generation}`;
 }
 
 function createUnifiDeviceThermalSshCollector({
@@ -86,13 +173,15 @@ function createUnifiDeviceThermalSshCollector({
         const targetIds = parseTargetIds(env.UNIFI_DEVICE_SSH_TARGET_IDS);
         const user = typeof env.UNIFI_DEVICE_SSH_USER === 'string' ? env.UNIFI_DEVICE_SSH_USER.trim() : '';
         const password = typeof env.UNIFI_DEVICE_SSH_PASSWORD === 'string' ? env.UNIFI_DEVICE_SSH_PASSWORD : '';
+        const hostKeysRaw = typeof env.UNIFI_DEVICE_SSH_HOST_KEYS === 'string' ? env.UNIFI_DEVICE_SSH_HOST_KEYS : '';
+        const hostKeys = parseHostKeys(hostKeysRaw);
         const candidatePort = Number(env.UNIFI_DEVICE_SSH_PORT || 22);
         const port = Number.isSafeInteger(candidatePort) && candidatePort > 0 && candidatePort <= 65535 ? candidatePort : 22;
-        return { targetIds, user, password, port };
+        return { targetIds, user, password, port, hostKeys, hostKeysValid: hostKeysConfigurationValid(hostKeysRaw) };
     }
 
     function fingerprint(config) {
-        return JSON.stringify([config.port, config.user, config.password, config.targetIds]);
+        return JSON.stringify([config.port, config.user, config.password, config.targetIds, [...config.hostKeys.entries()], config.hostKeysValid]);
     }
 
     function closePoolEntry(entry) {
@@ -140,7 +229,7 @@ function createUnifiDeviceThermalSshCollector({
     }
 
     function configured(config = currentConfiguration()) {
-        return !!(config.targetIds.length && config.user && config.password && !/your_/iu.test(config.password));
+        return !!(config.targetIds.length && config.user && config.password && config.hostKeysValid && !/your_/iu.test(config.password));
     }
 
     function closeDevice(deviceId) {
@@ -152,14 +241,18 @@ function createUnifiDeviceThermalSshCollector({
     }
 
     function poolFor(id, host, config) {
-        const identity = createPoolIdentity({ host, port: config.port, username: config.user, generation: config.generation });
+        const hostKeyFingerprint = config.hostKeys.get(id) || '';
+        const identity = createPoolIdentity({ host, port: config.port, username: config.user, hostKeyFingerprint, generation: config.generation });
         const existing = pools.get(id);
         if (existing?.identity === identity) return existing.pool;
         if (existing) closeDevice(id);
         const pool = createPool({
-            getConfig: () => ({ host, port: config.port, username: config.user, password: config.password })
+            getConfig: () => ({
+                host, port: config.port, username: config.user, password: config.password,
+                hostKeyFingerprint, ...(hostKeyFingerprint ? { hostVerifier: hostVerifier(hostKeyFingerprint) } : {})
+            })
         });
-        pools.set(id, { pool, deviceId: id, host, port: config.port, username: config.user, configurationGeneration: config.generation, identity });
+        pools.set(id, { pool, deviceId: id, host, port: config.port, username: config.user, hostKeyFingerprint, configurationGeneration: config.generation, identity });
         return pool;
     }
 
@@ -175,7 +268,8 @@ function createUnifiDeviceThermalSshCollector({
         if (!online(device)) return { errorCode: 'device_offline' };
         const host = managementIp(device);
         if (!host) return { errorCode: 'management_ip_missing' };
-        const identity = createPoolIdentity({ host, port: config.port, username: config.user, generation: config.generation });
+        const hostKeyFingerprint = config.hostKeys.get(id) || '';
+        const identity = createPoolIdentity({ host, port: config.port, username: config.user, hostKeyFingerprint, generation: config.generation });
         const existing = inflight.get(id);
         if (existing?.generation === config.generation && existing.identity === identity) return existing.promise;
         if (existing) {
@@ -191,14 +285,14 @@ function createUnifiDeviceThermalSshCollector({
                 const output = await pool.execute(THERMAL_READ_COMMAND);
                 if (taskGeneration !== currentConfiguration().generation || taskEpoch !== deviceEpoch(id)) return { errorCode: 'configuration_changed', discarded: true };
                 const thermal = parse(output, { sampledAt: now() });
-                return thermal ? { thermal, managementIp: host, configurationGeneration: taskGeneration }
-                    : { errorCode: 'no_thermal_zone', managementIp: host };
+                return thermal ? { thermal, managementIp: host, hostKeyLocked: !!hostKeyFingerprint, configurationGeneration: taskGeneration }
+                    : { errorCode: 'no_thermal_zone', managementIp: host, hostKeyLocked: !!hostKeyFingerprint };
             } catch (error) {
                 if (taskGeneration !== currentConfiguration().generation || taskEpoch !== deviceEpoch(id)) {
                     return { errorCode: 'configuration_changed', discarded: true };
                 }
                 closeDevice(id);
-                return { errorCode: errorCode(error), managementIp: host };
+                return { errorCode: errorCode(error), managementIp: host, hostKeyLocked: !!hostKeyFingerprint };
             }
         });
         const record = { generation: taskGeneration, identity, promise };
@@ -218,17 +312,24 @@ function createUnifiDeviceThermalSshCollector({
 
     function status() {
         const config = currentConfiguration();
-        return { configured: configured(config), selectedDeviceCount: config.targetIds.length, running: inflight.size, activeConnections: active, configurationGeneration: config.generation };
+        return {
+            configured: configured(config), selectedDeviceCount: config.targetIds.length,
+            hostKeyConfigurationValid: config.hostKeysValid,
+            hostKeyConfiguredDeviceCount: config.hostKeys.size,
+            unlockedDeviceCount: config.targetIds.filter(id => !config.hostKeys.has(id)).length,
+            running: inflight.size, activeConnections: active, configurationGeneration: config.generation
+        };
     }
 
     return Object.freeze({
         collect, closeDevice, closeAll, reset, status, configured,
         parseTargetIds: () => currentConfiguration().targetIds,
+        isHostKeyLocked: deviceId => currentConfiguration().hostKeys.has(normalizeDeviceId(deviceId)),
         getConfigurationGeneration: () => currentConfiguration().generation
     });
 }
 
 module.exports = {
     THERMAL_READ_COMMAND, createPoolIdentity, createUnifiDeviceThermalSshCollector,
-    errorCode, managementIp, normalizeDeviceId, parseTargetIds, safeManagementIp
+    errorCode, hostKeysConfigurationValid, hostVerifier, managementIp, normalizeDeviceId, parseHostKeys, parseTargetIds, safeManagementIp
 };

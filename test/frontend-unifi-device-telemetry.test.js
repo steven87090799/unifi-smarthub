@@ -23,6 +23,9 @@ test('dashboard renders live verified device telemetry and history for every man
     assert.match(html, /設定已更新，等待重新取樣/);
     assert.match(html, /資料已過期；Telemetry Snapshot 停止更新/);
     assert.match(html, /上次成功溫度/);
+    assert.match(html, /CPU（上次成功資料）/);
+    assert.match(html, /directSshHostKeyLocked/);
+    assert.match(html, /UNIFI_DEVICE_SSH_HOST_KEYS/);
     assert.match(html, /unifi-device-ssh-target-reference/);
     assert.match(html, /UNIFI_DEVICE_SSH_TARGET_IDS/);
     assert.match(html, /\/api\/network\/devices\/telemetry/);

@@ -650,6 +650,7 @@ function latestUnifiDeviceThermals(rawDevices) {
         direct.set(id, {
             id,
             selected: true,
+            hostKeyLocked: unifiDeviceThermalCollector.isHostKeyLocked(id),
             thermal: data?.thermal || null,
             stale: !!data?.thermal && (offline || !!snapshot?.lastErrorAt || ageMs > Math.max(unifiTelemetrySampleMs() * 3, 15 * 60 * 1000)),
             lastSuccessAt: snapshot?.lastSuccessAt ? new Date(snapshot.lastSuccessAt).toISOString() : null,
@@ -3595,7 +3596,7 @@ app.post('/api/settings', (req, res) => {
 const CONN_FIELDS = [
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
-    { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' }, { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true }, { key: 'UNIFI_DEVICE_SSH_TARGET_IDS' },
+    { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' }, { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true }, { key: 'UNIFI_DEVICE_SSH_TARGET_IDS' }, { key: 'UNIFI_DEVICE_SSH_HOST_KEYS' },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_TLS_VERIFY' },

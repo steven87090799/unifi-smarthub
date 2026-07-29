@@ -3261,6 +3261,7 @@
                                     <div class="grid grid-cols-3 gap-2"><div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Port</label><input id="conn-UNIFI_DEVICE_SSH_PORT" placeholder="22" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div><div class="col-span-2"><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Username</label><input id="conn-UNIFI_DEVICE_SSH_USER" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div></div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Password <span id="connset-UNIFI_DEVICE_SSH_PASSWORD" class="normal-case"></span></label><input id="conn-UNIFI_DEVICE_SSH_PASSWORD" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">溫度監測設備（MAC 逗號清單，最多 32 台）</label><input id="conn-UNIFI_DEVICE_SSH_TARGET_IDS" placeholder="aa:bb:cc:dd:ee:ff" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"><p class="text-[8px] text-slate-600 mt-1">留空即停用 Device SSH 溫度監測。</p><div id="unifi-device-ssh-target-reference" class="mt-2 space-y-1 text-[8px] text-slate-500 mono">載入 Controller 設備參考清單…</div></div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Host Key 指紋（選填，MAC=SHA256:…）</label><input id="conn-UNIFI_DEVICE_SSH_HOST_KEYS" placeholder="aa:bb:cc:dd:ee:ff=SHA256:..." class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"><p class="text-[8px] text-slate-600 mt-1">每台已設定的設備會嚴格驗證 SSH Host Key；留空仍可監測，但會標示為未鎖定。</p></div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Site Manager API Key
                                         (選填) <span id="connset-UNIFI_API_KEY" class="normal-case"></span></label><input
@@ -6161,28 +6162,31 @@
                     device_ssh_configuration_changed: '設定已更新，等待重新取樣',
                     device_ssh_no_management_ip: 'Controller 未回報，設備沒有管理 IP',
                     device_ssh_auth_failed: '設備 SSH 認證失敗',
+                    device_ssh_host_key_mismatch: '設備 SSH Host Key 指紋不符，已拒絕登入',
                     device_ssh_unreachable: '設備 SSH 無法連線',
                     device_ssh_no_thermal_zone: '設備沒有可讀取的 thermal zone',
                     device_ssh_invalid_response: '設備 SSH 回應無有效 thermal zone'
                 };
                 let temperatureNote = statusText[device.temperatureStatus] || 'Controller 未回報溫度';
+                if (device.directSshSelected && !device.directSshHostKeyLocked) temperatureNote += '；SSH Host Key 未鎖定';
                 if (device.type === 'udm' && !device.temperature) temperatureNote += '；UCG 的 SSH CPU 溫度顯示於上方';
                 const stateClass = device.online ? 'bg-emerald-500' : 'bg-red-500';
                 const zones = (device.temperatureZones || []).map(zone => `<li>${escapeHtml(zone.zone)} · ${escapeHtml(zone.type)} · ${escapeHtml(Number(zone.temperatureC).toFixed(1))}°C</li>`).join('');
                 const temperatureStale = payload.stale || device.telemetryStale || device.temperature?.stale;
                 const temperatureLabel = temperatureStale ? '上次成功溫度' : '內部最高溫度';
+                const cpuLabel = temperatureStale ? 'CPU（上次成功資料）' : 'CPU';
                 const freshness = device.temperature?.sampledAt ? `${temperatureStale ? '資料已過期；' : ''}最後成功：${new Date(device.temperature.sampledAt).toLocaleString('zh-TW')}` : '';
-                return `<article class="rounded-xl border border-slate-800/70 bg-slate-950/45 p-4">
+                return `<article class="rounded-xl border ${temperatureStale ? 'border-amber-500/50' : 'border-slate-800/70'} bg-slate-950/45 p-4">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
                             <p class="text-sm font-bold text-slate-200 truncate">${escapeHtml(device.name)}</p>
                             <p class="text-[9px] text-slate-500 mono">${escapeHtml(device.model || device.type || '--')} · ${escapeHtml(DEV_TYPE_LABEL[device.type] || device.type || 'UniFi')}</p>
                         </div>
-                        <span class="w-2 h-2 mt-1.5 rounded-full shrink-0 ${stateClass}" title="${device.online ? '在線' : '離線'}"></span>
+                        <div class="flex items-center gap-2"><span class="w-2 h-2 mt-1.5 rounded-full shrink-0 ${stateClass}" title="${device.online ? '在線' : '離線'}"></span>${temperatureStale ? '<span class="text-[8px] px-1.5 py-0.5 rounded border border-amber-500/40 text-amber-300">STALE</span>' : ''}</div>
                     </div>
                     <div class="grid grid-cols-2 gap-3 mt-4">
                         <div>
-                            <p class="text-[9px] text-slate-500 uppercase font-bold">CPU</p>
+                            <p class="text-[9px] text-slate-500 uppercase font-bold">${cpuLabel}</p>
                             <p class="text-2xl font-black text-blue-400 mono mt-0.5">${escapeHtml(cpu)}</p>
                             <p class="text-[8px] text-slate-600 mono">${escapeHtml(device.cpu?.sourceField || '未回報')}</p>
                         </div>
@@ -8534,7 +8538,7 @@
             const body = {};
             document.querySelectorAll('.conn-input').forEach(el => {
                 const key = el.id.replace('conn-', '');
-                if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS' || (el.value && el.value.trim())) body[key] = el.value.trim();
+                if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS' || key === 'UNIFI_DEVICE_SSH_HOST_KEYS' || (el.value && el.value.trim())) body[key] = el.value.trim();
             });
             dbg('Conn', '儲存欄位:', Object.keys(body));
             try {

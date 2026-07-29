@@ -23,6 +23,10 @@ class FakeConnection extends EventEmitter {
     end() { this.endCalls += 1; }
 }
 
+class DeferredConnection extends FakeConnection {
+    connect(options) { this.connectOptions = options; }
+}
+
 test('reuses one ready SSH connection, serializes commands, and applies a ten second ready timeout', async () => {
     const connections = [];
     let active = 0;
@@ -81,4 +85,30 @@ test('rotates the connection after configuration changes and reconnects after co
     assert.equal(await pool.execute('fourth'), 'ok');
     assert.equal(connections.length, 3);
     pool.close();
+});
+
+test('closing during CONNECTING cancels the candidate and late ready never executes a command', async () => {
+    const connections = [];
+    let executions = 0;
+    const pool = createSshConnectionPool({
+        getConfig: () => ({ host: 'device.test', username: 'user', password: 'secret' }),
+        createConnection: () => {
+            const connection = new DeferredConnection();
+            connections.push(connection);
+            return connection;
+        },
+        execute: async () => { executions += 1; return 'unexpected'; }
+    });
+
+    const pending = pool.execute('thermal');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(connections.length, 1);
+    pool.close();
+    await assert.rejects(pending, /pool is closed/);
+    assert.equal(connections[0].endCalls, 1);
+    connections[0].emit('ready');
+    connections[0].emit('error', new Error('late connection error'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(executions, 0);
+    await assert.rejects(pool.execute('again'), /pool is closed/);
 });

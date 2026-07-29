@@ -23,6 +23,7 @@ const {
     parseUiPreferences,
     quoteEnvValue,
     stringValue,
+    unifiDeviceSshHostKeysValue,
     unifiDeviceSshTargetIdsValue
 } = require('../server/policies/write-input-policy');
 
@@ -59,6 +60,15 @@ test('UniFi Device SSH target allowlist canonicalizes MACs and rejects unsafe en
     const fields = [{ key: 'UNIFI_DEVICE_SSH_TARGET_IDS' }, { key: 'UNIFI_DEVICE_SSH_PORT' }];
     assert.deepEqual(parseConnectionUpdates({ UNIFI_DEVICE_SSH_TARGET_IDS: '' }, fields), { UNIFI_DEVICE_SSH_TARGET_IDS: '' });
     assert.deepEqual(parseConnectionUpdates({ UNIFI_DEVICE_SSH_PORT: '22' }, fields), { UNIFI_DEVICE_SSH_PORT: '22' });
+});
+
+test('UniFi Device SSH Host Key fingerprints are canonicalized and strictly validated', () => {
+    const fingerprint = `SHA256:${'a'.repeat(43)}`;
+    assert.equal(unifiDeviceSshHostKeysValue(`AA:BB:CC:DD:EE:FF=${fingerprint}`), `aa:bb:cc:dd:ee:ff=${fingerprint}`);
+    validationError(() => unifiDeviceSshHostKeysValue('aa:bb:cc:dd:ee:ff=SHA256:short'), 'UNIFI_DEVICE_SSH_HOST_KEYS[0]');
+    validationError(() => unifiDeviceSshHostKeysValue(`aa:bb:cc:dd:ee:ff=${fingerprint},aa:bb:cc:dd:ee:ff=${fingerprint}`), 'UNIFI_DEVICE_SSH_HOST_KEYS');
+    const fields = [{ key: 'UNIFI_DEVICE_SSH_HOST_KEYS' }];
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_DEVICE_SSH_HOST_KEYS: '' }, fields), { UNIFI_DEVICE_SSH_HOST_KEYS: '' });
 });
 
 test('alias input canonicalizes either-case MACs and enforces the exact name boundary', () => {

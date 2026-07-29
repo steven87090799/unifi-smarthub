@@ -424,6 +424,30 @@ function unifiDeviceSshTargetIdsValue(value, field = 'UNIFI_DEVICE_SSH_TARGET_ID
     return [...new Set(normalized)].join(',');
 }
 
+function unifiDeviceSshHostKeysValue(value, field = 'UNIFI_DEVICE_SSH_HOST_KEYS') {
+    if (typeof value !== 'string') reject(`${field} must be a string`, field);
+    if (CONTROL_CHARACTERS.test(value)) reject(`${field} contains control characters`, field);
+    if (value.length > 4096) reject(`${field} is too long`, field);
+    const entries = value.split(',').map(entry => entry.trim()).filter(Boolean);
+    if (entries.length > 32) reject(`${field} supports at most 32 device fingerprints`, field);
+    const seen = new Set();
+    const normalized = entries.map((entry, index) => {
+        const separator = entry.indexOf('=');
+        if (separator <= 0) {
+            reject(`${field}[${index}] must use mac=SHA256:fingerprint`, `${field}[${index}]`);
+        }
+        const mac = macValue(entry.slice(0, separator).trim(), `${field}[${index}].mac`);
+        const fingerprint = entry.slice(separator + 1).trim();
+        if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/u.test(fingerprint)) {
+            reject(`${field}[${index}] must be a SHA256 SSH host key fingerprint`, `${field}[${index}]`);
+        }
+        if (seen.has(mac)) reject(`${field} cannot contain duplicate device MAC addresses`, field);
+        seen.add(mac);
+        return `${mac}=${fingerprint.replace(/=+$/u, '')}`;
+    });
+    return normalized.join(',');
+}
+
 function parseConnectionUpdates(body, fields) {
     const definitions = new Map(fields.map(field => [field.key, field]));
     exactObject(body, { allowed: [...definitions.keys()] });
@@ -431,7 +455,7 @@ function parseConnectionUpdates(body, fields) {
     for (const [key, raw] of Object.entries(body)) {
         if (typeof raw !== 'string') reject(`${key} must be a string`, key);
         if (raw.trim() === '') {
-            if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') updates[key] = '';
+            if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS' || key === 'UNIFI_DEVICE_SSH_HOST_KEYS') updates[key] = '';
             continue;
         }
         const definition = definitions.get(key);
@@ -439,6 +463,7 @@ function parseConnectionUpdates(body, fields) {
         let value = stringValue(raw, { field: key, min: 1, max });
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(raw, key);
+        else if (key === 'UNIFI_DEVICE_SSH_HOST_KEYS') value = unifiDeviceSshHostKeysValue(raw, key);
         else if (URL_FIELDS.has(key)) {
             value = key === 'UNIFI_NETWORK_API_URL'
                 ? unifiNetworkApiUrlValue(value, key)
@@ -522,6 +547,7 @@ module.exports = {
     parseWifiQrRequest,
     parseUiPreferences,
     quoteEnvValue,
-    stringValue
-    ,unifiDeviceSshTargetIdsValue
+    stringValue,
+    unifiDeviceSshHostKeysValue,
+    unifiDeviceSshTargetIdsValue
 };

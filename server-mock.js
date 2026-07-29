@@ -365,6 +365,7 @@ function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
         temperatureStatus: status,
         directSshConfigured: true,
         directSshSelected: !['not_selected', 'controller'].includes(device.thermalState),
+        directSshHostKeyLocked: !['not_selected', 'controller', 'offline'].includes(device.thermalState),
         directSshLastSuccessAt: hasZones ? sampledAt : null,
         directSshLastErrorAt: null,
         directSshErrorCode: device.thermalState === 'offline' ? 'device_offline' : device.thermalState === 'configuration_changed' ? 'configuration_changed' : null,
@@ -392,7 +393,7 @@ app.get('/api/network/devices/telemetry', (req, res) => {
         },
         devices,
         thermalSsh: {
-            configured: true, selectedDeviceCount: 4, lastRunAt: new Date().toISOString(), running: 0,
+            configured: true, selectedDeviceCount: 4, hostKeyConfiguredDeviceCount: 3, unlockedDeviceCount: 1, lastRunAt: new Date().toISOString(), running: 0,
             successfulDeviceCount: 2, failedDeviceCount: 3, notFoundDeviceCount: 1,
             lifecycleExamples: ['management_ip_changed_reconnected', 'configuration_changed', 'device_offline', 'device_ssh_stale'],
             notificationExamples: ['controller_source_notification', 'device_ssh_source_notification'],
@@ -1472,7 +1473,7 @@ const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirna
 const mockConnDefaults = {
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
     UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo',
-    UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'device-monitor', UNIFI_DEVICE_SSH_TARGET_IDS: '74:ac:b9:00:00:01',
+    UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'device-monitor', UNIFI_DEVICE_SSH_TARGET_IDS: '74:ac:b9:00:00:01', UNIFI_DEVICE_SSH_HOST_KEYS: '',
     UNIFI_NETWORK_API_URL: 'https://192.168.0.1/proxy/network/integration',
     UNIFI_NETWORK_TLS_VERIFY: 'true',
     UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',

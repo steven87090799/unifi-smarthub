@@ -29,9 +29,9 @@ Site Manager client 有頁數／項目上限、重複 token 防護、429 `Retry-
 - CPU 只接受 `system-stats.cpu` 的有限數值，畫面同步顯示來源欄位。
 - 溫度先要求設備明確回報 `has_temperature=true`，再接受已知的溫度欄位。
 - `has_temperature=false` 時，即使 payload 中出現看似溫度的其他數字也不採用。
-- 未回報溫度時，僅在管理者已選取 MAC、設備在線且具有已驗證的 IPv4/IPv6 管理 IP、並設定獨立 Device SSH Authentication 時，才以固定唯讀指令讀取 `/sys/class/thermal/thermal_zone*/temp`；host 名稱、unspecified、multicast、broadcast 與 loopback 都拒絕。
+- 未回報溫度時，僅在管理者已選取 MAC、設備在線且具有已驗證的 IPv4/IPv6 管理 IP、並設定獨立 Device SSH Authentication 時，才以固定唯讀指令讀取 `/sys/class/thermal/thermal_zone*/temp`；host 名稱、URL、port 字串、zone ID、unspecified、multicast、broadcast、loopback，以及 IPv4-mapped/embedded loopback 都拒絕。
 - Controller 真實溫度優先於 Device SSH；SSH 讀到的是內部感測器 zone，最高 zone 不必然是 CPU／SoC，也不等於外殼表面溫度。
-- Device SSH 使用 `UNIFI_DEVICE_SSH_*`，與 UCG Console SSH 和 UniFi 網頁登入帳密完全分離。`UNIFI_DEVICE_SSH_TARGET_IDS` 是最多 32 個以逗號分隔的 Controller MAC allowlist；留空即停用。
+- Device SSH 使用 `UNIFI_DEVICE_SSH_*`，與 UCG Console SSH 和 UniFi 網頁登入帳密完全分離。`UNIFI_DEVICE_SSH_TARGET_IDS` 是最多 32 個以逗號分隔的 Controller MAC allowlist；留空即停用。`UNIFI_DEVICE_SSH_HOST_KEYS` 可選擇以 `MAC=SHA256:base64`（逗號分隔）鎖定每台設備的 SSH Host Key；設定後不符即回報 `host_key_mismatch`，不會送出 thermal command，未設定者會明確標示為未鎖定。
 - 未回報溫度的設備會清楚顯示未設定、未選取、找不到 allowlist MAC、Controller 離線、認證失敗、不可達或沒有 thermal zone，不使用估算值。離線設備不執行 SSH，最後成功值只以 stale 顯示。
 - 歷史寫入 SQLite `history` 表的 `unifiDevices` series；過熱通知只根據通過上述驗證的溫度。
 

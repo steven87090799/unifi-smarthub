@@ -58,7 +58,7 @@ node server-mock.js
 |---|---|
 | UCG SSH | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD` |
 | UniFi 本地 | `UNIFI_CONTROLLER_URL`, `UNIFI_USERNAME`, `UNIFI_PASSWORD` |
-| UniFi Device SSH 溫度 | `UNIFI_DEVICE_SSH_PORT`, `UNIFI_DEVICE_SSH_USER`, `UNIFI_DEVICE_SSH_PASSWORD`, `UNIFI_DEVICE_SSH_TARGET_IDS` |
+| UniFi Device SSH 溫度 | `UNIFI_DEVICE_SSH_PORT`, `UNIFI_DEVICE_SSH_USER`, `UNIFI_DEVICE_SSH_PASSWORD`, `UNIFI_DEVICE_SSH_TARGET_IDS`, `UNIFI_DEVICE_SSH_HOST_KEYS`（選填的每設備嚴格 Host Key 指紋） |
 | UniFi 雲端 | `UNIFI_API_KEY` |
 | UGREEN NAS | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` |
 | NAS Monitor | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY`, `NAS_MONITOR_MODE` |
@@ -70,7 +70,7 @@ node server-mock.js
 
 沒有設定的整合會顯示未設定或空狀態，不應阻止主服務就緒。
 
-UniFi Device SSH 只供管理者明確選取的 AP／Switch 讀取 `/sys/class/thermal/thermal_zone*/temp`；這是設備內部感測器溫度，不等於外殼表面溫度，也不能與 UCG Console SSH 或 UniFi 網頁登入帳密混用。
+UniFi Device SSH 只供管理者明確選取的 AP／Switch 讀取 `/sys/class/thermal/thermal_zone*/temp`；這是設備內部感測器溫度，不等於外殼表面溫度，也不能與 UCG Console SSH 或 UniFi 網頁登入帳密混用。可選擇以 `UNIFI_DEVICE_SSH_HOST_KEYS` 設定 `MAC=SHA256:…` 指紋，已設定的設備會在登入前嚴格驗證 Host Key；未設定仍可相容連線，但畫面會標示未鎖定。
 
 ## 安全與部署邊界
 
