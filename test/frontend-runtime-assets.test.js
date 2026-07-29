@@ -14,6 +14,7 @@ const {
 
 const ROOT = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
 const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const mockServerSource = fs.readFileSync(path.join(ROOT, 'server-mock.js'), 'utf8');
 const serviceWorkerSource = fs.readFileSync(path.join(ROOT, 'server', 'services', 'pwa-service-worker.js'), 'utf8');
@@ -22,18 +23,20 @@ test('production frontend has no third-party executable/data dependency or QR cr
     assert.doesNotMatch(html, /<script[^>]+src="https?:\/\//iu);
     assert.doesNotMatch(html, /@import\s+url\(['"]?https?:\/\//iu);
     assert.doesNotMatch(html, /api\.qrserver\.com|cdn\.tailwindcss\.com|cdn\.jsdelivr\.net|fonts\.googleapis\.com/iu);
-    assert.match(html, /fetch\('\/api\/wifi\/qr'/u);
+    assert.match(appSource, /fetch\('\/api\/wifi\/qr'/u);
     assert.match(html, /SSID 與密碼不會送往第三方服務/u);
-    assert.match(html, /dataset\.panelRole !== 'admin'/u);
+    assert.match(appSource, /dataset\.panelRole !== 'admin'/u);
     for (const asset of frontendVendorAssets(ROOT)) {
-        assert.ok(html.includes(asset.url), asset.url);
+        assert.ok(`${html}\n${appSource}`.includes(asset.url), asset.url);
         assert.ok(serviceWorkerSource.includes(asset.url), `service worker precache: ${asset.url}`);
     }
     assert.match(serverSource, /PWA_CACHE_NAME[\s\S]+buildIdentity\.public\.revision/u);
     assert.match(serverSource, /renderPwaServiceWorker\(PWA_CACHE_NAME\)/u);
     assert.match(mockServerSource, /renderPwaServiceWorker/u);
     assert.match(html, /<script src="\/js\/web-push\.js"><\/script>/u);
+    assert.match(html, /<script src="\/js\/app\.js"><\/script>/u);
     assert.match(serviceWorkerSource, /'\/js\/web-push\.js'/u);
+    assert.match(serviceWorkerSource, /'\/js\/app\.js'/u);
 });
 
 test('locked vendor routes serve only the exact bounded same-origin assets', async t => {

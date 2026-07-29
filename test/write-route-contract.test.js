@@ -232,6 +232,9 @@ const INVALID_WRITES = Object.freeze([
     ['connection noncanonical port', 'POST', '/api/connections', { PPB_PORT: '03052' }],
     ['connection insecure remote Integration API', 'POST', '/api/connections', { UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }],
     ['connection invalid Integration API TLS flag', 'POST', '/api/connections', { UNIFI_NETWORK_TLS_VERIFY: 'FALSE' }],
+    ['connection invalid PPB TLS flag', 'POST', '/api/connections', { PPB_TLS_INSECURE: 'TRUE' }],
+    ['connection ambiguous PPB TLS disable', 'POST', '/api/connections', { PPB_TLS_VERIFY: 'false' }],
+    ['connection relative PPB CA path', 'POST', '/api/connections', { PPB_CA_FILE: 'relative.pem' }],
     ['connection insecure remote AdGuard', 'POST', '/api/connections', {
         ADGUARD_URL: 'http://192.0.2.10',
         ADGUARD_USER: 'admin',

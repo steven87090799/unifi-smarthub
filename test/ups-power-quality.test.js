@@ -58,3 +58,29 @@ test('UPS power-quality events are durable, deduplicated, and bounded on read', 
     assert.equal(db.listUpsPowerEvents(500).length, 1);
     assert.equal(db.listUpsPowerEvents()[0].inputV, 102.5);
 });
+
+test('integration sync state survives restart independently from existing UPS event rows', t => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-integration-sync-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    let db = createHistoryDb(dir);
+    assert.equal(db.getIntegrationSyncState('ppb'), null);
+    db.upsertIntegrationSyncState({
+        source: 'ppb',
+        initializedAt: 1000,
+        lastSuccessAt: 2000,
+        lastExternalId: 'event-b',
+        lastEventTs: 1500,
+        updatedAt: 2000
+    });
+    db.close();
+    db = createHistoryDb(dir);
+    assert.deepEqual(db.getIntegrationSyncState('ppb'), {
+        source: 'ppb',
+        initializedAt: 1000,
+        lastSuccessAt: 2000,
+        lastExternalId: 'event-b',
+        lastEventTs: 1500,
+        updatedAt: 2000
+    });
+    db.close();
+});

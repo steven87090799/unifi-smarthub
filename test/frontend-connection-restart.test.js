@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
 
 test('connection restart badges clear authoritative fields before pending overlays', () => {
     const clearIndex = source.indexOf("for (const key of d.restartRequiredFields || [])");
