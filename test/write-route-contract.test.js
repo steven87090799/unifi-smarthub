@@ -213,6 +213,8 @@ const INVALID_WRITES = Object.freeze([
     ['settings maximum plus one', 'POST', '/api/settings', { trendActiveSec: 3601 }],
     ['settings invalid hour', 'POST', '/api/settings', { reportHour: 24 }],
     ['settings retention maximum plus one', 'POST', '/api/settings', { historyKeepDays: 366 }],
+    ['settings telemetry active below minimum', 'POST', '/api/settings', { unifiTelemetryActiveSec: 14 }],
+    ['settings telemetry idle below minimum', 'POST', '/api/settings', { unifiTelemetryIdleSec: 59 }],
     ['settings lease must exceed heartbeat', 'POST', '/api/settings', { heartbeatSec: 30, activeLeaseSec: 30 }],
     ['settings unknown field', 'POST', '/api/settings', { unexpected: true }],
     ['Docker invalid identifier', 'POST', '/api/nas/docker/bad%24id/start', {}],
@@ -230,6 +232,11 @@ const INVALID_WRITES = Object.freeze([
     ['connection newline injection', 'POST', '/api/connections', { PPB_PASSWORD: 'safe\nEVIL=1' }],
     ['connection shell host injection', 'POST', '/api/connections', { PPB_HOST: 'host$(id)' }],
     ['connection noncanonical port', 'POST', '/api/connections', { PPB_PORT: '03052' }],
+    ['connection invalid UniFi device SSH username', 'POST', '/api/connections', { UNIFI_DEVICE_SSH_USER: 'root;id' }],
+    ['connection invalid UniFi device SSH host key', 'POST', '/api/connections', { UNIFI_DEVICE_SSH_HOST_KEYS: 'aa:bb:cc:dd:ee:ff=SHA256:bad' }],
+    ['connection excessive UniFi device SSH targets', 'POST', '/api/connections', {
+        UNIFI_DEVICE_SSH_TARGET_IDS: Array.from({ length: 33 }, (_, index) => `02:00:00:00:00:${index.toString(16).padStart(2, '0')}`).join(',')
+    }],
     ['connection insecure remote Integration API', 'POST', '/api/connections', { UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }],
     ['connection invalid Integration API TLS flag', 'POST', '/api/connections', { UNIFI_NETWORK_TLS_VERIFY: 'FALSE' }],
     ['connection invalid PPB TLS flag', 'POST', '/api/connections', { PPB_TLS_INSECURE: 'TRUE' }],
@@ -346,7 +353,9 @@ async function assertSafeLocalWrites(runtime, client) {
         activeLeaseSec: 31,
         upsFrontendPollSec: 4,
         upsActiveBackendSampleSec: 5,
-        upsIdleBackendSampleSec: 11
+        upsIdleBackendSampleSec: 11,
+        unifiTelemetryActiveSec: 61,
+        unifiTelemetryIdleSec: 301
     });
     text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} adaptive sampling settings: ${text}`);
@@ -359,6 +368,8 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.settings.upsFrontendPollSec, 4);
     assert.equal(body.settings.upsActiveBackendSampleSec, 5);
     assert.equal(body.settings.upsIdleBackendSampleSec, 11);
+    assert.equal(body.settings.unifiTelemetryActiveSec, 61);
+    assert.equal(body.settings.unifiTelemetryIdleSec, 301);
 
     response = await client.read('/api/client-aliases');
     text = await response.text();
@@ -366,15 +377,19 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(JSON.parse(text).aliases['aa:bb:cc:dd:ee:ff'], 'Integration Lamp');
 
     const secret = "pass with # and 'quote $HOME";
+    const deviceSecret = 'telemetry-device-secret';
+    const deviceFingerprint = `SHA256:${'A'.repeat(43)}`;
     response = await client.write('POST', '/api/connections', {
         UPS_SOURCE: 'ppb', PPB_HOST: '127.0.0.1', PPB_PORT: '3052', PPB_PASSWORD: secret,
-        UNIFI_NETWORK_TLS_VERIFY: 'false'
+        UNIFI_NETWORK_TLS_VERIFY: 'false', UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor',
+        UNIFI_DEVICE_SSH_PASSWORD: deviceSecret, UNIFI_DEVICE_SSH_TARGET_IDS: 'AA:BB:CC:DD:EE:FF',
+        UNIFI_DEVICE_SSH_HOST_KEYS: `AA:BB:CC:DD:EE:FF=${deviceFingerprint}`
     });
     text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} connections: ${text}`);
     body = JSON.parse(text);
     assert.equal(body.ok, true);
-    assert.equal(body.changed, 5);
+    assert.equal(body.changed, 10);
 
     response = await client.read('/api/connections');
     text = await response.text();
@@ -384,8 +399,16 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.fields.PPB_HOST, '127.0.0.1');
     assert.equal(body.fields.PPB_PORT, '3052');
     assert.equal(body.fields.UNIFI_NETWORK_TLS_VERIFY, 'false');
+    assert.equal(body.fields.UNIFI_DEVICE_SSH_PORT, '2222');
+    assert.equal(body.fields.UNIFI_DEVICE_SSH_USER, 'monitor');
     assert.equal(body.secretsSet.PPB_PASSWORD, true);
+    assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_PASSWORD, true);
+    assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_TARGET_IDS, true);
+    assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_HOST_KEYS, true);
     assert.equal(text.includes(secret), false, `${runtime.label} secret leaked in readback`);
+    assert.equal(text.includes(deviceSecret), false, `${runtime.label} device secret leaked in readback`);
+    assert.equal(text.includes('aa:bb:cc:dd:ee:ff'), false, `${runtime.label} target MAC leaked in readback`);
+    assert.equal(text.includes(deviceFingerprint), false, `${runtime.label} host key leaked in readback`);
 
     response = await client.write('POST', '/api/connections', {
         NAS_MONITOR_URL: 'http://nas-monitor:8000',
@@ -415,6 +438,11 @@ async function assertSafeLocalWrites(runtime, client) {
         assert.equal(parsed.PPB_HOST, '127.0.0.1');
         assert.equal(parsed.PPB_PORT, '3052');
         assert.equal(parsed.PPB_PASSWORD, secret);
+        assert.equal(parsed.UNIFI_DEVICE_SSH_PORT, '2222');
+        assert.equal(parsed.UNIFI_DEVICE_SSH_USER, 'monitor');
+        assert.equal(parsed.UNIFI_DEVICE_SSH_PASSWORD, deviceSecret);
+        assert.equal(parsed.UNIFI_DEVICE_SSH_TARGET_IDS, 'aa:bb:cc:dd:ee:ff');
+        assert.equal(parsed.UNIFI_DEVICE_SSH_HOST_KEYS, `aa:bb:cc:dd:ee:ff=${deviceFingerprint}`);
         assert.equal(parsed.EVIL, undefined);
     }
 }
@@ -431,6 +459,17 @@ async function exerciseRuntimeContract(t, script, label) {
         });
         assert.equal(response.status, 403);
         assert.equal((await response.json()).code, ERROR_CODES.API_AUTHORIZATION_FAILED);
+    });
+
+    await t.test('readonly can read retained UniFi telemetry without receiving connection secrets', async () => {
+        for (const route of ['/api/network/devices/telemetry', '/api/network/devices/telemetry/history?hours=24']) {
+            const response = await fetch(`${runtime.baseUrl}${route}`, {
+                headers: { authorization: READONLY_AUTH }, signal: AbortSignal.timeout(4_000)
+            });
+            const text = await response.text();
+            assert.equal(response.status, 200, `${runtime.label} ${route}: ${text.slice(0, 500)}`);
+            assert.doesNotMatch(text, /UNIFI_DEVICE_SSH_PASSWORD|PRIVATE_KEY|SHA256:[A-Za-z0-9+/]{43}/u);
+        }
     });
 
     await t.test('WiFi QR remains admin-only with same-origin CSRF proof', async () => {

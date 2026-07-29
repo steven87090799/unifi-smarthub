@@ -4,6 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createActivityLease } = require('../activity-lease');
 
+test('dedicated UniFi telemetry scope is accepted without activating unrelated device scopes', () => {
+    const lease = createActivityLease();
+    const marked = lease.mark('unifi-device-telemetry', 5000, { sessionId: 'telemetry-tab' });
+    assert.deepEqual(marked.accepted, ['unifi-device-telemetry']);
+    assert.equal(lease.isActive('unifi-device-telemetry'), true);
+    for (const scope of ['general', 'trend', 'ucg', 'nas', 'wiim', 'linux', 'ups']) assert.equal(lease.isActive(scope), false);
+});
+
 test('device activity leases are scoped, server-timed, and expire without renewal', () => {
     let now = 1000;
     const lease = createActivityLease({ now: () => now, maxLeaseMs: 45000 });
