@@ -323,6 +323,56 @@ app.get('/api/hardware/history', (req, res) => {
     res.json({ data: mockHardwareHistory.filter(point => new Date(point.t).getTime() >= cutoff), source: 'mock' });
 });
 
+const mockUnifiTelemetryDevices = [
+    { id: '74:ac:b9:00:00:01', name: 'U7 Pro', model: 'U7PRO', type: 'uap', cpu: 2.1 },
+    { id: '74:ac:b9:00:00:02', name: 'USW Flex 2.5G', model: 'USWED35', type: 'usw', cpu: 5.6 },
+    { id: '74:ac:b9:00:00:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm', cpu: 38.7 }
+];
+function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
+    return {
+        id: device.id, name: device.name, model: device.model, type: device.type,
+        version: 'mock', online: true,
+        cpu: { value: cpu, unit: 'percent', sourceField: 'system-stats.cpu', verifiedSource: true },
+        temperature: null,
+        temperatureCapability: false,
+        temperatureStatus: 'device_reported_unsupported'
+    };
+}
+app.get('/api/network/devices/telemetry', (_req, res) => {
+    res.json({
+        sampledAt: new Date().toISOString(),
+        source: {
+            system: 'Mock UniFi Network Controller',
+            endpoint: '/proxy/network/api/s/default/stat/device',
+            interpretation: 'simulated_direct_device_report'
+        },
+        devices: mockUnifiTelemetryDevices.map((device, index) =>
+            mockUnifiTelemetryDevice(device, +Math.max(0, device.cpu + Math.sin(Date.now() / 10000 + index) * 3).toFixed(1)))
+    });
+});
+app.get('/api/network/devices/telemetry/history', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    res.json({
+        data: mSeries(query.hours, 5, date => ({
+            t: date.toISOString(),
+            devices: mockUnifiTelemetryDevices.map((device, index) => ({
+                id: device.id, name: device.name, model: device.model, type: device.type, online: true,
+                cpu: +Math.max(0, device.cpu + Math.sin(date.getTime() / 600000 + index) * 4).toFixed(1),
+                temperature: null,
+                cpuSourceField: 'system-stats.cpu',
+                temperatureSourceField: null,
+                temperatureStatus: 'device_reported_unsupported'
+            }))
+        })),
+        source: {
+            system: 'Mock UniFi Network Controller',
+            endpoint: '/proxy/network/api/s/default/stat/device',
+            interpretation: 'simulated_direct_device_report'
+        }
+    });
+});
+
 // 2. 獲取活躍客戶端
 app.get('/api/clients', (req, res) => {
     // 模擬流量稍微增加
@@ -887,6 +937,7 @@ let mockNotif = {
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
     triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
+    triggerUnifiDeviceTemp: true, unifiDeviceTempAlert: 75,
     triggerWiimOffline: false, triggerWiimHighVolume: false, triggerWiimPlaybackChange: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerNasDiskHealth: true, triggerNasOffline: false, triggerNasHighCpu: false, nasCpuAlert: 90, triggerNasHighMemory: false, nasMemoryAlert: 90,
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,

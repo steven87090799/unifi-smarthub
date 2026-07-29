@@ -5,7 +5,7 @@ const Database = require('better-sqlite3');
 const { performance } = require('perf_hooks');
 const { ERROR_CODES } = require('./observability/error-codes');
 
-const HISTORY_SERIES = ['trend', 'ucg', 'nas', 'ups', 'wiim', 'linux'];
+const HISTORY_SERIES = ['trend', 'ucg', 'nas', 'ups', 'wiim', 'linux', 'unifiDevices'];
 const HISTORY_RAW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HISTORY_ROLLUP_BUCKET_MS = 60 * 1000;
 const HISTORY_FIVE_MIN_BUCKET_MS = 5 * 60 * 1000;
@@ -30,7 +30,8 @@ const JSON_HISTORY_FILES = {
     nas: 'nas-history.json',
     ups: 'ups-history.json',
     wiim: 'wiim-history.json',
-    linux: 'linux-history.json'
+    linux: 'linux-history.json',
+    unifiDevices: 'unifi-device-history.json'
 };
 
 function pointTimestamp(point, series) {

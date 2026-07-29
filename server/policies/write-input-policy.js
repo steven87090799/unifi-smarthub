@@ -218,7 +218,7 @@ const NOTIFICATION_BOOLEAN_FIELDS = Object.freeze([
     'enabled', 'webPushEnabled', 'telegramCommandsEnabled', 'triggerThreats', 'triggerNasAlerts', 'triggerWiimTemp',
     'triggerUpsOutage', 'triggerUpsLowBatt', 'triggerNewClient', 'triggerClientIpChange',
     'triggerClientWeakSignal', 'triggerClientConnectivity', 'triggerNetworkDeviceOffline',
-    'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerWiimOffline',
+    'triggerWifiSsidChange', 'triggerUnifiUpgrade', 'triggerCloudOffline', 'triggerUnifiDeviceTemp', 'triggerWiimOffline',
     'triggerWiimHighVolume', 'triggerWiimPlaybackChange', 'triggerBlockAction', 'triggerNasDiskTemp',
     'triggerNasSpace', 'triggerNasDiskHealth', 'triggerNasOffline', 'triggerNasHighCpu',
     'triggerNasHighMemory', 'triggerUcgTemp', 'triggerUcgHighCpu', 'triggerUcgHighMemory',
@@ -234,6 +234,7 @@ const NOTIFICATION_BOOLEAN_FIELDS = Object.freeze([
 
 const NOTIFICATION_NUMBER_FIELDS = Object.freeze({
     clientSignalAlert: Object.freeze({ min: 50, max: 95, integer: true }),
+    unifiDeviceTempAlert: Object.freeze({ min: 40, max: 100, integer: true }),
     wiimVolumeAlert: Object.freeze({ min: 10, max: 100, integer: true }),
     nasDiskTempAlert: Object.freeze({ min: 30, max: 70, integer: true }),
     nasSpaceAlert: Object.freeze({ min: 50, max: 99, integer: true }),
@@ -299,6 +300,7 @@ const UI_PREFERENCE_KEYS = Object.freeze([
 ]);
 const UI_POLL_KEYS = Object.freeze([
     'adguard', 'linuxMon', 'critAlerts', 'hardware', 'ucgHist', 'ucgSpikes', 'switches',
+    'unifiTelemetry', 'unifiTelemetryHistory',
     'clients', 'threats', 'cloud', 'isp', 'nas', 'nasAdvanced', 'docker', 'trend', 'notifLog',
     'reportLog', 'systemStatus', 'security', 'wiimSystem', 'wiimPlayback', 'ups', 'ppbEvents',
     'heartbeat'

@@ -15,11 +15,24 @@
 ## 本地與雲端路由
 
 - `/api/clients`, `/api/network/switches`, `/api/wifi-networks`
+- `/api/network/devices/telemetry`, `/api/network/devices/telemetry/history`
 - `/api/threats`, `/api/device/restrict`, `/api/poe/power-cycle`
 - `/api/speedtest`, `/api/speedtest/status`
 - `/api/cloud/sites`, `/devices`, `/isp-metrics`, `/hosts`, `/sdwan`
 
 Site Manager client 有頁數／項目上限、重複 token 防護、429 `Retry-After` 與有界退避。未設定 `UNIFI_API_KEY` 時回 `not_configured`。
+
+## 設備 CPU 與溫度真實性
+
+設備遙測讀取本地控制器 `/proxy/network/api/s/default/stat/device`：
+
+- CPU 只接受 `system-stats.cpu` 的有限數值，畫面同步顯示來源欄位。
+- 溫度先要求設備明確回報 `has_temperature=true`，再接受已知的溫度欄位。
+- `has_temperature=false` 時，即使 payload 中出現看似溫度的其他數字也不採用。
+- 未回報溫度的設備顯示「不支援」或「本次未回報」，不使用估算值。
+- 歷史寫入 SQLite `history` 表的 `unifiDevices` series；過熱通知只根據通過上述驗證的溫度。
+
+UCG 自身透過 SSH `ubnt-systool cputemp` 取得的核心溫度仍保留在既有 UCG 卡片，與控制器設備遙測分開標示來源。
 
 ## 暫時威脅來源封鎖
 

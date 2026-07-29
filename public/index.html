@@ -1535,6 +1535,33 @@
 
                     </div>
 
+                    <!-- UniFi 受管理設備真實遙測 -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
+                            <div>
+                                <h3 class="text-sm font-bold text-white tracking-wider">UniFi 設備 CPU 與溫度</h3>
+                                <p class="text-[10px] text-slate-400 mt-1">只採用設備經 UniFi 控制器直接回報的欄位；未回報溫度時會明確標示，不估算、不以外殼溫度代替。</p>
+                            </div>
+                            <span id="unifi-telemetry-source"
+                                class="self-start text-[8px] px-2 py-1 rounded border border-slate-700 text-slate-400 uppercase font-bold">驗證來源中</span>
+                        </div>
+                        <div id="unifi-device-telemetry-cards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mb-6">
+                            <p class="text-xs text-slate-500 text-center py-4 md:col-span-2 xl:col-span-3">讀取 UniFi 設備感測資料中...</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+                            <div>
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">歷史趨勢</p>
+                                <p class="text-[9px] text-slate-600">CPU 使用率為實線；只有設備真正回報溫度時才加入虛線溫度曲線。</p>
+                            </div>
+                            <div class="flex gap-1 text-[9px]">
+                                <button onclick="setUnifiTelemetryHistoryHours(2, this)" class="unifi-telemetry-range px-2.5 py-1 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 font-bold">2 小時</button>
+                                <button onclick="setUnifiTelemetryHistoryHours(24, this)" class="unifi-telemetry-range px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400">24 小時</button>
+                                <button onclick="setUnifiTelemetryHistoryHours(168, this)" class="unifi-telemetry-range px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400">7 天</button>
+                            </div>
+                        </div>
+                        <div class="h-72"><canvas id="unifiDeviceTelemetryChart"></canvas></div>
+                    </div>
+
                     <!-- UCG 歷史紀錄 (可調範圍) -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
                         <div class="flex justify-between items-center mb-6">
@@ -2838,6 +2865,13 @@
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-network-device-offline"
                                             class="accent-blue-500 w-4 h-4"> UniFi AP／交換器／閘道器離線 / 恢復
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-unifi-device-temp"
+                                            class="accent-blue-500 w-4 h-4"> UniFi 設備實際回報溫度超過
+                                        <input type="number" id="notif-unifi-device-temp" min="40" max="100"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            onclick="event.preventDefault()"> °C
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-wifi-ssid" class="accent-blue-500 w-4 h-4">
@@ -5495,7 +5529,7 @@
                 security: () => Promise.all([fetchThreats(), fetchSecuritySettings(), fetchBlockHistory()]),
                 wifi: () => Promise.all([fetchWiFiNetworks(), fetchSwitchMatrix()]),
                 cloud: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan(), fetchIspMetrics()]),
-                ucg: () => Promise.all([fetchHardware(), fetchUcgHist(), fetchUcgSpikes(), fetchSwitchMatrix()]),
+                ucg: () => Promise.all([fetchHardware(), fetchUcgHist(), fetchUcgSpikes(), fetchSwitchMatrix(), fetchUnifiDeviceTelemetry(), fetchUnifiDeviceTelemetryHistory()]),
                 nas: () => Promise.all([fetchNas(), fetchNasAdvanced(), fetchNasCharts(), fetchNasSleepStats(), fetchNasDocker(), fetchNasAlerts(), fetchAlertConfig().then(configured => { if (configured) connectNasSse(); })]),
                 wiim: () => { initWiimPage(); initWiimSrcDrag(); return Promise.all([fetchWiimDeviceInfo(), fetchWiimSystem(), fetchWiimPlayback()]); },
                 ups: () => Promise.all([fetchUps(), fetchPpbEvents()]),
@@ -5530,7 +5564,7 @@
             sendHeartbeat(true);
             loadPageData(page).finally(() => applyPolling(true));
             requestAnimationFrame(() => {
-                [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
+                [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, unifiDeviceTelemetryChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
                 replayPageChartEntrances(page);
             });
             window.scrollTo({ top: 0 });
@@ -5580,6 +5614,7 @@
             initNasCharts();
             initUpsCharts();
             initUcgHistChart();
+            initUnifiDeviceTelemetryChart();
             initNasHeroChart();
             initUpsHeroChart();
             initWorldMap();
@@ -5596,6 +5631,8 @@
             linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]) },
             critAlerts: { fn: () => fetchCritAlerts() }, hardware: { fn: () => fetchHardware() },
             ucgHist: { fn: () => fetchUcgHist() }, ucgSpikes: { fn: () => fetchUcgSpikes() }, switches: { fn: () => fetchSwitchMatrix() },
+            unifiTelemetry: { fn: () => fetchUnifiDeviceTelemetry() },
+            unifiTelemetryHistory: { fn: () => fetchUnifiDeviceTelemetryHistory() },
             clients: { fn: () => fetchClients() }, threats: { fn: () => fetchThreats() },
             cloud: { fn: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan()]) },
             isp: { fn: () => fetchIspMetrics() }, nas: { fn: () => fetchNas() },
@@ -5611,7 +5648,7 @@
         const PAGE_POLL_JOBS = {
             overview: ['hardware', 'clients', 'threats', 'trend', 'isp', 'nas', 'wiimSystem', 'ups'],
             clients: ['clients'], security: ['threats', 'security'], wifi: [], cloud: ['cloud', 'isp'],
-            ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches'],
+            ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches', 'unifiTelemetry', 'unifiTelemetryHistory'],
             nas: ['nas', 'nasAdvanced', 'docker'], wiim: ['wiimSystem', 'wiimPlayback'],
             ups: ['ups', 'upsHistory', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security']
@@ -6041,6 +6078,140 @@
                 if (!wrap.querySelector('.grid')) wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">連線中，稍候自動重試…</p>';
                 console.error('Switch matrix fetch failed', e);
             }
+        }
+
+        let unifiDeviceTelemetryChart = null;
+        let unifiTelemetryHistoryHours = 2;
+        let unifiTelemetryHistoryRaw = [];
+        const UNIFI_TELEMETRY_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ec4899', '#06b6d4', '#f97316'];
+
+        function initUnifiDeviceTelemetryChart() {
+            const canvas = document.getElementById('unifiDeviceTelemetryChart');
+            if (!canvas) return;
+            unifiDeviceTelemetryChart = new Chart(canvas, {
+                type: 'line',
+                data: { labels: [], datasets: [] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 9 } } },
+                        tooltip: { callbacks: { label: context => `${context.dataset.label}: ${context.parsed.y}${context.dataset.yAxisID === 'yTemp' ? '°C' : '%'}` } }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } },
+                        yCpu: { position: 'left', min: 0, max: 100, ticks: { color: '#94a3b8', font: { size: 8 }, callback: value => value + '%' }, grid: { color: 'rgba(30,41,59,0.4)' } },
+                        yTemp: { display: false, position: 'right', ticks: { color: '#f59e0b', font: { size: 8 }, callback: value => value + '°C' }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+        function renderUnifiDeviceTelemetry(payload) {
+            const wrap = document.getElementById('unifi-device-telemetry-cards');
+            const badge = document.getElementById('unifi-telemetry-source');
+            if (!wrap || !badge) return;
+            const devices = payload.devices || [];
+            const simulated = String(payload.source?.interpretation || '').startsWith('simulated');
+            badge.textContent = simulated ? 'DEMO DATA' : 'CONTROLLER DIRECT';
+            badge.className = `self-start text-[8px] px-2 py-1 rounded border uppercase font-bold ${simulated ? 'border-amber-500/30 text-amber-400' : 'border-emerald-500/30 text-emerald-400'}`;
+            badge.title = `${payload.source?.system || 'UniFi'} · ${payload.source?.endpoint || ''}`;
+            if (!devices.length) {
+                wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4 md:col-span-2 xl:col-span-3">控制器沒有回傳受管理設備</p>';
+                return;
+            }
+            wrap.innerHTML = devices.map(device => {
+                const cpu = Number.isFinite(device.cpu?.value) ? `${device.cpu.value.toFixed(1)}%` : '--';
+                const temperature = Number.isFinite(device.temperature?.value) ? `${device.temperature.value.toFixed(1)}°C` : '--';
+                let temperatureNote = '設備向控制器回報：不支援溫度';
+                if (device.temperatureStatus === 'reported') temperatureNote = `實際感測欄位：${device.temperature.sourceField}`;
+                else if (device.temperatureStatus === 'value_not_reported') temperatureNote = '設備宣告支援，但本次沒有回傳數值';
+                else if (device.type === 'udm') temperatureNote += '；UCG 的 SSH 實測溫度顯示於上方';
+                const stateClass = device.online ? 'bg-emerald-500' : 'bg-red-500';
+                return `<article class="rounded-xl border border-slate-800/70 bg-slate-950/45 p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <p class="text-sm font-bold text-slate-200 truncate">${escapeHtml(device.name)}</p>
+                            <p class="text-[9px] text-slate-500 mono">${escapeHtml(device.model || device.type || '--')} · ${escapeHtml(DEV_TYPE_LABEL[device.type] || device.type || 'UniFi')}</p>
+                        </div>
+                        <span class="w-2 h-2 mt-1.5 rounded-full shrink-0 ${stateClass}" title="${device.online ? '在線' : '離線'}"></span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 mt-4">
+                        <div>
+                            <p class="text-[9px] text-slate-500 uppercase font-bold">CPU</p>
+                            <p class="text-2xl font-black text-blue-400 mono mt-0.5">${escapeHtml(cpu)}</p>
+                            <p class="text-[8px] text-slate-600 mono">${escapeHtml(device.cpu?.sourceField || '未回報')}</p>
+                        </div>
+                        <div>
+                            <p class="text-[9px] text-slate-500 uppercase font-bold">設備溫度</p>
+                            <p class="text-2xl font-black mono mt-0.5 ${device.temperature ? 'text-amber-400' : 'text-slate-600'}">${escapeHtml(temperature)}</p>
+                            <p class="text-[8px] text-slate-600">${escapeHtml(temperatureNote)}</p>
+                        </div>
+                    </div>
+                </article>`;
+            }).join('');
+        }
+
+        async function fetchUnifiDeviceTelemetry() {
+            try {
+                const response = await fetch('/api/network/devices/telemetry');
+                if (!response.ok) throw new Error('UniFi telemetry request failed');
+                renderUnifiDeviceTelemetry(await response.json());
+            } catch (error) {
+                const wrap = document.getElementById('unifi-device-telemetry-cards');
+                if (wrap && !wrap.querySelector('article')) wrap.innerHTML = '<p class="text-xs text-red-400 text-center py-4 md:col-span-2 xl:col-span-3">暫時無法讀取 UniFi 設備遙測</p>';
+                console.error('UniFi device telemetry fetch failed', error);
+            }
+        }
+
+        function renderUnifiDeviceTelemetryHistory() {
+            if (!unifiDeviceTelemetryChart) return;
+            const stride = Math.max(1, Math.ceil(unifiTelemetryHistoryRaw.length / 360));
+            const points = unifiTelemetryHistoryRaw.filter((_point, index) =>
+                index % stride === 0 || index === unifiTelemetryHistoryRaw.length - 1);
+            const metadata = new Map();
+            unifiTelemetryHistoryRaw.forEach(point => (point.devices || []).forEach(device => metadata.set(device.id, device)));
+            const datasets = [];
+            [...metadata.values()].forEach((device, index) => {
+                const color = UNIFI_TELEMETRY_COLORS[index % UNIFI_TELEMETRY_COLORS.length];
+                const cpuValues = points.map(point => (point.devices || []).find(item => item.id === device.id)?.cpu ?? null);
+                const tempValues = points.map(point => (point.devices || []).find(item => item.id === device.id)?.temperature ?? null);
+                if (cpuValues.some(Number.isFinite)) datasets.push({
+                    label: `${device.name} CPU`, data: cpuValues, borderColor: color, backgroundColor: color,
+                    tension: 0.25, pointRadius: 0, spanGaps: true, yAxisID: 'yCpu'
+                });
+                if (tempValues.some(Number.isFinite)) datasets.push({
+                    label: `${device.name} 溫度`, data: tempValues, borderColor: color, backgroundColor: color,
+                    borderDash: [5, 4], borderWidth: 2, tension: 0.25, pointRadius: 0, spanGaps: true, yAxisID: 'yTemp'
+                });
+            });
+            unifiDeviceTelemetryChart.data.labels = points.map(point =>
+                new Date(point.t).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+            unifiDeviceTelemetryChart.data.datasets = datasets;
+            unifiDeviceTelemetryChart.options.scales.yTemp.display = datasets.some(dataset => dataset.yAxisID === 'yTemp');
+            updateChartWithEntrance(unifiDeviceTelemetryChart);
+        }
+
+        async function fetchUnifiDeviceTelemetryHistory() {
+            try {
+                const response = await fetch(`/api/network/devices/telemetry/history?hours=${unifiTelemetryHistoryHours}`);
+                if (!response.ok) throw new Error('UniFi telemetry history request failed');
+                unifiTelemetryHistoryRaw = (await response.json()).data || [];
+                renderUnifiDeviceTelemetryHistory();
+            } catch (error) {
+                console.error('UniFi device telemetry history fetch failed', error);
+            }
+        }
+
+        function setUnifiTelemetryHistoryHours(hours, button) {
+            unifiTelemetryHistoryHours = hours;
+            document.querySelectorAll('.unifi-telemetry-range').forEach(element => {
+                element.className = 'unifi-telemetry-range px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400';
+            });
+            if (button) button.className = 'unifi-telemetry-range px-2.5 py-1 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 font-bold';
+            requestChartReplay(unifiDeviceTelemetryChart);
+            fetchUnifiDeviceTelemetryHistory();
         }
 
         // 溫度配色與標籤 (共用於總覽雙設備體檢)
@@ -7847,6 +8018,7 @@
                 setCk('notif-trig-client-connectivity', !!s.triggerClientConnectivity);
                 setCk('notif-trig-client-signal', !!s.triggerClientWeakSignal);
                 setCk('notif-trig-network-device-offline', !!s.triggerNetworkDeviceOffline);
+                setCk('notif-trig-unifi-device-temp', s.triggerUnifiDeviceTemp !== false);
                 setCk('notif-trig-wifi-ssid', !!s.triggerWifiSsidChange);
                 setCk('notif-trig-unifi-upgrade', !!s.triggerUnifiUpgrade);
                 setCk('notif-trig-cloud-offline', !!s.triggerCloudOffline);
@@ -7899,6 +8071,7 @@
                 setCk('notif-trig-system-startup', !!s.triggerSystemStartup);
                 const setV = (id, v) => { const e = document.getElementById(id); if (e && document.activeElement !== e) e.value = v; };
                 setV('notif-client-signal', s.clientSignalAlert ?? 75);
+                setV('notif-unifi-device-temp', s.unifiDeviceTempAlert ?? 75);
                 setV('notif-wiim-volume', s.wiimVolumeAlert ?? 80);
                 setV('notif-nasdisk-temp', s.nasDiskTempAlert ?? 50);
                 setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
@@ -7942,6 +8115,8 @@
                 triggerClientWeakSignal: document.getElementById('notif-trig-client-signal')?.checked ?? false,
                 clientSignalAlert: parseInt(document.getElementById('notif-client-signal')?.value, 10) || 75,
                 triggerNetworkDeviceOffline: document.getElementById('notif-trig-network-device-offline')?.checked ?? false,
+                triggerUnifiDeviceTemp: document.getElementById('notif-trig-unifi-device-temp')?.checked ?? true,
+                unifiDeviceTempAlert: parseInt(document.getElementById('notif-unifi-device-temp')?.value, 10) || 75,
                 triggerWifiSsidChange: document.getElementById('notif-trig-wifi-ssid')?.checked ?? false,
                 triggerUnifiUpgrade: document.getElementById('notif-trig-unifi-upgrade')?.checked ?? false,
                 triggerCloudOffline: document.getElementById('notif-trig-cloud-offline')?.checked ?? false,

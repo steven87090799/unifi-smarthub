@@ -14,7 +14,7 @@
 | `heartbeatSec` | 5 秒 | 可見分頁回報仍在使用中的間隔；不等於取樣間隔。|
 | `activeLeaseSec` | 30 秒 | 後端未收到 heartbeat 後，將該 session 視為離線的時間；必須大於 heartbeat。|
 
-一般 collector 包含趨勢、UCG 背景 SSH 取樣、NAS、WiiM、Linux、UniFi clients／threats、ISP 與 AdGuard。collector 先更新 latest cache、寫入既有歷史資料，再由主要讀取 API 回傳 cache；只有 cache 不存在或已過期時，API 才會以 singleflight 補取一次。快取同時保存最後嘗試、最後成功、最後錯誤與連續失敗數；舊資料可供畫面顯示，但 watcher 會依失敗狀態判定離線，不會把舊資料當成健康。
+一般 collector 包含趨勢、UCG 背景 SSH 取樣、NAS、WiiM、Linux、UniFi clients／threats／設備 CPU 與溫度、ISP 與 AdGuard。collector 先更新 latest cache、寫入既有歷史資料，再由主要讀取 API 回傳 cache；只有 cache 不存在或已過期時，API 才會以 singleflight 補取一次。快取同時保存最後嘗試、最後成功、最後錯誤與連續失敗數；舊資料可供畫面顯示，但 watcher 會依失敗狀態判定離線，不會把舊資料當成健康。
 
 ## UPS
 

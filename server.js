@@ -104,6 +104,10 @@ const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createSseBackpressure } = require('./server/services/sse-backpressure');
 const { createArtworkCache, fetchArtwork } = require('./server/services/wiim-art-proxy');
 const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
+const {
+    presentUnifiDeviceTelemetry,
+    telemetryHistoryPoint
+} = require('./server/services/unifi-device-telemetry');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -588,6 +592,15 @@ function getUnifiHealthCached(options) {
 function getUnifiNetworkDevicesCached(options) {
     return readDeviceCollector('unifi.networkDevices', collectUnifiNetworkDevices, options);
 }
+async function getUnifiDeviceTelemetryCached(options) {
+    const devices = await getUnifiNetworkDevicesCached(options);
+    const snapshot = deviceCollectorSnapshot('unifi.networkDevices');
+    return presentUnifiDeviceTelemetry(devices, {
+        sampledAt: snapshot?.lastSuccessAt
+            ? new Date(snapshot.lastSuccessAt).toISOString()
+            : new Date().toISOString()
+    });
+}
 async function collectUnifiWifiNetworks() {
     const cookie = await getLocalSession();
     const response = await unifiClient.get('/proxy/network/api/s/default/rest/wlanconf', { headers: { 'Cookie': cookie } });
@@ -661,6 +674,35 @@ app.get('/api/network/switches', async (req, res) => {
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.switches', function: 'getSwitches', logMessage: 'Failed to fetch UniFi switches' });
     }
+});
+
+app.get('/api/network/devices/telemetry', async (_req, res) => {
+    try {
+        res.json(await getUnifiDeviceTelemetryCached());
+    } catch (error) {
+        apiError(res, error, {
+            code: ERROR_CODES.EXT_UNIFI_FAILED,
+            module: 'api.unifiDeviceTelemetry',
+            function: 'getCurrent',
+            logMessage: 'Failed to fetch UniFi device telemetry'
+        });
+    }
+});
+
+app.get('/api/network/devices/telemetry/history', async (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
+        module: 'api.unifiDeviceTelemetry', function: 'listHistory'
+    });
+    if (!query) return;
+    const cutoff = Date.now() - query.hours * 3600000;
+    res.json({
+        data: historyDb.getSince('unifiDevices', cutoff),
+        source: {
+            system: 'UniFi Network Controller',
+            endpoint: '/proxy/network/api/s/default/stat/device',
+            interpretation: 'direct_device_report'
+        }
+    });
 });
 
 // 3. 獲取 SSID 列表
@@ -1488,6 +1530,7 @@ const NOTIF_DEFAULTS = {
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
     triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
+    triggerUnifiDeviceTemp: true, unifiDeviceTempAlert: 75,
     triggerWiimOffline: false, triggerWiimHighVolume: false, triggerWiimPlaybackChange: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85,
     triggerNasDiskHealth: true, triggerNasOffline: false,
@@ -1643,6 +1686,7 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
         triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerClientWeakSignal: !!s.triggerClientWeakSignal, triggerClientConnectivity: !!s.triggerClientConnectivity, clientSignalAlert: s.clientSignalAlert ?? 75,
         triggerNetworkDeviceOffline: !!s.triggerNetworkDeviceOffline, triggerWifiSsidChange: !!s.triggerWifiSsidChange, triggerUnifiUpgrade: !!s.triggerUnifiUpgrade, triggerCloudOffline: !!s.triggerCloudOffline,
+        triggerUnifiDeviceTemp: s.triggerUnifiDeviceTemp !== false, unifiDeviceTempAlert: s.unifiDeviceTempAlert ?? 75,
         triggerWiimOffline: !!s.triggerWiimOffline, triggerWiimHighVolume: !!s.triggerWiimHighVolume, triggerWiimPlaybackChange: !!s.triggerWiimPlaybackChange, wiimVolumeAlert: s.wiimVolumeAlert ?? 80, triggerBlockAction: s.triggerBlockAction !== false,
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
@@ -1887,6 +1931,28 @@ async function notificationWatcher() {
             }
         } catch (error) {
             logRecoverableFailure('watcher.networkDevices', error, { module: 'watcher.notifications', function: 'checkNetworkDeviceStates', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
+    }
+    // 只有 UniFi 明確宣告 has_temperature=true，且回傳受支援的實際溫度欄位時才通知。
+    if (s.triggerUnifiDeviceTemp !== false) {
+        try {
+            const telemetry = await getUnifiDeviceTelemetryCached();
+            const threshold = s.unifiDeviceTempAlert ?? 75;
+            for (const device of telemetry.devices) {
+                const value = device.temperature?.value;
+                if (!Number.isFinite(value) || value < threshold) continue;
+                const last = unifiDeviceTempAlertTs.get(device.id) || 0;
+                if (Date.now() - last <= 30 * 60 * 1000) continue;
+                unifiDeviceTempAlertTs.set(device.id, Date.now());
+                await notify('🔥 UniFi 設備過熱警報',
+                    `${device.name}（${device.model || device.type || 'UniFi'}）\n`
+                    + `實際回報 ${value}°C (門檻 ${threshold}°C)\n`
+                    + `來源欄位 ${device.temperature.sourceField}`);
+            }
+        } catch (error) {
+            logRecoverableFailure('watcher.unifiDeviceTelemetry', error, {
+                module: 'watcher.notifications', function: 'checkUnifiDeviceTemperature', code: ERROR_CODES.EXT_UNIFI_FAILED
+            });
         }
     }
     // WiFi SSID 啟用狀態變更；使用設定本身的 stable id 作為去重基準。
@@ -2242,7 +2308,7 @@ async function notificationWatcher() {
     }
     // 去重 Set 上限維護 (防長期運行無限成長；iOS 隨機 MAC 會讓 knownClientMacs 持續累積)
     capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(notifiedNasSleepWakeIds); capSet(knownClientMacs, 4000);
-    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(clientPresenceStates, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000);
+    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(clientPresenceStates, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000); capMap(unifiDeviceTempAlertTs, 1000);
     notifBootstrapped = true;
 }
 const UCG_CPU_ALERT_SAMPLES = 3;
@@ -2254,6 +2320,7 @@ const clientPresenceStates = new Map();
 const networkDeviceStates = new Map();
 const wifiSsidStates = new Map();
 const unifiUpgradeAlertTs = new Map();
+const unifiDeviceTempAlertTs = new Map();
 const notifiedNasLogIds = new Set();
 const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
@@ -2434,14 +2501,32 @@ async function sampleNotificationSourceCaches() {
     await scanDockerNotifications(s);
 }
 
+async function sampleUnifiDeviceTelemetry() {
+    try {
+        const telemetry = await getUnifiDeviceTelemetryCached({ refresh: true });
+        if (!telemetry.devices.length) return;
+        historyDb.insertPoint('unifiDevices', telemetryHistoryPoint(telemetry), {
+            keepDays: appSettings.historyKeepDays,
+            hardCap: HISTORY_HARD_CAP
+        });
+    } catch (error) {
+        logRecoverableFailure('sampler.unifiDeviceTelemetry', error, {
+            module: 'scheduler.unifiDeviceTelemetry',
+            function: 'sample',
+            code: ERROR_CODES.EXT_UNIFI_FAILED
+        });
+    }
+}
+
 registerBackendSampler('trendHistory', sampleTrends, normalDeviceSampleMs);
 registerBackendSampler('notificationSourceCache', sampleNotificationSourceCaches, normalDeviceSampleMs);
+registerBackendSampler('unifiDeviceHistory', sampleUnifiDeviceTelemetry, normalDeviceSampleMs);
 scheduleServerJobs();
 systemMonitor.start();
 logger.info({
     module: 'scheduler', function: 'scheduleServerJobs', code: ERROR_CODES.WORKER_READY,
     message: 'Background schedulers ready', fields: {
-        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendHistory', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
+        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendHistory', 'unifiDeviceHistory', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
     }
 });
 
