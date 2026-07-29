@@ -22,7 +22,8 @@ const {
     parseWifiUpdate,
     parseUiPreferences,
     quoteEnvValue,
-    stringValue
+    stringValue,
+    unifiDeviceSshTargetIdsValue
 } = require('../server/policies/write-input-policy');
 
 function validationError(fn, field = undefined) {
@@ -49,6 +50,15 @@ test('bounded strings reject control characters instead of silently stripping or
         validationError(() => stringValue(malicious, { field: 'name', max: 40 }), 'name');
     }
     validationError(() => stringValue('x'.repeat(41), { field: 'name', max: 40 }), 'name');
+});
+
+test('UniFi Device SSH target allowlist canonicalizes MACs and rejects unsafe entries', () => {
+    assert.equal(unifiDeviceSshTargetIdsValue(' AA:BB:CC:DD:EE:FF,aa:bb:cc:dd:ee:ff '), 'aa:bb:cc:dd:ee:ff');
+    validationError(() => unifiDeviceSshTargetIdsValue('not-a-mac'), 'UNIFI_DEVICE_SSH_TARGET_IDS[0]');
+    validationError(() => unifiDeviceSshTargetIdsValue(Array(33).fill('aa:bb:cc:dd:ee:ff').map((value, index) => value.replace(/ff$/u, String(index).padStart(2, '0'))).join(',')), 'UNIFI_DEVICE_SSH_TARGET_IDS');
+    const fields = [{ key: 'UNIFI_DEVICE_SSH_TARGET_IDS' }, { key: 'UNIFI_DEVICE_SSH_PORT' }];
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_DEVICE_SSH_TARGET_IDS: '' }, fields), { UNIFI_DEVICE_SSH_TARGET_IDS: '' });
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_DEVICE_SSH_PORT: '22' }, fields), { UNIFI_DEVICE_SSH_PORT: '22' });
 });
 
 test('alias input canonicalizes either-case MACs and enforces the exact name boundary', () => {

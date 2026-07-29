@@ -29,10 +29,13 @@ Site Manager client 有頁數／項目上限、重複 token 防護、429 `Retry-
 - CPU 只接受 `system-stats.cpu` 的有限數值，畫面同步顯示來源欄位。
 - 溫度先要求設備明確回報 `has_temperature=true`，再接受已知的溫度欄位。
 - `has_temperature=false` 時，即使 payload 中出現看似溫度的其他數字也不採用。
-- 未回報溫度的設備顯示「不支援」或「本次未回報」，不使用估算值。
+- 未回報溫度時，僅在管理者已選取 MAC、設備在線且具有管理 IP、並設定獨立 Device SSH Authentication 時，才以固定唯讀指令讀取 `/sys/class/thermal/thermal_zone*/temp`。
+- Controller 真實溫度優先於 Device SSH；SSH 讀到的是內部感測器 zone，最高 zone 不必然是 CPU／SoC，也不等於外殼表面溫度。
+- Device SSH 使用 `UNIFI_DEVICE_SSH_*`，與 UCG Console SSH 和 UniFi 網頁登入帳密完全分離。`UNIFI_DEVICE_SSH_TARGET_IDS` 是最多 32 個以逗號分隔的 Controller MAC allowlist；留空即停用。
+- 未回報溫度的設備會清楚顯示未設定、未選取、認證失敗、不可達或沒有 thermal zone，不使用估算值。
 - 歷史寫入 SQLite `history` 表的 `unifiDevices` series；過熱通知只根據通過上述驗證的溫度。
 
-UCG 自身透過 SSH `ubnt-systool cputemp` 取得的核心溫度仍保留在既有 UCG 卡片，與控制器設備遙測分開標示來源。
+UCG 自身透過 SSH `ubnt-systool cputemp` 取得的核心溫度仍保留在既有 UCG 卡片，與控制器設備遙測分開標示來源。SSH 過期值只作資料品質提示，不會寫成新 history 點或觸發高溫通知；新的 Device SSH 取樣預設前景 60 秒、背景 300 秒、同時最多 2 台。
 
 ## 暫時威脅來源封鎖
 

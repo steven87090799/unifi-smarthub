@@ -329,13 +329,32 @@ const mockUnifiTelemetryDevices = [
     { id: '74:ac:b9:00:00:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm', cpu: 38.7 }
 ];
 function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
+    const isU7 = device.id === '74:ac:b9:00:00:01';
+    const sampledAt = new Date().toISOString();
+    const zones = isU7 ? [
+        { zone: 'thermal_zone0', type: 'cpu-thermal', temperatureC: 71.8, rawMilliCelsius: 71800 },
+        { zone: 'thermal_zone1', type: 'wifi0', temperatureC: 73.4, rawMilliCelsius: 73400 },
+        { zone: 'thermal_zone2', type: 'wifi1', temperatureC: 74.2, rawMilliCelsius: 74200 }
+    ] : [];
+    const temperature = isU7 ? {
+        value: 74.2, unit: 'celsius', sourceField: '/sys/class/thermal/thermal_zone*/temp',
+        sourceSystem: 'device_ssh', verifiedSource: true, sampledAt, stale: false
+    } : null;
     return {
         id: device.id, name: device.name, model: device.model, type: device.type,
         version: 'mock', online: true,
         cpu: { value: cpu, unit: 'percent', sourceField: 'system-stats.cpu', verifiedSource: true },
-        temperature: null,
+        temperature,
+        temperatureZones: zones,
+        temperatureSensorCount: zones.length,
+        cpuTemperatureC: isU7 ? 71.8 : null,
         temperatureCapability: false,
-        temperatureStatus: 'device_reported_unsupported'
+        temperatureStatus: isU7 ? 'device_ssh_reported' : 'device_ssh_not_selected',
+        directSshConfigured: true,
+        directSshSelected: isU7,
+        directSshLastSuccessAt: isU7 ? sampledAt : null,
+        directSshLastErrorAt: null,
+        directSshErrorCode: null
     };
 }
 app.get('/api/network/devices/telemetry', (_req, res) => {
@@ -347,7 +366,8 @@ app.get('/api/network/devices/telemetry', (_req, res) => {
             interpretation: 'simulated_direct_device_report'
         },
         devices: mockUnifiTelemetryDevices.map((device, index) =>
-            mockUnifiTelemetryDevice(device, +Math.max(0, device.cpu + Math.sin(Date.now() / 10000 + index) * 3).toFixed(1)))
+            mockUnifiTelemetryDevice(device, +Math.max(0, device.cpu + Math.sin(Date.now() / 10000 + index) * 3).toFixed(1))),
+        thermalSsh: { configured: true, selectedDeviceCount: 1, lastRunAt: new Date().toISOString(), running: 0, successfulDeviceCount: 1, failedDeviceCount: 0 }
     });
 });
 app.get('/api/network/devices/telemetry/history', (req, res) => {
@@ -359,11 +379,13 @@ app.get('/api/network/devices/telemetry/history', (req, res) => {
             devices: mockUnifiTelemetryDevices.map((device, index) => ({
                 id: device.id, name: device.name, model: device.model, type: device.type, online: true,
                 cpu: +Math.max(0, device.cpu + Math.sin(date.getTime() / 600000 + index) * 4).toFixed(1),
-                temperature: null,
+                temperature: device.id === '74:ac:b9:00:00:01' ? +(74 + Math.sin(date.getTime() / 900000) * 1.5).toFixed(1) : null,
                 cpuSourceField: 'system-stats.cpu',
-                temperatureSourceField: null,
-                temperatureStatus: 'device_reported_unsupported'
-            }))
+                temperatureSourceField: device.id === '74:ac:b9:00:00:01' ? '/sys/class/thermal/thermal_zone*/temp' : null,
+                temperatureSourceSystem: device.id === '74:ac:b9:00:00:01' ? 'device_ssh' : null,
+                temperatureSampledAt: device.id === '74:ac:b9:00:00:01' ? date.toISOString() : null,
+                temperatureStatus: device.id === '74:ac:b9:00:00:01' ? 'device_ssh_reported' : 'device_ssh_not_selected'
+    }))
         })),
         source: {
             system: 'Mock UniFi Network Controller',
@@ -371,6 +393,17 @@ app.get('/api/network/devices/telemetry/history', (req, res) => {
             interpretation: 'simulated_direct_device_report'
         }
     });
+});
+app.post('/api/network/devices/telemetry/thermal-probe', mockSecurity.requireAdmin, (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseUnifiDeviceThermalProbe(req.body));
+    if (!input) return;
+    if (input.deviceId !== '74:ac:b9:00:00:01') return res.status(400).json({ error: 'device_not_selected', code: ERROR_CODES.API_VALIDATION_FAILED });
+    res.json({ deviceId: input.deviceId, temperature: {
+        maxTemperatureC: 74.2, averageTemperatureC: 73.13, cpuTemperatureC: 71.8,
+        zones: mockUnifiTelemetryDevice(mockUnifiTelemetryDevices[0]).temperatureZones,
+        source: { system: 'UniFi device SSH', path: '/sys/class/thermal/thermal_zone*/temp', verifiedSource: true },
+        sampledAt: new Date().toISOString(), stale: false
+    }, errorCode: null });
 });
 
 // 2. 獲取活躍客戶端
@@ -1033,6 +1066,7 @@ setInterval(() => {
 const MOCK_APP_SETTING_RANGES = {
     deviceActiveFrontendPollSec: [1, 3600], deviceActiveBackendSampleSec: [1, 3600],
     deviceIdleBackendSampleSec: [1, 86400], heartbeatSec: [1, 3600], activeLeaseSec: [2, 3600],
+    unifiTelemetryActiveSec: [15, 3600], unifiTelemetryIdleSec: [60, 86400],
     upsFrontendPollSec: [1, 3600], upsActiveBackendSampleSec: [1, 3600], upsIdleBackendSampleSec: [1, 3600],
     upsHistoryFrontendPollSec: [1, 3600], upsPpbEventsFrontendPollSec: [1, 3600],
     upsPpbEventActiveBackendSampleSec: [1, 3600], upsPpbEventIdleBackendSampleSec: [1, 3600],
@@ -1043,6 +1077,7 @@ const MOCK_APP_SETTING_RANGES = {
 };
 let mockAppSettings = {
     deviceActiveFrontendPollSec: 5, deviceActiveBackendSampleSec: 5, deviceIdleBackendSampleSec: 600,
+    unifiTelemetryActiveSec: 60, unifiTelemetryIdleSec: 300,
     heartbeatSec: 5, activeLeaseSec: 30,
     upsFrontendPollSec: 3, upsActiveBackendSampleSec: 3, upsIdleBackendSampleSec: 10,
     upsHistoryFrontendPollSec: 10, upsPpbEventsFrontendPollSec: 10,
@@ -1407,6 +1442,7 @@ const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirna
 const mockConnDefaults = {
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
     UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo',
+    UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'device-monitor', UNIFI_DEVICE_SSH_TARGET_IDS: '74:ac:b9:00:00:01',
     UNIFI_NETWORK_API_URL: 'https://192.168.0.1/proxy/network/integration',
     UNIFI_NETWORK_TLS_VERIFY: 'true',
     UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
@@ -1423,6 +1459,7 @@ const mockConnDefaults = {
 };
 const mockSecretDefaults = {
     SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false,
+    UNIFI_DEVICE_SSH_PASSWORD: true,
     UNIFI_NETWORK_API_KEY: true,
     NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false, PPB_PASSWORD: false,
     ADGUARD_PASSWORD: false, LINUX_SSH_PASSWORD: false
@@ -1494,6 +1531,7 @@ app.get('/api/connections/status', (_req, res) => res.json({
     devices: [
         { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
         { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },
+        { name: 'UniFi 裝置 SSH 溫度', configured: true, ok: true, detail: '選取 1 台 · 成功 1 台' },
         { name: 'Site Manager', configured: false, ok: null, detail: '' },
         { name: 'UniFi Threat Blocking', configured: true, ok: true, detail: 'healthy' },
         { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },

@@ -104,7 +104,10 @@ const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createSseBackpressure } = require('./server/services/sse-backpressure');
 const { createArtworkCache, fetchArtwork } = require('./server/services/wiim-art-proxy');
 const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
+const { createUnifiDeviceThermalSshCollector, normalizeDeviceId, managementIp } = require('./server/integrations/unifi-device-thermal-ssh');
+const { createUnifiDeviceTemperatureAlertState } = require('./server/services/unifi-device-temperature-alert-state');
 const {
+    findTemperature,
     presentUnifiDeviceTelemetry,
     telemetryHistoryPoint
 } = require('./server/services/unifi-device-telemetry');
@@ -538,6 +541,11 @@ function generalCollectorCacheAgeMs() {
     return Math.max(normalDeviceSampleMs() * 2, 1000);
 }
 const deviceCollectorCache = createDeviceCollectorCache({ cacheAgeMs: generalCollectorCacheAgeMs });
+const unifiDeviceThermalCollector = createUnifiDeviceThermalSshCollector({
+    getEnvironment: () => process.env
+});
+const unifiThermalCache = createDeviceCollectorCache({ cacheAgeMs: () => unifiTelemetrySampleMs() });
+let unifiThermalLastRunAt = null;
 async function readDeviceCollector(name, collect, { refresh = false, allowStale = false } = {}) {
     return deviceCollectorCache.read(name, collect, { refresh, allowStale });
 }
@@ -595,11 +603,76 @@ function getUnifiNetworkDevicesCached(options) {
 async function getUnifiDeviceTelemetryCached(options) {
     const devices = await getUnifiNetworkDevicesCached(options);
     const snapshot = deviceCollectorSnapshot('unifi.networkDevices');
-    return presentUnifiDeviceTelemetry(devices, {
-        sampledAt: snapshot?.lastSuccessAt
-            ? new Date(snapshot.lastSuccessAt).toISOString()
-            : new Date().toISOString()
+    return presentUnifiDeviceTelemetrySnapshot(devices, snapshot?.lastSuccessAt);
+}
+function presentUnifiDeviceTelemetrySnapshot(devices, sampledAt = null) {
+    const directThermalByDevice = latestUnifiDeviceThermals(devices);
+    const telemetry = presentUnifiDeviceTelemetry(devices, {
+        sampledAt: sampledAt
+            ? new Date(sampledAt).toISOString()
+            : new Date().toISOString(),
+        directThermalByDevice,
+        thermalSshConfigured: unifiDeviceThermalCollector.configured()
     });
+    const entries = [...directThermalByDevice.values()];
+    telemetry.thermalSsh = {
+        ...unifiDeviceThermalCollector.status(),
+        lastRunAt: unifiThermalLastRunAt,
+        successfulDeviceCount: entries.filter(entry => entry.thermal && !entry.stale).length,
+        failedDeviceCount: entries.filter(entry => entry.errorCode).length
+    };
+    return telemetry;
+}
+
+function latestUnifiDeviceThermals(rawDevices) {
+    const targets = new Set(unifiDeviceThermalCollector.parseTargetIds());
+    const direct = new Map();
+    for (const device of Array.isArray(rawDevices) ? rawDevices : []) {
+        const id = normalizeDeviceId(device?.mac || device?._id);
+        if (!id || !targets.has(id)) continue;
+        const snapshot = unifiThermalCache.snapshot(`unifi.deviceThermal.${id}`);
+        const data = snapshot?.data;
+        const ageMs = snapshot?.lastSuccessAt ? Date.now() - snapshot.lastSuccessAt : Infinity;
+        direct.set(id, {
+            selected: true,
+            thermal: data?.thermal || null,
+            stale: !!data?.thermal && (!!snapshot?.lastErrorAt || ageMs > Math.max(unifiTelemetrySampleMs() * 3, 15 * 60 * 1000)),
+            lastSuccessAt: snapshot?.lastSuccessAt ? new Date(snapshot.lastSuccessAt).toISOString() : null,
+            lastErrorAt: snapshot?.lastErrorAt ? new Date(snapshot.lastErrorAt).toISOString() : null,
+            errorCode: snapshot?.lastError?.code || null
+        });
+    }
+    return direct;
+}
+
+async function refreshUnifiDeviceThermals(rawDevices) {
+    const targets = new Set(unifiDeviceThermalCollector.parseTargetIds());
+    const selected = (Array.isArray(rawDevices) ? rawDevices : []).filter(device => {
+        const id = normalizeDeviceId(device?.mac || device?._id);
+        return id && targets.has(id) && !findTemperature(device);
+    });
+    const results = await Promise.all(selected.map(async device => {
+        const id = normalizeDeviceId(device.mac || device._id);
+        const key = `unifi.deviceThermal.${id}`;
+        try {
+            await unifiThermalCache.read(key, async () => {
+                const result = await unifiDeviceThermalCollector.collect(device);
+                if (result.thermal) return result;
+                const error = new Error(result.errorCode || 'unknown_error');
+                error.code = result.errorCode || 'unknown_error';
+                throw error;
+            }, { refresh: true });
+            return { id, ok: true };
+        } catch (error) {
+            logRecoverableFailure(`sampler.unifiDeviceThermal:${id}`, error, {
+                module: 'scheduler.unifiDeviceThermal', function: 'collect', code: ERROR_CODES.EXT_UNIFI_FAILED,
+                fields: { device_id: id, error_code: error.code || 'unknown_error' }
+            });
+            return { id, ok: false };
+        }
+    }));
+    unifiThermalLastRunAt = new Date().toISOString();
+    return results;
 }
 async function collectUnifiWifiNetworks() {
     const cookie = await getLocalSession();
@@ -686,6 +759,38 @@ app.get('/api/network/devices/telemetry', async (_req, res) => {
             function: 'getCurrent',
             logMessage: 'Failed to fetch UniFi device telemetry'
         });
+    }
+});
+
+app.post('/api/network/devices/telemetry/thermal-probe', panelSecurity.requireAdmin, async (req, res) => {
+    const input = validatedInput(res, () => writeInput.parseUnifiDeviceThermalProbe(req.body), {
+        module: 'api.unifiDeviceTelemetry', function: 'thermalProbe'
+    });
+    if (!input) return;
+    try {
+        const devices = await getUnifiNetworkDevicesCached({ refresh: true });
+        const target = devices.find(device => normalizeDeviceId(device?.mac || device?._id) === input.deviceId);
+        if (!target) return res.status(404).json({ error: 'device_not_found', code: ERROR_CODES.API_NOT_FOUND });
+        if (!unifiDeviceThermalCollector.parseTargetIds().includes(input.deviceId)) {
+            return res.status(400).json({ error: 'device_not_selected', code: ERROR_CODES.API_VALIDATION_FAILED });
+        }
+        await refreshUnifiDeviceThermals([target]);
+        const direct = latestUnifiDeviceThermals([target]).get(input.deviceId);
+        res.json({
+            deviceId: input.deviceId,
+            temperature: direct?.thermal ? {
+                maxTemperatureC: direct.thermal.maxTemperatureC,
+                averageTemperatureC: direct.thermal.averageTemperatureC,
+                cpuTemperatureC: direct.thermal.cpuTemperatureC,
+                zones: direct.thermal.zones,
+                source: direct.thermal.source,
+                sampledAt: direct.thermal.sampledAt,
+                stale: direct.stale
+            } : null,
+            errorCode: direct?.errorCode || null
+        });
+    } catch (error) {
+        apiError(res, error, { code: ERROR_CODES.EXT_UNIFI_FAILED, module: 'api.unifiDeviceTelemetry', function: 'thermalProbe', logMessage: 'UniFi device SSH thermal probe failed' });
     }
 });
 
@@ -940,6 +1045,14 @@ function protectedManagementAddresses() {
     for (const key of ['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'ADGUARD_URL']) {
         try { addresses.add(new URL(process.env[key]).hostname); } catch { }
     }
+    const targets = new Set(unifiDeviceThermalCollector?.parseTargetIds?.() || []);
+    const devices = latestDeviceCollector('unifi.networkDevices') || [];
+    for (const device of devices) {
+        if (targets.has(normalizeDeviceId(device?.mac || device?._id))) {
+            const ip = managementIp(device);
+            if (ip) addresses.add(ip);
+        }
+    }
     return [...addresses];
 }
 
@@ -997,6 +1110,8 @@ const APP_DEFAULTS = {
     deviceActiveFrontendPollSec: 5,
     deviceActiveBackendSampleSec: 5,
     deviceIdleBackendSampleSec: 600,
+    unifiTelemetryActiveSec: 60,
+    unifiTelemetryIdleSec: 300,
     heartbeatSec: 5,
     activeLeaseSec: 30,
     // Preserve the previous UPS defaults: live status was 3s while viewed and
@@ -1023,6 +1138,7 @@ const APP_DEFAULTS = {
 const APP_SETTING_RANGES = {
     deviceActiveFrontendPollSec: [1, 3600], deviceActiveBackendSampleSec: [1, 3600],
     deviceIdleBackendSampleSec: [1, 86400], heartbeatSec: [1, 3600], activeLeaseSec: [2, 3600],
+    unifiTelemetryActiveSec: [15, 3600], unifiTelemetryIdleSec: [60, 86400],
     upsFrontendPollSec: [1, 3600], upsActiveBackendSampleSec: [1, 3600], upsIdleBackendSampleSec: [1, 3600],
     upsHistoryFrontendPollSec: [1, 3600], upsPpbEventsFrontendPollSec: [1, 3600],
     upsPpbEventActiveBackendSampleSec: [1, 3600], upsPpbEventIdleBackendSampleSec: [1, 3600],
@@ -1933,21 +2049,22 @@ async function notificationWatcher() {
             logRecoverableFailure('watcher.networkDevices', error, { module: 'watcher.notifications', function: 'checkNetworkDeviceStates', code: ERROR_CODES.EXT_UNIFI_FAILED });
         }
     }
-    // 只有 UniFi 明確宣告 has_temperature=true，且回傳受支援的實際溫度欄位時才通知。
+    // Controller 或設備 SSH 的新鮮真實溫度才會參與狀態機；stale/null/SSH 失敗一律不計數。
     if (s.triggerUnifiDeviceTemp !== false) {
         try {
             const telemetry = await getUnifiDeviceTelemetryCached();
             const threshold = s.unifiDeviceTempAlert ?? 75;
             for (const device of telemetry.devices) {
-                const value = device.temperature?.value;
-                if (!Number.isFinite(value) || value < threshold) continue;
-                const last = unifiDeviceTempAlertTs.get(device.id) || 0;
-                if (Date.now() - last <= 30 * 60 * 1000) continue;
-                unifiDeviceTempAlertTs.set(device.id, Date.now());
-                await notify('🔥 UniFi 設備過熱警報',
-                    `${device.name}（${device.model || device.type || 'UniFi'}）\n`
-                    + `實際回報 ${value}°C (門檻 ${threshold}°C)\n`
-                    + `來源欄位 ${device.temperature.sourceField}`);
+                const action = unifiDeviceTemperatureAlertState.evaluate(device, { threshold });
+                if (!action) continue;
+                const source = device.temperature?.sourceSystem === 'device_ssh' ? '設備 SSH' : 'Controller API';
+                const sensors = device.temperatureSensorCount ? `\n感測器：${device.temperatureSensorCount} 個` : '';
+                if (action.type === 'recovered') {
+                    await notify(`✅ ${device.name} 溫度已恢復`, `目前最高感測器：${action.value.toFixed(1)}°C\n恢復門檻：${action.threshold}°C`);
+                } else {
+                    await notify(`${action.type === 'critical' ? '🚨' : '🔥'} ${device.name} 內部溫度過高`,
+                        `目前最高感測器：${action.value.toFixed(1)}°C\n門檻：${threshold}°C\n來源：${source}${sensors}`);
+                }
             }
         } catch (error) {
             logRecoverableFailure('watcher.unifiDeviceTelemetry', error, {
@@ -2308,7 +2425,7 @@ async function notificationWatcher() {
     }
     // 去重 Set 上限維護 (防長期運行無限成長；iOS 隨機 MAC 會讓 knownClientMacs 持續累積)
     capSet(notifiedThreatIds); capSet(notifiedNasAlertIds); capSet(notifiedNasLogIds); capSet(notifiedNasSleepWakeIds); capSet(knownClientMacs, 4000);
-    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(clientPresenceStates, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000); capMap(unifiDeviceTempAlertTs, 1000);
+    capMap(clientIpByMac, 4000); capMap(clientSignalAlertTs, 4000); capMap(clientPresenceStates, 4000); capMap(networkDeviceStates, 1000); capMap(wifiSsidStates, 200); capMap(unifiUpgradeAlertTs, 1000);
     notifBootstrapped = true;
 }
 const UCG_CPU_ALERT_SAMPLES = 3;
@@ -2320,7 +2437,7 @@ const clientPresenceStates = new Map();
 const networkDeviceStates = new Map();
 const wifiSsidStates = new Map();
 const unifiUpgradeAlertTs = new Map();
-const unifiDeviceTempAlertTs = new Map();
+const unifiDeviceTemperatureAlertState = createUnifiDeviceTemperatureAlertState({ maxEntries: 1000 });
 const notifiedNasLogIds = new Set();
 const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
@@ -2381,6 +2498,11 @@ function normalDeviceSampleMs() {
     return (isDeviceSamplingActive('general')
         ? appSettings.deviceActiveBackendSampleSec
         : appSettings.deviceIdleBackendSampleSec) * 1000;
+}
+function unifiTelemetrySampleMs() {
+    return (isDeviceSamplingActive('general')
+        ? appSettings.unifiTelemetryActiveSec
+        : appSettings.unifiTelemetryIdleSec) * 1000;
 }
 function upsSampleMs() {
     return (isDeviceSamplingActive('ups')
@@ -2503,7 +2625,10 @@ async function sampleNotificationSourceCaches() {
 
 async function sampleUnifiDeviceTelemetry() {
     try {
-        const telemetry = await getUnifiDeviceTelemetryCached({ refresh: true });
+        const devices = await getUnifiNetworkDevicesCached({ refresh: true });
+        await refreshUnifiDeviceThermals(devices);
+        const snapshot = deviceCollectorSnapshot('unifi.networkDevices');
+        const telemetry = presentUnifiDeviceTelemetrySnapshot(devices, snapshot?.lastSuccessAt);
         if (!telemetry.devices.length) return;
         historyDb.insertPoint('unifiDevices', telemetryHistoryPoint(telemetry), {
             keepDays: appSettings.historyKeepDays,
@@ -2520,7 +2645,7 @@ async function sampleUnifiDeviceTelemetry() {
 
 registerBackendSampler('trendHistory', sampleTrends, normalDeviceSampleMs);
 registerBackendSampler('notificationSourceCache', sampleNotificationSourceCaches, normalDeviceSampleMs);
-registerBackendSampler('unifiDeviceHistory', sampleUnifiDeviceTelemetry, normalDeviceSampleMs);
+registerBackendSampler('unifiDeviceHistory', sampleUnifiDeviceTelemetry, unifiTelemetrySampleMs);
 scheduleServerJobs();
 systemMonitor.start();
 logger.info({
@@ -3443,6 +3568,7 @@ app.post('/api/settings', (req, res) => {
 const CONN_FIELDS = [
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
+    { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' }, { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true }, { key: 'UNIFI_DEVICE_SSH_TARGET_IDS' },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_TLS_VERIFY' },
@@ -3588,6 +3714,11 @@ app.post('/api/connections', (req, res) => {
         });
     }
     reconcilePendingRestartFields(desiredAfterWrite);
+    if (Object.keys(updates).some(key => key.startsWith('UNIFI_DEVICE_SSH_'))) {
+        unifiDeviceThermalCollector.reset();
+        unifiThermalCache.clear();
+        unifiThermalLastRunAt = null;
+    }
     if (Object.keys(updates).some(key => !CONN_FIELDS.find(field => field.key === key)?.restartRequired)) rebuildClients();
     sysLog('Connections', `已更新 ${Object.keys(updates).length} 個欄位: ${Object.keys(updates).join(', ')}`);
     res.json({
@@ -5066,10 +5197,13 @@ app.get('/api/connections/status', async (req, res) => {
         ? `${(upsSnapshot.lastGood.actualSource || '').toUpperCase()} · 電池 ${upsSnapshot.lastGood.battery ?? '--'}%${upsSnapshot.dataIsStale ? ` · 資料已過 ${Math.round((upsSnapshot.staleAgeMs || 0) / 1000)} 秒` : ''}`
         : (upsSnapshot.failureReason ? `尚無有效資料 · ${upsSnapshot.fetchHealth} ${upsSnapshot.consecutiveFailures}/${upsSnapshot.failureThreshold}` : '尚無資料');
     const hardwareSnapshot = deviceCollectorSnapshot('ucg.hardware');
+    const thermalTelemetry = latestDeviceCollector('unifi.networkDevices') || [];
+    const thermal = presentUnifiDeviceTelemetrySnapshot(thermalTelemetry, deviceCollectorSnapshot('unifi.networkDevices')?.lastSuccessAt).thermalSsh;
     res.json({
         devices: [
             { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: hardwareSnapshot?.lastErrorAt ? false : fresh(hardwareSnapshot?.lastSuccessAt, 120), detail: hardwareSnapshot?.data ? `CPU ${hardwareSnapshot.data.cpuTemp}°C / ${hardwareSnapshot.data.cpuUsage}%` : '尚無資料' },
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
+            { name: 'UniFi 裝置 SSH 溫度', configured: thermal.configured, ok: thermal.configured ? (thermal.failedDeviceCount ? false : (thermal.successfulDeviceCount ? true : null)) : null, detail: thermal.configured ? `選取 ${thermal.selectedDeviceCount} 台 · 成功 ${thermal.successfulDeviceCount} 台` : '尚未設定設備 SSH 帳密' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
@@ -5323,6 +5457,7 @@ function gracefulShutdown(signal, exitCode = 0) {
         backendSamplers.clear();
         ucgSshPool.close();
         linuxSshPool.close();
+        unifiDeviceThermalCollector.closeAll();
 
         resetSseUpstream();
         for (const client of sseClients) {

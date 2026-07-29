@@ -51,7 +51,15 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1000, now = () => Date.
         };
     }
 
-    return { read, snapshot };
+    function clear(name) {
+        if (name === undefined) {
+            entries.clear();
+            return;
+        }
+        entries.delete(name);
+    }
+
+    return { read, snapshot, clear };
 }
 
 module.exports = { createDeviceCollectorCache };

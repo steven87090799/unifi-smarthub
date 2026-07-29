@@ -15,8 +15,11 @@ test('dashboard renders live verified device telemetry and history for every man
     assert.match(html, /id="unifi-device-telemetry-cards"/);
     assert.match(html, /id="unifiDeviceTelemetryChart"/);
     assert.match(html, /device\.cpu\?\.sourceField/);
-    assert.match(html, /device\.temperature\.sourceField/);
-    assert.match(html, /設備向控制器回報：不支援溫度/);
+    assert.match(html, /device\.temperatureStatus/);
+    assert.match(html, /內部最高溫度/);
+    assert.match(html, /設備 SSH/);
+    assert.match(html, /unifi-device-ssh-target-reference/);
+    assert.match(html, /UNIFI_DEVICE_SSH_TARGET_IDS/);
     assert.match(html, /\/api\/network\/devices\/telemetry/);
     assert.match(html, /\/api\/network\/devices\/telemetry\/history\?hours=/);
 });
@@ -28,6 +31,8 @@ test('production and mock expose the same visible telemetry routes and notificat
         assert.match(source, /triggerUnifiDeviceTemp/);
         assert.match(source, /unifiDeviceTempAlert/);
     }
+    assert.match(production, /thermal-probe/);
+    assert.match(mock, /thermal-probe/);
 });
 
 test('integration contract documents capability-gated temperature truthfulness', () => {
@@ -35,4 +40,5 @@ test('integration contract documents capability-gated temperature truthfulness',
     assert.match(docs, /has_temperature=false/);
     assert.match(docs, /不使用估算值/);
     assert.match(docs, /system-stats\.cpu/);
+    assert.match(docs, /thermal_zone/);
 });

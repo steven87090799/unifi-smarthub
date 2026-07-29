@@ -390,7 +390,7 @@ function parseAppSettings(body, ranges) {
     return parsed;
 }
 
-const PORT_FIELDS = new Set(['SSH_PORT', 'NAS_PORT', 'PPB_PORT', 'ADGUARD_PORT', 'LINUX_SSH_PORT']);
+const PORT_FIELDS = new Set(['SSH_PORT', 'NAS_PORT', 'PPB_PORT', 'ADGUARD_PORT', 'LINUX_SSH_PORT', 'UNIFI_DEVICE_SSH_PORT']);
 const URL_FIELDS = new Set(['UNIFI_CONTROLLER_URL', 'UNIFI_NETWORK_API_URL', 'NAS_MONITOR_URL', 'ADGUARD_URL']);
 const UUID_FIELDS = new Set(['UNIFI_NETWORK_SITE_ID', 'UNIFI_THREAT_BLOCK_LIST_ID']);
 const HOST_FIELDS = new Set([
@@ -414,17 +414,31 @@ function canonicalPort(value, field) {
     return normalized;
 }
 
+function unifiDeviceSshTargetIdsValue(value, field = 'UNIFI_DEVICE_SSH_TARGET_IDS') {
+    if (typeof value !== 'string') reject(`${field} must be a string`, field);
+    if (CONTROL_CHARACTERS.test(value)) reject(`${field} contains control characters`, field);
+    if (value.length > 2048) reject(`${field} is too long`, field);
+    const values = value.split(',').map(entry => entry.trim()).filter(Boolean);
+    if (values.length > 32) reject(`${field} supports at most 32 MAC addresses`, field);
+    const normalized = values.map((entry, index) => macValue(entry, `${field}[${index}]`));
+    return [...new Set(normalized)].join(',');
+}
+
 function parseConnectionUpdates(body, fields) {
     const definitions = new Map(fields.map(field => [field.key, field]));
     exactObject(body, { allowed: [...definitions.keys()] });
     const updates = {};
     for (const [key, raw] of Object.entries(body)) {
         if (typeof raw !== 'string') reject(`${key} must be a string`, key);
-        if (raw.trim() === '') continue;
+        if (raw.trim() === '') {
+            if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') updates[key] = '';
+            continue;
+        }
         const definition = definitions.get(key);
         const max = definition.secret ? 4096 : 2048;
         let value = stringValue(raw, { field: key, min: 1, max });
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
+        else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(raw, key);
         else if (URL_FIELDS.has(key)) {
             value = key === 'UNIFI_NETWORK_API_URL'
                 ? unifiNetworkApiUrlValue(value, key)
@@ -461,6 +475,11 @@ function parseConnectionUpdates(body, fields) {
     return updates;
 }
 
+function parseUnifiDeviceThermalProbe(body) {
+    exactObject(body, { allowed: ['deviceId'], required: ['deviceId'] });
+    return { deviceId: macValue(body.deviceId, 'deviceId') };
+}
+
 function quoteEnvValue(value) {
     if (typeof value !== 'string' || CONTROL_CHARACTERS.test(value)) {
         reject('environment value must be a control-character-free string');
@@ -493,6 +512,7 @@ module.exports = {
     parseAlertConfig,
     parseAppSettings,
     parseConnectionUpdates,
+    parseUnifiDeviceThermalProbe,
     parseDeviceRestriction,
     parseEmptyBody,
     parseNotificationSettings,
@@ -503,4 +523,5 @@ module.exports = {
     parseUiPreferences,
     quoteEnvValue,
     stringValue
+    ,unifiDeviceSshTargetIdsValue
 };

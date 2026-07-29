@@ -1540,7 +1540,7 @@
                         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-5">
                             <div>
                                 <h3 class="text-sm font-bold text-white tracking-wider">UniFi 設備 CPU 與溫度</h3>
-                                <p class="text-[10px] text-slate-400 mt-1">只採用設備經 UniFi 控制器直接回報的欄位；未回報溫度時會明確標示，不估算、不以外殼溫度代替。</p>
+                                <p class="text-[10px] text-slate-400 mt-1">優先採用 Controller 直接回報；管理者選取的設備才會以唯讀 SSH 讀取 thermal zone。沒有可信資料時不估算、不以外殼溫度代替。</p>
                             </div>
                             <span id="unifi-telemetry-source"
                                 class="self-start text-[8px] px-2 py-1 rounded border border-slate-700 text-slate-400 uppercase font-bold">驗證來源中</span>
@@ -1551,7 +1551,7 @@
                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
                             <div>
                                 <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">歷史趨勢</p>
-                                <p class="text-[9px] text-slate-600">CPU 使用率為實線；只有設備真正回報溫度時才加入虛線溫度曲線。</p>
+                                <p class="text-[9px] text-slate-600">CPU 使用率為實線；只有 Controller 或設備 SSH 新鮮回報的真實溫度才加入虛線溫度曲線。</p>
                             </div>
                             <div class="flex gap-1 text-[9px]">
                                 <button onclick="setUnifiTelemetryHistoryHours(2, this)" class="unifi-telemetry-range px-2.5 py-1 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 font-bold">2 小時</button>
@@ -3255,6 +3255,13 @@
                                         id="conn-UNIFI_PASSWORD" type="password"
                                         class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                 </div>
+                                <div class="border-t border-slate-800/70 pt-3 mt-1 space-y-2.5">
+                                    <p class="text-[10px] font-bold text-amber-400">UniFi Network 裝置 SSH 溫度監測</p>
+                                    <p class="text-[9px] text-slate-500 leading-relaxed">此帳密是 UniFi Network 的 Device SSH Authentication，不是 UCG Console SSH，也不是 UniFi 網頁登入密碼。只會對下方選取的 MAC 執行固定唯讀 thermal zone 指令。</p>
+                                    <div class="grid grid-cols-3 gap-2"><div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Port</label><input id="conn-UNIFI_DEVICE_SSH_PORT" placeholder="22" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div><div class="col-span-2"><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Username</label><input id="conn-UNIFI_DEVICE_SSH_USER" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div></div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Password <span id="connset-UNIFI_DEVICE_SSH_PASSWORD" class="normal-case"></span></label><input id="conn-UNIFI_DEVICE_SSH_PASSWORD" type="password" class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">溫度監測設備（MAC 逗號清單，最多 32 台）</label><input id="conn-UNIFI_DEVICE_SSH_TARGET_IDS" placeholder="aa:bb:cc:dd:ee:ff" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"><p class="text-[8px] text-slate-600 mt-1">留空即停用 Device SSH 溫度監測。</p><div id="unifi-device-ssh-target-reference" class="mt-2 space-y-1 text-[8px] text-slate-500 mono">載入 Controller 設備參考清單…</div></div>
+                                </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Site Manager API Key
                                         (選填) <span id="connset-UNIFI_API_KEY" class="normal-case"></span></label><input
                                         id="conn-UNIFI_API_KEY" type="password"
@@ -3575,6 +3582,16 @@
                                         min="1"
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-amber-500/15 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UniFi 設備遙測：前景取樣</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">Controller CPU 與選取設備的 SSH thermal zone 共用此節奏；不使用一般設備的 5 秒取樣。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-unifiTelemetryActiveSec" min="15" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-amber-500/15 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UniFi 設備遙測：背景取樣</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">沒有可見 SmartHub 分頁時使用；預設 300 秒，避免對 AP／Switch 建立過密 SSH 連線。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-unifiTelemetryIdleSec" min="60" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">瀏覽器 heartbeat 間隔</label>
@@ -6097,7 +6114,11 @@
                     interaction: { mode: 'index', intersect: false },
                     plugins: {
                         legend: { labels: { color: '#94a3b8', boxWidth: 20, boxHeight: 2, font: { size: 9 } } },
-                        tooltip: { callbacks: { label: context => `${context.dataset.label}: ${context.parsed.y}${context.dataset.yAxisID === 'yTemp' ? '°C' : '%'}` } }
+                        tooltip: { callbacks: { label: context => {
+                            const unit = context.dataset.yAxisID === 'yTemp' ? '°C' : '%';
+                            const source = context.dataset.temperatureSources?.[context.dataIndex];
+                            return `${context.dataset.label}: ${context.parsed.y}${unit}${source === 'device_ssh' ? ' · 設備 SSH' : source === 'controller' ? ' · Controller API' : ''}`;
+                        } } }
                     },
                     scales: {
                         x: { ticks: { color: '#64748b', font: { size: 8 }, maxTicksLimit: 10 }, grid: { display: false } },
@@ -6114,7 +6135,7 @@
             if (!wrap || !badge) return;
             const devices = payload.devices || [];
             const simulated = String(payload.source?.interpretation || '').startsWith('simulated');
-            badge.textContent = simulated ? 'DEMO DATA' : 'CONTROLLER DIRECT';
+            badge.textContent = simulated ? 'DEMO DATA' : 'VERIFIED SOURCES';
             badge.className = `self-start text-[8px] px-2 py-1 rounded border uppercase font-bold ${simulated ? 'border-amber-500/30 text-amber-400' : 'border-emerald-500/30 text-emerald-400'}`;
             badge.title = `${payload.source?.system || 'UniFi'} · ${payload.source?.endpoint || ''}`;
             if (!devices.length) {
@@ -6124,11 +6145,26 @@
             wrap.innerHTML = devices.map(device => {
                 const cpu = Number.isFinite(device.cpu?.value) ? `${device.cpu.value.toFixed(1)}%` : '--';
                 const temperature = Number.isFinite(device.temperature?.value) ? `${device.temperature.value.toFixed(1)}°C` : '--';
-                let temperatureNote = '設備向控制器回報：不支援溫度';
-                if (device.temperatureStatus === 'reported') temperatureNote = `實際感測欄位：${device.temperature.sourceField}`;
-                else if (device.temperatureStatus === 'value_not_reported') temperatureNote = '設備宣告支援，但本次沒有回傳數值';
-                else if (device.type === 'udm') temperatureNote += '；UCG 的 SSH 實測溫度顯示於上方';
+                const statusText = {
+                    controller_reported: `Controller API · ${device.temperature?.sourceField || ''}`,
+                    controller_value_not_reported: 'Controller 宣告支援，但本次未回報數值；設備 SSH 尚未設定',
+                    controller_unsupported: 'Controller 未回報，設備 SSH 尚未設定',
+                    device_ssh_reported: '設備 SSH · /sys/class/thermal/thermal_zone*/temp',
+                    device_ssh_stale: '上次設備 SSH 資料已過期',
+                    device_ssh_not_configured: 'Controller 未回報，設備 SSH 尚未設定',
+                    device_ssh_waiting: '等待第一次 SSH 取樣',
+                    device_ssh_not_selected: 'Controller 未回報，未選取此設備',
+                    device_ssh_no_management_ip: 'Controller 未回報，設備沒有管理 IP',
+                    device_ssh_auth_failed: '設備 SSH 認證失敗',
+                    device_ssh_unreachable: '設備 SSH 無法連線',
+                    device_ssh_no_thermal_zone: '設備沒有可讀取的 thermal zone',
+                    device_ssh_invalid_response: '設備 SSH 回應無有效 thermal zone'
+                };
+                let temperatureNote = statusText[device.temperatureStatus] || 'Controller 未回報溫度';
+                if (device.type === 'udm' && !device.temperature) temperatureNote += '；UCG 的 SSH CPU 溫度顯示於上方';
                 const stateClass = device.online ? 'bg-emerald-500' : 'bg-red-500';
+                const zones = (device.temperatureZones || []).map(zone => `<li>${escapeHtml(zone.zone)} · ${escapeHtml(zone.type)} · ${escapeHtml(Number(zone.temperatureC).toFixed(1))}°C</li>`).join('');
+                const freshness = device.temperature?.sampledAt ? `${device.temperature.stale ? '資料已過期；' : ''}最後成功：${new Date(device.temperature.sampledAt).toLocaleString('zh-TW')}` : '';
                 return `<article class="rounded-xl border border-slate-800/70 bg-slate-950/45 p-4">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
@@ -6144,11 +6180,14 @@
                             <p class="text-[8px] text-slate-600 mono">${escapeHtml(device.cpu?.sourceField || '未回報')}</p>
                         </div>
                         <div>
-                            <p class="text-[9px] text-slate-500 uppercase font-bold">設備溫度</p>
+                            <p class="text-[9px] text-slate-500 uppercase font-bold">內部最高溫度</p>
                             <p class="text-2xl font-black mono mt-0.5 ${device.temperature ? 'text-amber-400' : 'text-slate-600'}">${escapeHtml(temperature)}</p>
                             <p class="text-[8px] text-slate-600">${escapeHtml(temperatureNote)}</p>
                         </div>
                     </div>
+                    ${freshness ? `<p class="mt-3 text-[8px] ${device.temperature?.stale ? 'text-amber-400' : 'text-slate-600'}">${escapeHtml(freshness)}${device.temperatureSensorCount ? ` · ${device.temperatureSensorCount} 個感測器` : ''}</p>` : ''}
+                    ${device.cpuTemperatureC != null ? `<p class="mt-1 text-[8px] text-slate-500">CPU／SoC 感測器 ${escapeHtml(Number(device.cpuTemperatureC).toFixed(1))}°C</p>` : ''}
+                    ${zones ? `<details class="mt-2 text-[8px] text-slate-500"><summary class="cursor-pointer">thermal zones</summary><ul class="mt-1 mono space-y-0.5">${zones}</ul></details>` : ''}
                 </article>`;
             }).join('');
         }
@@ -6177,13 +6216,14 @@
                 const color = UNIFI_TELEMETRY_COLORS[index % UNIFI_TELEMETRY_COLORS.length];
                 const cpuValues = points.map(point => (point.devices || []).find(item => item.id === device.id)?.cpu ?? null);
                 const tempValues = points.map(point => (point.devices || []).find(item => item.id === device.id)?.temperature ?? null);
+                const tempSources = points.map(point => (point.devices || []).find(item => item.id === device.id)?.temperatureSourceSystem ?? null);
                 if (cpuValues.some(Number.isFinite)) datasets.push({
                     label: `${device.name} CPU`, data: cpuValues, borderColor: color, backgroundColor: color,
                     tension: 0.25, pointRadius: 0, spanGaps: true, yAxisID: 'yCpu'
                 });
                 if (tempValues.some(Number.isFinite)) datasets.push({
                     label: `${device.name} 溫度`, data: tempValues, borderColor: color, backgroundColor: color,
-                    borderDash: [5, 4], borderWidth: 2, tension: 0.25, pointRadius: 0, spanGaps: true, yAxisID: 'yTemp'
+                    borderDash: [5, 4], borderWidth: 2, tension: 0.25, pointRadius: 0, spanGaps: true, yAxisID: 'yTemp', temperatureSources: tempSources
                 });
             });
             unifiDeviceTelemetryChart.data.labels = points.map(point =>
@@ -8332,6 +8372,8 @@
                 set('srv-deviceActiveFrontendPollSec', s.deviceActiveFrontendPollSec);
                 set('srv-deviceActiveBackendSampleSec', s.deviceActiveBackendSampleSec);
                 set('srv-deviceIdleBackendSampleSec', s.deviceIdleBackendSampleSec);
+                set('srv-unifiTelemetryActiveSec', s.unifiTelemetryActiveSec ?? 60);
+                set('srv-unifiTelemetryIdleSec', s.unifiTelemetryIdleSec ?? 300);
                 set('srv-heartbeatSec', s.heartbeatSec); set('srv-activeLeaseSec', s.activeLeaseSec);
                 set('srv-upsFrontendPollSec', s.upsFrontendPollSec);
                 set('srv-upsActiveBackendSampleSec', s.upsActiveBackendSampleSec);
@@ -8391,6 +8433,8 @@
                 deviceActiveFrontendPollSec: num('srv-deviceActiveFrontendPollSec'),
                 deviceActiveBackendSampleSec: num('srv-deviceActiveBackendSampleSec'),
                 deviceIdleBackendSampleSec: num('srv-deviceIdleBackendSampleSec'),
+                unifiTelemetryActiveSec: num('srv-unifiTelemetryActiveSec'),
+                unifiTelemetryIdleSec: num('srv-unifiTelemetryIdleSec'),
                 heartbeatSec: num('srv-heartbeatSec'), activeLeaseSec: num('srv-activeLeaseSec'),
                 upsFrontendPollSec: num('srv-upsFrontendPollSec'),
                 upsActiveBackendSampleSec: num('srv-upsActiveBackendSampleSec'),
@@ -8443,7 +8487,21 @@
                     if (badge) badge.innerHTML = '<span class="text-amber-400">已儲存，待 recreate</span>';
                 }
                 renderConnStatus();
+                renderUnifiDeviceSshTargetReference();
             } catch (e) { dbg('Conn', '載入失敗', e); }
+        }
+
+        async function renderUnifiDeviceSshTargetReference() {
+            const wrap = document.getElementById('unifi-device-ssh-target-reference');
+            if (!wrap) return;
+            try {
+                const response = await fetch('/api/network/devices/telemetry');
+                if (!response.ok) throw new Error('telemetry unavailable');
+                const devices = (await response.json()).devices || [];
+                wrap.innerHTML = devices.length ? `<p class="text-slate-600">Controller 設備參考：</p>${devices.map(device => `<p>${escapeHtml(device.name)} · ${escapeHtml(device.id)}</p>`).join('')}` : '<p>Controller 沒有回傳設備</p>';
+            } catch {
+                wrap.textContent = '目前無法取得 Controller 設備清單；請稍後再試。';
+            }
         }
 
         // 由後端記憶體現況直接彙整 (原本從側邊欄 DOM 推斷，時常不準)
@@ -8465,7 +8523,7 @@
             const body = {};
             document.querySelectorAll('.conn-input').forEach(el => {
                 const key = el.id.replace('conn-', '');
-                if (el.value && el.value.trim()) body[key] = el.value.trim();
+                if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS' || (el.value && el.value.trim())) body[key] = el.value.trim();
             });
             dbg('Conn', '儲存欄位:', Object.keys(body));
             try {

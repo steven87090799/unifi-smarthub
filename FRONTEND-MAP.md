@@ -37,7 +37,7 @@
 |---|---|
 | `renderPinned()` | 總覽釘選卡片 |
 | `fetchTrends()` | 趨勢與資料品質提示 |
-| `fetchHardware()`／`fetchClients()`／`fetchWiFiNetworks()` | UCG／客戶端／WiFi |
+| `fetchHardware()`／`fetchUnifiDeviceTelemetry()`／`fetchClients()`／`fetchWiFiNetworks()` | UCG、受管理設備 CPU／真實溫度、客戶端／WiFi |
 | `fetchCloud*()` | Site Manager |
 | `fetchThreats()`／`fetchThreatBlocks()` | 威脅與暫時封鎖 |
 | `updateGuestQR()` | 同源 admin-only WiFi QR |

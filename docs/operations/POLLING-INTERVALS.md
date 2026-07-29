@@ -16,6 +16,17 @@
 
 一般 collector 包含趨勢、UCG 背景 SSH 取樣、NAS、WiiM、Linux、UniFi clients／threats／設備 CPU 與溫度、ISP 與 AdGuard。collector 先更新 latest cache、寫入既有歷史資料，再由主要讀取 API 回傳 cache；只有 cache 不存在或已過期時，API 才會以 singleflight 補取一次。快取同時保存最後嘗試、最後成功、最後錯誤與連續失敗數；舊資料可供畫面顯示，但 watcher 會依失敗狀態判定離線，不會把舊資料當成健康。
 
+## UniFi Device SSH 溫度
+
+Device SSH 與一般設備取樣完全分開，避免可見頁面的 5 秒更新頻率造成 AP／Switch SSH 壓力。
+
+| 設定欄位 | 預設 | 實際控制內容 |
+|---|---:|---|
+| `unifiTelemetryActiveSec` | 60 秒 | 有可見 SmartHub 分頁時，Controller telemetry 與選取設備 thermal zone 的取樣。|
+| `unifiTelemetryIdleSec` | 300 秒 | 無可見分頁時的相同取樣。|
+
+每台 allowlist 設備有獨立 cache 與 singleflight，最多同時建立 2 個 SSH 工作。UI/API 只讀取最後快取，不能因畫面刷新建立 SSH。失敗會保留最後成功的資料並標記 stale；stale 值不會寫成新 history 樣本，也不會觸發溫度通知。
+
 ## UPS
 
 UPS 不使用一般設備的 600 秒 Idle 值，維持自己的獨立高頻設定：

@@ -28,7 +28,7 @@ test('presents real controller CPU while refusing temperature when capability is
         verifiedSource: true
     });
     assert.equal(telemetry.devices[0].temperature, null);
-    assert.equal(telemetry.devices[0].temperatureStatus, 'device_reported_unsupported');
+    assert.equal(telemetry.devices[0].temperatureStatus, 'controller_unsupported');
 });
 
 test('accepts only bounded temperature from an explicitly capable device', () => {
@@ -60,6 +60,23 @@ test('history contains presented values and their exact source fields', () => {
         temperature: 51,
         cpuSourceField: 'system-stats.cpu',
         temperatureSourceField: 'general_temperature',
-        temperatureStatus: 'reported'
+        temperatureSourceSystem: 'controller',
+        temperatureStatus: 'controller_reported',
+        temperatureSampledAt: '2026-07-29T00:00:00.000Z'
     });
+});
+
+test('uses fresh device SSH only when controller has no verified temperature, while stale is marked and excluded from history', () => {
+    const device = { mac: 'AA:BB:CC:DD:EE:FF', state: 1, has_temperature: false, 'system-stats': { cpu: 4 } };
+    const direct = new Map([['aa:bb:cc:dd:ee:ff', { selected: true, thermal: {
+        maxTemperatureC: 74.2, cpuTemperatureC: 71.1, sampledAt: '2026-07-29T00:01:00.000Z',
+        zones: [{ zone: 'thermal_zone0', type: 'soc', temperatureC: 71.1 }], source: { path: '/sys/class/thermal/thermal_zone*/temp' }
+    }, stale: false }]]);
+    const telemetry = presentUnifiDeviceTelemetry([device], { directThermalByDevice: direct, thermalSshConfigured: true });
+    assert.equal(telemetry.devices[0].temperature.sourceSystem, 'device_ssh');
+    assert.equal(telemetry.devices[0].temperatureStatus, 'device_ssh_reported');
+    direct.get('aa:bb:cc:dd:ee:ff').stale = true;
+    const stale = presentUnifiDeviceTelemetry([device], { directThermalByDevice: direct, thermalSshConfigured: true });
+    assert.equal(stale.devices[0].temperature.stale, true);
+    assert.equal(telemetryHistoryPoint(stale).devices[0].temperature, null);
 });

@@ -9,7 +9,7 @@
 | 面板安全 | `server/middleware/panel-security.js`、`server/routes/panel-auth-routes.js` |
 | 公開登入快照 | `server/services/public-system-health.js` |
 | UniFi 本地／雲端 | `unifiLogin`、`server/integrations/site-manager-client.js` |
-| UCG／Linux SSH | `server/integrations/ssh-command-stream.js` |
+| UCG／Linux SSH | `server/integrations/ssh-command-stream.js`；UniFi Device thermal 另由 `server/integrations/unifi-device-thermal-ssh.js`（allowlist-only） |
 | SQLite／設定 | `DATA_DIR`, `historyDb`, `db.js`, `server/storage/` |
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
