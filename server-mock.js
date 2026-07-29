@@ -1365,6 +1365,7 @@ const mockConnDefaults = {
     NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '192.168.0.170',
     UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
+    PPB_TLS_VERIFY: 'true', PPB_TLS_INSECURE: 'false', PPB_CA_FILE: '',
     ADGUARD_URL: '', ADGUARD_HOST: '', ADGUARD_PORT: '80',
     ADGUARD_ALLOW_INSECURE_HTTP: 'false', ADGUARD_TLS_VERIFY: 'true', ADGUARD_CA_FILE: '',
     ADGUARD_USER: '',
@@ -1455,6 +1456,14 @@ app.get('/api/connections/status', (_req, res) => res.json({
 app.post('/api/connections', (req, res) => {
     const updates = validatedInput(res, () => writeInput.parseConnectionUpdates(req.body, MOCK_CONN_FIELDS));
     if (!updates) return;
+    try { writeInput.validatePpbTlsSettings({ ...mockConn, ...updates }); }
+    catch (error) {
+        return mockApiError(res, error, {
+            status: 400,
+            code: ERROR_CODES.API_VALIDATION_FAILED,
+            publicMessage: error.message
+        });
+    }
     const adguardError = validateMockAdguardConnection(updates);
     if (adguardError) {
         return mockApiError(res, adguardError, {
@@ -1555,6 +1564,21 @@ app.get('/api/system/status', (_req, res) => {
         disk: { status: 'unknown', usage_percent: null, free_bytes: null },
         database: { status: 'unknown', type: 'mock', latency_ms: null, pool: { type: 'mock', size: 0, active: 0, available: 0, waiting: 0 }, slow_queries: 0, failed_queries: 0 },
         worker: { status: 'healthy', active_tasks: 0, queued_tasks: 0, failed_tasks: 0, completed_tasks: 0, retry_tasks: 0, skipped_tasks: 0, long_running_tasks: 0, stuck_tasks: 0 },
+        runtime: {
+            activityLease: {
+                sessionCount: 0, activeScopes: [], evictions: 0,
+                maxSessions: 1000, expiredSessionsRemoved: 0
+            },
+            backendSampling: { configuredScopes: [], activeScopes: [], samplers: {} },
+            sshPools: {
+                ucg: { state: 'idle', connecting: false, connected: false, closed: false },
+                linux: { state: 'idle', connecting: false, connected: false, closed: false }
+            },
+            ppb: {
+                client: { state: 'idle', agentActive: false, tokenActive: false, tlsVerification: true },
+                sync: { initialized: false, inFlight: false, lastAttemptAt: 0, lastSuccessAt: 0 }
+            }
+        },
         active_issues: memoryIssue, resolved_issues: [], trend_data: mockSystemTrend
     });
 });

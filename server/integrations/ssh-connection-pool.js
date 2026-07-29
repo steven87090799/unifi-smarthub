@@ -28,10 +28,13 @@ function createSshConnectionPool({
 
     let connection = null;
     let connectionKey = null;
-    let connecting = null;
+    let connectingClient = null;
+    let connectingPromise = null;
+    let rejectConnecting = null;
     let idleTimer = null;
     let operationTail = Promise.resolve();
     let closed = false;
+    const endedClients = new WeakSet();
 
     function clearIdleTimer() {
         clearTimeout(idleTimer);
@@ -39,12 +42,16 @@ function createSshConnectionPool({
     }
 
     function detachAndEnd(target) {
-        if (!target) return;
+        if (!target || endedClients.has(target)) return;
+        endedClients.add(target);
         target.removeAllListeners('ready');
         target.removeAllListeners('error');
         target.removeAllListeners('close');
         target.removeAllListeners('end');
         target.removeAllListeners('keyboard-interactive');
+        // A transport can still emit a late EventEmitter "error" after end().
+        // Keep a no-op sink so shutdown cannot become an uncaught exception.
+        target.on('error', () => {});
         try { target.end(); } catch { }
     }
 
@@ -66,10 +73,11 @@ function createSshConnectionPool({
         if (closed) return Promise.reject(new Error('SSH connection pool is closed'));
         if (connection && connectionKey === key) return Promise.resolve(connection);
         if (connection && connectionKey !== key) invalidate(connection);
-        if (connecting) return connecting;
+        if (connectingPromise) return connectingPromise;
 
         const candidate = createConnection();
-        connecting = new Promise((resolve, reject) => {
+        connectingClient = candidate;
+        connectingPromise = new Promise((resolve, reject) => {
             let settled = false;
             const fail = error => {
                 if (settled) return;
@@ -77,9 +85,16 @@ function createSshConnectionPool({
                 detachAndEnd(candidate);
                 reject(error);
             };
+            rejectConnecting = fail;
             candidate.once('ready', () => {
                 if (settled) return;
+                if (closed) {
+                    fail(new Error('SSH connection pool is closed'));
+                    return;
+                }
                 settled = true;
+                connectingClient = null;
+                rejectConnecting = null;
                 connection = candidate;
                 connectionKey = key;
                 candidate.on('error', () => invalidate(candidate));
@@ -94,8 +109,12 @@ function createSshConnectionPool({
             }
             try { candidate.connect({ ...config, readyTimeout: readyTimeoutMs }); }
             catch (error) { fail(error); }
-        }).finally(() => { connecting = null; });
-        return connecting;
+        }).finally(() => {
+            if (connectingClient === candidate) connectingClient = null;
+            rejectConnecting = null;
+            connectingPromise = null;
+        });
+        return connectingPromise;
     }
 
     function run(command, options) {
@@ -122,12 +141,25 @@ function createSshConnectionPool({
     }
 
     function close() {
+        if (closed) return;
         closed = true;
         clearIdleTimer();
+        const reject = rejectConnecting;
+        if (reject) reject(new Error('SSH connection pool is closed'));
+        else if (connectingClient) detachAndEnd(connectingClient);
         if (connection) invalidate(connection);
     }
 
-    return Object.freeze({ execute: executeSerial, close });
+    return Object.freeze({
+        execute: executeSerial,
+        close,
+        snapshot: () => ({
+            state: closed ? 'closed' : connection ? 'ready' : connectingClient ? 'connecting' : 'idle',
+            connecting: !!connectingClient,
+            connected: !!connection,
+            closed
+        })
+    });
 }
 
 module.exports = {

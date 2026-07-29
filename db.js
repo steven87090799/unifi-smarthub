@@ -167,6 +167,14 @@ function createHistoryDb(dataDir, options = {}) {
         );
         CREATE INDEX IF NOT EXISTS idx_ups_power_events_time
             ON ups_power_events(COALESCE(event_ts, observed_ts) DESC, id DESC);
+        CREATE TABLE IF NOT EXISTS integration_sync_state (
+            source TEXT PRIMARY KEY,
+            initialized_at INTEGER,
+            last_success_at INTEGER,
+            last_external_id TEXT,
+            last_event_ts INTEGER,
+            updated_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS block_history (
             id INTEGER PRIMARY KEY,
             ts INTEGER NOT NULL,
@@ -481,6 +489,23 @@ function createHistoryDb(dataDir, options = {}) {
             SELECT id FROM ups_power_events
             ORDER BY COALESCE(event_ts, observed_ts) DESC, id DESC LIMIT -1 OFFSET 1000
         )
+    `);
+    const getIntegrationSyncStateStmt = db.prepare(`
+        SELECT source, initialized_at, last_success_at, last_external_id, last_event_ts, updated_at
+        FROM integration_sync_state WHERE source = ?
+    `);
+    const upsertIntegrationSyncStateStmt = db.prepare(`
+        INSERT INTO integration_sync_state (
+            source, initialized_at, last_success_at, last_external_id, last_event_ts, updated_at
+        ) VALUES (
+            @source, @initialized_at, @last_success_at, @last_external_id, @last_event_ts, @updated_at
+        )
+        ON CONFLICT(source) DO UPDATE SET
+            initialized_at = excluded.initialized_at,
+            last_success_at = excluded.last_success_at,
+            last_external_id = excluded.last_external_id,
+            last_event_ts = excluded.last_event_ts,
+            updated_at = excluded.updated_at
     `);
     const deleteOldUpsEventsStmt = db.prepare(`
         DELETE FROM ups_events WHERE id IN (
@@ -1527,6 +1552,58 @@ function createHistoryDb(dataDir, options = {}) {
                     inputV: row.input_v, severity: row.severity, description: row.description
                 }))
             ));
+        },
+        getIntegrationSyncState(source) {
+            const safeSource = boundedRequiredString(source, 32, 'integration sync source');
+            return measure('getIntegrationSyncState', 'integration_sync_state', () => {
+                const row = getIntegrationSyncStateStmt.get(safeSource);
+                return row ? {
+                    source: row.source,
+                    initializedAt: row.initialized_at,
+                    lastSuccessAt: row.last_success_at,
+                    lastExternalId: row.last_external_id,
+                    lastEventTs: row.last_event_ts,
+                    updatedAt: row.updated_at
+                } : null;
+            });
+        },
+        upsertIntegrationSyncState(state) {
+            if (!state || typeof state !== 'object' || Array.isArray(state)) {
+                throw new TypeError('integration sync state must be an object');
+            }
+            const source = boundedRequiredString(state.source, 32, 'integration sync source');
+            const initializedAt = state.initializedAt == null ? null : Number(state.initializedAt);
+            const lastSuccessAt = state.lastSuccessAt == null ? null : Number(state.lastSuccessAt);
+            const lastEventTs = state.lastEventTs == null ? null : Number(state.lastEventTs);
+            const updatedAt = Number(state.updatedAt);
+            const lastExternalId = state.lastExternalId == null
+                ? null
+                : boundedRequiredString(state.lastExternalId, 200, 'integration sync lastExternalId');
+            if ((initializedAt !== null && !Number.isInteger(initializedAt))
+                || (lastSuccessAt !== null && !Number.isInteger(lastSuccessAt))
+                || (lastEventTs !== null && !Number.isInteger(lastEventTs))
+                || !Number.isInteger(updatedAt)) {
+                throw new TypeError('integration sync timestamps must be integers or null');
+            }
+            return measure('upsertIntegrationSyncState', 'integration_sync_state', () => {
+                upsertIntegrationSyncStateStmt.run({
+                    source,
+                    initialized_at: initializedAt,
+                    last_success_at: lastSuccessAt,
+                    last_external_id: lastExternalId,
+                    last_event_ts: lastEventTs,
+                    updated_at: updatedAt
+                });
+                const row = getIntegrationSyncStateStmt.get(source);
+                return {
+                    source: row.source,
+                    initializedAt: row.initialized_at,
+                    lastSuccessAt: row.last_success_at,
+                    lastExternalId: row.last_external_id,
+                    lastEventTs: row.last_event_ts,
+                    updatedAt: row.updated_at
+                };
+            });
         },
         insertBlock(entry) {
             return measure('insertBlock', 'block_history', db.transaction(() => {

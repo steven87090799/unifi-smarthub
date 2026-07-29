@@ -2,7 +2,7 @@
 
 const { ERROR_CODES } = require('./error-codes');
 
-function registerHealthRoutes(app, { monitor, db, taskTracker, version, buildIdentity }) {
+function registerHealthRoutes(app, { monitor, db, taskTracker, version, buildIdentity, runtimeDiagnostics = null }) {
     const liveness = (_req, res) => res.json({
         status: 'healthy',
         code: ERROR_CODES.API_HEALTH_OK,
@@ -34,7 +34,11 @@ function registerHealthRoutes(app, { monitor, db, taskTracker, version, buildIde
     });
 
     app.get('/api/system/status', async (_req, res, next) => {
-        try { res.json(await monitor.ensureSample()); }
+        try {
+            const status = await monitor.ensureSample();
+            const runtime = typeof runtimeDiagnostics === 'function' ? runtimeDiagnostics() : undefined;
+            res.json(runtime ? { ...status, runtime } : status);
+        }
         catch (error) { next(error); }
     });
 }
