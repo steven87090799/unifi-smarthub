@@ -4,7 +4,7 @@
 
 分支：`codex/fix-smarthub-audit-findings`
 
-完整實作 Commit SHA：`1d4dcaa0351b49c97caf395572a9ac505d13bdf6`
+最終實作版本：PR #5 final Head（完整 SHA 以 PR 與對應 final-head CI run 為準）
 
 CI Workflow：`SmartHub CI`（check：`Repository gate`）
 
@@ -12,7 +12,7 @@ CI Workflow：`SmartHub CI`（check：`Repository gate`）
 
 狀態：**READY FOR DRAFT PR WITH KNOWN DEPLOYMENT GAPS**
 
-本次稽核要求的程式修復、回歸測試、本機安全 Gate、隔離 Docker build 與 runtime smoke 已完成。正式 NAS 部署、真實設備破壞性操作、registry push／pull、完整跨瀏覽器矩陣與長時間 soak 沒有執行，因此本報告不把它們視為通過。
+本次稽核要求的程式修復、回歸測試、本機安全 Gate、隔離 Docker build，以及 final-head Hosted CI 的隔離 runtime smoke 已完成。正式 NAS 部署、真實設備破壞性操作、registry push／pull、完整跨瀏覽器矩陣與長時間 soak 沒有執行，因此本報告不把它們視為通過。
 
 ## 驗證環境
 
@@ -21,6 +21,7 @@ CI Workflow：`SmartHub CI`（check：`Repository gate`）
 | macOS local Node.js | `v26.4.0` |
 | local npm | `11.17.0` |
 | CI target Node.js | `20` |
+| GitHub Actions runtime | `checkout@v7`／`setup-node@v7`（官方穩定版，Node 24 action runtime） |
 | Docker Engine／CLI | `29.4.0` (`9d7ad9f`) |
 | Docker Compose | `v5.1.2` |
 | 應用程式 | `3.0.0` |
@@ -39,6 +40,8 @@ Docker 主映像與 NAS Monitor 映像都以目前 worktree 建置；沒有啟�
 | Inline JavaScript／handler | Dashboard 行為與動態字串 handler 混在 HTML，CSP 必須允許 inline | 拆成 `bootstrap.js`、`action-dispatcher.js`、`app.js`；使用 delegated listener 與 escaped data |
 | CSP 過寬 | inline 行為使 `script-src` 不能收緊 | `script-src 'self'`，不含 `unsafe-inline`／`unsafe-eval`；Service Worker 納入所有新資產 |
 | 缺少 hosted repository gate | PR 只能依賴手動本機敘述 | 新增 `SmartHub CI / Repository gate`，涵蓋 install、syntax、test、CSS、audit、Compose、雙映像 build 與 hygiene |
+| Low dependency advisory | Express 的單一 transitive `body-parser@1.20.5` 命中 `GHSA-v422-hmwv-36x6` | 在 Express 4 相容範圍內最小更新至 `body-parser@1.20.6`；未使用 override、major upgrade 或 `--force` |
+| Hosted runtime 缺口 | 原 runtime smoke 沒有成為 PR 的 blocking gate | 新增共用 `npm run test:smoke`；以正式 `server.js`、臨時資料／設定／port、loopback 假整合驗證完整啟停契約 |
 | 維護風險 | `server.js` 與 `index.html` 同時承擔生命週期與實作細節 | 抽離 sampler registry、PPB client／sync service 與 Dashboard executable assets |
 
 ## 測試與 Gate
@@ -46,18 +49,19 @@ Docker 主映像與 NAS Monitor 映像都以目前 worktree 建置；沒有啟�
 | 命令／驗證 | Exit Code | 結果 |
 |---|---:|---|
 | `npm ci` | 0 | PASS；安裝 282 packages |
-| `npm test` | 0 | PASS；537/537，0 fail，27.234 秒 |
+| `npm test` | 0 | PASS；542/542，0 fail |
 | `npm run check:css` | 0 | PASS |
-| `npm run check:js` | 0 | PASS；130 files |
-| `npm audit --audit-level=high` | 0 | PASS；0 high／critical，另有 1 low transitive advisory |
+| `npm run check:js` | 0 | PASS；133 files |
+| `npm run test:smoke` | 0 | PASS；正式 server 兩次 SIGTERM Exit 0 與重啟持久化 |
+| `npm audit --audit-level=low` | 0 | PASS；0 low／moderate／high／critical |
 | 主 profile `docker compose ... config --quiet` | 0 | PASS；使用臨時假設定 |
 | NAS Monitor profile `docker compose ... config --quiet` | 0 | PASS；使用臨時假設定 |
 | `docker compose ... build unifi-smarthub` | 0 | PASS |
 | `docker compose ... --profile nas-monitor build` | 0 | PASS |
-| 隔離 Runtime Smoke | 0 | PASS；臨時 volume、network、localhost random port，全假設定 |
+| GitHub Actions final Head | 0 | PASS；`SmartHub CI / Repository gate` 包含 blocking runtime smoke step |
 | `git diff --check` | 0 | PASS |
 
-`npm audit` 的 low finding 是 `body-parser <1.20.6` 的 transitive denial-of-service advisory；本次 high-level gate 成功，未使用 `npm audit fix --force` 擴大相容性風險。
+Dependency Audit：**0 low、0 moderate、0 high、0 critical**。唯一的 `body-parser` 由 Express 帶入且鎖定為修復版 `1.20.6`；未使用 override，也未使用 `npm audit fix --force`。
 
 ## 回歸矩陣摘要
 
@@ -81,26 +85,27 @@ Docker 主映像與 NAS Monitor 映像都以目前 worktree 建置；沒有啟�
 | Admin write without CSRF | PASS，HTTP 403 |
 | Admin safe write with CSRF | PASS，HTTP 200 |
 | SIGTERM | PASS，兩次 Exit Code 0，未 OOM |
-| Restart／SQLite settings | PASS |
-| Restart／PPB sync state | PASS |
-| Temporary resources cleanup | PASS；container、network、volume、fake `.env` 已移除 |
+| Restart／SQLite settings | PASS；安全設定於相同臨時 DATA_DIR 重啟後仍存在 |
+| Temporary resources cleanup | PASS；child process、臨時 DATA_DIR／config／`.env`、cookie 與 lock 已移除 |
 
-Smoke 使用 loopback 假設備位址、假登入資料、空整合 credential、停用真實通知，沒有啟動 NAS Monitor mutation 或掛 Docker socket。
+Hosted smoke 使用正式 `server.js`、動態 loopback port、loopback 假設備位址、假登入資料、空整合 credential 與停用通知的預設狀態；沒有連線真實設備、啟動 NAS Monitor mutation 或掛 Docker socket。這項 PASS 只代表 hosted isolation，不代表正式 NAS deployment、真實設備 destructive testing 或長時間 soak。
 
 ## CI 與 Branch Protection
 
-Workflow 檔已建立，Pull Request 與 `main` push 會執行 `SmartHub CI`。Repository 管理員仍須在 `main` branch protection／ruleset：
+Workflow 使用官方穩定 `actions/checkout@v7` 與 `actions/setup-node@v7`，兩者 action runtime 均為 Node 24；專案測試仍由 setup-node 安裝 Node.js 20。原 hosted action runtime 警告已消除，沒有使用 beta、第三方 fork 或不安全繞過環境變數。
+
+Pull Request 與 `main` push 會執行 `SmartHub CI`。本次在確認 repository Admin 權限、`main` 沒有既有 branch protection 且 ruleset 為空後，已設定：
 
 1. 將 `SmartHub CI / Repository gate` 設為 Required Check。
 2. 要求分支在 merge 前為最新。
 3. 禁止 check 未成功時 merge。
 
-Branch protection 設定狀態：**NOT RUN**；本次沒有使用 repository 管理權限修改或驗證 ruleset，不能宣稱已啟用。
+Branch protection 設定狀態：**PASS**；required status checks 的 `strict=true`，唯一新增 context 為 `SmartHub CI / Repository gate`。`enforce_admins=false`，因此 Repository Owner 仍保有緊急修復能力；未新增 review 限制、push restriction 或其他 ruleset。
 
 ## Soak 與資源
 
 - 長時間／多日 soak：**NOT RUN，0 小時**。
-- 本次只有 27.234 秒完整測試與短時間決定性 concurrency／capacity 模擬；這些證明 timer、Map、agent 與 connection owner 有界，不等同正式長期 soak。
+- 本次只有短時間完整測試與決定性 concurrency／capacity 模擬；這些證明 timer、Map、agent 與 connection owner 有界，不等同正式長期 soak。
 - Runtime Smoke 是短時間功能／shutdown／restart 驗證，不是效能 soak。
 
 ## 未執行
@@ -121,8 +126,8 @@ Branch protection 設定狀態：**NOT RUN**；本次沒有使用 repository 管
 - PWA 更新後，已開啟的舊分頁可能在 Service Worker activate／reload 前仍使用上一版 cache；部署後應重新載入並確認新 cache。
 - 真實多分頁背景節流、Safari／Firefox／Chromium 差異尚未做完整矩陣。
 - NAS／設備 API、SSH 與網路延遲的實際分布未由本機 loopback mock 覆蓋。
-- low-level dependency advisory仍存在；若上游 Express 鎖定版本更新，需在不破壞 Express 4 契約下重新 audit 與跑完整測試。
+- 依賴安全 gate 已收緊為 low；未來任何 low 以上 advisory 都會阻擋 CI，registry 暫時不可用時也不會被降級為可選檢查。
 
 ## 發布判定
 
-可建立 Draft PR 並交由 hosted CI 驗證。只有 Draft PR 最終 Head 的 `SmartHub CI / Repository gate` 成功、branch protection 設定完成、且部署人員接受上述 `NOT RUN` 項目後，才能進入受控 NAS 部署；本報告不授權 merge。
+PR #5 維持 Draft 且未 merge。只有 final Head 的 `SmartHub CI / Repository gate` 成功、branch protection 設定完成、且部署人員接受上述 `NOT RUN` 項目後，才能進入受控 NAS 部署；本報告不授權 merge。

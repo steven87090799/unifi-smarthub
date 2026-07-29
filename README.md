@@ -124,7 +124,15 @@ docker compose --env-file config/.env logs | grep Diag
 
 ## 正式發布
 
-Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI / Repository gate` 設為 Required Check，並禁止 CI 未通過的 PR merge；若尚未設定，不能把 workflow 存在誤稱為 branch protection 已啟用。
+Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 20 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
+
+本機也可獨立重跑同一個隔離 smoke：
+
+```bash
+npm run test:smoke
+```
+
+Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI / Repository gate` 設為 Required Check，並禁止 CI 未通過的 PR merge；若尚未設定，不能把 workflow 存在誤稱為 branch protection 已啟用。
 
 先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate，再建立不可變成對映像：
 

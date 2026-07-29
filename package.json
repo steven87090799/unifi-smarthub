@@ -9,6 +9,7 @@
     "check:js": "node scripts/check-js-syntax.js",
     "start": "node server.js",
     "test": "node --test --test-concurrency=4",
+    "test:smoke": "node scripts/runtime-smoke-test.js",
     "release:build": "node scripts/release-build.js"
   },
   "dependencies": {
