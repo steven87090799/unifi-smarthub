@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
     findTemperature,
     presentUnifiDeviceTelemetry,
+    temperatureNotificationText,
     telemetryHistoryPoint
 } = require('../server/services/unifi-device-telemetry');
 
@@ -79,4 +80,28 @@ test('uses fresh device SSH only when controller has no verified temperature, wh
     const stale = presentUnifiDeviceTelemetry([device], { directThermalByDevice: direct, thermalSshConfigured: true });
     assert.equal(stale.devices[0].temperature.stale, true);
     assert.equal(telemetryHistoryPoint(stale).devices[0].temperature, null);
+});
+
+test('uses precise missing and offline Device SSH states without treating stale data as current', () => {
+    const device = { mac: 'AA:BB:CC:DD:EE:FF', state: 0, has_temperature: true, general_temperature: 70 };
+    const offline = presentUnifiDeviceTelemetry([device], {
+        thermalSshConfigured: true,
+        directThermalByDevice: new Map([['aa:bb:cc:dd:ee:ff', {
+            selected: true, errorCode: 'device_offline', thermal: { maxTemperatureC: 66, sampledAt: '2026-07-29T00:00:00.000Z', zones: [] }, stale: true
+        }]])
+    });
+    assert.equal(offline.devices[0].temperatureStatus, 'device_ssh_device_offline');
+    assert.equal(offline.devices[0].temperature, null);
+    assert.equal(telemetryHistoryPoint(offline).devices[0].temperature, null);
+    const missing = presentUnifiDeviceTelemetry([{ mac: 'AA:BB:CC:DD:EE:FF', state: 1, has_temperature: false }], {
+        thermalSshConfigured: true,
+        directThermalByDevice: new Map([['aa:bb:cc:dd:ee:ff', { selected: true, errorCode: 'device_not_found' }]])
+    });
+    assert.equal(missing.devices[0].temperatureStatus, 'device_ssh_device_not_found');
+});
+
+test('notification wording names Device SSH maxima and Controller fields precisely', () => {
+    const action = { type: 'high', value: 78.4, threshold: 75 };
+    assert.match(temperatureNotificationText({ temperature: { sourceSystem: 'device_ssh' }, temperatureSensorCount: 3 }, action), /內部最高感測器：78\.4°C[\s\S]*來源：設備 SSH[\s\S]*感測器：3 個/u);
+    assert.match(temperatureNotificationText({ temperature: { sourceSystem: 'controller', sourceField: 'system-stats.temperature' } }, action), /設備溫度：78\.4°C[\s\S]*來源：Controller API[\s\S]*原始欄位：system-stats\.temperature/u);
 });

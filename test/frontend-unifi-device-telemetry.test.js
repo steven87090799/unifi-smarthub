@@ -18,6 +18,9 @@ test('dashboard renders live verified device telemetry and history for every man
     assert.match(html, /device\.temperatureStatus/);
     assert.match(html, /內部最高溫度/);
     assert.match(html, /設備 SSH/);
+    assert.match(html, /找不到已選取的設備/);
+    assert.match(html, /Controller 顯示設備離線/);
+    assert.match(html, /設定已更新，等待重新取樣/);
     assert.match(html, /unifi-device-ssh-target-reference/);
     assert.match(html, /UNIFI_DEVICE_SSH_TARGET_IDS/);
     assert.match(html, /\/api\/network\/devices\/telemetry/);
@@ -33,6 +36,8 @@ test('production and mock expose the same visible telemetry routes and notificat
     }
     assert.match(production, /thermal-probe/);
     assert.match(mock, /thermal-probe/);
+    assert.match(mock, /device_not_found/);
+    assert.match(mock, /management_ip_changed_reconnected/);
 });
 
 test('integration contract documents capability-gated temperature truthfulness', () => {

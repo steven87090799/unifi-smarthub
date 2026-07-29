@@ -324,37 +324,50 @@ app.get('/api/hardware/history', (req, res) => {
 });
 
 const mockUnifiTelemetryDevices = [
-    { id: '74:ac:b9:00:00:01', name: 'U7 Pro', model: 'U7PRO', type: 'uap', cpu: 2.1 },
-    { id: '74:ac:b9:00:00:02', name: 'USW Flex 2.5G', model: 'USWED35', type: 'usw', cpu: 5.6 },
-    { id: '74:ac:b9:00:00:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm', cpu: 38.7 }
+    { id: '74:ac:b9:00:00:01', name: 'U7 Pro', model: 'U7PRO', type: 'uap', cpu: 2.1, thermalState: 'reported' },
+    { id: '74:ac:b9:00:00:04', name: 'U7 Pro（管理 IP 已變更）', model: 'U7PRO', type: 'uap', cpu: 2.8, thermalState: 'reconnected' },
+    { id: '74:ac:b9:00:00:05', name: 'U6 Mesh（離線）', model: 'U6M', type: 'uap', cpu: 0, thermalState: 'offline' },
+    { id: '74:ac:b9:00:00:06', name: 'U6 Lite（上次資料過期）', model: 'U6LITE', type: 'uap', cpu: 1.4, thermalState: 'stale' },
+    { id: '74:ac:b9:00:00:07', name: 'USW Flex（設定已更新）', model: 'USW-FLEX', type: 'usw', cpu: 5.6, thermalState: 'configuration_changed' },
+    { id: '74:ac:b9:00:00:08', name: 'USW Pro（Controller 溫度）', model: 'USW-PRO', type: 'usw', cpu: 7.2, thermalState: 'controller' },
+    { id: '74:ac:b9:00:00:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm', cpu: 38.7, thermalState: 'not_selected' }
 ];
 function mockUnifiTelemetryDevice(device, cpu = device.cpu) {
-    const isU7 = device.id === '74:ac:b9:00:00:01';
+    const hasZones = ['reported', 'reconnected', 'stale'].includes(device.thermalState);
     const sampledAt = new Date().toISOString();
-    const zones = isU7 ? [
+    const zones = hasZones ? [
         { zone: 'thermal_zone0', type: 'cpu-thermal', temperatureC: 71.8, rawMilliCelsius: 71800 },
         { zone: 'thermal_zone1', type: 'wifi0', temperatureC: 73.4, rawMilliCelsius: 73400 },
         { zone: 'thermal_zone2', type: 'wifi1', temperatureC: 74.2, rawMilliCelsius: 74200 }
     ] : [];
-    const temperature = isU7 ? {
+    const temperature = hasZones ? {
         value: 74.2, unit: 'celsius', sourceField: '/sys/class/thermal/thermal_zone*/temp',
-        sourceSystem: 'device_ssh', verifiedSource: true, sampledAt, stale: false
+        sourceSystem: 'device_ssh', verifiedSource: true, sampledAt, stale: device.thermalState === 'stale'
+    } : device.thermalState === 'controller' ? {
+        value: 67.5, unit: 'celsius', sourceField: 'system-stats.temperature',
+        sourceSystem: 'controller', verifiedSource: true, sampledAt, stale: false
     } : null;
+    const status = {
+        reported: 'device_ssh_reported', reconnected: 'device_ssh_reported', offline: 'device_ssh_device_offline',
+        stale: 'device_ssh_stale', configuration_changed: 'device_ssh_configuration_changed',
+        controller: 'controller_reported', not_selected: 'device_ssh_not_selected'
+    }[device.thermalState];
     return {
         id: device.id, name: device.name, model: device.model, type: device.type,
-        version: 'mock', online: true,
+        version: 'mock', online: device.thermalState !== 'offline',
         cpu: { value: cpu, unit: 'percent', sourceField: 'system-stats.cpu', verifiedSource: true },
         temperature,
         temperatureZones: zones,
         temperatureSensorCount: zones.length,
-        cpuTemperatureC: isU7 ? 71.8 : null,
-        temperatureCapability: false,
-        temperatureStatus: isU7 ? 'device_ssh_reported' : 'device_ssh_not_selected',
+        cpuTemperatureC: hasZones ? 71.8 : null,
+        temperatureCapability: device.thermalState === 'controller',
+        temperatureStatus: status,
         directSshConfigured: true,
-        directSshSelected: isU7,
-        directSshLastSuccessAt: isU7 ? sampledAt : null,
+        directSshSelected: !['not_selected', 'controller'].includes(device.thermalState),
+        directSshLastSuccessAt: hasZones ? sampledAt : null,
         directSshLastErrorAt: null,
-        directSshErrorCode: null
+        directSshErrorCode: device.thermalState === 'offline' ? 'device_offline' : device.thermalState === 'configuration_changed' ? 'configuration_changed' : null,
+        managementIpChanged: device.thermalState === 'reconnected'
     };
 }
 app.get('/api/network/devices/telemetry', (_req, res) => {
@@ -367,7 +380,13 @@ app.get('/api/network/devices/telemetry', (_req, res) => {
         },
         devices: mockUnifiTelemetryDevices.map((device, index) =>
             mockUnifiTelemetryDevice(device, +Math.max(0, device.cpu + Math.sin(Date.now() / 10000 + index) * 3).toFixed(1))),
-        thermalSsh: { configured: true, selectedDeviceCount: 1, lastRunAt: new Date().toISOString(), running: 0, successfulDeviceCount: 1, failedDeviceCount: 0 }
+        thermalSsh: {
+            configured: true, selectedDeviceCount: 4, lastRunAt: new Date().toISOString(), running: 0,
+            successfulDeviceCount: 2, failedDeviceCount: 3, notFoundDeviceCount: 1,
+            lifecycleExamples: ['management_ip_changed_reconnected', 'configuration_changed', 'device_offline', 'device_ssh_stale'],
+            notificationExamples: ['controller_source_notification', 'device_ssh_source_notification'],
+            missingTargets: [{ id: 'aa:bb:cc:dd:ee:99', errorCode: 'device_not_found' }]
+        }
     });
 });
 app.get('/api/network/devices/telemetry/history', (req, res) => {

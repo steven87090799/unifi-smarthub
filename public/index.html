@@ -6154,6 +6154,9 @@
                     device_ssh_not_configured: 'Controller 未回報，設備 SSH 尚未設定',
                     device_ssh_waiting: '等待第一次 SSH 取樣',
                     device_ssh_not_selected: 'Controller 未回報，未選取此設備',
+                    device_ssh_device_not_found: '找不到已選取的設備，請確認 MAC 或設備是否仍由此 Controller 管理',
+                    device_ssh_device_offline: 'Controller 顯示設備離線，未執行 SSH 溫度取樣',
+                    device_ssh_configuration_changed: '設定已更新，等待重新取樣',
                     device_ssh_no_management_ip: 'Controller 未回報，設備沒有管理 IP',
                     device_ssh_auth_failed: '設備 SSH 認證失敗',
                     device_ssh_unreachable: '設備 SSH 無法連線',
@@ -6190,6 +6193,10 @@
                     ${zones ? `<details class="mt-2 text-[8px] text-slate-500"><summary class="cursor-pointer">thermal zones</summary><ul class="mt-1 mono space-y-0.5">${zones}</ul></details>` : ''}
                 </article>`;
             }).join('');
+            const missingTargets = payload.thermalSsh?.missingTargets || [];
+            if (missingTargets.length) {
+                wrap.insertAdjacentHTML('afterbegin', `<p class="md:col-span-2 xl:col-span-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-300">找不到已選取的設備，請確認 MAC 或設備是否仍由此 Controller 管理：${missingTargets.map(target => escapeHtml(target.id)).join('、')}</p>`);
+            }
         }
 
         async function fetchUnifiDeviceTelemetry() {

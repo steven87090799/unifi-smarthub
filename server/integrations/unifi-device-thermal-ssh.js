@@ -26,10 +26,25 @@ function parseTargetIds(value) {
     return [...new Set(targets)].slice(0, 32);
 }
 
+function safeManagementIp(value) {
+    const host = typeof value === 'string' ? value.trim() : '';
+    const family = net.isIP(host);
+    if (!family) return null;
+    if (family === 4) {
+        const octets = host.split('.').map(Number);
+        if (octets[0] === 0 || octets[0] === 127 || octets[0] >= 224
+            || octets.every(octet => octet === 255)) return null;
+    } else {
+        const normalized = host.toLowerCase();
+        if (normalized === '::' || normalized === '::1' || normalized.startsWith('ff')) return null;
+    }
+    return host;
+}
+
 function managementIp(device) {
     for (const key of ['ip', 'last_ip']) {
-        const value = typeof device?.[key] === 'string' ? device[key].trim() : '';
-        if (net.isIP(value)) return value;
+        const host = safeManagementIp(device?.[key]);
+        if (host) return host;
     }
     return null;
 }
@@ -47,6 +62,10 @@ function errorCode(error) {
     return 'unknown_error';
 }
 
+function createPoolIdentity({ host, port, username, generation }) {
+    return `${host}|${port}|${username}|${generation}`;
+}
+
 function createUnifiDeviceThermalSshCollector({
     getEnvironment = () => process.env,
     createPool = createSshConnectionPool,
@@ -56,73 +75,157 @@ function createUnifiDeviceThermalSshCollector({
 } = {}) {
     const pools = new Map();
     const inflight = new Map();
-    let active = 0;
+    const deviceEpochs = new Map();
     const queue = [];
-    const runLimited = task => new Promise((resolve, reject) => {
-        const start = () => {
-            active += 1;
-            Promise.resolve().then(task).then(resolve, reject).finally(() => {
-                active -= 1;
-                const next = queue.shift();
-                if (next) next();
-            });
-        };
-        if (active < maxConcurrent) start(); else queue.push(start);
-    });
+    let active = 0;
+    let configurationGeneration = 0;
+    let configurationFingerprint = null;
+
     function environment() {
         const env = getEnvironment() || {};
         const targetIds = parseTargetIds(env.UNIFI_DEVICE_SSH_TARGET_IDS);
         const user = typeof env.UNIFI_DEVICE_SSH_USER === 'string' ? env.UNIFI_DEVICE_SSH_USER.trim() : '';
         const password = typeof env.UNIFI_DEVICE_SSH_PASSWORD === 'string' ? env.UNIFI_DEVICE_SSH_PASSWORD : '';
-        const port = Number(env.UNIFI_DEVICE_SSH_PORT || 22);
-        return { targetIds, user, password, port: Number.isSafeInteger(port) && port > 0 && port <= 65535 ? port : 22 };
+        const candidatePort = Number(env.UNIFI_DEVICE_SSH_PORT || 22);
+        const port = Number.isSafeInteger(candidatePort) && candidatePort > 0 && candidatePort <= 65535 ? candidatePort : 22;
+        return { targetIds, user, password, port };
     }
-    function configured() {
-        const env = environment();
-        return !!(env.targetIds.length && env.user && env.password && !/your_/iu.test(env.password));
+
+    function fingerprint(config) {
+        return JSON.stringify([config.port, config.user, config.password, config.targetIds]);
     }
+
+    function closePoolEntry(entry) {
+        try { entry?.pool?.close(); } catch { }
+    }
+
+    function cancelQueuedTasks() {
+        while (queue.length) {
+            const queued = queue.shift();
+            queued.resolve({ errorCode: 'configuration_changed', discarded: true });
+        }
+    }
+
+    function closeAllPools() {
+        pools.forEach(closePoolEntry);
+        pools.clear();
+    }
+
+    function invalidateConfiguration() {
+        configurationGeneration += 1;
+        cancelQueuedTasks();
+        closeAllPools();
+    }
+
+    function currentConfiguration() {
+        const config = environment();
+        const nextFingerprint = fingerprint(config);
+        if (configurationFingerprint !== null && configurationFingerprint !== nextFingerprint) invalidateConfiguration();
+        configurationFingerprint = nextFingerprint;
+        return { ...config, generation: configurationGeneration };
+    }
+
+    function runLimited(task) {
+        return new Promise(resolve => {
+            const start = () => {
+                active += 1;
+                Promise.resolve().then(task).then(resolve, error => resolve({ errorCode: errorCode(error) })).finally(() => {
+                    active -= 1;
+                    const next = queue.shift();
+                    if (next) next.start();
+                });
+            };
+            if (active < maxConcurrent) start(); else queue.push({ start, resolve });
+        });
+    }
+
+    function configured(config = currentConfiguration()) {
+        return !!(config.targetIds.length && config.user && config.password && !/your_/iu.test(config.password));
+    }
+
     function closeDevice(deviceId) {
         const id = normalizeDeviceId(deviceId);
         if (!id) return;
-        pools.get(id)?.close();
+        const entry = pools.get(id);
+        closePoolEntry(entry);
         pools.delete(id);
     }
-    function closeAll() {
-        pools.forEach(pool => pool.close());
-        pools.clear();
+
+    function poolFor(id, host, config) {
+        const identity = createPoolIdentity({ host, port: config.port, username: config.user, generation: config.generation });
+        const existing = pools.get(id);
+        if (existing?.identity === identity) return existing.pool;
+        if (existing) closeDevice(id);
+        const pool = createPool({
+            getConfig: () => ({ host, port: config.port, username: config.user, password: config.password })
+        });
+        pools.set(id, { pool, deviceId: id, host, port: config.port, username: config.user, configurationGeneration: config.generation, identity });
+        return pool;
     }
+
+    function deviceEpoch(id) {
+        return deviceEpochs.get(id) || 0;
+    }
+
     async function collect(device) {
         const id = normalizeDeviceId(device?.mac || device?._id);
-        const env = environment();
-        if (!env.user || !env.password || /your_/iu.test(env.password)) return { errorCode: 'not_configured' };
-        if (!id || !env.targetIds.includes(id)) return { errorCode: 'not_selected' };
+        const config = currentConfiguration();
+        if (!configured(config)) return { errorCode: 'not_configured' };
+        if (!id || !config.targetIds.includes(id)) return { errorCode: 'not_selected' };
         if (!online(device)) return { errorCode: 'device_offline' };
         const host = managementIp(device);
         if (!host) return { errorCode: 'management_ip_missing' };
-        if (inflight.has(id)) return inflight.get(id);
-        const work = runLimited(async () => {
-            let pool = pools.get(id);
-            if (!pool) {
-                pool = createPool({ getConfig: () => ({ host, port: env.port, username: env.user, password: env.password }) });
-                pools.set(id, pool);
-            }
+        const identity = createPoolIdentity({ host, port: config.port, username: config.user, generation: config.generation });
+        const existing = inflight.get(id);
+        if (existing?.generation === config.generation && existing.identity === identity) return existing.promise;
+        if (existing) {
+            deviceEpochs.set(id, deviceEpoch(id) + 1);
+            closeDevice(id);
+        }
+        const taskGeneration = config.generation;
+        const taskEpoch = deviceEpoch(id);
+        const promise = runLimited(async () => {
+            if (taskGeneration !== currentConfiguration().generation || taskEpoch !== deviceEpoch(id)) return { errorCode: 'configuration_changed', discarded: true };
+            const pool = poolFor(id, host, config);
             try {
                 const output = await pool.execute(THERMAL_READ_COMMAND);
+                if (taskGeneration !== currentConfiguration().generation || taskEpoch !== deviceEpoch(id)) return { errorCode: 'configuration_changed', discarded: true };
                 const thermal = parse(output, { sampledAt: now() });
-                return thermal ? { thermal, managementIp: host } : { errorCode: 'no_thermal_zone', managementIp: host };
+                return thermal ? { thermal, managementIp: host, configurationGeneration: taskGeneration }
+                    : { errorCode: 'no_thermal_zone', managementIp: host };
             } catch (error) {
                 closeDevice(id);
                 return { errorCode: errorCode(error), managementIp: host };
             }
-        }).finally(() => inflight.delete(id));
-        inflight.set(id, work);
-        return work;
+        });
+        const record = { generation: taskGeneration, identity, promise };
+        inflight.set(id, record);
+        promise.finally(() => { if (inflight.get(id) === record) inflight.delete(id); });
+        return promise;
     }
+
+    function reset() {
+        invalidateConfiguration();
+        configurationFingerprint = fingerprint(environment());
+    }
+
+    function closeAll() {
+        reset();
+    }
+
     function status() {
-        const env = environment();
-        return { configured: configured(), selectedDeviceCount: env.targetIds.length, running: inflight.size, activeConnections: active };
+        const config = currentConfiguration();
+        return { configured: configured(config), selectedDeviceCount: config.targetIds.length, running: inflight.size, activeConnections: active, configurationGeneration: config.generation };
     }
-    return Object.freeze({ collect, closeDevice, closeAll, reset: closeAll, status, configured, parseTargetIds: () => environment().targetIds });
+
+    return Object.freeze({
+        collect, closeDevice, closeAll, reset, status, configured,
+        parseTargetIds: () => currentConfiguration().targetIds,
+        getConfigurationGeneration: () => currentConfiguration().generation
+    });
 }
 
-module.exports = { THERMAL_READ_COMMAND, createUnifiDeviceThermalSshCollector, errorCode, managementIp, normalizeDeviceId, parseTargetIds };
+module.exports = {
+    THERMAL_READ_COMMAND, createPoolIdentity, createUnifiDeviceThermalSshCollector,
+    errorCode, managementIp, normalizeDeviceId, parseTargetIds, safeManagementIp
+};

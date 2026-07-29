@@ -104,11 +104,13 @@ const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createSseBackpressure } = require('./server/services/sse-backpressure');
 const { createArtworkCache, fetchArtwork } = require('./server/services/wiim-art-proxy');
 const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
+const { createUnifiDeviceTelemetrySnapshot } = require('./server/services/unifi-device-telemetry-snapshot');
 const { createUnifiDeviceThermalSshCollector, normalizeDeviceId, managementIp } = require('./server/integrations/unifi-device-thermal-ssh');
 const { createUnifiDeviceTemperatureAlertState } = require('./server/services/unifi-device-temperature-alert-state');
 const {
     findTemperature,
     presentUnifiDeviceTelemetry,
+    temperatureNotificationText,
     telemetryHistoryPoint
 } = require('./server/services/unifi-device-telemetry');
 
@@ -546,6 +548,10 @@ const unifiDeviceThermalCollector = createUnifiDeviceThermalSshCollector({
 });
 const unifiThermalCache = createDeviceCollectorCache({ cacheAgeMs: () => unifiTelemetrySampleMs() });
 let unifiThermalLastRunAt = null;
+const unifiDeviceTelemetrySnapshot = createUnifiDeviceTelemetrySnapshot({
+    sample: () => collectUnifiDeviceTelemetrySnapshot(),
+    staleAfterMs: () => Math.max(unifiTelemetrySampleMs() * 3, 15 * 60 * 1000)
+});
 async function readDeviceCollector(name, collect, { refresh = false, allowStale = false } = {}) {
     return deviceCollectorCache.read(name, collect, { refresh, allowStale });
 }
@@ -600,10 +606,10 @@ function getUnifiHealthCached(options) {
 function getUnifiNetworkDevicesCached(options) {
     return readDeviceCollector('unifi.networkDevices', collectUnifiNetworkDevices, options);
 }
-async function getUnifiDeviceTelemetryCached(options) {
-    const devices = await getUnifiNetworkDevicesCached(options);
-    const snapshot = deviceCollectorSnapshot('unifi.networkDevices');
-    return presentUnifiDeviceTelemetrySnapshot(devices, snapshot?.lastSuccessAt);
+async function getUnifiDeviceTelemetryCached() {
+    // This route-facing read is intentionally independent from the general
+    // device collector: only the dedicated 60/300-second sampler refreshes it.
+    return unifiDeviceTelemetrySnapshot.read();
 }
 function presentUnifiDeviceTelemetrySnapshot(devices, sampledAt = null) {
     const directThermalByDevice = latestUnifiDeviceThermals(devices);
@@ -615,11 +621,14 @@ function presentUnifiDeviceTelemetrySnapshot(devices, sampledAt = null) {
         thermalSshConfigured: unifiDeviceThermalCollector.configured()
     });
     const entries = [...directThermalByDevice.values()];
+    const missingTargets = entries.filter(entry => entry.errorCode === 'device_not_found');
     telemetry.thermalSsh = {
         ...unifiDeviceThermalCollector.status(),
         lastRunAt: unifiThermalLastRunAt,
         successfulDeviceCount: entries.filter(entry => entry.thermal && !entry.stale).length,
-        failedDeviceCount: entries.filter(entry => entry.errorCode).length
+        failedDeviceCount: entries.filter(entry => entry.errorCode).length,
+        notFoundDeviceCount: missingTargets.length,
+        missingTargets: missingTargets.map(entry => ({ id: entry.id, errorCode: entry.errorCode }))
     };
     return telemetry;
 }
@@ -627,19 +636,25 @@ function presentUnifiDeviceTelemetrySnapshot(devices, sampledAt = null) {
 function latestUnifiDeviceThermals(rawDevices) {
     const targets = new Set(unifiDeviceThermalCollector.parseTargetIds());
     const direct = new Map();
-    for (const device of Array.isArray(rawDevices) ? rawDevices : []) {
-        const id = normalizeDeviceId(device?.mac || device?._id);
-        if (!id || !targets.has(id)) continue;
+    const byId = new Map((Array.isArray(rawDevices) ? rawDevices : []).map(device => [normalizeDeviceId(device?.mac || device?._id), device]).filter(([id]) => id));
+    for (const id of targets) {
+        const device = byId.get(id);
+        if (!device) {
+            direct.set(id, { id, selected: true, configured: true, thermal: null, stale: false, lastSuccessAt: null, lastErrorAt: null, errorCode: 'device_not_found' });
+            continue;
+        }
         const snapshot = unifiThermalCache.snapshot(`unifi.deviceThermal.${id}`);
         const data = snapshot?.data;
         const ageMs = snapshot?.lastSuccessAt ? Date.now() - snapshot.lastSuccessAt : Infinity;
+        const offline = !(device.state === 1 || device.state === '1' || String(device.state).toLowerCase() === 'connected');
         direct.set(id, {
+            id,
             selected: true,
             thermal: data?.thermal || null,
-            stale: !!data?.thermal && (!!snapshot?.lastErrorAt || ageMs > Math.max(unifiTelemetrySampleMs() * 3, 15 * 60 * 1000)),
+            stale: !!data?.thermal && (offline || !!snapshot?.lastErrorAt || ageMs > Math.max(unifiTelemetrySampleMs() * 3, 15 * 60 * 1000)),
             lastSuccessAt: snapshot?.lastSuccessAt ? new Date(snapshot.lastSuccessAt).toISOString() : null,
             lastErrorAt: snapshot?.lastErrorAt ? new Date(snapshot.lastErrorAt).toISOString() : null,
-            errorCode: snapshot?.lastError?.code || null
+            errorCode: offline ? 'device_offline' : (snapshot?.lastError?.code || null)
         });
     }
     return direct;
@@ -657,7 +672,7 @@ async function refreshUnifiDeviceThermals(rawDevices) {
         try {
             await unifiThermalCache.read(key, async () => {
                 const result = await unifiDeviceThermalCollector.collect(device);
-                if (result.thermal) return result;
+                if (result.thermal && !result.discarded) return result;
                 const error = new Error(result.errorCode || 'unknown_error');
                 error.code = result.errorCode || 'unknown_error';
                 throw error;
@@ -673,6 +688,18 @@ async function refreshUnifiDeviceThermals(rawDevices) {
     }));
     unifiThermalLastRunAt = new Date().toISOString();
     return results;
+}
+
+async function collectUnifiDeviceTelemetrySnapshot() {
+    const devices = await getUnifiNetworkDevicesCached({ refresh: true });
+    await refreshUnifiDeviceThermals(devices);
+    const controllerSnapshot = deviceCollectorSnapshot('unifi.networkDevices');
+    const telemetry = presentUnifiDeviceTelemetrySnapshot(devices, controllerSnapshot?.lastSuccessAt);
+    return {
+        ...telemetry,
+        controllerSampledAt: controllerSnapshot?.lastSuccessAt ? new Date(controllerSnapshot.lastSuccessAt).toISOString() : telemetry.sampledAt,
+        thermalSampledAt: unifiThermalLastRunAt || telemetry.sampledAt
+    };
 }
 async function collectUnifiWifiNetworks() {
     const cookie = await getLocalSession();
@@ -2057,13 +2084,11 @@ async function notificationWatcher() {
             for (const device of telemetry.devices) {
                 const action = unifiDeviceTemperatureAlertState.evaluate(device, { threshold });
                 if (!action) continue;
-                const source = device.temperature?.sourceSystem === 'device_ssh' ? '設備 SSH' : 'Controller API';
-                const sensors = device.temperatureSensorCount ? `\n感測器：${device.temperatureSensorCount} 個` : '';
                 if (action.type === 'recovered') {
-                    await notify(`✅ ${device.name} 溫度已恢復`, `目前最高感測器：${action.value.toFixed(1)}°C\n恢復門檻：${action.threshold}°C`);
+                    await notify(`✅ ${device.name} 溫度已恢復`, temperatureNotificationText(device, action));
                 } else {
                     await notify(`${action.type === 'critical' ? '🚨' : '🔥'} ${device.name} 內部溫度過高`,
-                        `目前最高感測器：${action.value.toFixed(1)}°C\n門檻：${threshold}°C\n來源：${source}${sensors}`);
+                        temperatureNotificationText(device, action));
                 }
             }
         } catch (error) {
@@ -2625,10 +2650,7 @@ async function sampleNotificationSourceCaches() {
 
 async function sampleUnifiDeviceTelemetry() {
     try {
-        const devices = await getUnifiNetworkDevicesCached({ refresh: true });
-        await refreshUnifiDeviceThermals(devices);
-        const snapshot = deviceCollectorSnapshot('unifi.networkDevices');
-        const telemetry = presentUnifiDeviceTelemetrySnapshot(devices, snapshot?.lastSuccessAt);
+        const telemetry = await unifiDeviceTelemetrySnapshot.refresh();
         if (!telemetry.devices.length) return;
         historyDb.insertPoint('unifiDevices', telemetryHistoryPoint(telemetry), {
             keepDays: appSettings.historyKeepDays,
@@ -3717,6 +3739,7 @@ app.post('/api/connections', (req, res) => {
     if (Object.keys(updates).some(key => key.startsWith('UNIFI_DEVICE_SSH_'))) {
         unifiDeviceThermalCollector.reset();
         unifiThermalCache.clear();
+        unifiDeviceTelemetrySnapshot.clear();
         unifiThermalLastRunAt = null;
     }
     if (Object.keys(updates).some(key => !CONN_FIELDS.find(field => field.key === key)?.restartRequired)) rebuildClients();

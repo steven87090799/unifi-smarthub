@@ -9,7 +9,7 @@
 | 面板安全 | `server/middleware/panel-security.js`、`server/routes/panel-auth-routes.js` |
 | 公開登入快照 | `server/services/public-system-health.js` |
 | UniFi 本地／雲端 | `unifiLogin`、`server/integrations/site-manager-client.js` |
-| UCG／Linux SSH | `server/integrations/ssh-command-stream.js`；UniFi Device thermal 另由 `server/integrations/unifi-device-thermal-ssh.js`（allowlist-only） |
+| UCG／Linux SSH | `server/integrations/ssh-command-stream.js`；UniFi Device thermal 另由 `server/integrations/unifi-device-thermal-ssh.js`（allowlist-only、IP/port/user/generation 變更即重建 pool） |
 | SQLite／設定 | `DATA_DIR`, `historyDb`, `db.js`, `server/storage/` |
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
@@ -57,6 +57,7 @@
 - `runSerialJob()` 阻止同名工作重入；報表另以 SQLite claim、lease、retry、deadline、fencing 管理。
 - `instance-lock` 使用 2 秒 heartbeat／8 秒 lease 保證單一 DATA_DIR owner。
 - SSH 命令共用 12 秒期限與 1 MiB stdout／stderr 上限。
+- UniFi Device telemetry 的 GET 僅讀取專用 snapshot；Controller 與 allowlist SSH 由 60/300 秒 sampler 刷新。設定變更會作廢舊 queue/inflight 結果，避免舊帳密或舊 IP 寫回快取。
 - 歷史佇列、resource samples、cooldown maps、subscriptions 與 audit 都有容量或 retention。
 - UPS 在總覽/UPS 焦點下真實 3 秒取樣，閒置預設 10 秒；PPB 事件同步為焦點 10 秒、閒置 60 秒。
 

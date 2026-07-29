@@ -28,7 +28,7 @@
 | `renderHtmlChartLegend()` | 可鍵盤操作圖例 |
 | `initUiSystem()` | 表格、卡片、Modal、Loading／Empty／Error |
 
-總覽或目前裝置頁可見時，相關前端資料與後端取樣使用 3 秒節奏；切頁、背景分頁或租約到期後立即回到低頻。
+總覽或目前裝置頁可見時，相關前端資料與後端取樣使用 3 秒節奏；但 UniFi Device telemetry API 只讀專用 snapshot，Controller/Device SSH 仍固定用 60/300 秒 sampler。切頁、背景分頁或租約到期後立即回到低頻。
 大型歷史查詢不跟著全部加速：UPS/NAS/UCG 歷史圖使用 10 秒以上節奏，完整表見 `docs/operations/POLLING-INTERVALS.md`。
 
 ## 主要功能錨點

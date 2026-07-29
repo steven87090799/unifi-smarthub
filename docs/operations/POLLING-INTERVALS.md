@@ -25,7 +25,7 @@ Device SSH 與一般設備取樣完全分開，避免可見頁面的 5 秒更新
 | `unifiTelemetryActiveSec` | 60 秒 | 有可見 SmartHub 分頁時，Controller telemetry 與選取設備 thermal zone 的取樣。|
 | `unifiTelemetryIdleSec` | 300 秒 | 無可見分頁時的相同取樣。|
 
-每台 allowlist 設備有獨立 cache 與 singleflight，最多同時建立 2 個 SSH 工作。UI/API 只讀取最後快取，不能因畫面刷新建立 SSH。失敗會保留最後成功的資料並標記 stale；stale 值不會寫成新 history 樣本，也不會觸發溫度通知。
+每台 allowlist 設備有獨立 cache 與 singleflight，最多同時建立 2 個 SSH 工作。`GET /api/network/devices/telemetry` 只讀取專用最後 snapshot；只有第一次沒有 snapshot 時以 singleflight 初始化，後續 UI/API 刷新不能查 Controller、建立 SSH、寫 SQLite 或推送通知。Controller fetch 與 Device SSH 只由同一個專用 sampler 依 60/300 秒更新；snapshot 超過目前 interval 三倍（最低 15 分鐘）會標示 stale。失敗會保留最後成功的資料並標記 stale；stale 值不會寫成新 history 樣本，也不會觸發溫度通知。
 
 ## UPS
 

@@ -54,11 +54,25 @@ function directSshStatus(entry, configured, controllerCapability) {
         authentication_failed: 'device_ssh_auth_failed',
         connection_timeout: 'device_ssh_unreachable',
         connection_refused: 'device_ssh_unreachable',
-        device_offline: 'device_ssh_unreachable',
+        device_offline: 'device_ssh_device_offline',
+        device_not_found: 'device_ssh_device_not_found',
+        configuration_changed: 'device_ssh_configuration_changed',
         no_thermal_zone: 'device_ssh_no_thermal_zone',
         invalid_response: 'device_ssh_invalid_response'
     };
     return codes[entry?.errorCode] || (entry?.errorCode ? 'device_ssh_invalid_response' : 'device_ssh_waiting');
+}
+
+function temperatureNotificationText(device, action) {
+    const temperature = device?.temperature;
+    const fromSsh = temperature?.sourceSystem === 'device_ssh';
+    const label = fromSsh ? '內部最高感測器' : '設備溫度';
+    const source = fromSsh ? '設備 SSH' : 'Controller API';
+    const detail = fromSsh
+        ? `感測器：${device?.temperatureSensorCount || 0} 個`
+        : `原始欄位：${temperature?.sourceField || '未提供'}`;
+    const limit = action.type === 'recovered' ? `恢復門檻：${action.threshold}°C` : `門檻：${action.threshold}°C`;
+    return `${label}：${action.value.toFixed(1)}°C\n${limit}\n來源：${source}\n${detail}`;
 }
 
 function presentUnifiDeviceTelemetry(rawDevices, {
@@ -77,8 +91,9 @@ function presentUnifiDeviceTelemetry(rawDevices, {
         const temperatureCapability = device.has_temperature === true;
         const controllerSampledAt = sampledAt;
         const directTemperature = direct?.thermal;
-        const useDirect = !controllerTemperature && directTemperature;
-        const temperature = controllerTemperature
+        const directOffline = direct?.selected && direct?.errorCode === 'device_offline';
+        const useDirect = !directOffline && !controllerTemperature && directTemperature;
+        const temperature = controllerTemperature && !directOffline
             ? {
                 value: controllerTemperature.value,
                 sourceField: controllerTemperature.sourceField,
@@ -99,7 +114,7 @@ function presentUnifiDeviceTelemetry(rawDevices, {
                     cpuTemperatureC: directTemperature.cpuTemperatureC ?? null
                 }
                 : null;
-        const temperatureStatus = controllerTemperature
+        const temperatureStatus = controllerTemperature && !directOffline
             ? 'controller_reported'
             : useDirect
                 ? (direct.stale ? 'device_ssh_stale' : 'device_ssh_reported')
@@ -175,5 +190,6 @@ module.exports = {
     findTemperature,
     directSshStatus,
     presentUnifiDeviceTelemetry,
+    temperatureNotificationText,
     telemetryHistoryPoint
 };
