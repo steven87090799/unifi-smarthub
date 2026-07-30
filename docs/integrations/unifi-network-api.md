@@ -27,7 +27,9 @@ Site Manager client 有頁數／項目上限、重複 token 防護、429 `Retry-
 
 Controller 提供 online、model、firmware、IP、uptime、uplink／link、流量、radio／channel、VAP／SSID、client、packet／error／drop 與 CPU。只有 `has_temperature=true` 且值在合理範圍內的 Controller 溫度才採用；不由 CPU 推算，也不把 offline 殘留值寫入歷史。
 
-Device SSH 是選配 fallback：`UNIFI_DEVICE_SSH_TARGET_IDS` 最多 32 個 canonical MAC；目標必須同時存在於 Controller、online 且有安全 Literal IPv4／IPv6。命令固定、12 秒 timeout、128 KiB output cap、per-device cache／singleflight、全域最多兩個工作。`UNIFI_DEVICE_SSH_HOST_KEYS` 可用 `mac=SHA256:...` 逐台釘選；設定輪替與 shutdown 都會取消舊候選連線。密碼、MAC allowlist 與 fingerprint 在 Settings GET、diagnostics、log、backup 都只顯示是否設定或數量。
+Device SSH 是選配 fallback：`UNIFI_DEVICE_SSH_TARGET_IDS` 最多 32 個 canonical MAC；目標必須同時存在於 Controller、online 且有安全 Literal IPv4／IPv6。命令固定、12 秒 timeout、128 KiB output cap、per-device cache／singleflight、全域最多兩個工作。`UNIFI_DEVICE_SSH_HOST_KEYS` 必須以 `mac=SHA256:...` 逐台釘選，缺任何 target 的 pin 即 fail-closed；僅受控測試能顯式以 `ALLOW_UNPINNED_SSH=true` 放寬。設定輪替與 shutdown 都會取消舊候選連線。密碼、MAC allowlist 與 fingerprint 在 Settings GET、diagnostics、log、backup 都只顯示是否設定或數量。
+
+本地 Controller URL 與 Integration API 在非 loopback 一律使用 HTTPS。HTTPS 預設驗證憑證；私有 CA 以 `UNIFI_CA_FILE` 掛載，`UNIFI_TLS_INSECURE=true` 是僅供受控測試的明確例外。
 
 U7 Pro、USW Flex 2.5G 或其他設備若 Controller／SSH 都沒有真實溫度，狀態是 `unsupported`，UI 顯示「不支援」而不是 `0°C`。API 只讀專用 snapshot；獨立 sampler 預設 UCG 頁可見時 60 秒、閒置 300 秒更新並以 SQLite transaction 保存，stale 樣本不入庫也不觸發通知。
 

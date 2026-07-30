@@ -20,9 +20,11 @@ const IDS = Array.from({ length: 33 }, (_, index) => `02:00:00:00:00:${index.toS
 const THERMAL_OUTPUT = '__ZONE_BEGIN__\n/sys/class/thermal/thermal_zone0\nsoc\n61500\n__ZONE_END__\n';
 
 function configuredEnv(overrides = {}) {
+    const targetIds = overrides.UNIFI_DEVICE_SSH_TARGET_IDS || IDS[0];
+    const hostKeys = targetIds.split(',').map(id => `${id}=SHA256:${'A'.repeat(43)}`).join(',');
     return {
         UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'monitor', UNIFI_DEVICE_SSH_PASSWORD: 'secret',
-        UNIFI_DEVICE_SSH_TARGET_IDS: IDS[0], UNIFI_DEVICE_SSH_HOST_KEYS: '', ...overrides
+        UNIFI_DEVICE_SSH_TARGET_IDS: targetIds, UNIFI_DEVICE_SSH_HOST_KEYS: hostKeys, ...overrides
     };
 }
 
@@ -93,6 +95,18 @@ test('collector requires Controller-known online selected devices and retains no
     assert.equal((await collector.collect(knownDevice(IDS[0], '127.0.0.1'))).status, 'unavailable');
     assert.equal((await collector.collect(knownDevice(IDS[0], '192.168.1.20', { state: 0 }))).status, 'offline');
     assert.equal(executions, 0);
+    collector.close();
+});
+
+test('missing pin fails closed unless explicitly opted in', async () => {
+    let calls = 0;
+    const env = configuredEnv({ UNIFI_DEVICE_SSH_HOST_KEYS: '' });
+    const collector = createUnifiDeviceThermalSshCollector({ getEnvironment: () => env, createPool: () => ({ execute: async () => { calls += 1; return THERMAL_OUTPUT; }, close() {} }) });
+    assert.equal((await collector.collect(knownDevice())).status, 'not_configured');
+    assert.equal(calls, 0);
+    env.ALLOW_UNPINNED_SSH = 'true';
+    assert.equal((await collector.collect(knownDevice())).status, 'supported');
+    assert.equal(calls, 1);
     collector.close();
 });
 

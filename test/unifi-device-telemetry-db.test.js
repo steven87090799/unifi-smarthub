@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { createHistoryDb } = require('../db');
+const { createUnifiDeviceTemperatureAlertState } = require('../server/services/unifi-device-temperature-alert-state');
 
 function fixture(t) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-unifi-telemetry-'));
@@ -75,5 +76,43 @@ test('retention and hard cap prevent unbounded telemetry growth', t => {
     }
     const rows = db.listUnifiTelemetrySince(0);
     assert.equal(rows.length, 2);
-    assert.deepEqual(rows.map(value => value.deviceId), ['device-2', 'device-3']);
+    assert.deepEqual(rows.map(value => value.deviceId), ['device-3', 'device-2']);
+});
+
+test('telemetry history is cursor-bounded and stable for equal timestamps', t => {
+    const directory = fixture(t);
+    const db = createHistoryDb(directory);
+    t.after(() => db.close());
+    const collectedAt = new Date().toISOString();
+    db.insertUnifiTelemetryBatch({ collectedAt, stale: false, rows: [row('device-a'), row('device-b'), row('device-c')] });
+    const first = db.listUnifiTelemetrySince(0, { limit: 2 });
+    assert.equal(first.length, 2);
+    assert.ok(first[0].id > first[1].id);
+    const second = db.listUnifiTelemetrySince(0, { limit: 2, before: first.at(-1).id });
+    assert.equal(second.length, 1);
+    assert.ok(second[0].id < first.at(-1).id);
+    assert.equal(db.listUnifiTelemetrySince(0, { limit: 100000 }).length, 3);
+});
+
+test('temperature alert state survives SQLite restart and ignores duplicate or older samples', t => {
+    const directory = fixture(t);
+    let now = 1_000;
+    let db = createHistoryDb(directory);
+    const createState = () => createUnifiDeviceTemperatureAlertState({
+        now: () => now,
+        load: id => db.getUnifiDeviceTemperatureAlertState(id),
+        save: (id, state) => db.saveUnifiDeviceTemperatureAlertState(id, state)
+    });
+    const device = sampledAt => ({ id: 'aa:bb:cc:dd:ee:01', freshness: { stale: false }, temperature: { status: 'supported', value: 80, sampledAt } });
+    const state = createState();
+    state.evaluate(device('2026-01-01T00:00:01.000Z'));
+    state.evaluate(device('2026-01-01T00:00:02.000Z'));
+    now += 1;
+    assert.equal(state.evaluate(device('2026-01-01T00:00:03.000Z')).type, 'high');
+    db.close();
+    db = createHistoryDb(directory);
+    const restarted = createState();
+    assert.equal(restarted.evaluate(device('2026-01-01T00:00:03.000Z')), null);
+    assert.equal(restarted.evaluate(device('2026-01-01T00:00:02.000Z')), null);
+    db.close();
 });

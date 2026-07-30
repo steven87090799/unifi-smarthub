@@ -23,6 +23,7 @@ const {
 } = require('./server/storage/json-file-store');
 const { acquireInstanceLock } = require('./server/storage/instance-lock');
 const { createSshConnectionPool } = require('./server/integrations/ssh-connection-pool');
+const { hostVerifier: sshHostVerifier } = require('./server/integrations/unifi-device-thermal-ssh');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -107,6 +108,8 @@ const { createPpbEventSync } = require('./server/services/ppb-event-sync');
 const { createUnifiDeviceThermalSshCollector, normalizeDeviceId } = require('./server/integrations/unifi-device-thermal-ssh');
 const { createUnifiDeviceTelemetrySnapshot } = require('./server/services/unifi-device-telemetry-snapshot');
 const { createUnifiDeviceTemperatureAlertState } = require('./server/services/unifi-device-temperature-alert-state');
+const { createWiimArtProxy } = require('./server/services/wiim-art-proxy');
+const { createTlsAgent, exactBoolean } = require('./server/services/tls-trust-policy');
 const {
     findTemperature,
     presentUnifiDeviceTelemetry,
@@ -307,10 +310,12 @@ app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()))
 // 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
 let unifiCsrfToken = '';
 function buildUnifiClient() {
+    const trust = createTlsAgent(process.env, 'UNIFI');
+    if (trust.insecure) sysLog('UniFi TLS', '警告：UNIFI_TLS_INSECURE=true，憑證驗證已明確停用', true);
     const c = axios.create({
         baseURL: process.env.UNIFI_CONTROLLER_URL,
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        httpsAgent: trust.agent,
         timeout: 10000
     });
     // UniFi OS 的寫入操作 (POST/PUT) 需要登入時取得的 CSRF token
@@ -426,13 +431,22 @@ function parseIpLinks(txt) {
 // SSH 遙測含 sleep 1；同一設備重用單一連線、命令序列化，閒置時自動釋放。
 let hwCache = null;      // { ts, data }
 let hwInflight = null;
+function sshTrustConfig(fingerprintKey) {
+    const fingerprint = String(process.env[fingerprintKey] || '').trim().replace(/=+$/u, '');
+    if (/^SHA256:[A-Za-z0-9+/]{43}$/u.test(fingerprint)) {
+        return { hostKeyFingerprint: fingerprint, hostVerifier: sshHostVerifier(fingerprint) };
+    }
+    if (process.env.ALLOW_UNPINNED_SSH === 'true') return {};
+    throw new Error(`${fingerprintKey} must pin the SSH host key (or explicitly set ALLOW_UNPINNED_SSH=true)`);
+}
 const ucgSshPool = createSshConnectionPool({
     getConfig: () => ({
         host: process.env.UCG_IP,
         port: parseInt(process.env.SSH_PORT || '22', 10),
         username: process.env.SSH_USER,
         password: process.env.SSH_PASSWORD,
-        tryKeyboard: true
+        tryKeyboard: true,
+        ...sshTrustConfig('UCG_SSH_HOST_KEY')
     }),
     onKeyboardInteractive: (_name, _instructions, _lang, prompts, finish) => {
         finish(prompts.map(() => process.env.SSH_PASSWORD));
@@ -600,13 +614,16 @@ app.get('/api/network/devices/telemetry', (_req, res) => {
 });
 
 app.get('/api/network/devices/telemetry/history', (req, res) => {
-    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
+    const query = validatedInput(res, () => queryInput.parseUnifiTelemetryHistoryQuery(req.query), {
         module: 'api.unifiDeviceTelemetry', function: 'listHistory'
     });
     if (!query) return;
     const cutoff = Date.now() - query.hours * 3600000;
+    const descending = historyDb.listUnifiTelemetrySince(cutoff, { limit: query.limit, before: query.before });
     res.json({
-        data: historyDb.listUnifiTelemetrySince(cutoff),
+        data: descending.slice().reverse(),
+        pagination: { limit: query.limit, nextBefore: descending.length === query.limit ? descending.at(-1)?.id || null : null },
+        order: 'sampled_ts_asc,id_asc',
         source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' }
     });
 });
@@ -2227,7 +2244,11 @@ const clientPresenceStates = new Map();
 const networkDeviceStates = new Map();
 const wifiSsidStates = new Map();
 const unifiUpgradeAlertTs = new Map();
-const unifiDeviceTemperatureAlertState = createUnifiDeviceTemperatureAlertState({ maxEntries: 1000 });
+const unifiDeviceTemperatureAlertState = createUnifiDeviceTemperatureAlertState({
+    maxEntries: 1000,
+    load: deviceId => historyDb.getUnifiDeviceTemperatureAlertState(deviceId),
+    save: (deviceId, state) => historyDb.saveUnifiDeviceTemperatureAlertState(deviceId, state)
+});
 const notifiedNasLogIds = new Set();
 const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
@@ -2461,12 +2482,14 @@ function buildNasClient() {
     const base = process.env.NAS_HOST
         ? `${process.env.NAS_SCHEME || 'https'}://${process.env.NAS_HOST}:${process.env.NAS_PORT || '9443'}`
         : null;
+    const trust = createTlsAgent(process.env, 'NAS');
+    if (trust.insecure) sysLog('NAS TLS', '警告：NAS_TLS_INSECURE=true，憑證驗證已明確停用', true);
     return {
         base,
         client: base ? axios.create({
             baseURL: base,
             headers: { 'ug-agent': 'PC/WEB', 'Accept': 'application/json' },
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            httpsAgent: trust.agent,
             timeout: 10000
         }) : null
     };
@@ -3327,29 +3350,32 @@ app.post('/api/settings', (req, res) => {
 /* ===================== 連線設定 (網頁安全更新 config/.env) ===================== */
 // 允許透過設定頁修改的欄位 (secret: GET 時只回「是否已設定」)
 const CONN_FIELDS = [
-    { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
+    { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'UCG_SSH_HOST_KEY', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
+    { key: 'UNIFI_TLS_INSECURE' }, { key: 'UNIFI_CA_FILE' },
     { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' },
     { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true },
     { key: 'UNIFI_DEVICE_SSH_TARGET_IDS', secret: true },
     { key: 'UNIFI_DEVICE_SSH_HOST_KEYS', secret: true },
+    { key: 'ALLOW_UNPINNED_SSH' },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_TLS_VERIFY' },
     { key: 'UNIFI_NETWORK_SITE_ID' }, { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
     { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
     { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
+    { key: 'NAS_TLS_INSECURE' }, { key: 'NAS_CA_FILE' },
     { key: 'NAS_MONITOR_URL', restartRequired: true },
     { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
     { key: 'NAS_MONITOR_MODE', restartRequired: true },
-    { key: 'WIIM_IP' },
+    { key: 'WIIM_IP' }, { key: 'WIIM_TLS_INSECURE' }, { key: 'WIIM_CA_FILE' }, { key: 'WIIM_ALLOW_INSECURE_HTTP' }, { key: 'WIIM_ART_ALLOWED_HOSTS' },
     { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
     { key: 'PPB_TLS_VERIFY' }, { key: 'PPB_TLS_INSECURE' }, { key: 'PPB_CA_FILE' },
     { key: 'ADGUARD_URL' }, { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' },
     { key: 'ADGUARD_ALLOW_INSECURE_HTTP' }, { key: 'ADGUARD_TLS_VERIFY' }, { key: 'ADGUARD_CA_FILE' },
     { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
-    { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true }
+    { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true }, { key: 'LINUX_SSH_HOST_KEY', secret: true }
 ];
 const pendingRestartConnectionFields = new Set();
 const RECREATE_DEFAULTS = Object.freeze({
@@ -3502,7 +3528,7 @@ app.post('/api/connections', (req, res) => {
     }
     reconcilePendingRestartFields(desiredAfterWrite);
     const updatedKeys = Object.keys(updates);
-    const telemetryUpdated = updatedKeys.some(key => key.startsWith('UNIFI_DEVICE_SSH_'));
+    const telemetryUpdated = updatedKeys.some(key => key.startsWith('UNIFI_DEVICE_SSH_') || key === 'ALLOW_UNPINNED_SSH');
     if (telemetryUpdated) {
         unifiDeviceThermalCollector.reset();
         unifiDeviceTelemetrySnapshot.clear();
@@ -4056,6 +4082,10 @@ app.get('/sw.js', (req, res) => {
 // --- WiiM Amp Integration Endpoints & Background Polling ---
 let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
 const wiimCache = {};
+const wiimArtProxy = createWiimArtProxy({
+    getKnownHost: () => wiimIP,
+    getAllowedHosts: () => process.env.WIIM_ART_ALLOWED_HOSTS || ''
+});
 
 async function wiimGet(command) {
     const cacheKey = command;
@@ -4068,16 +4098,21 @@ async function wiimGet(command) {
     }
 
     const headers = { 'User-Agent': 'wiim-temp/2.0' };
+    const trust = createTlsAgent(process.env, 'WIIM');
     let result = null;
     try {
         const res = await axios.get(`https://${wiimIP}/httpapi.asp?command=${encodeURIComponent(command)}`, {
             headers,
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            httpsAgent: trust.agent,
             timeout: 3000
         });
         result = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
     } catch (e1) {
-        sysLog('WiiM Proxy', `[HTTPS 失敗] 命令: ${command}，錯誤: ${e1.message}。嘗試 HTTP 回退...`, true);
+        if (!exactBoolean(process.env.WIIM_ALLOW_INSECURE_HTTP, 'WIIM_ALLOW_INSECURE_HTTP', false)) {
+            sysLog('WiiM Proxy', `[HTTPS 失敗] 命令: ${command}；未啟用 WIIM_ALLOW_INSECURE_HTTP，不回退 HTTP`, true);
+            return null;
+        }
+        sysLog('WiiM Proxy', `[HTTPS 失敗] 命令: ${command}；已明確啟用 HTTP 回退`, true);
         try {
             const res = await axios.get(`http://${wiimIP}/httpapi.asp?command=${encodeURIComponent(command)}`, {
                 headers,
@@ -4180,42 +4215,22 @@ registerWiimCommandRoutes(app, {
     })
 });
 
-// 專輯封面代理：WiiM 回的 albumArtURI 常是裝置自簽 HTTPS 或外部 CDN，瀏覽器直連會被擋
-// 由後端抓取後轉發 (忽略自簽憑證)，記憶體快取 5 分鐘
-const wiimArtCache = {};
+// Album art is an allowlisted, DNS-pinned, byte-bounded image proxy. It never
+// forwards arbitrary upstream headers or disables TLS verification.
 app.get('/api/wiim/art', async (req, res) => {
     const query = validatedInput(res, () => queryInput.parseWiimArtQuery(req.query), {
         module: 'api.wiim', function: 'getAlbumArt'
     });
     if (!query) return;
-    const { u } = query;
-    // SSRF 防護：僅允許抓 WiiM 裝置本身，或非內網的公開 CDN；
-    // 禁止以此代理探測其他內網位址 (10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x)
+    const controller = new AbortController();
+    req.once('close', () => controller.abort());
     try {
-        const host = new URL(u).hostname;
-        const isPrivate = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || host === 'localhost';
-        if (isPrivate && host !== wiimIP) return res.status(403).end();
-    } catch { return res.status(400).end(); }
-    // AirPlay 的封面 URI 固定不變、內容隨曲目更換 → 以前端傳來的曲名 (v) 作為快取版本鍵
-    const key = u + '|' + query.v;
-    const hit = wiimArtCache[key];
-    if (hit && Date.now() - hit.ts < 5 * 60 * 1000) {
-        res.set('Content-Type', hit.type); return res.send(hit.buf);
-    }
-    try {
-        const r = await axios.get(u, {
-            responseType: 'arraybuffer', timeout: 6000,
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-            headers: { 'User-Agent': 'wiim-temp/2.0' }
-        });
-        const type = r.headers['content-type'] || 'image/jpeg';
-        wiimArtCache[key] = { buf: r.data, type, ts: Date.now() };
-        // 快取上限 20 張，超過清最舊
-        const keys = Object.keys(wiimArtCache);
-        if (keys.length > 20) delete wiimArtCache[keys.sort((a, b) => wiimArtCache[a].ts - wiimArtCache[b].ts)[0]];
-        res.set('Content-Type', type); res.send(r.data);
-    } catch (e) {
-        sysLog('WiiM Art', `封面抓取失敗: ${e.message}`, true);
+        const art = await wiimArtProxy.fetch(query.u, query.v, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        res.set({ 'Content-Type': art.type, 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' }).send(art.buffer);
+    } catch {
+        if (controller.signal.aborted) return;
+        sysLog('WiiM Art', '封面抓取遭安全策略拒絕或上游失敗', true);
         res.status(502).end();
     }
 });
@@ -4869,7 +4884,8 @@ const linuxSshPool = createSshConnectionPool({
         host: process.env.LINUX_HOST,
         port: parseInt(process.env.LINUX_SSH_PORT || '22', 10),
         username: process.env.LINUX_SSH_USER,
-        password: process.env.LINUX_SSH_PASSWORD
+        password: process.env.LINUX_SSH_PASSWORD,
+        ...sshTrustConfig('LINUX_SSH_HOST_KEY')
     })
 });
 async function fetchLinuxSSH() {

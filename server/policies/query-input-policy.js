@@ -6,7 +6,7 @@ const CANONICAL_DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const CONTROL_OR_WHITESPACE = /[\s\u0000-\u001f\u007f-\u009f]/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const SAFE_PATH_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
-const ACTIVITY_SCOPES = Object.freeze(['general', 'trend', 'ucg', 'nas', 'wiim', 'linux', 'ups']);
+const ACTIVITY_SCOPES = Object.freeze(['general', 'trend', 'ucg', 'unifi-device-telemetry', 'nas', 'wiim', 'linux', 'ups']);
 
 const QUERY_LIMITS = Object.freeze({
     nasLogsPage: Object.freeze({ defaultValue: 0, min: 0, max: 1000000 }),
@@ -17,7 +17,8 @@ const QUERY_LIMITS = Object.freeze({
     reportLimit: Object.freeze({ defaultValue: 20, min: 1, max: 50 }),
     adGuardLimit: Object.freeze({ defaultValue: 100, min: 1, max: 200 }),
     historyHours: Object.freeze({ defaultValue: 24, min: 1, max: 8760 }),
-    historyDays: Object.freeze({ defaultValue: 30, min: 1, max: 365 })
+    historyDays: Object.freeze({ defaultValue: 30, min: 1, max: 365 }),
+    unifiTelemetryLimit: Object.freeze({ defaultValue: 200, min: 1, max: 500 })
 });
 
 function reject(message, field = null) {
@@ -231,6 +232,16 @@ function parseWiimArtQuery(query) {
     });
 }
 
+function parseUnifiTelemetryHistoryQuery(query) {
+    return parseExactQuery(query, {
+        hours: integerField(QUERY_LIMITS.historyHours),
+        limit: integerField(QUERY_LIMITS.unifiTelemetryLimit),
+        before: (value, field) => value === undefined ? null : canonicalDecimalValue(value, {
+            field, min: 1, max: Number.MAX_SAFE_INTEGER
+        })
+    });
+}
+
 function parseHistoryHoursQuery(query, options = {}) {
     return parseExactQuery(query, {
         hours: integerField({ ...QUERY_LIMITS.historyHours, ...options })
@@ -264,6 +275,7 @@ module.exports = {
     parseNasLogsQuery,
     parseNasSleepStatsQuery,
     parseReportLogQuery,
+    parseUnifiTelemetryHistoryQuery,
     parseWiimArtQuery,
     parseWiimStatusQuery,
     safePathIdentifierValue,

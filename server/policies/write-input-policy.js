@@ -128,6 +128,10 @@ function unifiNetworkApiUrlValue(value, field) {
     return normalized;
 }
 
+function unifiControllerUrlValue(value, field) {
+    return unifiNetworkApiUrlValue(value, field);
+}
+
 function adguardUrlValue(value, field) {
     const normalized = httpUrlValue(value, { field });
     const parsed = new URL(normalized);
@@ -403,6 +407,11 @@ const ENUM_FIELDS = Object.freeze({
     UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
     PPB_TLS_VERIFY: ['true', 'false'],
     PPB_TLS_INSECURE: ['true', 'false'],
+    UNIFI_TLS_INSECURE: ['true', 'false'],
+    NAS_TLS_INSECURE: ['true', 'false'],
+    WIIM_TLS_INSECURE: ['true', 'false'],
+    WIIM_ALLOW_INSECURE_HTTP: ['true', 'false'],
+    ALLOW_UNPINNED_SSH: ['true', 'false'],
     ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
     ADGUARD_TLS_VERIFY: ['true', 'false'],
     UPS_SOURCE: ['auto', 'nut', 'pwrstat', 'pmset', 'ppb']
@@ -443,6 +452,14 @@ function unifiDeviceSshHostKeysValue(value, field = 'UNIFI_DEVICE_SSH_HOST_KEYS'
     }).join(',');
 }
 
+function sshHostKeyValue(value, field) {
+    const normalized = stringValue(value, { field, min: 50, max: 51 });
+    if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/u.test(normalized)) {
+        reject(`${field} must be a SHA256 SSH host key fingerprint`, field);
+    }
+    return normalized.replace(/=+$/u, '');
+}
+
 function parseConnectionUpdates(body, fields) {
     const definitions = new Map(fields.map(field => [field.key, field]));
     exactObject(body, { allowed: [...definitions.keys()] });
@@ -456,12 +473,15 @@ function parseConnectionUpdates(body, fields) {
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_HOST_KEYS') value = unifiDeviceSshHostKeysValue(value, key);
+        else if (key === 'UCG_SSH_HOST_KEY' || key === 'LINUX_SSH_HOST_KEY') value = sshHostKeyValue(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_USER') {
             value = stringValue(value, { field: key, min: 1, max: 128, pattern: /^[A-Za-z0-9._-]+$/u });
         }
         else if (URL_FIELDS.has(key)) {
             value = key === 'UNIFI_NETWORK_API_URL'
                 ? unifiNetworkApiUrlValue(value, key)
+                : key === 'UNIFI_CONTROLLER_URL'
+                    ? unifiControllerUrlValue(value, key)
                 : key === 'ADGUARD_URL'
                     ? adguardUrlValue(value, key)
                     : httpUrlValue(value, { field: key });
@@ -480,7 +500,7 @@ function parseConnectionUpdates(body, fields) {
             value = stringValue(value, { field: key, min: 1, max: 32, pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u });
         } else if (key === 'NUT_UPS_NAME') {
             value = stringValue(value, { field: key, min: 1, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u });
-        } else if (key === 'PPB_CA_FILE') {
+        } else if (key === 'PPB_CA_FILE' || key === 'UNIFI_CA_FILE' || key === 'NAS_CA_FILE' || key === 'WIIM_CA_FILE') {
             value = stringValue(value, {
                 field: key,
                 min: 2,
@@ -556,6 +576,8 @@ module.exports = {
     parseUiPreferences,
     quoteEnvValue,
     stringValue,
+    sshHostKeyValue,
+    unifiControllerUrlValue,
     unifiDeviceSshHostKeysValue,
     unifiDeviceSshTargetIdsValue,
     validatePpbTlsSettings

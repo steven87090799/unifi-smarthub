@@ -809,6 +809,7 @@
         /* ==================== 導航 ==================== */
         let currentPage = 'overview';
         function navigate(page) {
+            if (currentPage === 'ucg' && page !== 'ucg') unifiTelemetryHistoryAbort?.abort();
             currentPage = page;
             // 重新觸發分頁進場動畫
             const target = document.getElementById('page-' + page);
@@ -1006,10 +1007,18 @@
             if (document.visibilityState !== 'visible') return;
             const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
             const query = '?scope=' + encodeURIComponent(scopes.join(',')) + `&session=${encodeURIComponent(heartbeatSessionId)}` + (focus ? '&focus=1' : '');
-            try { await fetch('/api/heartbeat' + query); } catch (e) { /* 靜默 */ }
+            try {
+                const response = await fetch('/api/heartbeat' + query);
+                if (!response.ok) throw new Error(`heartbeat rejected: ${response.status}`);
+            } catch (error) {
+                // The URL has no credentials; only stable status/error text is observable.
+                console.warn('SmartHub heartbeat failed', error?.message || 'network error');
+            }
         }
         function releaseDeviceFocus() {
-            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}`).catch(() => { /* 靜默 */ });
+            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}`)
+                .then(response => { if (!response.ok) throw new Error(`heartbeat release rejected: ${response.status}`); })
+                .catch(error => console.warn('SmartHub heartbeat release failed', error?.message || 'network error'));
         }
         document.addEventListener('visibilitychange', () => {
             applyPolling();
@@ -1417,17 +1426,17 @@
                 ? radios.map(radio => `${escapeHtml(radio.band || radio.name || 'Radio')} Ch ${escapeHtml(radio.channel ?? '--')} · ${telemetryNumber(radio.utilizationPercent, '%')}`).join('<br>')
                 : '無射頻資料';
             const vapSummary = vaps.length
-                ? vaps.map(vap => `${escapeHtml(vap.ssid || '隱藏 SSID')} · ${vap.up ? 'Up' : 'Down'} · ${telemetryNumber(vap.clientCount)} 台`).join('<br>')
+                ? vaps.map(vap => `${escapeHtml(vap.ssid || '隱藏 SSID')} · ${vap.up === true ? 'Up' : vap.up === false ? 'Down' : '未知'} · ${telemetryNumber(vap.clientCount)} 台`).join('<br>')
                 : '無 SSID/VAP 資料';
             const traffic = device?.traffic || {};
             const packets = `${telemetryNumber(traffic.rxPackets)} / ${telemetryNumber(traffic.txPackets)}`;
             const errors = `${telemetryNumber(traffic.rxErrors)} / ${telemetryNumber(traffic.txErrors)} / ${telemetryNumber(traffic.rxDropped)} / ${telemetryNumber(traffic.txDropped)}`;
-            const stateClass = device?.online ? 'text-emerald-400' : 'text-red-400';
+            const stateClass = device?.online === true ? 'text-emerald-400' : device?.online === false ? 'text-red-400' : 'text-amber-300';
             return `<article class="rounded-xl border ${stale ? 'border-amber-500/30' : 'border-slate-800/70'} bg-slate-950/45 p-4">
                 <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0"><p class="text-xs font-bold text-slate-200 truncate">${escapeHtml(device?.name || device?.id || '未知設備')}</p>
                     <p class="text-[9px] text-slate-500 mono truncate">${escapeHtml(device?.model || '--')} · ${escapeHtml(device?.firmware || '--')} · ${escapeHtml(device?.ip || '--')}</p></div>
-                    <span class="text-[9px] font-bold ${stateClass}">${device?.online ? 'Online' : 'Offline'}</span>
+                    <span class="text-[9px] font-bold ${stateClass}">${device?.online === true ? 'Online' : device?.online === false ? 'Offline' : '未知'}</span>
                 </div>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-[10px]">
                     <div><p class="text-slate-600">溫度</p><p class="font-bold ${temperature.status === 'supported' && !stale ? 'text-cyan-300' : 'text-slate-400'}">${escapeHtml(temperatureText)}</p></div>
@@ -1443,17 +1452,43 @@
                 <p class="text-[9px] text-slate-600 mt-2">流量 RX/TX：${escapeHtml(telemetryBytes(traffic.rxBytes))} / ${escapeHtml(telemetryBytes(traffic.txBytes))} · Uptime：${telemetryNumber(device?.uptimeSeconds, ' 秒')} · 溫度來源：${escapeHtml(temperature.source || '無')} · 取樣：${escapeHtml(telemetryTimestamp(temperature.sampledAt))}${device?.freshness?.errorReason ? ` · ${escapeHtml(device.freshness.errorReason)}` : ''}</p>
             </article>`;
         }
+        let unifiTelemetryHistoryLoaded = false;
+        let unifiTelemetryHistoryAbort = null;
+        function renderUnifiTelemetryHistory(historyPayload) {
+            const rows = (Array.isArray(historyPayload?.data) ? historyPayload.data : [])
+                .filter(row => row.temperatureStatus === 'supported' && Number.isFinite(Number(row.temperature)));
+            const history = document.getElementById('unifi-telemetry-history');
+            const count = document.getElementById('unifi-telemetry-history-count');
+            if (count) count.textContent = `${rows.length} 點`;
+            if (history) history.innerHTML = rows.length ? rows.map(row => `<div class="flex items-center justify-between gap-3 rounded-lg bg-slate-950/40 border border-slate-800/50 px-3 py-2 text-[9px]">
+                <span class="text-slate-400 truncate">${escapeHtml(row.name || row.deviceId)}</span>
+                <span class="text-slate-600">${escapeHtml(telemetryTimestamp(row.collectedAt))}</span>
+                <span class="text-cyan-300 font-bold mono">${telemetryNumber(row.temperature, '°C', 1)}</span>
+            </div>`).join('') : '<p class="text-[10px] text-slate-500">尚無可用的真實溫度紀錄</p>';
+        }
+        async function loadUnifiTelemetryHistory() {
+            if (unifiTelemetryHistoryLoaded || currentPage !== 'ucg') return;
+            unifiTelemetryHistoryLoaded = true;
+            unifiTelemetryHistoryAbort?.abort();
+            unifiTelemetryHistoryAbort = new AbortController();
+            try {
+                const response = await fetch('/api/network/devices/telemetry/history?hours=24&limit=200', { signal: unifiTelemetryHistoryAbort.signal });
+                if (!response.ok) throw new Error(`telemetry history rejected: ${response.status}`);
+                renderUnifiTelemetryHistory(await response.json());
+            } catch (error) {
+                if (error?.name === 'AbortError') { unifiTelemetryHistoryLoaded = false; return; }
+                console.warn('UniFi telemetry history fetch failed', error?.message || 'network error');
+            } finally {
+                unifiTelemetryHistoryAbort = null;
+            }
+        }
         async function fetchUnifiDeviceTelemetry() {
             const wrap = document.getElementById('unifi-telemetry-devices');
             if (!wrap) return;
             try {
-                const [snapshotResponse, historyResponse] = await Promise.all([
-                    fetch('/api/network/devices/telemetry'),
-                    fetch('/api/network/devices/telemetry/history?hours=24')
-                ]);
-                if (!snapshotResponse.ok || !historyResponse.ok) throw new Error('telemetry request failed');
+                const snapshotResponse = await fetch('/api/network/devices/telemetry');
+                if (!snapshotResponse.ok) throw new Error(`telemetry snapshot rejected: ${snapshotResponse.status}`);
                 const snapshot = await snapshotResponse.json();
-                const historyPayload = await historyResponse.json();
                 const devices = Array.isArray(snapshot.devices) ? snapshot.devices : [];
                 wrap.innerHTML = devices.length
                     ? devices.map(device => renderUnifiTelemetryDevice(device, snapshot.stale)).join('')
@@ -1465,17 +1500,7 @@
                 }
                 const last = document.getElementById('unifi-telemetry-last-success');
                 if (last) last.textContent = `最後成功：${telemetryTimestamp(snapshot.lastSuccessfulAt)}`;
-                const rows = (Array.isArray(historyPayload.data) ? historyPayload.data : [])
-                    .filter(row => row.temperatureStatus === 'supported' && Number.isFinite(Number(row.temperature)))
-                    .slice(-100).reverse();
-                const history = document.getElementById('unifi-telemetry-history');
-                const count = document.getElementById('unifi-telemetry-history-count');
-                if (count) count.textContent = `${rows.length} 點`;
-                if (history) history.innerHTML = rows.length ? rows.map(row => `<div class="flex items-center justify-between gap-3 rounded-lg bg-slate-950/40 border border-slate-800/50 px-3 py-2 text-[9px]">
-                    <span class="text-slate-400 truncate">${escapeHtml(row.name || row.deviceId)}</span>
-                    <span class="text-slate-600">${escapeHtml(telemetryTimestamp(row.collectedAt))}</span>
-                    <span class="text-cyan-300 font-bold mono">${telemetryNumber(row.temperature, '°C', 1)}</span>
-                </div>`).join('') : '<p class="text-[10px] text-slate-500">尚無可用的真實溫度紀錄</p>';
+                loadUnifiTelemetryHistory();
             } catch (error) {
                 if (!wrap.querySelector('article')) wrap.innerHTML = '<p class="text-xs text-amber-400 text-center py-6 xl:col-span-2">遙測快照暫時無法讀取，稍後自動重試</p>';
                 console.error('UniFi device telemetry fetch failed', error);

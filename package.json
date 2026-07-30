@@ -10,6 +10,7 @@
     "start": "node server.js",
     "test": "node --test --test-concurrency=4",
     "test:smoke": "node scripts/runtime-smoke.js",
+    "test:compose-smoke": "node scripts/compose-runtime-smoke.js",
     "release:build": "node scripts/release-build.js"
   },
   "dependencies": {

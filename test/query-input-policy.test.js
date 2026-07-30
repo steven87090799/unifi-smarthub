@@ -20,6 +20,7 @@ const {
     parseNasLogsQuery,
     parseNasSleepStatsQuery,
     parseReportLogQuery,
+    parseUnifiTelemetryHistoryQuery,
     parseWiimArtQuery,
     parseWiimStatusQuery,
     safePathIdentifierValue
@@ -175,6 +176,7 @@ test('heartbeat and WiiM status queries use exact bounded enums', () => {
         scope: 'trend,nas,ups', scopes: ['trend', 'nas', 'ups'], focus: true, session: 'legacy'
     });
     assert.equal(parseHeartbeatQuery({ scope: 'general', session: 'tab-1' }).session, 'tab-1');
+    assert.deepEqual(parseHeartbeatQuery({ scope: 'ucg,unifi-device-telemetry', focus: '1' }).scopes, ['ucg', 'unifi-device-telemetry']);
     assert.deepEqual(parseWiimStatusQuery({}), { type: 'all' });
     assert.deepEqual(parseWiimStatusQuery({ type: 'play' }), { type: 'play' });
 
@@ -185,6 +187,14 @@ test('heartbeat and WiiM status queries use exact bounded enums', () => {
     validationError(() => parseHeartbeatQuery({ scope: 'trend', extra: '1' }), 'extra');
     validationError(() => parseWiimStatusQuery({ type: 'ALL' }), 'type');
     validationError(() => parseWiimStatusQuery({ type: ['all', 'play'] }), 'type');
+});
+
+test('UniFi telemetry history query is bounded and cursor-safe', () => {
+    assert.deepEqual(parseUnifiTelemetryHistoryQuery({}), { hours: 24, limit: 200, before: null });
+    assert.deepEqual(parseUnifiTelemetryHistoryQuery({ hours: '24', limit: '500', before: '42' }), { hours: 24, limit: 500, before: 42 });
+    for (const query of [{ limit: '0' }, { limit: '501' }, { limit: '-1' }, { limit: '3.2' }, { before: '0' }, { before: 'x' }]) {
+        validationError(() => parseUnifiTelemetryHistoryQuery(query));
+    }
 });
 
 test('bounded query strings and HTTP URLs preserve safe values only', () => {

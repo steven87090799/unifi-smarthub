@@ -16,7 +16,9 @@ test('telemetry UI is external-script driven, scope-aware, and renders truth and
     assert.match(html, /id="unifi-telemetry-state"/u);
     assert.match(html, /id="unifi-telemetry-last-success"/u);
     assert.match(app, /fetch\('\/api\/network\/devices\/telemetry'\)/u);
-    assert.match(app, /fetch\('\/api\/network\/devices\/telemetry\/history\?hours=24'\)/u);
+    assert.match(app, /fetch\('\/api\/network\/devices\/telemetry\/history\?hours=24&limit=200'/u);
+    assert.match(app, /let unifiTelemetryHistoryLoaded = false/u);
+    assert.doesNotMatch(app, /Promise\.all\(\[\s*fetch\('\/api\/network\/devices\/telemetry'[,\s\S]*telemetry\/history/u);
     assert.match(app, /unifi-device-telemetry/u);
     assert.match(app, /unsupported: '不支援'/u);
     assert.match(app, /STALE · 保留最後成功資料/u);
@@ -38,6 +40,6 @@ test('production and mock expose the same read-only telemetry API while producti
         assert.match(source, /app\.get\('\/api\/network\/devices\/telemetry\/history'/u);
     }
     assert.match(server, /app\.get\('\/api\/network\/devices\/telemetry',[\s\S]{0,200}unifiDeviceTelemetrySnapshot\.read\(\)/u);
-    assert.match(server, /historyDb\.listUnifiTelemetrySince\(cutoff\)/u);
+    assert.match(server, /historyDb\.listUnifiTelemetrySince\(cutoff, \{ limit: query\.limit, before: query\.before \}\)/u);
     assert.match(server, /name: 'unifiDeviceTelemetry'[\s\S]{0,240}collect: sampleUnifiDeviceTelemetry/u);
 });

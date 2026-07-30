@@ -23,7 +23,7 @@ const RESTORABLE_FILES = Object.freeze([
     'ui-preferences.json'
 ]);
 const REQUIRED_TABLES = Object.freeze(['history', 'ups_events', 'block_history', 'report_runs']);
-const SECRET_ENV_KEY = /(?:PASSWORD|PASSCODE|TOKEN|SECRET|API_KEY|PRIVATE_KEY|WEBHOOK|HOST_KEYS|TARGET_IDS)/i;
+const SECRET_ENV_KEY = /(?:PASSWORD|PASSCODE|TOKEN|SECRET|API_KEY|PRIVATE_KEY|WEBHOOK|HOST_KEY(?:S)?|TARGET_IDS)/i;
 
 class BackupValidationError extends Error {
     constructor(message, options = {}) {

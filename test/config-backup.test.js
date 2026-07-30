@@ -48,6 +48,8 @@ async function fixture(t) {
         'UNIFI_DEVICE_SSH_PASSWORD=device-secret',
         'UNIFI_DEVICE_SSH_TARGET_IDS=aa:bb:cc:dd:ee:ff',
         'UNIFI_DEVICE_SSH_HOST_KEYS=aa:bb:cc:dd:ee:ff=SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        'UCG_SSH_HOST_KEY=SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        'LINUX_SSH_HOST_KEY=SHA256:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
         'WEB_PUSH_PRIVATE_KEY=web-push-private-material',
         'WIIM_IP=192.0.2.55',
         'UPS_SOURCE=ppb'
@@ -74,9 +76,11 @@ test('export produces a consistent SQLite snapshot and never exports live env se
     assert.deepEqual(f.artifact.environment.values.UNIFI_DEVICE_SSH_PASSWORD, { secret: true, configured: true });
     assert.deepEqual(f.artifact.environment.values.UNIFI_DEVICE_SSH_TARGET_IDS, { secret: true, configured: true });
     assert.deepEqual(f.artifact.environment.values.UNIFI_DEVICE_SSH_HOST_KEYS, { secret: true, configured: true });
+    assert.deepEqual(f.artifact.environment.values.UCG_SSH_HOST_KEY, { secret: true, configured: true });
+    assert.deepEqual(f.artifact.environment.values.LINUX_SSH_HOST_KEY, { secret: true, configured: true });
     assert.deepEqual(f.artifact.environment.values.WEB_PUSH_PRIVATE_KEY, { secret: true, configured: true });
     assert.deepEqual(f.artifact.environment.values.WIIM_IP, { secret: false, value: '192.0.2.55' });
-    assert.doesNotMatch(JSON.stringify(f.artifact), /top-secret|another-secret|device-secret|aa:bb:cc:dd:ee:ff|web-push-private-material/);
+    assert.doesNotMatch(JSON.stringify(f.artifact), /top-secret|another-secret|device-secret|aa:bb:cc:dd:ee:ff|SHA256:BBBB|SHA256:CCCC|web-push-private-material/);
     assert.equal(f.artifact.files['app-settings.json'].data, JSON.stringify({ watcherSec: 45 }));
 
     const snapshot = path.join(f.directory, 'exported.db');

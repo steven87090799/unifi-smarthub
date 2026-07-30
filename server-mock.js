@@ -400,10 +400,11 @@ function mockTelemetrySnapshot() {
 
 app.get('/api/network/devices/telemetry', (_req, res) => res.json(mockTelemetrySnapshot()));
 app.get('/api/network/devices/telemetry/history', (req, res) => {
-    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    const query = validatedInput(res, () => queryInput.parseUnifiTelemetryHistoryQuery(req.query));
     if (!query) return;
     const now = Date.now();
-    const data = Array.from({ length: 12 }, (_, index) => ({
+    const allRows = Array.from({ length: 12 }, (_, index) => ({
+        id: index + 1,
         collectedAt: new Date(now - (11 - index) * 5 * 60 * 1000).toISOString(),
         deviceId: mockUnifiTelemetryDevices[1].id,
         name: mockUnifiTelemetryDevices[1].name,
@@ -413,7 +414,9 @@ app.get('/api/network/devices/telemetry/history', (req, res) => {
         linkSpeedMbps: 2500, rxBytes: 50000000 + index * 100000, txBytes: 12000000 + index * 50000,
         rxErrors: 0, txErrors: 0, rxDropped: 0, txDropped: 0
     }));
-    res.json({ data, source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' } });
+    const descending = allRows.slice().reverse().filter(row => !query.before || row.id < query.before).slice(0, query.limit);
+    const data = descending.reverse();
+    res.json({ data, pagination: { limit: query.limit, nextBefore: descending.length === query.limit ? descending.at(-1)?.id || null : null }, order: 'sampled_ts_asc,id_asc', source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' } });
 });
 
 app.get('/api/ui-preferences', (_req, res) => res.json({ preferences: mockUiPreferences }));
@@ -746,7 +749,7 @@ app.get('/api/heartbeat', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHeartbeatQuery(req.query));
     if (!query) return;
     lastClientActivity = query.scopes.includes('general') ? Date.now() : 0;
-    res.json({ ok: true, mode: query.scopes.includes('general') ? 'active' : 'idle', activeScopes: query.scopes, promptScopes: [], session: query.session });
+    res.json({ ok: true, mode: query.scopes.includes('general') ? 'active' : 'idle', activeScopes: query.scopes, promptScopes: query.focus ? query.scopes : [], session: query.session });
 });
 
 // 15-18. UGREEN NAS 模擬端點

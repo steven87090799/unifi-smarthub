@@ -6,10 +6,13 @@ SmartHub 透過 LinkPlay `httpapi.asp` 讀取 WiiM 狀態並執行受限控制�
 
 ```env
 WIIM_IP=192.168.0.170
+WIIM_TLS_INSECURE=false
+# WIIM_CA_FILE=/app/config/wiim-ca.pem
+# WIIM_ALLOW_INSECURE_HTTP=false
 ```
 
-- 先嘗試 `https://<ip>/httpapi.asp?command=...`，再回退 HTTP；單次 timeout 3 秒。
-- HTTPS 目前接受設備自簽憑證，只應在可信內網使用。
+- 預設只用 `https://<ip>/httpapi.asp?command=...`，單次 timeout 3 秒；HTTP 只有 `WIIM_ALLOW_INSECURE_HTTP=true` 才會嘗試。
+- HTTPS 預設驗證憑證；自簽憑證請以 `WIIM_CA_FILE` 掛載私有 CA，`WIIM_TLS_INSECURE=true` 是僅供受控測試的例外。
 - 常用唯讀指令有 2 秒快取；失聯時可回最後一筆快取，但正式狀態標示來源／不可達。
 - `getStatusEx` 的溫度寫入 SQLite；WiiM 頁活動時使用一般裝置取樣設定，預設 5 秒，閒置時回到設定的低頻。
 - 正式服務不把模擬數據寫入歷史。
@@ -50,3 +53,5 @@ WIIM_IP=192.168.0.170
 - `test/wiim-command-policy.test.js`
 
 不要恢復任意命令代理，也不要依賴上游「所有異動都用 GET」的原始介面設計。
+
+封面代理只接受 WiiM 已知主機，或明確列於 `WIIM_ART_ALLOWED_HOSTS` 的 external host。每次 DNS lookup 都拒絕 loopback、private、link-local、CGNAT、ULA 與 multicast 位址，使用已驗證 IP 連線以避免 rebinding；不跟隨 redirect，只接受 JPEG/PNG/WebP/GIF 並限制串流大小與 LRU cache。

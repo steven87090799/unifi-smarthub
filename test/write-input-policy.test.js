@@ -188,6 +188,8 @@ test('empty-body actions accept only undefined or an empty plain object', () => 
 test('connection updates reject .env injection, bad types, oversized values, and unknown fields', () => {
     const fields = [
         { key: 'SSH_PORT' },
+        { key: 'UCG_SSH_HOST_KEY', secret: true },
+        { key: 'LINUX_SSH_HOST_KEY', secret: true },
         { key: 'UNIFI_CONTROLLER_URL' },
         { key: 'UNIFI_NETWORK_API_URL' },
         { key: 'UNIFI_NETWORK_TLS_VERIFY' },
@@ -210,6 +212,8 @@ test('connection updates reject .env injection, bad types, oversized values, and
     ];
     assert.deepEqual(parseConnectionUpdates({
         SSH_PORT: '22',
+        UCG_SSH_HOST_KEY: `SHA256:${'A'.repeat(43)}`,
+        LINUX_SSH_HOST_KEY: `SHA256:${'B'.repeat(43)}`,
         UNIFI_CONTROLLER_URL: 'https://192.168.1.1:443',
         UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration',
         UNIFI_NETWORK_TLS_VERIFY: 'true',
@@ -227,6 +231,8 @@ test('connection updates reject .env injection, bad types, oversized values, and
         PASSWORD: ' spaces and # are data '
     }, fields), {
         SSH_PORT: '22',
+        UCG_SSH_HOST_KEY: `SHA256:${'A'.repeat(43)}`,
+        LINUX_SSH_HOST_KEY: `SHA256:${'B'.repeat(43)}`,
         UNIFI_CONTROLLER_URL: 'https://192.168.1.1:443',
         UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration',
         UNIFI_NETWORK_TLS_VERIFY: 'true',
@@ -255,10 +261,12 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ UNKNOWN: 'x' }, fields), 'UNKNOWN');
     validationError(() => parseConnectionUpdates({ PASSWORD: 'x'.repeat(4097) }, fields), 'PASSWORD');
     validationError(() => parseConnectionUpdates({ UNIFI_CONTROLLER_URL: 'ftp://host' }, fields), 'UNIFI_CONTROLLER_URL');
+    validationError(() => parseConnectionUpdates({ UNIFI_CONTROLLER_URL: 'http://192.168.1.1' }, fields), 'UNIFI_CONTROLLER_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_CONTROLLER_URL: 'https://user:pass@host' }, fields), 'UNIFI_CONTROLLER_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'file:///tmp/api' }, fields), 'UNIFI_NETWORK_API_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }, fields), 'UNIFI_NETWORK_API_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration?key=leak' }, fields), 'UNIFI_NETWORK_API_URL');
+    validationError(() => parseConnectionUpdates({ UCG_SSH_HOST_KEY: 'SHA256:bad' }, fields), 'UCG_SSH_HOST_KEY');
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080' }, fields).UNIFI_NETWORK_API_URL, 'http://127.0.0.1:8080');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_VERIFY: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_VERIFY');
     validationError(() => parseConnectionUpdates({ ADGUARD_URL: 'https://adguard.internal/control' }, fields), 'ADGUARD_URL');

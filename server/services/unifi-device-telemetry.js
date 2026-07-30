@@ -48,7 +48,9 @@ function stableDeviceId(device) {
 }
 
 function onlineState(state) {
-    return state === 1 || state === '1' || String(state).toLowerCase() === 'connected';
+    if (state === 1 || state === '1' || String(state).toLowerCase() === 'connected') return true;
+    if (state === 0 || state === '0' || String(state).toLowerCase() === 'disconnected') return false;
+    return null;
 }
 
 function literalIp(device) {
@@ -85,13 +87,16 @@ function normalizeVaps(device) {
     return vaps.slice(0, 64).map(vap => ({
         ssid: boundedText(vap?.essid || vap?.ssid || '', 64) || null,
         radio: boundedText(vap?.radio || vap?.radio_name || '', 32) || null,
-        up: vap?.up === true || vap?.up === 1 || vap?.up === '1',
+        up: vap?.up === true || vap?.up === 1 || vap?.up === '1'
+            ? true
+            : vap?.up === false || vap?.up === 0 || vap?.up === '0' ? false : null,
         clientCount: finiteNumber(vap?.num_sta, { min: 0, max: 100000, integer: true })
     }));
 }
 
 function directStatus(entry, { selected, controllerCapability }) {
     if (!selected) return controllerCapability ? 'unavailable' : 'unsupported';
+    if (entry?.stale) return 'stale';
     const status = entry?.status || entry?.errorCode;
     if (status === 'not_configured') return 'not_configured';
     if (status === 'device_offline' || status === 'offline') return 'offline';
@@ -105,7 +110,8 @@ function directStatus(entry, { selected, controllerCapability }) {
 
 function temperatureFor(device, direct, collectedAt) {
     const online = onlineState(device?.state);
-    if (!online) return { value: null, status: 'offline', source: null, sourceField: null, sampledAt: null, stale: false };
+    if (online === false) return { value: null, status: 'offline', source: null, sourceField: null, sampledAt: null, stale: false };
+    if (online !== true) return { value: null, status: 'unavailable', source: null, sourceField: null, sampledAt: null, stale: false };
     const controller = findTemperature(device);
     if (controller) {
         return {
@@ -117,9 +123,10 @@ function temperatureFor(device, direct, collectedAt) {
             stale: false
         };
     }
-    if (direct?.thermal && !direct.stale && direct.status === 'supported') {
+    if (direct?.thermal && !direct.stale && direct.status === 'supported'
+        && Number.isFinite(direct.thermal.cpuTemperatureC)) {
         return {
-            value: direct.thermal.maxTemperatureC,
+            value: direct.thermal.cpuTemperatureC,
             status: 'supported',
             source: 'device_ssh',
             sourceField: direct.thermal.source?.path || '/sys/class/thermal/thermal_zone*/temp',
@@ -129,7 +136,9 @@ function temperatureFor(device, direct, collectedAt) {
     }
     return {
         value: null,
-        status: directStatus(direct, { selected: direct?.selected === true, controllerCapability: device?.has_temperature === true }),
+        status: direct?.thermal && direct.status === 'supported' && !direct.stale
+            ? 'unsupported'
+            : directStatus(direct, { selected: direct?.selected === true, controllerCapability: device?.has_temperature === true }),
         source: direct?.thermal ? 'device_ssh' : null,
         sourceField: null,
         sampledAt: direct?.lastSuccessAt || null,
@@ -148,6 +157,7 @@ function normalizeDevice(device, direct, collectedAt) {
     const uplink = device?.uplink && typeof device.uplink === 'object' ? device.uplink : {};
     const linkSpeed = firstNumber(uplink, [['speed'], ['link_speed']], { min: 0, max: 1000000 });
     const clientCount = firstNumber(device, [['num_sta'], ['user-num_sta'], ['client_count']], { min: 0, max: 100000, integer: true });
+    const radioClientCountsKnown = radios.length > 0 && radios.every(radio => radio.clientCount !== null);
     const counter = (paths) => firstNumber(device, paths, { min: 0, max: Number.MAX_SAFE_INTEGER })?.value ?? null;
     const temperature = temperatureFor(device, direct, collectedAt);
     return {
@@ -162,7 +172,9 @@ function normalizeDevice(device, direct, collectedAt) {
         uplink: {
             deviceId: boundedText(uplink.uplink_mac || uplink.mac, 128).toLowerCase() || null,
             port: finiteNumber(uplink.uplink_remote_port ?? uplink.port_idx ?? uplink.port, { min: 0, max: 65535, integer: true }),
-            state: online && (uplink.up === true || uplink.up === 1 || uplink.up === '1' || String(uplink.state).toLowerCase() === 'up') ? 'up' : 'down',
+            state: uplink.up === true || uplink.up === 1 || uplink.up === '1' || String(uplink.state).toLowerCase() === 'up'
+                ? 'up'
+                : uplink.up === false || uplink.up === 0 || uplink.up === '0' || String(uplink.state).toLowerCase() === 'down' ? 'down' : 'unknown',
             speedMbps: linkSpeed?.value ?? null,
             duplex: uplink.full_duplex === true || uplink.full_duplex === 1 || String(uplink.duplex).toLowerCase() === 'full'
                 ? 'full'
@@ -180,7 +192,7 @@ function normalizeDevice(device, direct, collectedAt) {
         },
         radios,
         vaps,
-        clientCount: clientCount?.value ?? radios.reduce((sum, radio) => sum + (radio.clientCount || 0), 0),
+        clientCount: clientCount?.value ?? (radioClientCountsKnown ? radios.reduce((sum, radio) => sum + radio.clientCount, 0) : null),
         cpu: cpu ? { value: cpu.value, unit: 'percent', sourceField: cpu.sourceField } : null,
         temperature: {
             value: temperature.value,

@@ -58,7 +58,7 @@ test('temperature truth gate rejects unsupported, out-of-range, and offline resi
 test('SSH temperature is accepted only when selected, supported, fresh, and online', () => {
     const direct = new Map([['aa:bb:cc:dd:ee:01', {
         selected: true, status: 'supported', stale: false, hostKeyPinned: true,
-        thermal: { maxTemperatureC: 58.25, sampledAt: COLLECTED_AT, source: { path: '/sys/class/thermal/thermal_zone*/temp' }, zones: [{ zone: 'thermal_zone0' }] }
+        thermal: { maxTemperatureC: 88, cpuTemperatureC: 58.25, sampledAt: COLLECTED_AT, source: { path: '/sys/class/thermal/thermal_zone*/temp' }, zones: [{ zone: 'thermal_zone0' }] }
     }]]);
     const normalized = presentUnifiDeviceTelemetry([device({ has_temperature: false })], { collectedAt: COLLECTED_AT, directThermalByDevice: direct }).devices[0];
     assert.equal(normalized.temperature.value, 58.25);
@@ -81,6 +81,19 @@ test('malformed and duplicate Controller devices remain bounded and deterministi
     assert.equal(rich.online, true);
     assert.equal(rich.cpu, null);
     assert.equal(snapshot.devices.find(value => value.id === 'controller-id-only').ip, null);
+});
+
+test('missing Controller fields remain unknown and never become false, down, or zero', () => {
+    const normalized = presentUnifiDeviceTelemetry([device({
+        state: undefined, num_sta: undefined, uplink: {}, radio_table: [], vap_table: [],
+        'system-stats': { cpu: null }, uptime: null
+    })], { collectedAt: COLLECTED_AT }).devices[0];
+    assert.equal(normalized.online, null);
+    assert.equal(normalized.uplink.state, 'unknown');
+    assert.equal(normalized.clientCount, null);
+    assert.equal(normalized.cpu, null);
+    assert.deepEqual(normalized.radios, []);
+    assert.deepEqual(normalized.vaps, []);
 });
 
 test('stale snapshots produce no history rows', () => {

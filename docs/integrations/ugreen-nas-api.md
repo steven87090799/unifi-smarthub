@@ -26,7 +26,7 @@ NAS_PASSWORD=...
 - `/ugreen/v1/storage/volume/list`
 - UGOS logs 與 UPS 狀態相關路徑
 
-UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。直接連線目前接受設備自簽憑證，因此只應用於可信內網；若要強化 TLS，需同步補設定、錯誤契約與測試。
+UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。HTTPS 預設驗證憑證；自簽憑證請以 `NAS_CA_FILE` 掛載私有 CA，只有受控測試才能明確設定 `NAS_TLS_INSECURE=true`。
 
 ## 歷史
 

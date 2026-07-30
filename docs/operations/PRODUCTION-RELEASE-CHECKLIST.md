@@ -11,6 +11,8 @@
 - 容器內 upstream 位址不是 `localhost`／`127.0.0.1`。
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
 - PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false`；私有／自簽 CA 使用容器內絕對路徑 `PPB_CA_FILE`，並確認不是 symlink。
+- UniFi、NAS、WiiM 的 HTTPS 預設驗證憑證；自簽環境掛載各自 `*_CA_FILE`。不得以 `*_TLS_INSECURE=true` 或 WiiM HTTP 作為正式設定。
+- 所有 SSH 目標先取得並填入 SHA256 host key pin：`UCG_SSH_HOST_KEY`、`LINUX_SSH_HOST_KEY`，以及逐設備 `UNIFI_DEVICE_SSH_HOST_KEYS`；正式環境不得使用 `ALLOW_UNPINNED_SSH=true`。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
 
@@ -24,6 +26,7 @@ npm test
 npm run check:js
 npm run check:css
 npm run test:smoke
+npm run test:compose-smoke
 npm audit --audit-level=low
 git diff --check
 docker compose --env-file config/.env config --quiet
@@ -50,7 +53,7 @@ node --test \
 
 任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。
 
-Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 的 branch protection／ruleset 應將 `SmartHub CI / Repository gate` 設為 Required Check，要求分支為最新並禁止 CI 未通過時 merge。Workflow 檔存在不代表 repository 規則已啟用；沒有管理權限驗證時記為 `NOT RUN`。
+Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離的 Node 與 Docker Compose smoke；後者確認 health、non-root、readonly API、bind-mounted config、SQLite restart persistence 與 `nas-monitor` profile startability。它使用暫存資料與假帳密，不代表正式 NAS 或真實設備已驗證。`main` 的 branch protection／ruleset 應將 `SmartHub CI / Repository gate` 設為 Required Check，要求分支為最新並禁止 CI 未通過時 merge。Workflow 檔存在不代表 repository 規則已啟用；沒有管理權限驗證時記為 `NOT RUN`。
 
 ## 3. 建立不可變成對映像
 

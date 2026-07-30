@@ -58,7 +58,7 @@ node server-mock.js
 
 | 整合 | 主要欄位 |
 |---|---|
-| UCG SSH | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD` |
+| UCG SSH | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD`, `UCG_SSH_HOST_KEY` |
 | UniFi 本地 | `UNIFI_CONTROLLER_URL`, `UNIFI_USERNAME`, `UNIFI_PASSWORD` |
 | UniFi 裝置溫度（選填） | `UNIFI_DEVICE_SSH_PORT`, `UNIFI_DEVICE_SSH_USER`, `UNIFI_DEVICE_SSH_PASSWORD`, `UNIFI_DEVICE_SSH_TARGET_IDS`, `UNIFI_DEVICE_SSH_HOST_KEYS` |
 | UniFi 雲端 | `UNIFI_API_KEY` |
@@ -67,7 +67,7 @@ node server-mock.js
 | WiiM | `WIIM_IP` |
 | UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*`；PPB TLS 見下節 |
 | AdGuard | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` |
-| Linux SSH | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD` |
+| Linux SSH | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD`, `LINUX_SSH_HOST_KEY` |
 | 面板登入 | `PANEL_PASSWORD`；唯讀帳號另設 `PANEL_READONLY_*` |
 
 沒有設定的整合會顯示未設定或空狀態，不應阻止主服務就緒。
@@ -80,7 +80,7 @@ node server-mock.js
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
 - Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
-- Device SSH 只接受 Controller 已知設備、最多 32 個明確 MAC、Literal IP 與固定唯讀 thermal command；最多兩條並行連線，可用每台設備的 SHA256 Host Key pinning。密碼、MAC 清單與 fingerprint 不由 GET、診斷、log 或安全備份回傳。
+- 所有 SSH 整合預設要求 SHA256 Host Key pinning：UCG／Linux 分別使用 `UCG_SSH_HOST_KEY`／`LINUX_SSH_HOST_KEY`，Device SSH 用每設備 `UNIFI_DEVICE_SSH_HOST_KEYS`。只有受控測試才可明確設定 `ALLOW_UNPINNED_SSH=true`；密碼、MAC 清單與 fingerprint 不由 GET、診斷、log 或安全備份回傳。
 - 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
 
 ## Docker UPS

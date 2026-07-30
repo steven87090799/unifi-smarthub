@@ -472,6 +472,20 @@ async function exerciseRuntimeContract(t, script, label) {
         }
     });
 
+    await t.test('telemetry heartbeat scopes are accepted, reflected, and prompt sampled', async () => {
+        for (const scope of ['unifi-device-telemetry', 'ucg,unifi-device-telemetry']) {
+            const response = await fetch(`${runtime.baseUrl}/api/heartbeat?scope=${encodeURIComponent(scope)}&focus=1&session=telemetry-tab`, {
+                headers: { authorization: BASIC_AUTH }, signal: AbortSignal.timeout(4_000)
+            });
+            const body = await response.json();
+            assert.equal(response.status, 200);
+            for (const expected of scope.split(',')) assert.ok(body.activeScopes.includes(expected));
+            assert.ok(body.promptScopes.includes('unifi-device-telemetry'));
+        }
+        const rejected = await fetch(`${runtime.baseUrl}/api/heartbeat?scope=not-a-scope`, { headers: { authorization: BASIC_AUTH } });
+        assert.equal(rejected.status, 400);
+    });
+
     await t.test('WiFi QR remains admin-only with same-origin CSRF proof', async () => {
         const body = JSON.stringify({ ssid: 'Guest', password: 'safe passphrase' });
         assert.equal((await fetch(`${runtime.baseUrl}/api/wifi/qr`, {
