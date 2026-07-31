@@ -294,3 +294,27 @@ test('quoted .env serialization round-trips spaces, hashes, equals, quotes, and 
     for (const value of ['x\ny', 'x\ry', 'x\0y']) validationError(() => quoteEnvValue(value));
     validationError(() => quoteEnvValue("all'\"`#delimiters"));
 });
+
+test('UniFi device SSH settings enforce canonical ports, usernames, MAC limits, fingerprints, and control rejection', () => {
+    const fields = [
+        { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' },
+        { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true },
+        { key: 'UNIFI_DEVICE_SSH_TARGET_IDS', secret: true },
+        { key: 'UNIFI_DEVICE_SSH_HOST_KEYS', secret: true }
+    ];
+    const fingerprint = `SHA256:${'A'.repeat(43)}`;
+    assert.deepEqual(parseConnectionUpdates({
+        UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor-user',
+        UNIFI_DEVICE_SSH_TARGET_IDS: 'AA:BB:CC:DD:EE:FF,aa:bb:cc:dd:ee:ff',
+        UNIFI_DEVICE_SSH_HOST_KEYS: `AA:BB:CC:DD:EE:FF=${fingerprint}`
+    }, fields), {
+        UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor-user',
+        UNIFI_DEVICE_SSH_TARGET_IDS: 'aa:bb:cc:dd:ee:ff',
+        UNIFI_DEVICE_SSH_HOST_KEYS: `aa:bb:cc:dd:ee:ff=${fingerprint}`
+    });
+    assert.throws(() => parseConnectionUpdates({ UNIFI_DEVICE_SSH_PORT: '022' }, fields));
+    assert.throws(() => parseConnectionUpdates({ UNIFI_DEVICE_SSH_USER: 'root;id' }, fields));
+    assert.throws(() => parseConnectionUpdates({ UNIFI_DEVICE_SSH_PASSWORD: 'bad\nvalue' }, fields));
+    assert.throws(() => parseConnectionUpdates({ UNIFI_DEVICE_SSH_TARGET_IDS: Array.from({ length: 33 }, (_, index) => `02:00:00:00:00:${index.toString(16).padStart(2, '0')}`).join(',') }, fields));
+    assert.throws(() => parseConnectionUpdates({ UNIFI_DEVICE_SSH_HOST_KEYS: 'aa:bb:cc:dd:ee:ff=SHA256:bad' }, fields));
+});

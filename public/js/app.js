@@ -896,6 +896,7 @@
             fetchIspMetrics();
             fetchThreats();
             fetchSwitchMatrix();
+            fetchUnifiDeviceTelemetry();
             fetchBlockHistory();
             fetchTrends();
             fetchNas();
@@ -933,6 +934,7 @@
             linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]) },
             critAlerts: { fn: () => fetchCritAlerts() }, hardware: { fn: () => fetchHardware() },
             ucgHist: { fn: () => fetchUcgHist() }, ucgSpikes: { fn: () => fetchUcgSpikes() }, switches: { fn: () => fetchSwitchMatrix() },
+            unifiTelemetry: { fn: () => fetchUnifiDeviceTelemetry() },
             clients: { fn: () => fetchClients() }, threats: { fn: () => fetchThreats() },
             cloud: { fn: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan()]) },
             isp: { fn: () => fetchIspMetrics() }, nas: { fn: () => fetchNas() },
@@ -948,14 +950,14 @@
         const PAGE_POLL_JOBS = {
             overview: ['hardware', 'clients', 'threats', 'trend', 'isp', 'nas', 'wiimSystem', 'ups'],
             clients: ['clients'], security: ['threats', 'security'], wifi: [], cloud: ['cloud', 'isp'],
-            ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches'],
+            ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches', 'unifiTelemetry'],
             nas: ['nas', 'nasAdvanced', 'docker'], wiim: ['wiimSystem', 'wiimPlayback'],
             ups: ['ups', 'upsHistory', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security']
         };
         const PAGE_ACTIVITY_SCOPES = {
             overview: ['trend', 'ucg', 'nas', 'wiim', 'ups'], clients: ['trend'], security: ['trend'],
-            cloud: ['trend'], ucg: ['ucg'], nas: ['nas'], wiim: ['wiim'], ups: ['ups'], linuxhost: ['linux']
+            cloud: ['trend'], ucg: ['ucg', 'unifi-device-telemetry'], nas: ['nas'], wiim: ['wiim'], ups: ['ups'], linuxhost: ['linux']
         };
         let pollTimers = {};
         let pollStartTimers = {};
@@ -1377,6 +1379,106 @@
                 // 只有在還沒成功渲染過時才顯示提示 (避免暫時性斷線清空已顯示的內容)
                 if (!wrap.querySelector('.grid')) wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">連線中，稍候自動重試…</p>';
                 console.error('Switch matrix fetch failed', e);
+            }
+        }
+
+        const UNIFI_TEMPERATURE_STATUS = Object.freeze({
+            supported: '支援', unsupported: '不支援', not_configured: '未設定', offline: '離線',
+            stale: '資料過期', authentication_failed: '驗證失敗', host_key_mismatch: 'Host Key 不符',
+            timeout: '逾時', unavailable: '暫時無法取得'
+        });
+        function telemetryNumber(value, suffix = '', digits = 0) {
+            return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+                ? `${Number(value).toFixed(digits)}${suffix}`
+                : '--';
+        }
+        function telemetryTimestamp(value) {
+            const parsed = Date.parse(value || '');
+            return Number.isFinite(parsed) ? new Date(parsed).toLocaleString('zh-TW') : '--';
+        }
+        function telemetryBytes(value) {
+            const number = Number(value);
+            if (value === null || value === undefined || !Number.isFinite(number) || number < 0) return '--';
+            if (number >= 1024 ** 3) return `${(number / 1024 ** 3).toFixed(1)} GiB`;
+            if (number >= 1024 ** 2) return `${(number / 1024 ** 2).toFixed(1)} MiB`;
+            if (number >= 1024) return `${(number / 1024).toFixed(1)} KiB`;
+            return `${number} B`;
+        }
+        function renderUnifiTelemetryDevice(device, snapshotStale) {
+            const temperature = device?.temperature || {};
+            const stale = snapshotStale || device?.freshness?.stale || temperature.stale;
+            const statusLabel = UNIFI_TEMPERATURE_STATUS[temperature.status] || '不支援';
+            const temperatureText = temperature.status === 'supported' && Number.isFinite(Number(temperature.value)) && !stale
+                ? `${Number(temperature.value).toFixed(1)}°C`
+                : `${statusLabel}${stale && temperature.status !== 'stale' ? ' · 舊值未採用' : ''}`;
+            const radios = Array.isArray(device?.radios) ? device.radios : [];
+            const vaps = Array.isArray(device?.vaps) ? device.vaps : [];
+            const radioSummary = radios.length
+                ? radios.map(radio => `${escapeHtml(radio.band || radio.name || 'Radio')} Ch ${escapeHtml(radio.channel ?? '--')} · ${telemetryNumber(radio.utilizationPercent, '%')}`).join('<br>')
+                : '無射頻資料';
+            const vapSummary = vaps.length
+                ? vaps.map(vap => `${escapeHtml(vap.ssid || '隱藏 SSID')} · ${vap.up ? 'Up' : 'Down'} · ${telemetryNumber(vap.clientCount)} 台`).join('<br>')
+                : '無 SSID/VAP 資料';
+            const traffic = device?.traffic || {};
+            const packets = `${telemetryNumber(traffic.rxPackets)} / ${telemetryNumber(traffic.txPackets)}`;
+            const errors = `${telemetryNumber(traffic.rxErrors)} / ${telemetryNumber(traffic.txErrors)} / ${telemetryNumber(traffic.rxDropped)} / ${telemetryNumber(traffic.txDropped)}`;
+            const stateClass = device?.online ? 'text-emerald-400' : 'text-red-400';
+            return `<article class="rounded-xl border ${stale ? 'border-amber-500/30' : 'border-slate-800/70'} bg-slate-950/45 p-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0"><p class="text-xs font-bold text-slate-200 truncate">${escapeHtml(device?.name || device?.id || '未知設備')}</p>
+                    <p class="text-[9px] text-slate-500 mono truncate">${escapeHtml(device?.model || '--')} · ${escapeHtml(device?.firmware || '--')} · ${escapeHtml(device?.ip || '--')}</p></div>
+                    <span class="text-[9px] font-bold ${stateClass}">${device?.online ? 'Online' : 'Offline'}</span>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-[10px]">
+                    <div><p class="text-slate-600">溫度</p><p class="font-bold ${temperature.status === 'supported' && !stale ? 'text-cyan-300' : 'text-slate-400'}">${escapeHtml(temperatureText)}</p></div>
+                    <div><p class="text-slate-600">CPU</p><p class="text-slate-300 mono">${telemetryNumber(device?.cpu?.value, '%', 1)}</p></div>
+                    <div><p class="text-slate-600">用戶端</p><p class="text-slate-300 mono">${telemetryNumber(device?.clientCount)}</p></div>
+                    <div><p class="text-slate-600">上聯</p><p class="text-slate-300 mono">${escapeHtml(device?.uplink?.state || '--')} · ${telemetryNumber(device?.uplink?.speedMbps, ' Mbps')} · ${escapeHtml(device?.uplink?.duplex || '--')}</p></div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/60 text-[9px] text-slate-500">
+                    <p>Radio：<span class="text-slate-400">${radioSummary}</span></p>
+                    <p>SSID/VAP：<span class="text-slate-400">${vapSummary}</span></p>
+                    <p class="sm:col-span-2">RX/TX 封包：<span class="text-slate-400 mono">${packets}</span> · 錯誤/丟棄 RX/TX：<span class="text-slate-400 mono">${errors}</span></p>
+                </div>
+                <p class="text-[9px] text-slate-600 mt-2">流量 RX/TX：${escapeHtml(telemetryBytes(traffic.rxBytes))} / ${escapeHtml(telemetryBytes(traffic.txBytes))} · Uptime：${telemetryNumber(device?.uptimeSeconds, ' 秒')} · 溫度來源：${escapeHtml(temperature.source || '無')} · 取樣：${escapeHtml(telemetryTimestamp(temperature.sampledAt))}${device?.freshness?.errorReason ? ` · ${escapeHtml(device.freshness.errorReason)}` : ''}</p>
+            </article>`;
+        }
+        async function fetchUnifiDeviceTelemetry() {
+            const wrap = document.getElementById('unifi-telemetry-devices');
+            if (!wrap) return;
+            try {
+                const [snapshotResponse, historyResponse] = await Promise.all([
+                    fetch('/api/network/devices/telemetry'),
+                    fetch('/api/network/devices/telemetry/history?hours=24')
+                ]);
+                if (!snapshotResponse.ok || !historyResponse.ok) throw new Error('telemetry request failed');
+                const snapshot = await snapshotResponse.json();
+                const historyPayload = await historyResponse.json();
+                const devices = Array.isArray(snapshot.devices) ? snapshot.devices : [];
+                wrap.innerHTML = devices.length
+                    ? devices.map(device => renderUnifiTelemetryDevice(device, snapshot.stale)).join('')
+                    : '<p class="text-xs text-slate-500 text-center py-6 xl:col-span-2">Controller 尚未回傳設備資料</p>';
+                const state = document.getElementById('unifi-telemetry-state');
+                if (state) {
+                    state.textContent = snapshot.stale ? 'STALE · 保留最後成功資料' : 'FRESH';
+                    state.className = `inline-block px-2 py-1 rounded-full border ${snapshot.stale ? 'border-amber-500/30 bg-amber-500/10 text-amber-300' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'}`;
+                }
+                const last = document.getElementById('unifi-telemetry-last-success');
+                if (last) last.textContent = `最後成功：${telemetryTimestamp(snapshot.lastSuccessfulAt)}`;
+                const rows = (Array.isArray(historyPayload.data) ? historyPayload.data : [])
+                    .filter(row => row.temperatureStatus === 'supported' && Number.isFinite(Number(row.temperature)))
+                    .slice(-100).reverse();
+                const history = document.getElementById('unifi-telemetry-history');
+                const count = document.getElementById('unifi-telemetry-history-count');
+                if (count) count.textContent = `${rows.length} 點`;
+                if (history) history.innerHTML = rows.length ? rows.map(row => `<div class="flex items-center justify-between gap-3 rounded-lg bg-slate-950/40 border border-slate-800/50 px-3 py-2 text-[9px]">
+                    <span class="text-slate-400 truncate">${escapeHtml(row.name || row.deviceId)}</span>
+                    <span class="text-slate-600">${escapeHtml(telemetryTimestamp(row.collectedAt))}</span>
+                    <span class="text-cyan-300 font-bold mono">${telemetryNumber(row.temperature, '°C', 1)}</span>
+                </div>`).join('') : '<p class="text-[10px] text-slate-500">尚無可用的真實溫度紀錄</p>';
+            } catch (error) {
+                if (!wrap.querySelector('article')) wrap.innerHTML = '<p class="text-xs text-amber-400 text-center py-6 xl:col-span-2">遙測快照暫時無法讀取，稍後自動重試</p>';
+                console.error('UniFi device telemetry fetch failed', error);
             }
         }
 
@@ -3197,6 +3299,7 @@
                 setCk('notif-trig-nas-cpu', !!s.triggerNasHighCpu);
                 setCk('notif-trig-nas-memory', !!s.triggerNasHighMemory);
                 setCk('notif-trig-ucgtemp', !!s.triggerUcgTemp);
+                setCk('notif-trig-unifi-device-temp', s.triggerUnifiDeviceTemp !== false);
                 setCk('notif-trig-ucg-cpu', !!s.triggerUcgHighCpu);
                 setCk('notif-trig-ucg-memory', !!s.triggerUcgHighMemory);
                 setCk('notif-trig-ucg-disk', !!s.triggerUcgDisk);
@@ -3240,6 +3343,7 @@
                 setV('notif-nasspace-pct', s.nasSpaceAlert ?? 85);
                 setV('notif-nas-cpu', s.nasCpuAlert ?? 90); setV('notif-nas-memory', s.nasMemoryAlert ?? 90);
                 setV('notif-ucg-temp', s.ucgTempAlert ?? 75);
+                setV('notif-unifi-device-temp', s.unifiDeviceTempAlert ?? 75);
                 setV('notif-ucg-cpu', s.ucgCpuAlert ?? 90);
                 setV('notif-ucg-memory', s.ucgMemoryAlert ?? 90); setV('notif-ucg-disk', s.ucgDiskAlert ?? 85);
                 setV('notif-wan-latency', s.wanLatencyAlert ?? 100);
@@ -3293,6 +3397,7 @@
                 triggerNasHighCpu: document.getElementById('notif-trig-nas-cpu')?.checked ?? false,
                 triggerNasHighMemory: document.getElementById('notif-trig-nas-memory')?.checked ?? false,
                 triggerUcgTemp: document.getElementById('notif-trig-ucgtemp')?.checked ?? false,
+                triggerUnifiDeviceTemp: document.getElementById('notif-trig-unifi-device-temp')?.checked ?? true,
                 triggerUcgHighCpu: document.getElementById('notif-trig-ucg-cpu')?.checked ?? false,
                 triggerUcgHighMemory: document.getElementById('notif-trig-ucg-memory')?.checked ?? false,
                 triggerUcgDisk: document.getElementById('notif-trig-ucg-disk')?.checked ?? false,
@@ -3313,6 +3418,7 @@
                 nasCpuAlert: parseInt(document.getElementById('notif-nas-cpu')?.value, 10) || 90,
                 nasMemoryAlert: parseInt(document.getElementById('notif-nas-memory')?.value, 10) || 90,
                 ucgTempAlert: parseInt(document.getElementById('notif-ucg-temp')?.value, 10) || 75,
+                unifiDeviceTempAlert: parseInt(document.getElementById('notif-unifi-device-temp')?.value, 10) || 75,
                 ucgCpuAlert: parseInt(document.getElementById('notif-ucg-cpu')?.value, 10) || 90,
                 ucgMemoryAlert: parseInt(document.getElementById('notif-ucg-memory')?.value, 10) || 90,
                 ucgDiskAlert: parseInt(document.getElementById('notif-ucg-disk')?.value, 10) || 85,
@@ -3490,6 +3596,8 @@
                 set('srv-deviceActiveFrontendPollSec', s.deviceActiveFrontendPollSec);
                 set('srv-deviceActiveBackendSampleSec', s.deviceActiveBackendSampleSec);
                 set('srv-deviceIdleBackendSampleSec', s.deviceIdleBackendSampleSec);
+                set('srv-unifiTelemetryActiveSec', s.unifiTelemetryActiveSec);
+                set('srv-unifiTelemetryIdleSec', s.unifiTelemetryIdleSec);
                 set('srv-heartbeatSec', s.heartbeatSec); set('srv-activeLeaseSec', s.activeLeaseSec);
                 set('srv-upsFrontendPollSec', s.upsFrontendPollSec);
                 set('srv-upsActiveBackendSampleSec', s.upsActiveBackendSampleSec);
@@ -3549,6 +3657,8 @@
                 deviceActiveFrontendPollSec: num('srv-deviceActiveFrontendPollSec'),
                 deviceActiveBackendSampleSec: num('srv-deviceActiveBackendSampleSec'),
                 deviceIdleBackendSampleSec: num('srv-deviceIdleBackendSampleSec'),
+                unifiTelemetryActiveSec: num('srv-unifiTelemetryActiveSec'),
+                unifiTelemetryIdleSec: num('srv-unifiTelemetryIdleSec'),
                 heartbeatSec: num('srv-heartbeatSec'), activeLeaseSec: num('srv-activeLeaseSec'),
                 upsFrontendPollSec: num('srv-upsFrontendPollSec'),
                 upsActiveBackendSampleSec: num('srv-upsActiveBackendSampleSec'),
@@ -3580,6 +3690,12 @@
         /* ==================== 連線設定 (.env 網頁化) ==================== */
         async function fetchConnections() {
             try {
+                const security = await loadPanelSecurityContext();
+                const telemetrySettings = document.getElementById('unifi-telemetry-admin-settings');
+                if (telemetrySettings) telemetrySettings.classList.toggle('hidden', security.role !== 'admin');
+                const saveButton = document.getElementById('save-connections-button');
+                if (saveButton) saveButton.classList.toggle('hidden', security.role !== 'admin');
+                if (security.role !== 'admin') return;
                 const d = await (await fetch('/api/connections')).json();
                 dbg('Conn', '連線設定載入', d);
                 for (const [k, v] of Object.entries(d.fields || {})) {
@@ -3620,6 +3736,7 @@
         }
 
         async function saveConnections() {
+            if (document.documentElement.dataset.panelRole !== 'admin') return showToast('僅管理員可變更連線設定', true);
             const body = {};
             document.querySelectorAll('.conn-input').forEach(el => {
                 const key = el.id.replace('conn-', '');

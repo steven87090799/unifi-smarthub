@@ -144,6 +144,15 @@ function createHistoryDb(dataDir, options = {}) {
         );
         CREATE INDEX IF NOT EXISTS idx_history_series_ts ON history(series, ts);
         CREATE INDEX IF NOT EXISTS idx_history_series_ts_id ON history(series, ts, id);
+        CREATE TABLE IF NOT EXISTS unifi_device_telemetry (
+            id INTEGER PRIMARY KEY,
+            sampled_ts INTEGER NOT NULL,
+            device_id TEXT NOT NULL,
+            data TEXT NOT NULL,
+            UNIQUE(sampled_ts, device_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_unifi_device_telemetry_time
+            ON unifi_device_telemetry(sampled_ts, device_id, id);
         CREATE TABLE IF NOT EXISTS ups_events (
             id INTEGER PRIMARY KEY,
             start_ts INTEGER NOT NULL,
@@ -452,6 +461,24 @@ function createHistoryDb(dataDir, options = {}) {
     const deleteOldestStmt = db.prepare(`
         DELETE FROM history WHERE id IN (
             SELECT id FROM history WHERE series = ? ORDER BY ts ASC, id ASC LIMIT ?
+        )
+    `);
+    const insertUnifiTelemetryStmt = db.prepare(`
+        INSERT OR IGNORE INTO unifi_device_telemetry (sampled_ts, device_id, data)
+        VALUES (@sampled_ts, @device_id, @data)
+    `);
+    const listUnifiTelemetryStmt = db.prepare(`
+        SELECT sampled_ts, device_id, data
+        FROM unifi_device_telemetry
+        WHERE sampled_ts >= ?
+        ORDER BY sampled_ts ASC, device_id ASC, id ASC
+        LIMIT 100000
+    `);
+    const deleteOldUnifiTelemetryStmt = db.prepare('DELETE FROM unifi_device_telemetry WHERE sampled_ts < ?');
+    const countUnifiTelemetryStmt = db.prepare('SELECT COUNT(*) AS count FROM unifi_device_telemetry');
+    const deleteOldestUnifiTelemetryStmt = db.prepare(`
+        DELETE FROM unifi_device_telemetry WHERE id IN (
+            SELECT id FROM unifi_device_telemetry ORDER BY sampled_ts ASC, device_id ASC, id ASC LIMIT ?
         )
     `);
     const insertUpsEventStmt = db.prepare(`
@@ -851,6 +878,14 @@ function createHistoryDb(dataDir, options = {}) {
     const healthStmt = db.prepare('SELECT 1 AS ok');
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
+    });
+    const insertUnifiTelemetryTransaction = db.transaction((rows, cutoff, hardCap) => {
+        let inserted = 0;
+        for (const row of rows) inserted += insertUnifiTelemetryStmt.run(row).changes;
+        deleteOldUnifiTelemetryStmt.run(cutoff);
+        const excess = countUnifiTelemetryStmt.get().count - hardCap;
+        if (excess > 0) deleteOldestUnifiTelemetryStmt.run(excess);
+        return inserted;
     });
     function writeThreatIpAudit(entry) {
         insertThreatIpBlockAuditStmt.run({
@@ -1303,6 +1338,88 @@ function createHistoryDb(dataDir, options = {}) {
         return true;
     }
 
+    function insertUnifiTelemetryBatch(snapshot, { keepDays = 30, hardCap = 100000 } = {}) {
+        if (!snapshot || snapshot.stale || !Array.isArray(snapshot.rows)) {
+            return { inserted: 0, rejected: Array.isArray(snapshot?.rows) ? snapshot.rows.length : 0 };
+        }
+        const sampledTs = Date.parse(snapshot.collectedAt || '');
+        if (!Number.isFinite(sampledTs)) return { inserted: 0, rejected: snapshot.rows.length };
+        const rows = [];
+        let rejected = Math.max(0, snapshot.rows.length - 1000);
+        for (const value of snapshot.rows.slice(0, 1000)) {
+            const deviceId = typeof value?.deviceId === 'string' ? value.deviceId.trim().toLowerCase() : '';
+            if (!deviceId || deviceId.length > 128 || /[\u0000-\u001f\u007f-\u009f]/u.test(deviceId)) {
+                rejected += 1;
+                continue;
+            }
+            const boundedNumber = (number, min, max, { integer = false } = {}) => {
+                if (number === null || number === undefined) return null;
+                if (typeof number !== 'number' || !Number.isFinite(number) || number < min || number > max) return undefined;
+                if (integer && !Number.isSafeInteger(number)) return undefined;
+                return number;
+            };
+            const online = value.online === true;
+            const temperatureStatus = typeof value.temperatureStatus === 'string'
+                ? value.temperatureStatus.slice(0, 32)
+                : 'unavailable';
+            if (!['supported', 'unsupported', 'not_configured', 'offline', 'stale', 'authentication_failed', 'host_key_mismatch', 'timeout', 'unavailable'].includes(temperatureStatus)) {
+                rejected += 1;
+                continue;
+            }
+            const cpu = boundedNumber(value.cpu, 0, 100);
+            const temperature = boundedNumber(value.temperature, -60, 150);
+            const clientCount = boundedNumber(value.clientCount, 0, 100000, { integer: true });
+            const linkSpeedMbps = boundedNumber(value.linkSpeedMbps, 0, 1000000);
+            const counters = ['rxBytes', 'txBytes', 'rxErrors', 'txErrors', 'rxDropped', 'txDropped']
+                .map(key => boundedNumber(value[key], 0, Number.MAX_SAFE_INTEGER, { integer: true }));
+            if ([cpu, temperature, clientCount, linkSpeedMbps, ...counters].includes(undefined)) {
+                rejected += 1;
+                continue;
+            }
+            const payload = {
+                name: String(value.name || '').slice(0, 128),
+                model: value.model == null ? null : String(value.model).slice(0, 64),
+                type: value.type == null ? null : String(value.type).slice(0, 32),
+                online,
+                cpu,
+                temperature: online && temperatureStatus === 'supported' ? temperature : null,
+                temperatureStatus,
+                temperatureSource: value.temperatureSource == null ? null : String(value.temperatureSource).slice(0, 32),
+                clientCount,
+                linkSpeedMbps,
+                rxBytes: counters[0],
+                txBytes: counters[1],
+                rxErrors: counters[2],
+                txErrors: counters[3],
+                rxDropped: counters[4],
+                txDropped: counters[5]
+            };
+            const data = JSON.stringify(payload);
+            if (Buffer.byteLength(data) > 64 * 1024) {
+                rejected += 1;
+                continue;
+            }
+            rows.push({ sampled_ts: sampledTs, device_id: deviceId, data });
+        }
+        const days = Math.min(Math.max(Number(keepDays) || 1, 1), 365);
+        const cap = Math.min(Math.max(Number(hardCap) || 1, 1), 1000000);
+        const inserted = measure('insertUnifiTelemetryBatch', 'unifi_device_telemetry', () => (
+            insertUnifiTelemetryTransaction(rows, Date.now() - days * 86400000, cap)
+        ), { transaction: true });
+        return { inserted, rejected };
+    }
+
+    function listUnifiTelemetrySince(cutoffMs = 0) {
+        const cutoff = Math.max(0, Number(cutoffMs) || 0);
+        return measure('listUnifiTelemetrySince', 'unifi_device_telemetry', () => (
+            listUnifiTelemetryStmt.all(cutoff).map(row => {
+                let data;
+                try { data = JSON.parse(row.data); } catch { data = {}; }
+                return { collectedAt: new Date(row.sampled_ts).toISOString(), deviceId: row.device_id, ...data };
+            })
+        ));
+    }
+
     function pruneRaw(series, keepDays = 30, hardCap = 100000) {
         const days = Math.max(Number(keepDays) || 1, 1);
         deleteBeforeStmt.run(series, Date.now() - days * 86400000);
@@ -1448,6 +1565,8 @@ function createHistoryDb(dataDir, options = {}) {
     return {
         file,
         insertPoint,
+        insertUnifiTelemetryBatch,
+        listUnifiTelemetrySince,
         flush,
         getSince,
         getLatest,
@@ -1974,6 +2093,9 @@ function createHistoryDb(dataDir, options = {}) {
                     const excess = countPointsStmt.get(series).count - Math.max(Number(hardCap) || 1, 1);
                     if (excess > 0) deleteOldestStmt.run(series, excess);
                 }
+                deleteOldUnifiTelemetryStmt.run(cutoff);
+                const telemetryExcess = countUnifiTelemetryStmt.get().count - Math.max(Number(hardCap) || 1, 1);
+                if (telemetryExcess > 0) deleteOldestUnifiTelemetryStmt.run(telemetryExcess);
             });
             measure('cleanup', 'history', cleanup, { transaction: true });
             try { db.pragma('incremental_vacuum(200)'); } catch { }

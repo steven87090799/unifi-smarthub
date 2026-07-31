@@ -13,6 +13,7 @@
 | 客戶端 | UniFi 活躍客戶端 | 5 秒（預設） |
 | 資安 | 威脅與資安狀態 | 5 秒（預設） |
 | UCG | 硬體、交換器/AP 埠、歷史與異常分析 | 5 秒（預設） |
+| UCG | UniFi 裝置 snapshot 與 24 小時 history 顯示 | 5 秒（預設；不直接查設備） |
 | NAS | 即時遙測、Docker、歷史、警報與休眠統計 | 5 秒（預設） |
 | WiiM | 播放與系統狀態 | 5 秒（預設） |
 | UPS | 真實來源狀態讀取 | 3 秒 |
@@ -32,6 +33,7 @@
 |---|---:|---:|
 | 聚合趨勢 | 600 秒（預設） | 5 秒（預設） |
 | UCG 歷史 | 600 秒（預設） | 5 秒（預設） |
+| UniFi 裝置 Controller／Device SSH 遙測 | 300 秒（預設） | 60 秒（UCG 頁可見；可設定） |
 | NAS 歷史 | 600 秒（預設） | 5 秒（預設） |
 | WiiM 溫度 | 600 秒（預設） | 5 秒（預設） |
 | UPS 電壓、電池、負載與事件偵測 | 10 秒（可設定） | 3 秒真實讀取 |
@@ -53,12 +55,15 @@
 |---|---|
 | `trend` | `trendHistory` |
 | `ucg` | `ucgHistory` |
+| `unifi-device-telemetry` | `unifiDeviceTelemetry` |
 | `nas` | `nasHistory` |
 | `wiim` | `wiimTemperature` |
 | `ups` | `upsSample`, `ppbEventSync` |
 | `linux` | `linuxHistory` |
 
-總覽送出 `trend,ucg,nas,wiim,ups`；各裝置頁只送自己的 scope。客戶端、資安與雲端頁只啟用 `trend`；設定、通知、WiFi、工具與 AdGuard 不會為設備 sampler 建立活動 scope。`general` 不屬於 sampler registry，不能無條件把所有設備切到高頻。
+總覽送出 `trend,ucg,nas,wiim,ups`；UCG 頁送出 `ucg,unifi-device-telemetry`，其他裝置頁只送自己的 scope。客戶端、資安與雲端頁只啟用 `trend`；設定、通知、WiFi、工具與 AdGuard 不會為設備 sampler 建立活動 scope。`general` 不屬於 sampler registry，不能無條件把所有設備切到高頻。
+
+UniFi 裝置 API refresh 只讀 retained snapshot／SQLite，不重查 Controller、不建立 SSH、不寫 history、不發通知。Sampler 失敗時 snapshot 保留最後成功值並變成 stale；stale 樣本不寫入 history，也不推進高溫／恢復狀態機。
 
 每個瀏覽器分頁有自己的 session lease。切頁或隱藏時以空 scope 釋放該分頁，不會清掉另一個可見分頁；沒有續約時租約自行過期。容量固定為最多 1,000 sessions、每 session 8 scopes，先清過期項目，再以最近最少使用順序淘汰。
 

@@ -9,7 +9,8 @@ const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 function stableConfigKey(config) {
     return JSON.stringify([
         config.host || '', Number(config.port) || 22, config.username || '',
-        config.password || '', config.privateKey || '', config.tryKeyboard === true
+        config.password || '', config.privateKey || '', config.tryKeyboard === true,
+        config.hostKeyFingerprint || ''
     ]);
 }
 
@@ -107,7 +108,13 @@ function createSshConnectionPool({
             if (typeof onKeyboardInteractive === 'function') {
                 candidate.on('keyboard-interactive', onKeyboardInteractive);
             }
-            try { candidate.connect({ ...config, readyTimeout: readyTimeoutMs }); }
+            try {
+                // hostKeyFingerprint is internal identity metadata used to
+                // rotate a pooled connection. ssh2 receives only supported
+                // connection fields; hostVerifier remains the enforcement hook.
+                const { hostKeyFingerprint: _hostKeyFingerprint, ...sshConfig } = config;
+                candidate.connect({ ...sshConfig, readyTimeout: readyTimeoutMs });
+            }
             catch (error) { fail(error); }
         }).finally(() => {
             if (connectingClient === candidate) connectingClient = null;

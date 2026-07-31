@@ -15,6 +15,7 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 
 - 14 個頁面：總覽、UCG、客戶端、資安、WiFi、雲端站點、NAS、WiiM、UPS、AdGuard、Linux、工具、通知、設定。
 - 設定驅動的活動頁更新與後端自適應取樣；一般裝置預設 5 秒、UPS 即時狀態預設 3 秒，離開頁面後自動回到低頻。
+- UCG 頁提供 UniFi 裝置 Controller 遙測與可選的唯讀 Device SSH 真實溫度；不支援時明確顯示「不支援」，不推算或偽造溫度。
 - 管理員／唯讀角色、Session、CSRF、Origin 檢查、登入節流與受保護寫入路由。
 - SQLite 歷史、事件、報表、政策、Web Push、備份／還原與重啟復原。
 - Discord、Telegram、Webhook、Web Push 與 Telegram 指令中心。
@@ -59,6 +60,7 @@ node server-mock.js
 |---|---|
 | UCG SSH | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD` |
 | UniFi 本地 | `UNIFI_CONTROLLER_URL`, `UNIFI_USERNAME`, `UNIFI_PASSWORD` |
+| UniFi 裝置溫度（選填） | `UNIFI_DEVICE_SSH_PORT`, `UNIFI_DEVICE_SSH_USER`, `UNIFI_DEVICE_SSH_PASSWORD`, `UNIFI_DEVICE_SSH_TARGET_IDS`, `UNIFI_DEVICE_SSH_HOST_KEYS` |
 | UniFi 雲端 | `UNIFI_API_KEY` |
 | UGREEN NAS | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` |
 | NAS Monitor | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY`, `NAS_MONITOR_MODE` |
@@ -78,6 +80,7 @@ node server-mock.js
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
 - Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
+- Device SSH 只接受 Controller 已知設備、最多 32 個明確 MAC、Literal IP 與固定唯讀 thermal command；最多兩條並行連線，可用每台設備的 SHA256 Host Key pinning。密碼、MAC 清單與 fingerprint 不由 GET、診斷、log 或安全備份回傳。
 - 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
 
 ## Docker UPS

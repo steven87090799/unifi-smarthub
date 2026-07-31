@@ -127,3 +127,26 @@ test('late ready and error events cannot resurrect a closed SSH pool', async () 
     await assert.rejects(pool.execute('second'), /closed/i);
     assert.equal(connections.length, 1);
 });
+
+test('host fingerprint rotates pool identity but internal metadata is never passed to ssh2', async () => {
+    const connections = [];
+    let fingerprint = 'SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const verifier = () => true;
+    const pool = createSshConnectionPool({
+        getConfig: () => ({ host: 'device.test', username: 'user', password: 'secret', hostKeyFingerprint: fingerprint, hostVerifier: verifier }),
+        createConnection: () => {
+            const connection = new FakeConnection();
+            connections.push(connection);
+            return connection;
+        },
+        execute: async () => 'ok'
+    });
+    assert.equal(await pool.execute('first'), 'ok');
+    assert.equal(connections[0].connectOptions.hostKeyFingerprint, undefined);
+    assert.equal(connections[0].connectOptions.hostVerifier, verifier);
+    fingerprint = 'SHA256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    assert.equal(await pool.execute('second'), 'ok');
+    assert.equal(connections.length, 2);
+    assert.equal(connections[0].endCalls, 1);
+    pool.close();
+});

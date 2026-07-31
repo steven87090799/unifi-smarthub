@@ -104,6 +104,14 @@ const { renderWifiQrSvg } = require('./server/services/wifi-qr');
 const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createBackendSamplerRegistry } = require('./server/services/backend-sampler-registry');
 const { createPpbEventSync } = require('./server/services/ppb-event-sync');
+const { createUnifiDeviceThermalSshCollector, normalizeDeviceId } = require('./server/integrations/unifi-device-thermal-ssh');
+const { createUnifiDeviceTelemetrySnapshot } = require('./server/services/unifi-device-telemetry-snapshot');
+const { createUnifiDeviceTemperatureAlertState } = require('./server/services/unifi-device-temperature-alert-state');
+const {
+    findTemperature,
+    presentUnifiDeviceTelemetry,
+    telemetryHistoryRows
+} = require('./server/services/unifi-device-telemetry');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -576,13 +584,40 @@ app.get('/api/clients', async (req, res) => {
     }
 });
 
+let unifiDeviceThermalCollector;
+let unifiDeviceTelemetrySnapshot;
+
+async function collectUnifiNetworkDevices() {
+    const cookie = await getLocalSession();
+    const response = await unifiClient.get('/proxy/network/api/s/default/stat/device', { headers: { 'Cookie': cookie } });
+    return Array.isArray(response.data?.data) ? response.data.data : [];
+}
+
+// Telemetry API only reads the dedicated in-memory snapshot. Browser refreshes
+// never query the Controller, open SSH, write SQLite, or emit notifications.
+app.get('/api/network/devices/telemetry', (_req, res) => {
+    res.json(unifiDeviceTelemetrySnapshot.read());
+});
+
+app.get('/api/network/devices/telemetry/history', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query), {
+        module: 'api.unifiDeviceTelemetry', function: 'listHistory'
+    });
+    if (!query) return;
+    const cutoff = Date.now() - query.hours * 3600000;
+    res.json({
+        data: historyDb.listUnifiTelemetrySince(cutoff),
+        source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' }
+    });
+});
+
 // 2-1. 全網路裝置的實體網埠矩陣 (UCG/USW/AP)，含即時速率與埠上連接的裝置對照
 // UniFi 自己已經算好即時速率 (port_table[].tx_bytes-r / rx_bytes-r，單位 bytes/sec)，不需要像 SSH 那樣手動兩次取樣差值
 app.get('/api/network/switches', async (req, res) => {
     try {
         const cookie = await getLocalSession();
-        const [devRes, staRes] = await Promise.all([
-            unifiClient.get('/proxy/network/api/s/default/stat/device', { headers: { 'Cookie': cookie } }),
+        const [rawDevices, staRes] = await Promise.all([
+            collectUnifiNetworkDevices(),
             unifiClient.get('/proxy/network/api/s/default/stat/sta', { headers: { 'Cookie': cookie } })
         ]);
         // 依 sw_mac + sw_port 建立「哪個埠接了哪個客戶端」的對照表
@@ -590,7 +625,7 @@ app.get('/api/network/switches', async (req, res) => {
         (staRes.data.data || []).forEach(c => {
             if (c.sw_mac && c.sw_port != null) bySwPort[`${c.sw_mac}_${c.sw_port}`] = { name: c.name || c.hostname || 'Unknown', mac: c.mac, ip: c.ip };
         });
-        const devices = (devRes.data.data || [])
+        const devices = rawDevices
             .filter(d => Array.isArray(d.port_table) && d.port_table.length)
             .map(d => ({
                 mac: d.mac,
@@ -901,6 +936,8 @@ const APP_DEFAULTS = {
     deviceActiveFrontendPollSec: 5,
     deviceActiveBackendSampleSec: 5,
     deviceIdleBackendSampleSec: 600,
+    unifiTelemetryActiveSec: 60,
+    unifiTelemetryIdleSec: 300,
     heartbeatSec: 5,
     activeLeaseSec: 30,
     // Preserve the previous UPS defaults: live status was 3s while viewed and
@@ -927,6 +964,7 @@ const APP_DEFAULTS = {
 const APP_SETTING_RANGES = {
     deviceActiveFrontendPollSec: [1, 3600], deviceActiveBackendSampleSec: [1, 3600],
     deviceIdleBackendSampleSec: [1, 86400], heartbeatSec: [1, 3600], activeLeaseSec: [2, 3600],
+    unifiTelemetryActiveSec: [15, 3600], unifiTelemetryIdleSec: [60, 86400],
     upsFrontendPollSec: [1, 3600], upsActiveBackendSampleSec: [1, 3600], upsIdleBackendSampleSec: [1, 3600],
     upsHistoryFrontendPollSec: [1, 3600], upsPpbEventsFrontendPollSec: [1, 3600],
     upsPpbEventActiveBackendSampleSec: [1, 3600], upsPpbEventIdleBackendSampleSec: [1, 3600],
@@ -1386,6 +1424,7 @@ const NOTIF_DEFAULTS = {
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
     triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
+    triggerUnifiDeviceTemp: true, unifiDeviceTempAlert: 75,
     triggerWiimOffline: false, triggerWiimHighVolume: false, triggerWiimPlaybackChange: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85,
     triggerNasDiskHealth: true, triggerNasOffline: false,
@@ -1541,6 +1580,7 @@ app.get('/api/notifications/settings', (req, res) => {
         triggerUpsOutage: s.triggerUpsOutage !== false, triggerUpsLowBatt: s.triggerUpsLowBatt !== false,
         triggerNewClient: !!s.triggerNewClient, triggerClientIpChange: !!s.triggerClientIpChange, triggerClientWeakSignal: !!s.triggerClientWeakSignal, triggerClientConnectivity: !!s.triggerClientConnectivity, clientSignalAlert: s.clientSignalAlert ?? 75,
         triggerNetworkDeviceOffline: !!s.triggerNetworkDeviceOffline, triggerWifiSsidChange: !!s.triggerWifiSsidChange, triggerUnifiUpgrade: !!s.triggerUnifiUpgrade, triggerCloudOffline: !!s.triggerCloudOffline,
+        triggerUnifiDeviceTemp: s.triggerUnifiDeviceTemp !== false, unifiDeviceTempAlert: s.unifiDeviceTempAlert ?? 75,
         triggerWiimOffline: !!s.triggerWiimOffline, triggerWiimHighVolume: !!s.triggerWiimHighVolume, triggerWiimPlaybackChange: !!s.triggerWiimPlaybackChange, wiimVolumeAlert: s.wiimVolumeAlert ?? 80, triggerBlockAction: s.triggerBlockAction !== false,
         triggerNasDiskTemp: !!s.triggerNasDiskTemp, nasDiskTempAlert: s.nasDiskTempAlert ?? 50,
         triggerNasSpace: !!s.triggerNasSpace, nasSpaceAlert: s.nasSpaceAlert ?? 85,
@@ -1797,6 +1837,24 @@ async function notificationWatcher() {
             }
         } catch (error) {
             logRecoverableFailure('watcher.networkDevices', error, { module: 'watcher.notifications', function: 'checkNetworkDeviceStates', code: ERROR_CODES.EXT_UNIFI_FAILED });
+        }
+    }
+    // Dedicated snapshot only: the notification watcher never queries the
+    // Controller or opens SSH, and stale/offline samples cannot advance state.
+    if (s.triggerUnifiDeviceTemp !== false) {
+        const telemetry = unifiDeviceTelemetrySnapshot.read();
+        if (!telemetry.stale) {
+            for (const device of telemetry.devices) {
+                const action = unifiDeviceTemperatureAlertState.evaluate(device, {
+                    threshold: s.unifiDeviceTempAlert ?? 75
+                });
+                if (!action) continue;
+                const source = device.temperature?.source === 'device_ssh' ? '設備 SSH' : 'Controller API';
+                const title = action.type === 'recovered'
+                    ? `✅ ${device.name} 溫度已恢復`
+                    : `${action.type === 'critical' ? '🚨' : '🔥'} ${device.name} 溫度過高`;
+                await notify(title, `${action.value.toFixed(1)}°C · 門檻 ${action.threshold}°C\n來源：${source}`);
+            }
         }
     }
     // WiFi SSID 啟用狀態變更；使用設定本身的 stable id 作為去重基準。
@@ -2169,6 +2227,7 @@ const clientPresenceStates = new Map();
 const networkDeviceStates = new Map();
 const wifiSsidStates = new Map();
 const unifiUpgradeAlertTs = new Map();
+const unifiDeviceTemperatureAlertState = createUnifiDeviceTemperatureAlertState({ maxEntries: 1000 });
 const notifiedNasLogIds = new Set();
 const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
@@ -2241,6 +2300,11 @@ function ppbEventSyncMs() {
         ? appSettings.upsPpbEventActiveBackendSampleSec
         : appSettings.upsPpbEventIdleBackendSampleSec) * 1000;
 }
+function unifiTelemetrySampleMs() {
+    return (isDeviceSamplingActive('unifi-device-telemetry')
+        ? appSettings.unifiTelemetryActiveSec
+        : appSettings.unifiTelemetryIdleSec) * 1000;
+}
 function registerBackendSampler({ name, scopes, collect, getDelayMs }) {
     const sampler = createAdaptiveSampler({
         collect: () => runSerialJob(name, collect),
@@ -2270,6 +2334,45 @@ function markClientActivity(scopes = 'general', { focus = false, session = 'lega
     return { ...activity, promptScopes };
 }
 function isDeviceSamplingActive(scope) { return deviceActivity.isActive(scope); }
+
+unifiDeviceThermalCollector = createUnifiDeviceThermalSshCollector({ getEnvironment: () => process.env });
+
+async function collectUnifiDeviceTelemetrySnapshot() {
+    const rawDevices = await collectUnifiNetworkDevices();
+    const selected = new Set(unifiDeviceThermalCollector.selectedIds());
+    const directThermalByDevice = new Map();
+    await Promise.all(rawDevices.map(async device => {
+        const id = normalizeDeviceId(device?.mac || device?._id);
+        if (!id || !selected.has(id)) return;
+        if (findTemperature(device) && (device.state === 1 || device.state === '1' || String(device.state).toLowerCase() === 'connected')) {
+            directThermalByDevice.set(id, { selected: true, status: 'unsupported' });
+            return;
+        }
+        directThermalByDevice.set(id, await unifiDeviceThermalCollector.collect(device));
+    }));
+    const collectedAt = new Date().toISOString();
+    return presentUnifiDeviceTelemetry(rawDevices, { collectedAt, directThermalByDevice });
+}
+
+unifiDeviceTelemetrySnapshot = createUnifiDeviceTelemetrySnapshot({
+    sample: collectUnifiDeviceTelemetrySnapshot,
+    staleAfterMs: () => Math.max(unifiTelemetrySampleMs() * 3, 60 * 1000)
+});
+
+async function sampleUnifiDeviceTelemetry() {
+    const snapshot = await unifiDeviceTelemetrySnapshot.refresh();
+    if (snapshot.stale) {
+        logRecoverableFailure('sampler.unifiDeviceTelemetry', new Error(snapshot.errorReason || 'unavailable'), {
+            module: 'scheduler.unifiDeviceTelemetry', function: 'sample', code: ERROR_CODES.EXT_UNIFI_FAILED
+        });
+        return;
+    }
+    historyDb.insertUnifiTelemetryBatch({
+        collectedAt: snapshot.collectedAt,
+        stale: snapshot.stale,
+        rows: telemetryHistoryRows(snapshot)
+    }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+}
 
 async function sampleTrends() {
     const point = { t: new Date().toISOString(), clients: null, threats24h: null, latency: null };
@@ -2316,12 +2419,18 @@ registerBackendSampler({
     collect: sampleTrends,
     getDelayMs: () => deviceSampleMs('trend')
 });
+registerBackendSampler({
+    name: 'unifiDeviceTelemetry',
+    scopes: ['unifi-device-telemetry'],
+    collect: sampleUnifiDeviceTelemetry,
+    getDelayMs: unifiTelemetrySampleMs
+});
 scheduleServerJobs();
 systemMonitor.start();
 logger.info({
     module: 'scheduler', function: 'scheduleServerJobs', code: ERROR_CODES.WORKER_READY,
     message: 'Background schedulers ready', fields: {
-        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendHistory', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
+        jobs: ['notificationWatcher', 'autoDefenseSweep', 'trendHistory', 'unifiDeviceTelemetry', 'historyCleanup', 'nasHistory', 'reportScheduler', 'wiimTemperature', 'upsSample', 'linuxHistory']
     }
 });
 
@@ -3220,6 +3329,10 @@ app.post('/api/settings', (req, res) => {
 const CONN_FIELDS = [
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
+    { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' },
+    { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true },
+    { key: 'UNIFI_DEVICE_SSH_TARGET_IDS', secret: true },
+    { key: 'UNIFI_DEVICE_SSH_HOST_KEYS', secret: true },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_TLS_VERIFY' },
@@ -3388,7 +3501,16 @@ app.post('/api/connections', (req, res) => {
         });
     }
     reconcilePendingRestartFields(desiredAfterWrite);
-    if (Object.keys(updates).some(key => !CONN_FIELDS.find(field => field.key === key)?.restartRequired)) rebuildClients();
+    const updatedKeys = Object.keys(updates);
+    const telemetryUpdated = updatedKeys.some(key => key.startsWith('UNIFI_DEVICE_SSH_'));
+    if (telemetryUpdated) {
+        unifiDeviceThermalCollector.reset();
+        unifiDeviceTelemetrySnapshot.clear();
+        unifiDeviceTemperatureAlertState.clear();
+        requestPromptSampling(['unifi-device-telemetry']);
+    }
+    if (updatedKeys.some(key => !key.startsWith('UNIFI_DEVICE_SSH_')
+        && !CONN_FIELDS.find(field => field.key === key)?.restartRequired)) rebuildClients();
     sysLog('Connections', `已更新 ${Object.keys(updates).length} 個欄位: ${Object.keys(updates).join(', ')}`);
     res.json({
         ok: true,
@@ -4845,10 +4967,12 @@ app.get('/api/connections/status', async (req, res) => {
     const upsDetail = upsSnapshot.lastGood
         ? `${(upsSnapshot.lastGood.actualSource || '').toUpperCase()} · 電池 ${upsSnapshot.lastGood.battery ?? '--'}%${upsSnapshot.dataIsStale ? ` · 資料已過 ${Math.round((upsSnapshot.staleAgeMs || 0) / 1000)} 秒` : ''}`
         : (upsSnapshot.failureReason ? `尚無有效資料 · ${upsSnapshot.fetchHealth} ${upsSnapshot.consecutiveFailures}/${upsSnapshot.failureThreshold}` : '尚無資料');
+    const telemetrySsh = unifiDeviceThermalCollector.diagnostics();
     res.json({
         devices: [
             { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: fresh(hwCache && hwCache.ts, 120), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
+            { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
@@ -4954,8 +5078,10 @@ registerHealthRoutes(app, {
         },
         sshPools: {
             ucg: ucgSshPool.snapshot(),
-            linux: linuxSshPool.snapshot()
+            linux: linuxSshPool.snapshot(),
+            unifiDeviceThermal: unifiDeviceThermalCollector.diagnostics()
         },
+        unifiDeviceTelemetry: unifiDeviceTelemetrySnapshot.diagnostics(),
         ppb: {
             client: ppbClient.snapshot(),
             sync: ppbEventSync.snapshot()
@@ -5091,6 +5217,7 @@ function gracefulShutdown(signal, exitCode = 0) {
         backendSamplers.stopAll();
         ucgSshPool.close();
         linuxSshPool.close();
+        unifiDeviceThermalCollector.close();
         ppbClient.close();
 
         resetSseUpstream();

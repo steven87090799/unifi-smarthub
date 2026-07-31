@@ -1633,6 +1633,32 @@
                         </div>
                     </div>
 
+                    <!-- UniFi 裝置遙測（API 僅讀取後端專用快照） -->
+                    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+                        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+                            <div>
+                                <h3 class="text-sm font-bold text-white tracking-wider">UniFi 裝置遙測</h3>
+                                <p class="text-[10px] text-slate-500 mt-1">Controller 資料搭配明確允許的唯讀 Device SSH 溫度；畫面更新不會直接連線設備。</p>
+                            </div>
+                            <div class="text-right text-[9px] text-slate-500">
+                                <span id="unifi-telemetry-state" class="inline-block px-2 py-1 rounded-full border border-slate-700 bg-slate-800 text-slate-400">等待快照</span>
+                                <p id="unifi-telemetry-last-success" class="mt-1">最後成功：--</p>
+                            </div>
+                        </div>
+                        <div id="unifi-telemetry-devices" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <p class="text-xs text-slate-500 text-center py-6 xl:col-span-2">遙測資料載入中...</p>
+                        </div>
+                        <div class="mt-5 pt-4 border-t border-slate-800/60">
+                            <div class="flex items-center justify-between mb-3">
+                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">近 24 小時溫度紀錄</p>
+                                <span id="unifi-telemetry-history-count" class="text-[9px] text-slate-600 mono">0 點</span>
+                            </div>
+                            <div id="unifi-telemetry-history" class="space-y-1.5 max-h-48 overflow-y-auto terminal-scroll">
+                                <p class="text-[10px] text-slate-500">尚無歷史資料</p>
+                            </div>
+                        </div>
+                    </div>
+
                 </section>
 
                 <!-- ==================== 頁面：客戶端 ==================== -->
@@ -2897,6 +2923,13 @@
                                             data-handler-click="h75"> °C (經 SSH)
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                                        <input type="checkbox" id="notif-trig-unifi-device-temp" class="accent-blue-500 w-4 h-4">
+                                        UniFi 裝置溫度超過
+                                        <input type="number" id="notif-unifi-device-temp" min="40" max="100"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            data-handler-click="h75"> °C（僅真實新鮮資料）
+                                    </label>
+                                    <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-wandown" class="accent-blue-500 w-4 h-4">
                                         WAN 對外斷線 / 恢復 (經 SSH)
                                     </label>
@@ -3165,7 +3198,7 @@
                                 <p class="text-[10px] text-slate-500 mt-0.5">直接在這裡填設備帳密與 IP — 儲存即寫入 .env 並<span
                                         class="text-slate-300">立即生效，免重啟</span>。密碼欄位留空 = 保留原值，不會被清空。</p>
                             </div>
-                            <button data-handler-click="h83"
+                            <button id="save-connections-button" data-handler-click="h83"
                                 class="py-2.5 px-6 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition shrink-0 self-start">💾
                                 儲存並立即套用</button>
                         </div>
@@ -3251,6 +3284,26 @@
                                         id="conn-UNIFI_THREAT_BLOCK_LIST_NAME" placeholder="SmartHub Threat Blocks"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                 </div>
+                            </div>
+                            <!-- UniFi Device SSH：只有管理員可見 -->
+                            <div id="unifi-telemetry-admin-settings" class="hidden bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                                <p class="text-[11px] font-bold text-cyan-400">🌡 UniFi 裝置溫度 (唯讀 SSH)</p>
+                                <p class="text-[9px] text-slate-500 leading-relaxed">僅查詢 Controller 已知、MAC 明確允許且使用 Literal IP 的設備。最多 32 台、最多 2 條同時連線；不支援時顯示「不支援」。</p>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 帳號</label><input id="conn-UNIFI_DEVICE_SSH_USER"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Port</label><input id="conn-UNIFI_DEVICE_SSH_PORT"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 密碼 <span id="connset-UNIFI_DEVICE_SSH_PASSWORD" class="normal-case"></span></label><input
+                                        id="conn-UNIFI_DEVICE_SSH_PASSWORD" type="password"
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">允許設備 MAC（逗號分隔） <span id="connset-UNIFI_DEVICE_SSH_TARGET_IDS" class="normal-case"></span></label><input
+                                        id="conn-UNIFI_DEVICE_SSH_TARGET_IDS" type="password" autocomplete="off"
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">Host Key（MAC=SHA256:...） <span id="connset-UNIFI_DEVICE_SSH_HOST_KEYS" class="normal-case"></span></label><input
+                                        id="conn-UNIFI_DEVICE_SSH_HOST_KEYS" type="password" autocomplete="off"
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
                             </div>
                             <!-- WiiM + UPS -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
@@ -3574,6 +3627,18 @@
                                         min="1"
                                         class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-cyan-500/20 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UniFi 遙測：頁面可見時</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">只有 UCG 頁面可見時使用此取樣間隔；不會加速 UPS、NAS 或 WiiM。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-unifiTelemetryActiveSec" min="15"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                            </div>
+                            <div class="bg-slate-950/50 border border-cyan-500/20 rounded-xl p-4">
+                                <label class="text-[11px] font-bold text-slate-300 block mb-1">UniFi 遙測：背景閒置時</label>
+                                <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">沒有 UCG 頁面 Lease 時的專用背景取樣間隔；預設 300 秒。</p>
+                                <div class="flex items-center gap-2"><input type="number" id="srv-unifiTelemetryIdleSec" min="60"
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">瀏覽器 heartbeat 間隔</label>

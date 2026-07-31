@@ -9,6 +9,7 @@
 | 面板安全 | `server/middleware/panel-security.js`、`server/routes/panel-auth-routes.js` |
 | 公開登入快照 | `server/services/public-system-health.js` |
 | UniFi 本地／雲端 | `unifiLogin`、`server/integrations/site-manager-client.js` |
+| UniFi 裝置遙測 | `unifi-device-telemetry*.js`、`server/integrations/unifi-device-thermal-ssh.js` |
 | UCG／Linux SSH | `server/integrations/ssh-command-stream.js`、`ssh-connection-pool.js` |
 | SQLite／設定 | `DATA_DIR`, `historyDb`, `db.js`, `server/storage/` |
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
@@ -27,7 +28,7 @@
 
 | 類別 | 主要路徑 |
 |---|---|
-| UCG／UniFi | `/api/hardware`, `/api/clients`, `/api/network/switches`, `/api/wifi-networks`, `/api/threats`, `/api/speedtest*` |
+| UCG／UniFi | `/api/hardware`, `/api/clients`, `/api/network/switches`, `/api/network/devices/telemetry`, `/api/network/devices/telemetry/history`, `/api/wifi-networks`, `/api/threats`, `/api/speedtest*` |
 | 威脅封鎖 | `GET/POST /api/security/threat-blocks`, `DELETE /api/security/threat-blocks/:id` |
 | 雲端 | `/api/cloud/sites`, `/devices`, `/isp-metrics`, `/hosts`, `/sdwan` |
 | NAS | `/api/nas/overview`, `/disks`, `/logs`, `/volumes`, `/ups`, 各歷史路徑 |
@@ -46,6 +47,8 @@
 
 - 除公開健康與登入資產外，API 受 Session／Basic 相容驗證保護；異動另需 admin、Origin、CSRF 與輸入驗證。
 - `/api/public/system-health` 只讀記憶體中的最小摘要，不觸發 SSH、設備 API 或 DB 聚合。
+- UniFi 裝置遙測 GET 只讀專用記憶體快照／SQLite history；只有 `unifiDeviceTelemetry` sampler 可查 Controller、開 Device SSH、寫 history。失敗保留最後成功值並標示 stale，stale／offline 溫度不入庫也不推進通知狀態。
+- Device SSH 由 MAC allowlist（最多 32 台）與 Controller 已知設備雙重限制，只接受安全 Literal IP、固定 thermal command、12 秒 deadline 與 128 KiB output cap；每台可釘選 SHA256 Host Key，最多同時兩個工作。
 - WiiM `GET /api/wiim/cmd` 只允許讀取；異動使用 POST、高風險命令需精確確認。
 - UniFi 威脅封鎖只接受公網 IPv4、強制到期，並只管理專用 `IPV4_ADDRESSES` 清單。
 - Docker mutation 與 logs 使用不同 allowlist；SmartHub／broker 容器永久 protected。
@@ -58,10 +61,10 @@
 ## 長期執行邊界
 
 - `runSerialJob()` 阻止同名工作重入；報表另以 SQLite claim、lease、retry、deadline、fencing 管理。
-- Scope registry 只重排匹配 `trend`／`ucg`／`nas`／`wiim`／`ups`／`linux` 的 sampler；`general` 不會加速設備取樣，設定變更才全量重排。
+- Scope registry 只重排匹配 `trend`／`ucg`／`unifi-device-telemetry`／`nas`／`wiim`／`ups`／`linux` 的 sampler；`general` 不會加速設備取樣，設定變更才全量重排。
 - 活動 lease 以分頁 session 隔離，最多 1,000 sessions、每 session 8 scopes，過期優先清理後才以 LRU 淘汰；診斷不回傳 session ID。
 - `instance-lock` 使用 2 秒 heartbeat／8 秒 lease 保證單一 DATA_DIR owner。
-- SSH 命令共用 12 秒期限與 1 MiB stdout／stderr 上限；pool shutdown 會拒絕 pending／queued command，late ready 不得復活連線。
+- 一般 SSH 命令共用 12 秒期限與 1 MiB stdout／stderr 上限；Device thermal 使用更小的 128 KiB 上限。Pool shutdown 會拒絕 pending／queued command，late ready 不得復活連線；Host Key 設定輪替會使候選連線失效。
 - 歷史佇列、resource samples、cooldown maps、subscriptions 與 audit 都有容量或 retention。
 - UPS 在總覽/UPS 焦點下真實 3 秒取樣，閒置預設 10 秒；PPB 事件同步為焦點 10 秒、閒置 60 秒。
 

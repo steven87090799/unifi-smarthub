@@ -1,6 +1,6 @@
 'use strict';
 
-const DEFAULT_SCOPES = ['general', 'trend', 'ucg', 'nas', 'wiim', 'linux', 'ups'];
+const DEFAULT_SCOPES = ['general', 'trend', 'ucg', 'unifi-device-telemetry', 'nas', 'wiim', 'linux', 'ups'];
 
 // A short server-timed lease prevents a stale browser tab from keeping device
 // polling fast forever. Client clocks are never trusted.

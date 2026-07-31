@@ -362,6 +362,60 @@ app.get('/api/network/switches', (_req, res) => res.json({
     }]
 }));
 
+const mockUnifiTelemetryDevices = Object.freeze([
+    {
+        id: 'aa:bb:cc:dd:ee:01', name: 'USW Flex 2.5G', model: 'USW-Flex-2.5G-8', type: 'usw',
+        firmware: '8.1.0', ip: '192.168.1.21', online: true, uptimeSeconds: 432000,
+        uplink: { deviceId: 'aa:bb:cc:dd:ee:ff', port: 2, state: 'up', speedMbps: 2500, duplex: 'full' },
+        traffic: { rxBytes: 123456789, txBytes: 98765432, rxPackets: 10000, txPackets: 9000, rxErrors: 0, txErrors: 0, rxDropped: 1, txDropped: 0 },
+        radios: [], vaps: [], clientCount: 6,
+        cpu: { value: 18.2, unit: 'percent', sourceField: 'system-stats.cpu' },
+        temperature: { value: null, unit: 'celsius', status: 'unsupported', source: null, sourceField: null, sampledAt: null, stale: false },
+        temperatureZones: [], hostKeyPinned: false
+    },
+    {
+        id: 'aa:bb:cc:dd:ee:02', name: 'U7 Pro', model: 'U7PRO', type: 'uap',
+        firmware: '8.0.7', ip: '192.168.1.22', online: true, uptimeSeconds: 86400,
+        uplink: { deviceId: 'aa:bb:cc:dd:ee:01', port: 3, state: 'up', speedMbps: 2500, duplex: 'full' },
+        traffic: { rxBytes: 50000000, txBytes: 12000000, rxPackets: 8000, txPackets: 6000, rxErrors: 0, txErrors: 0, rxDropped: 0, txDropped: 0 },
+        radios: [{ name: '5 GHz', band: 'na', channel: 149, channelWidthMhz: 80, utilizationPercent: 22, clientCount: 8 }],
+        vaps: [{ ssid: 'SmartHub', radio: 'na', up: true, clientCount: 8 }], clientCount: 8,
+        cpu: { value: 27.5, unit: 'percent', sourceField: 'system-stats.cpu' },
+        temperature: { value: 61.5, unit: 'celsius', status: 'supported', source: 'device_ssh', sourceField: '/sys/class/thermal/thermal_zone*/temp', sampledAt: new Date().toISOString(), stale: false },
+        temperatureZones: [{ zone: 'thermal_zone0', type: 'soc', temperatureC: 61.5, rawMilliCelsius: 61500 }], hostKeyPinned: true
+    }
+]);
+
+function mockTelemetrySnapshot() {
+    const collectedAt = new Date().toISOString();
+    return {
+        collectedAt, lastSuccessfulAt: collectedAt, stale: false, errorReason: null,
+        source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' },
+        devices: mockUnifiTelemetryDevices.map(device => ({
+            ...device,
+            freshness: { collectedAt, lastSuccessfulAt: collectedAt, stale: false, errorReason: null }
+        }))
+    };
+}
+
+app.get('/api/network/devices/telemetry', (_req, res) => res.json(mockTelemetrySnapshot()));
+app.get('/api/network/devices/telemetry/history', (req, res) => {
+    const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
+    if (!query) return;
+    const now = Date.now();
+    const data = Array.from({ length: 12 }, (_, index) => ({
+        collectedAt: new Date(now - (11 - index) * 5 * 60 * 1000).toISOString(),
+        deviceId: mockUnifiTelemetryDevices[1].id,
+        name: mockUnifiTelemetryDevices[1].name,
+        model: mockUnifiTelemetryDevices[1].model,
+        type: 'uap', online: true, cpu: 22 + index / 2, temperature: 59 + index / 4,
+        temperatureStatus: 'supported', temperatureSource: 'device_ssh', clientCount: 8,
+        linkSpeedMbps: 2500, rxBytes: 50000000 + index * 100000, txBytes: 12000000 + index * 50000,
+        rxErrors: 0, txErrors: 0, rxDropped: 0, txDropped: 0
+    }));
+    res.json({ data, source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' } });
+});
+
 app.get('/api/ui-preferences', (_req, res) => res.json({ preferences: mockUiPreferences }));
 app.post('/api/ui-preferences', (req, res) => {
     const input = validatedInput(res, () => writeInput.parseUiPreferences(req.body));
@@ -887,6 +941,7 @@ let mockNotif = {
     triggerThreats: true, triggerNasAlerts: true, triggerWiimTemp: true, triggerUpsOutage: true, triggerUpsLowBatt: true,
     triggerNewClient: false, triggerClientIpChange: false, triggerClientWeakSignal: false, triggerClientConnectivity: false, clientSignalAlert: 75,
     triggerNetworkDeviceOffline: false, triggerWifiSsidChange: false, triggerUnifiUpgrade: false, triggerCloudOffline: false,
+    triggerUnifiDeviceTemp: true, unifiDeviceTempAlert: 75,
     triggerWiimOffline: false, triggerWiimHighVolume: false, triggerWiimPlaybackChange: false, wiimVolumeAlert: 80, triggerBlockAction: true,
     triggerNasDiskTemp: false, nasDiskTempAlert: 50, triggerNasSpace: false, nasSpaceAlert: 85, triggerNasDiskHealth: true, triggerNasOffline: false, triggerNasHighCpu: false, nasCpuAlert: 90, triggerNasHighMemory: false, nasMemoryAlert: 90,
     triggerUcgTemp: false, ucgTempAlert: 75, triggerUcgHighCpu: false, ucgCpuAlert: 90, triggerUcgHighMemory: false, ucgMemoryAlert: 90, triggerUcgDisk: false, ucgDiskAlert: 85,
@@ -982,6 +1037,7 @@ setInterval(() => {
 const MOCK_APP_SETTING_RANGES = {
     deviceActiveFrontendPollSec: [1, 3600], deviceActiveBackendSampleSec: [1, 3600],
     deviceIdleBackendSampleSec: [1, 86400], heartbeatSec: [1, 3600], activeLeaseSec: [2, 3600],
+    unifiTelemetryActiveSec: [15, 3600], unifiTelemetryIdleSec: [60, 86400],
     upsFrontendPollSec: [1, 3600], upsActiveBackendSampleSec: [1, 3600], upsIdleBackendSampleSec: [1, 3600],
     upsHistoryFrontendPollSec: [1, 3600], upsPpbEventsFrontendPollSec: [1, 3600],
     upsPpbEventActiveBackendSampleSec: [1, 3600], upsPpbEventIdleBackendSampleSec: [1, 3600],
@@ -992,6 +1048,7 @@ const MOCK_APP_SETTING_RANGES = {
 };
 let mockAppSettings = {
     deviceActiveFrontendPollSec: 5, deviceActiveBackendSampleSec: 5, deviceIdleBackendSampleSec: 600,
+    unifiTelemetryActiveSec: 60, unifiTelemetryIdleSec: 300,
     heartbeatSec: 5, activeLeaseSec: 30,
     upsFrontendPollSec: 3, upsActiveBackendSampleSec: 3, upsIdleBackendSampleSec: 10,
     upsHistoryFrontendPollSec: 10, upsPpbEventsFrontendPollSec: 10,
@@ -1356,6 +1413,7 @@ const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirna
 const mockConnDefaults = {
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
     UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo',
+    UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'monitor',
     UNIFI_NETWORK_API_URL: 'https://192.168.0.1/proxy/network/integration',
     UNIFI_NETWORK_TLS_VERIFY: 'true',
     UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
@@ -1373,6 +1431,7 @@ const mockConnDefaults = {
 };
 const mockSecretDefaults = {
     SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false,
+    UNIFI_DEVICE_SSH_PASSWORD: false, UNIFI_DEVICE_SSH_TARGET_IDS: false, UNIFI_DEVICE_SSH_HOST_KEYS: false,
     UNIFI_NETWORK_API_KEY: true,
     NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false, PPB_PASSWORD: false,
     ADGUARD_PASSWORD: false, LINUX_SSH_PASSWORD: false
@@ -1444,6 +1503,7 @@ app.get('/api/connections/status', (_req, res) => res.json({
     devices: [
         { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
         { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },
+        { name: 'UniFi 裝置 SSH 溫度', configured: true, ok: true, detail: '已選 1 台 · Host Key 1 台' },
         { name: 'Site Manager', configured: false, ok: null, detail: '' },
         { name: 'UniFi Threat Blocking', configured: true, ok: true, detail: 'healthy' },
         { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
