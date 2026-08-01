@@ -10,7 +10,7 @@
 | Branch | `fix/production-long-run-hardening` |
 | START_MAIN_SHA | `1f931756a1599eb2f239f998b8812edd75d15847` |
 | FINAL_HEAD_SHA | `af4f6cc4fa2b6ab0b583da1fb2322fabb240c3ee`（最後程式／測試提交） |
-| PR | Draft PR to `main`; 不自動 merge |
+| PR | Draft PR to `main`；尚未建立，push 因 OAuth 缺少 `workflow` scope 被拒 |
 | Runtime baseline | Node.js `24.18.x`；Docker base image exact patch + digest |
 
 ## Gate A - Repository
@@ -29,6 +29,7 @@
 | Docker builds | PASS | SmartHub 與 NAS Monitor image |
 | SBOM／container scan | PASS | pinned Trivy digest；HIGH／CRITICAL scan exit 0 |
 | `git diff --check` | PASS | no whitespace errors |
+| Hosted `SmartHub CI / Repository gate` | NOT RUN | push rejected because active OAuth token lacks `workflow` scope |
 
 ## Gate B - Persistence and DR
 
@@ -90,4 +91,4 @@
 
 ## Release decision
 
-本分支可在 local／hosted gates 全部取得 PASS 後建立 Draft PR，但在 Gate E 或 24／72 小時 soak 完成前，不宣稱「已由真實部署證明 fully production-ready」。PR 維持 Draft，不自動 merge。
+本分支的 local gates 已完成；hosted gate 與 Draft PR 因 OAuth scope blocker 尚未建立。取得 `workflow` scope 後再 push exact head、建立 Draft PR；在 Gate E 或 24／72 小時 soak 完成前，不宣稱「已由真實部署證明 fully production-ready」。PR 維持 Draft，不自動 merge。

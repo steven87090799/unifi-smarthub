@@ -5,7 +5,7 @@ Repository：`steven87090799/unifi-smarthub`
 Branch：`fix/production-long-run-hardening`  
 START_MAIN_SHA：`1f931756a1599eb2f239f998b8812edd75d15847`  
 FINAL_HEAD_SHA：`af4f6cc4fa2b6ab0b583da1fb2322fabb240c3ee`（最後程式／測試提交；此後僅更新本報告的交付 metadata）
-PR：Draft PR to `main`；不 merge
+PR：Draft PR to `main`；本地已準備但尚未建立（push 被 OAuth `workflow` scope 拒絕）
 
 ## 結論
 
@@ -45,7 +45,7 @@ PR：Draft PR to `main`；不 merge
 | SmartHub／NAS Monitor Docker build | PASS | Node 24.18.0 Alpine exact digest |
 | SBOM and HIGH/CRITICAL image scan | PASS | pinned Trivy digest; both images exit 0 |
 | `git diff --check` | PASS | no whitespace errors |
-| Hosted `SmartHub CI / Repository gate` | PENDING PR | must be checked on pushed final head |
+| Hosted `SmartHub CI / Repository gate` | NOT RUN | push rejected because the active OAuth token lacks `workflow` scope |
 
 ## Short soak evidence
 
@@ -106,4 +106,4 @@ All of the following remain **NOT RUN**: real UniFi／NAS／UPS／AdGuard／Linu
 
 ## Delivery status
 
-The required delivery terminal state is a pushed `fix/production-long-run-hardening` branch with a Draft PR targeting `main`, no merge. Hosted CI status and the final PR number are recorded only after push; an unpushed local commit is not hosted-CI evidence.
+The required delivery terminal state is a pushed `fix/production-long-run-hardening` branch with a Draft PR targeting `main`, no merge. The local branch is complete through the recorded implementation head, but GitHub rejected the push because the active OAuth token has `gist`, `read:org`, and `repo` scopes without `workflow`; therefore hosted CI and PR creation are **NOT RUN**. Re-authenticate with `workflow` scope, push the exact branch head, then create the Draft PR. An unpushed local commit is not hosted-CI evidence.
