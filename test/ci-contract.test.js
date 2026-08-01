@@ -20,9 +20,12 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /npm audit --audit-level=low/u);
     assert.match(workflow, /docker compose[\s\S]+config --quiet/u);
     assert.match(workflow, /docker compose[\s\S]+build unifi-smarthub/u);
-    assert.match(workflow, /uses:\s*actions\/checkout@v7/u);
-    assert.match(workflow, /uses:\s*actions\/setup-node@v7/u);
-    assert.match(workflow, /node-version:\s*20/u);
+    assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\s+# v7/u);
+    assert.match(workflow, /uses:\s*actions\/setup-node@[0-9a-f]{40}\s+# v7/u);
+    assert.match(workflow, /node-version-file:\s*\.nvmrc/u);
+    assert.match(workflow, /Generate SBOM and scan built images/u);
+    assert.match(workflow, /trivy@sha256:[0-9a-f]{64}/u);
+    assert.match(workflow, /SOAK_DURATION_MS=90000 npm run test:soak/u);
     assert.match(workflow, /git diff --check/u);
 });
 

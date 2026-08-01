@@ -10,6 +10,8 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - 完整操作與文件規格：[SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html](SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html)
 - 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
 - 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
+- 長期硬化報告：[docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md](docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md)
+- Production Acceptance：[docs/operations/PRODUCTION_ACCEPTANCE.md](docs/operations/PRODUCTION_ACCEPTANCE.md)
 
 ## 主要能力
 
@@ -23,7 +25,7 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 
 ## 快速開始
 
-需求：Node.js 20+；正式部署另需 Docker Compose。
+需求：Node.js 24.18.x（`.nvmrc`）；正式部署另需 Docker Compose。
 
 ```bash
 git clone <repository-url>
@@ -38,7 +40,7 @@ docker compose --env-file config/.env up -d --build
 docker compose --env-file config/.env ps
 ```
 
-開啟 `http://<主機 IP>:3000`。
+本機隔離演練可開啟 `http://127.0.0.1:3000`。正式環境不可把 `http://<NAS IP>:3000` 當作對外入口；請以前置 Caddy／Nginx 終止 HTTPS，再反向代理至 SmartHub 的內部 port。
 
 本機直接執行：
 
@@ -77,6 +79,7 @@ node server-mock.js
 - 只部署在可信任內網；遠端存取使用 VPN 或受信任反向代理。
 - `config/.env` 是唯一部署設定來源，權限應為 `0600`；不要在根目錄保留第二份 `.env`。
 - 所有 Compose 指令都使用同一個 `--env-file config/.env`。
+- 正式映像使用不可變的 commit tag 或 registry digest，不使用 `latest`；主服務預設 256 MiB，只有在 soak／backup 證據支持時才調整。
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
 - Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
@@ -109,7 +112,7 @@ PPB_TLS_INSECURE=false
 - 歷史、事件、報表與政策使用 SQLite WAL。
 - 一般歷史樣本先進入有上限的記憶體佇列，再批次寫入；正常關機與 UPS 狀態轉換會強制 flush。
 - 線上安全備份由「設定 → 備份與還原」產生，不包含 secret。
-- 完整離線備份應先停止服務，再保存 DB／WAL／SHM 與設定。
+- 完整離線備份應先停止服務，再保存 DB／WAL／SHM；`config/.env` 必須由 NAS 的加密備份機制另行保護，且備份目的地要是不同 storage mount，同一 Docker volume 不等於 disaster recovery。
 
 ## 健康檢查
 
@@ -123,12 +126,13 @@ docker compose --env-file config/.env logs | grep Diag
 |---|---|
 | `/health` | 程序存活 |
 | `/health/ready` | SQLite 與 worker 就緒 |
+| `/health/operational` | 受驗證保護的整合與依賴健康摘要 |
 | `/api/public/system-health` | 登入頁匿名最小狀態快照 |
 | `/api/system/status` | 受驗證保護的完整診斷 |
 
 ## 正式發布
 
-Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 20 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
+Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 24.18.x 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
 
 本機也可獨立重跑同一個隔離 smoke：
 

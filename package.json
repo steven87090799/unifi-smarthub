@@ -3,13 +3,17 @@
   "version": "3.0.0",
   "description": "Production Secure Proxy for UniFi Controller and UCG-Ultra",
   "main": "server.js",
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
   "scripts": {
     "build:css": "node scripts/build-frontend-css.js",
     "check:css": "node scripts/build-frontend-css.js --check",
     "check:js": "node scripts/check-js-syntax.js",
     "start": "node server.js",
-    "test": "node --test --test-concurrency=4",
+    "test": "node --test --test-concurrency=4 test/*.test.js",
     "test:smoke": "node scripts/runtime-smoke.js",
+    "test:soak": "node scripts/runtime-soak.js --duration-ms=${SOAK_DURATION_MS:-90000}",
     "release:build": "node scripts/release-build.js"
   },
   "dependencies": {
