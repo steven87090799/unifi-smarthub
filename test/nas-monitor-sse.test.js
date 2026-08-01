@@ -95,6 +95,8 @@ test('stalled NAS Monitor SSE handshakes are coalesced and shutdown-owned', { ti
         env: {
             ...process.env,
             NODE_ENV: 'production', PORT: String(port), DATA_DIR: dataDir,
+            SMARTHUB_BIND_ADDRESS: '127.0.0.1', PANEL_REQUIRE_HTTPS: 'false',
+            PANEL_ALLOW_INSECURE_HTTP: 'false',
             SMARTHUB_ENV_FILE: envFile, PANEL_PASSWORD: ADMIN_PASSWORD,
             PANEL_READONLY_PASSWORD: 'sse-readonly-secret', MONITOR_ENABLED: 'false',
             UCG_IP: '127.0.0.1', SSH_PORT: '1', SSH_USER: '', SSH_PASSWORD: '',

@@ -401,6 +401,15 @@ const ENUM_FIELDS = Object.freeze({
     NAS_SCHEME: ['http', 'https'],
     NAS_MONITOR_MODE: ['docker_only', 'full'],
     UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
+    UNIFI_CONTROLLER_TLS_VERIFY: ['true', 'false'],
+    UNIFI_CONTROLLER_TLS_INSECURE: ['true', 'false'],
+    UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP: ['true', 'false'],
+    NAS_TLS_VERIFY: ['true', 'false'],
+    NAS_TLS_INSECURE: ['true', 'false'],
+    NAS_ALLOW_INSECURE_HTTP: ['true', 'false'],
+    UCG_SSH_ALLOW_UNPINNED: ['true', 'false'],
+    LINUX_SSH_ALLOW_UNPINNED: ['true', 'false'],
+    UNIFI_DEVICE_SSH_ALLOW_UNPINNED: ['true', 'false'],
     PPB_TLS_VERIFY: ['true', 'false'],
     PPB_TLS_INSECURE: ['true', 'false'],
     ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
@@ -456,6 +465,10 @@ function parseConnectionUpdates(body, fields) {
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_HOST_KEYS') value = unifiDeviceSshHostKeysValue(value, key);
+        else if (['UCG_SSH_HOST_KEY', 'LINUX_SSH_HOST_KEY'].includes(key)) {
+            if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/u.test(value)) reject(`${key} must be a SHA256 SSH host key fingerprint`, key);
+            value = value.replace(/=+$/u, '');
+        }
         else if (key === 'UNIFI_DEVICE_SSH_USER') {
             value = stringValue(value, { field: key, min: 1, max: 128, pattern: /^[A-Za-z0-9._-]+$/u });
         }
@@ -480,7 +493,7 @@ function parseConnectionUpdates(body, fields) {
             value = stringValue(value, { field: key, min: 1, max: 32, pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u });
         } else if (key === 'NUT_UPS_NAME') {
             value = stringValue(value, { field: key, min: 1, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u });
-        } else if (key === 'PPB_CA_FILE') {
+        } else if (['PPB_CA_FILE', 'UNIFI_CONTROLLER_CA_FILE', 'NAS_CA_FILE'].includes(key)) {
             value = stringValue(value, {
                 field: key,
                 min: 2,
