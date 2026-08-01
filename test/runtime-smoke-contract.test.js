@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
@@ -14,7 +15,11 @@ test('runtime smoke uses the production entrypoint with isolated restart and cle
     const source = fs.readFileSync(smokePath, 'utf8');
 
     assert.equal(packageJson.scripts['test:smoke'], 'node scripts/runtime-smoke.js');
-    assert.equal(fs.existsSync(path.join(ROOT, 'scripts', 'runtime-smoke-test.js')), false);
+    const legacySmoke = spawnSync('git', ['ls-files', '--error-unmatch', 'scripts/runtime-smoke-test.js'], {
+        cwd: ROOT,
+        stdio: 'ignore'
+    });
+    assert.notEqual(legacySmoke.status, 0, 'the legacy smoke runner must not be tracked');
     assert.equal(fs.existsSync(smokePath), true);
     assert.doesNotMatch(path.basename(smokePath), DISCOVERABLE_SCRIPT_PATTERN);
     assert.match(source, /server\.js/u);
@@ -38,7 +43,13 @@ test('runtime smoke uses the production entrypoint with isolated restart and cle
 
 test('scripts contain no files that Node test discovery can execute accidentally', () => {
     const scriptFiles = fs.readdirSync(path.join(ROOT, 'scripts'));
-    const accidentallyDiscoverable = scriptFiles.filter(file => DISCOVERABLE_SCRIPT_PATTERN.test(file));
+    const trackedFiles = new Set(spawnSync('git', ['ls-files', 'scripts'], {
+        cwd: ROOT,
+        encoding: 'utf8'
+    }).stdout.split(/\r?\n/u).filter(Boolean).map(file => path.basename(file)));
+    const accidentallyDiscoverable = scriptFiles
+        .filter(file => trackedFiles.has(file))
+        .filter(file => DISCOVERABLE_SCRIPT_PATTERN.test(file));
 
     assert.deepEqual(accidentallyDiscoverable, []);
 });

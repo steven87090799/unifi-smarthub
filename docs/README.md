@@ -10,11 +10,13 @@
 | 後端定位 | [backend-map.md](reference/backend-map.md) |
 | 前端定位 | [frontend-map.md](reference/frontend-map.md) |
 | 正式發布 | [PRODUCTION-RELEASE-CHECKLIST.md](operations/PRODUCTION-RELEASE-CHECKLIST.md) |
+| Production Acceptance | [PRODUCTION_ACCEPTANCE.md](operations/PRODUCTION_ACCEPTANCE.md) |
 | Docker 容器管理 | [NAS-DOCKER-MONITOR-SETUP.md](operations/NAS-DOCKER-MONITOR-SETUP.md) |
 | 診斷與健康狀態 | [OBSERVABILITY.md](operations/OBSERVABILITY.md) |
 | 所有前後端更新頻率 | [POLLING-INTERVALS.md](operations/POLLING-INTERVALS.md) |
 | 裝置整合 | [integrations/](integrations/) |
 | 未完成規劃 | [planning/](planning/) |
 | 最終報告與發布說明 | [reports/](reports/) |
+| 長期硬化證據 | [PRODUCTION_LONG_RUN_HARDENING_REPORT.md](reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md) |
 
 權威順序：實際 source／tests → `reference/backend-map.md`／`reference/frontend-map.md` → 專題文件。報告只代表其記錄日期與 commit，不取代目前程式；HTML 手冊列出所有 Markdown 的位置、用途與連結。
