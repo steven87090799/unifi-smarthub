@@ -14,7 +14,7 @@
 | SQLite／設定 | `DATA_DIR`, `historyDb`, `db.js`, `server/storage/` |
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
-| WiiM | `server/policies/wiim-command-policy.js`、`server/routes/wiim-command-routes.js`、`server/services/wiim-art-proxy.js`、`server/services/wiim-config.js` |
+| WiiM | `server/policies/wiim-command-policy.js`、`server/routes/wiim-command-routes.js`、`server/services/wiim-art-proxy.js`、`server/services/wiim-client.js`、`server/services/wiim-config.js` |
 | UPS | `readUpsLive`, `createUpsState`, `ups-power-quality.js`, `server/integrations/ppb-client.js`, `server/services/ppb-event-sync.js` |
 | AdGuard | `server/integrations/adguard-client.js`、policy／service |
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
@@ -50,8 +50,9 @@
 - UniFi 裝置遙測 GET 只讀專用記憶體快照／SQLite history；只有 `unifiDeviceTelemetry` sampler 可查 Controller、開 Device SSH、寫 history。失敗保留最後成功值並標示 stale，stale／offline 溫度不入庫也不推進通知狀態。
 - Device SSH 由 MAC allowlist（最多 32 台）與 Controller 已知設備雙重限制，只接受安全 Literal IP、固定 thermal command、12 秒 deadline 與 128 KiB output cap；每台可釘選 SHA256 Host Key，最多同時兩個工作。
 - WiiM `GET /api/wiim/cmd` 只允許讀取；異動使用 POST、高風險命令需精確確認。
-- WiiM `WIIM_IP` 為選配且只接受 literal IPv4/IPv6；留空時 status/history/command/art/sampler/watcher 都不觸發裝置讀取，封面代理只允許明確設定的 literal 私有位址，並有 DNS pin、TLS/HTTP opt-in、redirect/MIME/大小與 bounded LRU 限制。
-- UniFi Network API 預設嚴格 TLS 驗證；`UNIFI_NETWORK_CA_FILE` 可指定絕對私有 CA，停用驗證與 HTTP 都必須分別明確 opt-in。
+- WiiM `WIIM_IP` 為選配且只接受 literal IPv4/IPv6；留空時 status/history/command/art/sampler/watcher 都不觸發裝置讀取，封面代理以 numeric IPv4/IPv6（含 mapped／compatible IPv6）分類並拒絕 transition/special ranges，所有 DNS 答案都驗證後 pin，redirect 每跳重驗證，最多 4 個 upstream／16 個 queue／7 秒 deadline，並有 TLS/HTTP opt-in、redirect/MIME/大小與 bounded LRU 限制。
+- WiiM read client 回傳 `live`／`fresh_cache`／`stale_cache`／`unreachable`／`not_configured` typed result；fresh window 2 秒、stale 最多 5 分鐘。stale 不算 online、不入溫度歷史、不觸發成功通知，也不回報 mutation 成功。
+- UniFi Network API 預設嚴格 TLS 驗證；`UNIFI_NETWORK_CA_FILE` 可指定絕對私有 CA，resolved CA bytes 由 shared TLS policy 傳給 transport，不在 request 時重讀 raw path；停用驗證與 HTTP 都必須分別明確 opt-in。
 - UniFi 威脅封鎖只接受公網 IPv4、強制到期，並只管理專用 `IPV4_ADDRESSES` 清單。
 - Docker mutation 與 logs 使用不同 allowlist；SmartHub／broker 容器永久 protected。
 - AdGuard 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可使用私有 CA。

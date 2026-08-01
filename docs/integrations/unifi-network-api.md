@@ -51,6 +51,8 @@ UNIFI_NETWORK_ALLOW_INSECURE_HTTP=false
 安全契約：
 
 - TLS 預設驗證；私有 CA 使用 `UNIFI_NETWORK_CA_FILE`。只有明確 `UNIFI_NETWORK_TLS_INSECURE=true` 才可停用驗證，只有明確 `UNIFI_NETWORK_ALLOW_INSECURE_HTTP=true` 才可使用非 loopback HTTP。
+- 啟動時由共用 TLS policy 讀取並解析有界的 CA bytes；GET／PUT transport 只使用 resolved policy，不會再次讀取 raw CA path。insecure HTTPS 或明確 HTTP 模式不會因 stale CA path 被重新讀取而失敗。
+- 設定頁回傳 `clearableFields`；清空 `UNIFI_NETWORK_CA_FILE` 會明確清除 CA path，清空 `UNIFI_NETWORK_API_URL` 會恢復由 `UNIFI_CONTROLLER_URL` 推導的 endpoint。secret 欄位留空仍代表不變更。
 - 清單必須是名稱、ID 完全相符的專用 `IPV4_ADDRESSES` list。
 - 不得與人工項目或其他自動化共用。
 - 只接受單一公網 IPv4；管理位址、私有、loopback、link-local、reserved 與 IPv6 都拒絕。

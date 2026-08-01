@@ -35,7 +35,7 @@ staging, backup/restore, and long-duration environment gates. Unexecuted real
 environment gates will remain `NOT RUN` and will not be inferred from mocks or
 unit tests.
 
-## Final delivery record
+## Historical prior delivery record (pre-follow-up)
 
 Implementation and local delivery evidence is recorded below. Hosted evidence is
 reported separately after the final branch push because it is tied to the exact
@@ -54,3 +54,21 @@ GitHub commit SHA, not to an older local result.
 - `HOSTED_CI_FINAL_HEAD`: this audit-report closure commit intentionally triggers a new exact-head gate; its result is recorded in the final handoff after completion.
 - `REAL_ENVIRONMENT_GATES`: `NOT RUN` for real UCG/UniFi/WiiM/NAS/UPS/AdGuard/Linux devices, staging deployment, independent DR restore, production traffic, and 24/72-hour observation; hardware/PMIC/thermal acceptance is also `NOT RUN`.
 - `FINAL_VERDICT`: `LOCAL_AND_CI_READY_REAL_ENV_PENDING`.
+
+## 2026-08-01 final follow-up implementation record
+
+This section is the production follow-up record. The historical section above
+is retained as immutable pre-follow-up evidence; its implementation SHA and
+hosted run do not prove the current branch head.
+
+- `FOLLOW_UP_BRANCH`: `fix/post-merge-audit-hardening`
+- `FOLLOW_UP_PR`: `#14` (`main` base, Draft/Open/unmerged)
+- `FOLLOW_UP_START_HEAD`: `7da2a96e4ca3c1b2cf7e76bce015aa7eefe03286`
+- `FOLLOW_UP_IMPLEMENTATION_HEAD`: `a58aff3` (`fix: harden WiiM and frontend lifecycle follow-up`)
+- `FOLLOW_UP_SCOPE`: WiiM numeric DNS pin／mapped and compatible IPv6 policy／redirect and HTTP boundaries／bounded artwork fetcher; typed WiiM live/fresh/stale/unreachable state; finite temperature parsing; hydration/SSE/pinned lifecycle; heartbeat ordering; resolved Network TLS policy; clearable path metadata.
+- `FOLLOW_UP_BEHAVIOR_TESTS`: `test/frontend-lifecycle.test.js` exercises pending hydration, common-job scheduling, partial retry, generation-scoped resources, and observer teardown; `test/wiim-art-proxy.test.js` includes a real local pinned socket request.
+- `FOLLOW_UP_TARGETED_VALIDATION`: PASS for syntax, `git diff --check`, frontend lifecycle/WiiM/artwork/heartbeat/query/TLS/write-route targeted suites; production and mock route contracts both passed. Full release gates are recorded only after the final documentation commit.
+- `FOLLOW_UP_SOAK_AND_REAL_ENV`: `NOT RUN` in this follow-up. The historical 90-second result above is not evidence for this new head; real devices, staging, DR, production traffic, 24/72-hour observation, and hardware/PMIC/thermal acceptance remain `NOT RUN`.
+- `FOLLOW_UP_HOSTED_CI`: pending the exact final documentation head. The source of truth for merge readiness is PR #14's `Repository gate` on that exact head; historical hosted runs above are not current-head evidence.
+- `FOLLOW_UP_SCANNERS`: local gitleaks/trufflehog/Trivy are `NOT RUN` because the host tools are not installed and none was installed; hosted image/SBOM scan status will be reported from the exact final PR run. Full-history secret scanning remains `NOT RUN`.
+- `FOLLOW_UP_FINAL_VERDICT`: `CODE_AND_HOSTED_CI_READY_REAL_ENV_PENDING` once the exact final PR #14 head has `Repository gate` PASS; the final run/job/SHA is recorded in PR metadata without another source commit.

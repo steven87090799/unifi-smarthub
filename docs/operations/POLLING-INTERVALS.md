@@ -1,6 +1,6 @@
 # SmartHub 資料更新頻率
 
-前端只輪詢目前顯示的頁面；初始啟動只讀取必要的設定、健康與重大事件，其他頁面在首次進入時才 hydration，失敗會保留重試狀態。分頁隱藏或切到其他頁面後，該頁面的非共用工作會停止。所有一般前端工作採 `deviceActiveFrontendPollSec`，預設 5 秒；UPS 狀態、UPS 歷史與 PPB 事件使用獨立設定。歷史查詢仍和即時狀態分開，避免無限制重做大型 SQLite 查詢與 DOM 重繪。
+前端只輪詢目前顯示的頁面；初始啟動只讀取必要的設定、健康與重大事件，其他頁面在首次進入時才 hydration。hydration 以 structured results 記錄每個 job，成功 job 只執行一次，失敗 job 保留重試狀態；pending hydration 不會阻擋 heartbeat 或重大事件等 common jobs。分頁隱藏或切到其他頁面後，該頁面的非共用工作會停止。所有一般前端工作採 `deviceActiveFrontendPollSec`，預設 5 秒；UPS 狀態、UPS 歷史與 PPB 事件使用獨立設定。歷史查詢仍和即時狀態分開，避免無限制重做大型 SQLite 查詢與 DOM 重繪。
 
 ## 前端目前頁面
 
@@ -25,7 +25,7 @@
 | 設定 | 報表、系統診斷、資安設定 | 5 秒（預設） |
 | WiFi、工具 | 背景輪詢 | 無；進頁或操作時讀取 |
 
-首次 hydration 以 `loadedPages` 去重；頁面離開時不會為未觀看頁面預取資料。NAS SSE 只在 NAS 頁完成設定檢查且目前仍在 NAS 頁時連線；未設定的 WiiM/NAS endpoint 只回 `not_configured` 空狀態，不向上游發出請求。
+首次 hydration 以每頁 completed-job set 與 in-flight generation 去重；頁面離開時不會為未觀看頁面預取資料，過期 generation 的結果不會重連資源。NAS SSE 只在 NAS 頁完成設定檢查、目前仍在 NAS 頁且分頁可見時連線；任一時間最多一個 EventSource，離開頁面、hidden、pagehide 都會關閉，重新可見時才重新檢查並連線。未設定的 WiiM/NAS endpoint 只回 `not_configured` 空狀態，不向上游發出請求。
 
 一般前端工作共用可調整的 5 秒預設，並以 `applyPolling()` 防止同一工作重疊。若 Site Manager 的上游速率限制較低，應在設定與實作一併調整，不能只改文件宣稱不同頻率。
 
@@ -67,8 +67,8 @@
 
 UniFi 裝置 API refresh 只讀 retained snapshot／SQLite，不重查 Controller、不建立 SSH、不寫 history、不發通知。Sampler 失敗時 snapshot 保留最後成功值並變成 stale；stale 樣本不寫入 history，也不推進高溫／恢復狀態機。
 
-每個瀏覽器分頁有自己的 session lease。切頁或隱藏時以空 scope 釋放該分頁，不會清掉另一個可見分頁；沒有續約時租約自行過期。容量固定為最多 1,000 sessions、每 session 8 scopes，先清過期項目，再以最近最少使用順序淘汰。
+每個瀏覽器分頁有自己的 session lease。heartbeat 帶單調遞增的 per-tab sequence，後端拒絕較舊或相同 sequence，避免 rapid navigation 的回應順序回滾 scope；legacy request 仍使用未排序兼容模式。切頁或隱藏時以空 scope 釋放該分頁，不會清掉另一個可見分頁；沒有續約時租約自行過期。容量固定為最多 1,000 sessions、每 session 8 scopes，先清過期項目，再以最近最少使用順序淘汰。
 
-頁面 focus 或已過期 scope 重新啟用時，只對匹配 scope 做一次 prompt sampling；一般 5 秒 heartbeat 只續租，不建立新 timer。設定值變更才會清除並重排全部 sampler，collector 完成後才安排下一次，因此 repeated rebuild 不重疊 collector。
+頁面 focus 或已過期 scope 重新啟用時，只對匹配 scope 做一次 prompt sampling；一般 5 秒 heartbeat 只續租，不建立新 timer。Pinned mirror 只在 Overview 可見時透過 MutationObserver 同步，離開 Overview、hidden、pagehide、unpin 或 rerender 都會 teardown；mirror 為 inert、無重複 id／可操作 controls，移除 badge 仍在 mirror 外可操作。設定值變更才會清除並重排全部 sampler，collector 完成後才安排下一次，因此 repeated rebuild 不重疊 collector。
 
 受保護的 `/api/system/status` 只輸出聚合診斷：活動 session 數、active scopes、淘汰與過期清理數、sampler 狀態、SSH pool 與 PPB sync 摘要；不含 session ID、token 或 credential。
