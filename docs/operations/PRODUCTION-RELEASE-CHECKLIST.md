@@ -12,6 +12,11 @@
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
 - PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false`；私有／自簽 CA 使用容器內絕對路徑 `PPB_CA_FILE`，並確認不是 symlink。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
+- `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。
+- 正式 Web 入口是 Caddy／Nginx 等 HTTPS reverse proxy；`http://<NAS IP>:3000` 只可作為隔離的 local probe，不是 production 使用路徑。
+- `PANEL_REQUIRE_HTTPS=true`、`PANEL_ALLOW_INSECURE_HTTP=false`，並只對實際 reverse proxy 設定 `PANEL_TRUSTED_PROXIES`。
+- UniFi／NAS HTTPS 預設驗證憑證；私有 CA 使用 `*_CA_FILE`，insecure 只能由明確 opt-in 開啟。
+- 已設定所有啟用 SSH integration 的 host fingerprint；未 pin 的 production SSH 連線不得放行。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
 
 ## 2. 程式庫檢查
@@ -24,6 +29,7 @@ npm test
 npm run check:js
 npm run check:css
 npm run test:smoke
+npm run test:soak
 npm audit --audit-level=low
 git diff --check
 docker compose --env-file config/.env config --quiet
@@ -51,6 +57,33 @@ node --test \
 任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。
 
 Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 的 branch protection／ruleset 應將 `SmartHub CI / Repository gate` 設為 Required Check，要求分支為最新並禁止 CI 未通過時 merge。Workflow 檔存在不代表 repository 規則已啟用；沒有管理權限驗證時記為 `NOT RUN`。
+
+### HTTPS reverse proxy 範例
+
+正式對外只發布 proxy 的 HTTPS port，SmartHub 直接綁定的 `3000` 保持在 loopback 或受限的 container network。Caddy：
+
+```caddyfile
+smarthub.example.internal {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+Nginx 至少要傳遞可信 protocol header，並讓 SmartHub 只信任 proxy 的來源位址：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+只有當 proxy 與 SmartHub 位於同一台主機或明確 CIDR allowlist 時，才設定 `PANEL_TRUSTED_PROXIES`。不可信來源的 `X-Forwarded-Proto: https` 不得繞過 HTTPS policy。
+
+### Docker socket accepted risk
+
+`nas-monitor` profile 預設停用。取得 Docker socket 的 process 若發生 RCE，可能取得宿主機高權限；非 root、read-only rootfs、cap drop、`no-new-privileges` 與資源限制只能縮小一般攻擊面，不能消除這項風險。Docker socket 的 `:ro` bind mount 也不是 Docker Engine API 的 read-only security boundary；若要啟用，必須使用專用 host、強 API key、mutation／allowlist 預設關閉並接受此風險。
 
 ## 3. 建立不可變成對映像
 
@@ -96,6 +129,7 @@ curl --user admin http://127.0.0.1:3000/api/system/status
 - restart／force-recreate 後 SQLite `quick_check`、排程 ownership 與設定 authority 正常。
 - SIGTERM 在 20 秒 grace period 內安全停止，重啟後 readiness 回復。
 - diagnostics 與 logs 不洩漏 credential。
+- `/health/operational` 只作 authenticated operational view；`/health`、`/healthz`、`/health/ready` 維持 process/container probe，不因外部整合離線而觸發無限 restart。
 
 真正的 UniFi、NAS、WiiM、AdGuard、UPS、PoE 或非隔離 Docker mutation 需另行明確授權。
 
@@ -113,3 +147,5 @@ curl --user admin http://127.0.0.1:3000/api/system/status
 記錄 Git commit、兩個映像 tag／digest／ID、Compose project、設定 authority、profile、測試／audit、演練時間、health／restart／SIGTERM／SQLite 結果、故障注入、未執行項目、回滾 identity 與操作者。
 
 短時間加速測試只能證明實際執行的 cycles，不可宣稱等同長期 soak。
+
+完整的 Gate A-E 驗收矩陣與本次分支證據見 [PRODUCTION_ACCEPTANCE.md](PRODUCTION_ACCEPTANCE.md) 與 [PRODUCTION_LONG_RUN_HARDENING_REPORT.md](../reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md)。

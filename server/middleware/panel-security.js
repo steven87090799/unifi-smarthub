@@ -97,6 +97,11 @@ function createPanelSecurity(options = {}) {
     const sessionIdleMs = positiveInteger(options.sessionIdleMs, 12 * 60 * 60 * 1000, 60 * 1000);
     const sessionRememberMs = positiveInteger(options.sessionRememberMs, 30 * 24 * 60 * 60 * 1000, sessionIdleMs);
     const maxSessions = positiveInteger(options.maxSessions, 1000);
+    const requireHttps = options.requireHttps === true;
+    const allowInsecureHttp = options.allowInsecureHttp === true;
+    // Explicit migration/development mode disables both transport enforcement
+    // and Secure cookies together; otherwise HTTP sessions would be unusable.
+    const enforceHttps = requireHttps && !allowInsecureHttp;
     const sessionCookieName = String(options.sessionCookieName || 'smarthub_session');
     if (!/^[A-Za-z0-9_-]{1,64}$/u.test(sessionCookieName)) throw new Error('Invalid panel session cookie name');
     const publicMetadata = options.publicMetadata && typeof options.publicMetadata === 'object'
@@ -299,6 +304,12 @@ function createPanelSecurity(options = {}) {
             options.authCode || 'API-AUTH-001', getRequestId());
     }
 
+    function requireHttpsTransport(req, res, next) {
+        if (!enforceHttps || healthPaths.has(req.path) || req.secure === true) return next();
+        return send(res, 400, 'HTTPS is required for the SmartHub panel',
+            options.transportCode || 'API-HTTPS-001', getRequestId());
+    }
+
     function cookieValue(token, req, { remember = false, maxAgeMs = 0, clear = false } = {}) {
         const parts = [
             `${sessionCookieName}=${clear ? '' : encodeURIComponent(token)}`,
@@ -306,7 +317,7 @@ function createPanelSecurity(options = {}) {
             'HttpOnly',
             'SameSite=Strict'
         ];
-        if (req.secure) parts.push('Secure');
+        if (enforceHttps || req.secure) parts.push('Secure');
         if (clear) {
             parts.push('Max-Age=0', 'Expires=Thu, 01 Jan 1970 00:00:00 GMT');
         } else if (remember) {
@@ -461,6 +472,7 @@ function createPanelSecurity(options = {}) {
 
     return {
         authenticate,
+        requireHttpsTransport,
         login,
         logout,
         status,
@@ -473,7 +485,10 @@ function createPanelSecurity(options = {}) {
             failures: failures.size,
             sessions: sessions.size,
             eventKeys: eventLog.size,
-            failureKeys: [...failures.keys()]
+            failureKeys: [...failures.keys()],
+            requireHttps,
+            allowInsecureHttp,
+            enforceHttps
         })
     };
 }

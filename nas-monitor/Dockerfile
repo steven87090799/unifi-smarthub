@@ -1,6 +1,7 @@
-FROM node:20-alpine
+FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
 
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 WORKDIR /app
 COPY --chown=node:node server.js ./server.js
@@ -20,7 +21,8 @@ ENV BUILD_VERSION=${BUILD_VERSION} \
     BUILD_DIRTY=${BUILD_DIRTY} \
     BUILD_IDENTITY_REQUIRED=${BUILD_IDENTITY_REQUIRED}
 
-LABEL org.opencontainers.image.version=${BUILD_VERSION} \
+LABEL org.opencontainers.image.source="https://github.com/steven87090799/unifi-smarthub" \
+      org.opencontainers.image.version=${BUILD_VERSION} \
       org.opencontainers.image.revision=${BUILD_REVISION} \
       org.opencontainers.image.created=${BUILD_CREATED} \
       io.smarthub.build.dirty=${BUILD_DIRTY}

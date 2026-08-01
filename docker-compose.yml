@@ -8,15 +8,25 @@ services:
         BUILD_CREATED: ${BUILD_CREATED:-}
         BUILD_DIRTY: ${BUILD_DIRTY:-}
         BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
-    image: ${SMARTHUB_IMAGE:-unifi-smarthub:latest}
+    image: ${SMARTHUB_IMAGE:-unifi-smarthub:dev}
     restart: unless-stopped
     stop_grace_period: 20s
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
     ports:
-      - "${SMARTHUB_HOST_PORT:-3000}:3000"
+      - "${SMARTHUB_BIND_ADDRESS:-0.0.0.0}:${SMARTHUB_HOST_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data
       - PORT=3000
+      - SMARTHUB_BIND_ADDRESS=0.0.0.0
       - SMARTHUB_ENV_FILE=/app/config/.env
       # 一般整合設定由 config/.env 載入。Monitor 的整組連線/信任設定刻意固定於
       # container creation，避免 key 輪替途中把舊 credential 送到新 target。
@@ -48,8 +58,8 @@ services:
     labels:
       # Broker 永遠拒絕操作此 service，即使使用者 allowlist 誤設過寬。
       - com.unifi.smarthub.nas-monitor.protected=true
-    # 記憶體限制：此服務為輕量 Node 程序，256MB 足夠；預留下限確保排程穩定
-    mem_limit: 256m
+    # Baseline remains 256 MiB until the documented soak/backup measurements justify a change.
+    mem_limit: ${SMARTHUB_MEM_LIMIT:-256m}
     mem_reservation: 128m
 
   nas-monitor:
@@ -62,7 +72,7 @@ services:
         BUILD_CREATED: ${BUILD_CREATED:-}
         BUILD_DIRTY: ${BUILD_DIRTY:-}
         BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
-    image: ${NAS_MONITOR_IMAGE:-unifi-smarthub-nas-monitor:latest}
+    image: ${NAS_MONITOR_IMAGE:-unifi-smarthub-nas-monitor:dev}
     restart: unless-stopped
     stop_grace_period: 20s
     user: "1000:1000"

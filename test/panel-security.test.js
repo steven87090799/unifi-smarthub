@@ -13,6 +13,7 @@ async function createHarness(options = {}) {
         adminPassword: 'admin-secret', readonlyPassword: 'viewer-secret',
         csrfToken: 'test-csrf-token', onEvent: event => events.push(event), ...options
     });
+    app.use(boundary.requireHttpsTransport);
     app.get('/login', (_req, res) => res.type('html').send('<h1>login</h1>'));
     app.get('/api/auth/status', boundary.status);
     app.post('/api/auth/login', express.json({ limit: '8kb' }), boundary.login);
@@ -30,6 +31,44 @@ async function createHarness(options = {}) {
     const origin = `http://127.0.0.1:${server.address().port}`;
     return { boundary, events, origin, close: () => new Promise(resolve => server.close(resolve)) };
 }
+
+test('production HTTPS policy rejects direct HTTP and ignores spoofed forwarded headers', async t => {
+    const harness = await createHarness({ requireHttps: true });
+    t.after(harness.close);
+    const response = await fetch(`${harness.origin}/api/auth/status`, { headers: { 'x-forwarded-proto': 'https' } });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, 'API-HTTPS-001');
+});
+
+test('an explicitly trusted loopback proxy may assert HTTPS and receives a Secure session cookie', async t => {
+    const harness = await createHarness({ requireHttps: true, trustProxy: 'loopback' });
+    t.after(harness.close);
+    const forwardedOrigin = harness.origin.replace(/^http:/u, 'https:');
+    const response = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+            origin: forwardedOrigin,
+            'x-forwarded-proto': 'https',
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({ username: 'admin', password: 'admin-secret', remember: false })
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('set-cookie') || '', /Secure/u);
+});
+
+test('explicit insecure migration mode keeps HTTP transport and session cookie semantics consistent', async t => {
+    const harness = await createHarness({ requireHttps: true, allowInsecureHttp: true });
+    t.after(harness.close);
+    assert.equal(harness.boundary.getState().enforceHttps, false);
+    const response = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin-secret', remember: false })
+    });
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(response.headers.get('set-cookie') || '', /Secure/u);
+});
 
 test('admin can read and write with same-origin CSRF proof', async t => {
     const harness = await createHarness();

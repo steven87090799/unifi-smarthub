@@ -2,7 +2,7 @@
 
 const { ERROR_CODES } = require('./error-codes');
 
-function registerHealthRoutes(app, { monitor, db, taskTracker, version, buildIdentity, runtimeDiagnostics = null }) {
+function registerHealthRoutes(app, { monitor, db, taskTracker, version, buildIdentity, runtimeDiagnostics = null, operationalHealth = null }) {
     const liveness = (_req, res) => res.json({
         status: 'healthy',
         code: ERROR_CODES.API_HEALTH_OK,
@@ -31,6 +31,15 @@ function registerHealthRoutes(app, { monitor, db, taskTracker, version, buildIde
             },
             note: 'External device integrations are optional and do not gate readiness.'
         });
+    });
+
+    app.get('/health/operational', async (_req, res, next) => {
+        try {
+            const snapshot = typeof operationalHealth === 'function'
+                ? await operationalHealth()
+                : { status: 'unknown', generated_at: new Date().toISOString(), dependencies: {} };
+            res.status(snapshot.status === 'critical' ? 503 : 200).json(snapshot);
+        } catch (error) { next(error); }
     });
 
     app.get('/api/system/status', async (_req, res, next) => {

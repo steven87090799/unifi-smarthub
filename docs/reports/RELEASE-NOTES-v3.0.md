@@ -65,7 +65,7 @@ docker compose --env-file config/.env logs --tail=100 unifi-smarthub
 
 ## 相容性與注意事項
 
-- Node.js 20+。
+- Node.js 20+（v3.0 歷史基線；目前 production hardening 基線為 Node.js 24.18.x）。
 - Docker 為正式部署方式；UPS 在 Docker 中建議使用已驗證的 PowerPanel Business REST 路徑：`UPS_SOURCE=ppb`、`PPB_HOST=host.docker.internal`、PPB HTTP discovery port `3052`。
 - 既有通知管道、SQLite 歷史資料與 JSON 設定會沿用；新增通知欄位以安全預設值補齊。
 - 本版本沒有資料庫破壞性遷移。

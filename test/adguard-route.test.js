@@ -34,6 +34,9 @@ async function startApp(extraEnvironment, script = 'server.js') {
         env: {
             ...process.env,
             NODE_ENV: 'production',
+            SMARTHUB_BIND_ADDRESS: '127.0.0.1',
+            PANEL_REQUIRE_HTTPS: 'false',
+            PANEL_ALLOW_INSECURE_HTTP: 'false',
             PORT: String(port),
             DATA_DIR: dataDir,
             SMARTHUB_ENV_FILE: envFile,

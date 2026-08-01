@@ -38,6 +38,8 @@ function createUnifiDeviceTelemetrySnapshot({ sample, now = () => Date.now(), st
     let inflight = null;
     let lastAttemptAt = null;
     let lastErrorAt = null;
+    let lastFailureAt = null;
+    let consecutiveFailures = 0;
     let lastErrorReason = null;
 
     function present() {
@@ -57,10 +59,13 @@ function createUnifiDeviceTelemetrySnapshot({ sample, now = () => Date.now(), st
             const collectedAt = snapshot.collectedAt || new Date(now()).toISOString();
             latest = { ...snapshot, collectedAt, lastSuccessfulAt: collectedAt, stale: false, errorReason: null };
             lastErrorAt = null;
+            consecutiveFailures = 0;
             lastErrorReason = null;
             return present();
         }).catch(error => {
             lastErrorAt = now();
+            lastFailureAt = lastErrorAt;
+            consecutiveFailures += 1;
             lastErrorReason = errorReason(error);
             return present();
         }).finally(() => { inflight = null; });
@@ -71,6 +76,8 @@ function createUnifiDeviceTelemetrySnapshot({ sample, now = () => Date.now(), st
         latest = null;
         lastAttemptAt = null;
         lastErrorAt = null;
+        lastFailureAt = null;
+        consecutiveFailures = 0;
         lastErrorReason = null;
     }
 
@@ -84,6 +91,8 @@ function createUnifiDeviceTelemetrySnapshot({ sample, now = () => Date.now(), st
             lastAttemptAt: lastAttemptAt ? new Date(lastAttemptAt).toISOString() : null,
             lastSuccessfulAt: latest?.lastSuccessfulAt || null,
             lastErrorAt: lastErrorAt ? new Date(lastErrorAt).toISOString() : null,
+            lastFailureAt: lastFailureAt ? new Date(lastFailureAt).toISOString() : null,
+            consecutiveFailures,
             lastErrorReason
         })
     });

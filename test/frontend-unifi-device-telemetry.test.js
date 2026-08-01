@@ -38,6 +38,6 @@ test('production and mock expose the same read-only telemetry API while producti
         assert.match(source, /app\.get\('\/api\/network\/devices\/telemetry\/history'/u);
     }
     assert.match(server, /app\.get\('\/api\/network\/devices\/telemetry',[\s\S]{0,200}unifiDeviceTelemetrySnapshot\.read\(\)/u);
-    assert.match(server, /historyDb\.listUnifiTelemetrySince\(cutoff\)/u);
+    assert.match(server, /historyDb\.listUnifiTelemetryHistory\(cutoff/u);
     assert.match(server, /name: 'unifiDeviceTelemetry'[\s\S]{0,240}collect: sampleUnifiDeviceTelemetry/u);
 });

@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
 
 # tini 作為 PID 1，正確處理訊號與殭屍程序 (SSH 子連線清理)
 # nut：提供 upsc 客戶端，容器內才能讀取 NAS/主機上 NUT server 的 UPS 數據 (UPS_SOURCE=nut)
@@ -15,7 +15,8 @@ COPY package*.json ./
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
     && npm ci --omit=dev \
     && apk del .build-deps \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # 複製應用程式原始碼 (.dockerignore 已排除 node_modules/.env/data 等)
 COPY . .
@@ -35,7 +36,8 @@ ENV BUILD_VERSION=${BUILD_VERSION} \
     BUILD_DIRTY=${BUILD_DIRTY} \
     BUILD_IDENTITY_REQUIRED=${BUILD_IDENTITY_REQUIRED}
 
-LABEL org.opencontainers.image.version=${BUILD_VERSION} \
+LABEL org.opencontainers.image.source="https://github.com/steven87090799/unifi-smarthub" \
+      org.opencontainers.image.version=${BUILD_VERSION} \
       org.opencontainers.image.revision=${BUILD_REVISION} \
       org.opencontainers.image.created=${BUILD_CREATED} \
       io.smarthub.build.dirty=${BUILD_DIRTY}
@@ -51,6 +53,7 @@ RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 
 ENV NODE_ENV=production
+ENV SMARTHUB_BIND_ADDRESS=0.0.0.0
 EXPOSE 3000
 STOPSIGNAL SIGTERM
 

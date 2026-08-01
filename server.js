@@ -10,6 +10,8 @@ const webPushLibrary = require('web-push');
 const fs = require('node:fs');
 const path = require('path');
 const https = require('https');
+const { Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 const { execFile } = require('child_process');
 const {
     loadEnvFile,
@@ -23,6 +25,15 @@ const {
 } = require('./server/storage/json-file-store');
 const { acquireInstanceLock } = require('./server/storage/instance-lock');
 const { createSshConnectionPool } = require('./server/integrations/ssh-connection-pool');
+const {
+    createHttpsAgent,
+    destroyAgent,
+    resolveTlsPolicy,
+    strictBoolean: strictTlsBoolean
+} = require('./server/integrations/tls-policy');
+const { resolveHostKeyPolicy } = require('./server/integrations/ssh-host-key-policy');
+const { createSseBackpressureManager } = require('./server/services/sse-backpressure');
+const { rebuildAuthRetryHeaders, shouldRetryControllerRequest } = require('./server/integrations/unifi-auth-retry');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -75,7 +86,9 @@ const {
 } = require('./server/services/ups-power-quality');
 const {
     BACKUP_MEDIA_TYPE,
+    BACKUP_V2_MEDIA_TYPE,
     MAX_BACKUP_BYTES,
+    resolveBackupMaxBytes,
     BackupValidationError,
     applyPendingRestore,
     createConfigBackupService
@@ -275,6 +288,8 @@ const panelSecurity = createPanelSecurity({
     authorizationCode: ERROR_CODES.API_AUTHORIZATION_FAILED,
     csrfCode: ERROR_CODES.API_CSRF_FAILED,
     originCode: ERROR_CODES.API_ORIGIN_FAILED,
+    requireHttps: strictTlsBoolean(process.env.PANEL_REQUIRE_HTTPS, 'PANEL_REQUIRE_HTTPS', process.env.NODE_ENV === 'production'),
+    allowInsecureHttp: strictTlsBoolean(process.env.PANEL_ALLOW_INSECURE_HTTP, 'PANEL_ALLOW_INSECURE_HTTP', false),
     onEvent: ({ type, ...fields }) => logger.warning({
         module: 'api.security', function: type,
         code: type.startsWith('auth_') ? ERROR_CODES.API_AUTH_FAILED
@@ -288,6 +303,7 @@ const publicSystemHealth = createPublicSystemHealthService({
     windowMs: (Number(process.env.PANEL_PUBLIC_HEALTH_WINDOW_SECONDS) || 60) * 1000,
     maxClients: Number(process.env.PANEL_PUBLIC_HEALTH_MAX_CLIENTS) || 1000
 });
+app.use(panelSecurity.requireHttpsTransport);
 registerPanelAuthRoutes(app, {
     rootDir: __dirname,
     security: panelSecurity,
@@ -306,21 +322,55 @@ app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()))
 // 建立忽略內網自簽 HTTPS 憑證錯誤的 Axios 實例
 // 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
 let unifiCsrfToken = '';
+let unifiAgent = null;
 function buildUnifiClient() {
+    const controllerUrl = process.env.UNIFI_CONTROLLER_URL || 'https://127.0.0.1';
+    const tls = resolveTlsPolicy({
+        url: controllerUrl,
+        verify: process.env.UNIFI_CONTROLLER_TLS_VERIFY,
+        insecure: process.env.UNIFI_CONTROLLER_TLS_INSECURE,
+        caFile: process.env.UNIFI_CONTROLLER_CA_FILE,
+        allowInsecureHttp: process.env.UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP,
+        fields: {
+            url: 'UNIFI_CONTROLLER_URL', verify: 'UNIFI_CONTROLLER_TLS_VERIFY',
+            insecure: 'UNIFI_CONTROLLER_TLS_INSECURE', ca: 'UNIFI_CONTROLLER_CA_FILE',
+            allowHttp: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP'
+        }
+    });
+    destroyAgent(unifiAgent);
+    unifiAgent = createHttpsAgent(tls);
+    if (tls.warning) sysLog('TLS', `UniFi Controller transport mode: ${tls.mode} (explicit insecure opt-in)`, true);
+    else sysLog('TLS', `UniFi Controller transport mode: ${tls.mode}`);
     const c = axios.create({
-        baseURL: process.env.UNIFI_CONTROLLER_URL,
+        baseURL: tls.url,
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        ...(unifiAgent ? { httpsAgent: unifiAgent } : {}),
         timeout: 10000
     });
-    // UniFi OS 的寫入操作 (POST/PUT) 需要登入時取得的 CSRF token
-    c.interceptors.request.use(cfg => { if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken; return cfg; });
+    c.interceptors.request.use(cfg => {
+        cfg.headers = cfg.headers || {};
+        if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken;
+        return cfg;
+    });
+    c.interceptors.response.use(undefined, async error => {
+        const config = error?.config;
+        const response = error?.response;
+        if (!shouldRetryControllerRequest({ config, response })) throw error;
+        config._smartHubAuthRetry = true;
+        const cookie = await refreshLocalSession();
+        config.headers = rebuildAuthRetryHeaders(config.headers, cookie, unifiCsrfToken);
+        return c.request(config);
+    });
     return c;
 }
 let unifiClient = buildUnifiClient();
 
 let localCookie = '';
 let cookieExpiry = 0;
+let unifiSessionRefreshInflight = null;
+let localSessionLastSuccessAt = null;
+let localSessionLastFailureAt = null;
+let localSessionConsecutiveFailures = 0;
 
 // 佔位字串檢查：帳密未填時「完全不發起連線」，避免反覆嘗試被 IPS 判定為掃描行為
 const isPlaceholder = v => !v || /your_/i.test(v);
@@ -339,12 +389,12 @@ async function getLocalSession() {
         sysLog('UniFi Auth', '使用快取的本地控制器 Session Cookie。');
         return localCookie;
     }
+    invalidateLocalSession();
     if (unifiLoginInflight) return unifiLoginInflight;
     unifiLoginInflight = doUnifiLogin().finally(() => { unifiLoginInflight = null; });
     return unifiLoginInflight;
 }
 async function doUnifiLogin() {
-    const now = Date.now();
     try {
         sysLog('UniFi Auth', '發起全新的本地控制器登入請求...');
         const response = await unifiClient.post('/api/auth/login', {
@@ -354,17 +404,37 @@ async function doUnifiLogin() {
 
         const cookies = response.headers['set-cookie'];
         if (cookies) {
-            unifiCsrfToken = response.headers['x-csrf-token'] || unifiCsrfToken;
+            // A login without a CSRF header must not inherit the old session's token.
+            unifiCsrfToken = response.headers['x-csrf-token'] || '';
             localCookie = cookies.join('; ');
-            cookieExpiry = now + 15 * 60 * 1000; // 15 分鐘過期
+            cookieExpiry = Date.now() + 15 * 60 * 1000; // 15 分鐘過期
+            localSessionLastSuccessAt = Date.now();
+            localSessionConsecutiveFailures = 0;
             sysLog('UniFi Auth', '登入成功，已快取 Session Cookie (15分鐘)。');
             return localCookie;
         }
         throw new Error('No cookie returned from Controller');
     } catch (error) {
+        localSessionLastFailureAt = Date.now();
+        localSessionConsecutiveFailures += 1;
         sysLog('UniFi Auth', `控制器登入失敗: ${error.message}`, true);
         throw new Error('UniFi Controller Login Failed: ' + error.message);
     }
+}
+
+function invalidateLocalSession() {
+    localCookie = '';
+    cookieExpiry = 0;
+    unifiCsrfToken = '';
+}
+
+function refreshLocalSession() {
+    if (unifiSessionRefreshInflight) return unifiSessionRefreshInflight;
+    unifiSessionRefreshInflight = (async () => {
+        invalidateLocalSession();
+        return getLocalSession();
+    })().finally(() => { unifiSessionRefreshInflight = null; });
+    return unifiSessionRefreshInflight;
 }
 
 // 建立 UniFi 官方雲端 Site Manager API 客戶端
@@ -426,14 +496,26 @@ function parseIpLinks(txt) {
 // SSH 遙測含 sleep 1；同一設備重用單一連線、命令序列化，閒置時自動釋放。
 let hwCache = null;      // { ts, data }
 let hwInflight = null;
+let hwLastFailureAt = null;
+let hwConsecutiveFailures = 0;
 const ucgSshPool = createSshConnectionPool({
-    getConfig: () => ({
-        host: process.env.UCG_IP,
-        port: parseInt(process.env.SSH_PORT || '22', 10),
-        username: process.env.SSH_USER,
-        password: process.env.SSH_PASSWORD,
-        tryKeyboard: true
-    }),
+    getConfig: () => {
+        const policy = resolveHostKeyPolicy({
+            fingerprint: process.env.UCG_SSH_HOST_KEY,
+            allowUnpinned: process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production'),
+            field: 'UCG_SSH_HOST_KEY'
+        });
+        if (policy.error) throw new Error(policy.error);
+        return {
+            host: process.env.UCG_IP,
+            port: parseInt(process.env.SSH_PORT || '22', 10),
+            username: process.env.SSH_USER,
+            password: process.env.SSH_PASSWORD,
+            tryKeyboard: true,
+            hostKeyFingerprint: policy.fingerprint || '',
+            hostVerifier: policy.verifier
+        };
+    },
     onKeyboardInteractive: (_name, _instructions, _lang, prompts, finish) => {
         finish(prompts.map(() => process.env.SSH_PASSWORD));
     }
@@ -537,10 +619,21 @@ async function getHardwareCached({ force = false } = {}) {
         ? Math.max(1, appSettings.deviceActiveBackendSampleSec - 1) * 1000
         : 15000;
     if (!force && hwCache && Date.now() - hwCache.ts < cacheMs) return hwCache.data;
-    if (!hwInflight) hwInflight = fetchHardwareSSH().finally(() => { hwInflight = null; });
-    const data = await hwInflight;
-    hwCache = { ts: Date.now(), data };
-    return data;
+    if (!hwInflight) {
+        hwInflight = fetchHardwareSSH()
+            .then(data => {
+                hwCache = { ts: Date.now(), data };
+                hwConsecutiveFailures = 0;
+                return data;
+            })
+            .catch(error => {
+                hwLastFailureAt = Date.now();
+                hwConsecutiveFailures += 1;
+                throw error;
+            })
+            .finally(() => { hwInflight = null; });
+    }
+    return hwInflight;
 }
 
 app.get('/api/hardware', async (req, res) => {
@@ -605,8 +698,10 @@ app.get('/api/network/devices/telemetry/history', (req, res) => {
     });
     if (!query) return;
     const cutoff = Date.now() - query.hours * 3600000;
+    const history = historyDb.listUnifiTelemetryHistory(cutoff, { pointBudget: 10_000 });
     res.json({
-        data: historyDb.listUnifiTelemetrySince(cutoff),
+        data: history.data,
+        resolution: history.resolution,
         source: { system: 'unifi_controller', endpoint: '/proxy/network/api/s/default/stat/device' }
     });
 });
@@ -838,6 +933,13 @@ const configBackupService = createConfigBackupService({
     appVersion: APP_VERSION,
     database: historyDb
 });
+const scheduledBackupEnabled = strictTlsBoolean(
+    process.env.SMARTHUB_BACKUP_SCHEDULE_ENABLED,
+    'SMARTHUB_BACKUP_SCHEDULE_ENABLED',
+    false
+);
+const scheduledBackupIntervalHours = Math.min(Math.max(Number(process.env.SMARTHUB_BACKUP_INTERVAL_HOURS) || 24, 1), 168);
+const scheduledBackupRetentionCount = Math.min(Math.max(Number(process.env.SMARTHUB_BACKUP_RETENTION_COUNT) || 7, 1), 90);
 const threatTrafficListClient = createUniFiTrafficListClient({
     transport: ({ tlsVerify, ...request }) => axios({
         ...request,
@@ -925,6 +1027,10 @@ app.delete('/api/security/threat-blocks/:id', panelSecurity.requireAdmin, async 
     }
 });
 const HISTORY_HARD_CAP = 100000;
+const TELEMETRY_HARD_CAP = Math.min(
+    Math.max(Number(process.env.UNIFI_TELEMETRY_HARD_CAP) || HISTORY_HARD_CAP, 1),
+    1000000
+);
 const systemMonitor = new SystemMonitor({
     dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger,
     version: APP_VERSION, buildIdentity: buildIdentity.public
@@ -1050,9 +1156,11 @@ app.post('/api/ui-preferences', (req, res) => {
     res.json({ ok: true, preferences: uiPreferences });
 });
 
-// SQLite 以資料庫端清理取代舊的記憶體陣列 prune；清理後保留增量 vacuum，避免檔案無限膨脹。
-historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP);
-lifecycleInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP)), 60 * 60 * 1000);
+// SQLite cleanup is yielding and bounded. Schedule it after listen so a large
+// existing history cannot delay the container health endpoint from opening.
+lifecycleInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(
+    appSettings.historyKeepDays, HISTORY_HARD_CAP, { telemetryHardCap: TELEMETRY_HARD_CAP }
+)), 60 * 60 * 1000);
 let lastHistoryFlushTs = Date.now();
 lifecycleInterval(() => {
     const gap = Math.max(Number(appSettings.historyFlushMin) || 10, 1) * 60 * 1000;
@@ -2273,9 +2381,20 @@ runSerialJob('adguardPolicyReconcile', () => adguardServicePolicyService.reconci
 function scheduleServerJobs() {
     clearLifecycleInterval(jobTimers.watcher);
     clearLifecycleInterval(jobTimers.autodef);
+    clearLifecycleInterval(jobTimers.scheduledBackup);
     if (shuttingDown) return;
     jobTimers.watcher = lifecycleInterval(() => runSerialJob('notificationWatcher', notificationWatcher), Math.max(appSettings.watcherSec, 5) * 1000);
     jobTimers.autodef = lifecycleInterval(() => runSerialJob('autoDefenseSweep', autoDefenseSweep), Math.max(appSettings.autoDefenseSec, 5) * 1000);
+    if (scheduledBackupEnabled) {
+        jobTimers.scheduledBackup = lifecycleInterval(() => runSerialJob('scheduledBackup', async () => {
+            const result = await configBackupService.createScheduledBackup({ retentionCount: scheduledBackupRetentionCount });
+            logger.info({
+                module: 'config.backup', function: 'scheduledBackup', code: ERROR_CODES.WORKER_READY,
+                message: 'Scheduled v2 backup created',
+                fields: { file: path.basename(result.file), bytes: result.bytes, retention_count: scheduledBackupRetentionCount }
+            });
+        }), scheduledBackupIntervalHours * 60 * 60 * 1000);
+    }
 }
 
 /* ===================== 歷史取樣器 (可見分頁自適應頻率) ===================== */
@@ -2371,7 +2490,7 @@ async function sampleUnifiDeviceTelemetry() {
         collectedAt: snapshot.collectedAt,
         stale: snapshot.stale,
         rows: telemetryHistoryRows(snapshot)
-    }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+    }, { keepDays: appSettings.historyKeepDays, hardCap: TELEMETRY_HARD_CAP });
 }
 
 async function sampleTrends() {
@@ -2441,7 +2560,8 @@ app.get('/api/history', (req, res) => {
     });
     if (!query) return;
     const cutoff = Date.now() - query.hours * 3600000;
-    res.json({ history: historyDb.getSince('trend', cutoff) });
+    const history = historyDb.getHistory('trend', cutoff);
+    res.json({ history: history.data, resolution: history.resolution, point_budget: history.point_budget });
 });
 
 // 輕量心跳端點：只為目前顯示的裝置續短租約；沒有續約最晚 3 分鐘自動回到低頻。
@@ -2457,21 +2577,43 @@ app.get('/api/heartbeat', (req, res) => {
 /* ===================== UGREEN NAS (UGOS Pro 原生 API) ===================== */
 // 認證流程：GET rsa_public_key → RSA PKCS1v15 加密密碼 → POST login 取 token (掛在 query ?token=)
 const crypto = require('crypto');
+let nasAgent = null;
 function buildNasClient() {
     const base = process.env.NAS_HOST
         ? `${process.env.NAS_SCHEME || 'https'}://${process.env.NAS_HOST}:${process.env.NAS_PORT || '9443'}`
         : null;
+    if (!base) {
+        destroyAgent(nasAgent);
+        nasAgent = null;
+        return { base: null, client: null, tls: null };
+    }
+    const tls = resolveTlsPolicy({
+        url: base,
+        verify: process.env.NAS_TLS_VERIFY,
+        insecure: process.env.NAS_TLS_INSECURE,
+        caFile: process.env.NAS_CA_FILE,
+        allowInsecureHttp: process.env.NAS_ALLOW_INSECURE_HTTP,
+        fields: {
+            url: 'NAS_HOST', verify: 'NAS_TLS_VERIFY', insecure: 'NAS_TLS_INSECURE',
+            ca: 'NAS_CA_FILE', allowHttp: 'NAS_ALLOW_INSECURE_HTTP'
+        }
+    });
+    destroyAgent(nasAgent);
+    nasAgent = createHttpsAgent(tls);
+    if (tls.warning) sysLog('TLS', `UGREEN NAS transport mode: ${tls.mode} (explicit insecure opt-in)`, true);
+    else sysLog('TLS', `UGREEN NAS transport mode: ${tls.mode}`);
     return {
-        base,
+        base: tls.url,
+        tls,
         client: base ? axios.create({
-            baseURL: base,
+            baseURL: tls.url,
             headers: { 'ug-agent': 'PC/WEB', 'Accept': 'application/json' },
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            ...(nasAgent ? { httpsAgent: nasAgent } : {}),
             timeout: 10000
         }) : null
     };
 }
-let { base: NAS_BASE, client: nasClient } = buildNasClient();
+let { base: NAS_BASE, client: nasClient, tls: nasTls } = buildNasClient();
 
 function nasConfigured() {
     return !!(NAS_BASE && process.env.NAS_USER && process.env.NAS_PASSWORD)
@@ -2492,6 +2634,9 @@ function deepFind(obj, keys, depth = 0) {
 }
 
 let nasToken = '', nasTokenExpiry = 0;
+let nasLastSuccessAt = null;
+let nasLastFailureAt = null;
+let nasConsecutiveFailures = 0;
 async function getNasToken() {
     const now = Date.now();
     if (nasToken && now < nasTokenExpiry) {
@@ -2539,32 +2684,47 @@ async function getNasToken() {
 
         nasToken = token;
         nasTokenExpiry = now + 12 * 60 * 60 * 1000; // Token 官方效期 24H，保守 12H 換發
+        nasLastSuccessAt = Date.now();
+        nasConsecutiveFailures = 0;
         sysLog('NAS Auth', 'NAS 登入成功，快取 JWT Token (12小時)。');
         return nasToken;
     } catch (error) {
+        nasLastFailureAt = Date.now();
+        nasConsecutiveFailures += 1;
         sysLog('NAS Auth', `NAS 登入流程失敗: ${error.message}`, true);
         throw error;
     }
 }
 
 async function nasGet(pathName, params = {}, _retried = false) {
-    const token = await getNasToken();
-    const r = await nasClient.get(pathName, { params: { ...params, token } });
-    // UGOS 一律回 HTTP 200，錯誤放在 body.code (1004/1008 = 權限不足，需管理員帳號)
-    if (r.data && typeof r.data.code === 'number' && r.data.code !== 200) {
-        const permErr = [1004, 1008].includes(r.data.code);
-        // 權限錯誤重試也沒用；其他錯誤(含 token 失效，例如 NAS 重開機後舊 token 被清空)一律
-        // 清掉快取 token 重新登入後重試一次 —— 不用去猜 UGOS 到底吐哪個代碼表示 token 失效
-        if (!permErr && !_retried) {
-            sysLog('NAS Auth', `${pathName} 回 code ${r.data.code}，可能是 token 失效 (如 NAS 重開機)，清除快取重新登入後重試`, false);
-            nasToken = ''; nasTokenExpiry = 0;
-            return nasGet(pathName, params, true);
+    try {
+        const token = await getNasToken();
+        const r = await nasClient.get(pathName, { params: { ...params, token } });
+        // UGOS 一律回 HTTP 200，錯誤放在 body.code (1004/1008 = 權限不足，需管理員帳號)
+        if (r.data && typeof r.data.code === 'number' && r.data.code !== 200) {
+            const permErr = [1004, 1008].includes(r.data.code);
+            // 權限錯誤重試也沒用；其他錯誤(含 token 失效，例如 NAS 重開機後舊 token 被清空)一律
+            // 清掉快取 token 重新登入後重試一次 —— 不用去猜 UGOS 到底吐哪個代碼表示 token 失效
+            if (!permErr && !_retried) {
+                sysLog('NAS Auth', `${pathName} 回 code ${r.data.code}，可能是 token 失效 (如 NAS 重開機)，清除快取重新登入後重試`, false);
+                nasToken = ''; nasTokenExpiry = 0;
+                const retried = await nasGet(pathName, params, true);
+                nasLastSuccessAt = Date.now();
+                nasConsecutiveFailures = 0;
+                return retried;
+            }
+            throw new Error(permErr
+                ? `NAS 帳號權限不足 (code ${r.data.code})：此 API 僅限管理員帳號，請在 UGOS 將使用者設為管理員或改用管理員帳密`
+                : `UGOS code ${r.data.code}: ${r.data.msg || r.data.debug || ''}`);
         }
-        throw new Error(permErr
-            ? `NAS 帳號權限不足 (code ${r.data.code})：此 API 僅限管理員帳號，請在 UGOS 將使用者設為管理員或改用管理員帳密`
-            : `UGOS code ${r.data.code}: ${r.data.msg || r.data.debug || ''}`);
+        nasLastSuccessAt = Date.now();
+        nasConsecutiveFailures = 0;
+        return r.data && r.data.data !== undefined ? r.data.data : r.data;
+    } catch (error) {
+        nasLastFailureAt = Date.now();
+        nasConsecutiveFailures += 1;
+        throw error;
     }
-    return r.data && r.data.data !== undefined ? r.data.data : r.data;
 }
 
 // 15. NAS 總覽 (硬體資訊 + 即時遙測 taskmgr/stat/get_all)
@@ -2878,7 +3038,8 @@ app.get('/api/hardware/history', (req, res) => {
     });
     if (!query) return;
     const cutoff = Date.now() - query.hours * 3600000;
-    res.json({ data: historyDb.getSince('ucg', cutoff) });
+    const history = historyDb.getHistory('ucg', cutoff);
+    res.json({ data: history.data, resolution: history.resolution, point_budget: history.point_budget });
 });
 
 /* ===================== NAS 歷史自建取樣器 =====================
@@ -2962,11 +3123,25 @@ function buildNasMonClient() {
 }
 let nasMonConfigurationError = null;
 let { url: NASMON_URL, client: nasMonClient } = buildNasMonClient();
+let nasMonLastSuccessAt = null;
+let nasMonLastFailureAt = null;
+let nasMonConsecutiveFailures = 0;
 function nasMonConfigured() { return !!NASMON_URL; }
 function nasMonAdvancedConfigured() {
     return nasMonConfigured() && String(process.env.NAS_MONITOR_MODE || 'full').toLowerCase() !== 'docker_only';
 }
-async function nasMonGet(p, params) { const r = await nasMonClient.get(p, { params }); return r.data; }
+async function nasMonGet(p, params) {
+    try {
+        const r = await nasMonClient.get(p, { params });
+        nasMonLastSuccessAt = Date.now();
+        nasMonConsecutiveFailures = 0;
+        return r.data;
+    } catch (error) {
+        nasMonLastFailureAt = Date.now();
+        nasMonConsecutiveFailures += 1;
+        throw error;
+    }
+}
 function allowLegacyNasMonActions() { return process.env.NAS_MONITOR_ALLOW_LEGACY_ACTIONS === 'true'; }
 async function authorizeNasMonDockerAction(id, action) {
     const inventory = await nasMonGet('/api/docker/containers');
@@ -3073,8 +3248,9 @@ app.get('/api/nas/traffic-history', (req, res) => {
     if (!query) return;
     const { hours } = query;
     if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/traffic/history', { hours }, { data: [] });
-    const data = nasHistorySince(hours).map(p => ({ t: p.t, upload_mbps: p.up_mbps, download_mbps: p.down_mbps }));
-    res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
+    const history = historyDb.getHistory('nas', Date.now() - hours * 3600000);
+    const data = history.data.map(p => ({ t: p.t, upload_mbps: p.up_mbps, download_mbps: p.down_mbps }));
+    res.json({ data, resolution: history.resolution, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 24. 系統歷史 (CPU / 記憶體 / 溫度)
@@ -3085,8 +3261,9 @@ app.get('/api/nas/system-history', (req, res) => {
     if (!query) return;
     const { hours } = query;
     if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/system/history', { hours }, { data: [] });
-    const data = nasHistorySince(hours).map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature, fan_rpm: p.fan_rpm ?? null }));
-    res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
+    const history = historyDb.getHistory('nas', Date.now() - hours * 3600000);
+    const data = history.data.map(p => ({ t: p.t, cpu: p.cpu, memory: p.memory, temperature: p.temperature, fan_rpm: p.fan_rpm ?? null }));
+    res.json({ data, resolution: history.resolution, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 25. 溫度歷史 (各硬碟溫度；此機型 API 無風扇轉速)
@@ -3097,11 +3274,12 @@ app.get('/api/nas/temperature-history', (req, res) => {
     if (!query) return;
     const { hours } = query;
     if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/temperature/history', { hours }, { data: [] });
-    const pts = nasHistorySince(hours);
+    const history = historyDb.getHistory('nas', Date.now() - hours * 3600000);
+    const pts = history.data;
     // 收集所有出現過的硬碟名稱，供前端動態畫線
     const diskNames = [...new Set(pts.flatMap(p => Object.keys(p.disks || {})))];
     const data = pts.map(p => ({ t: p.t, disks: p.disks || {}, fan_rpm: p.fan_rpm ?? null }));
-    res.json({ data, diskNames, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
+    res.json({ data, diskNames, resolution: history.resolution, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 26. 儲存容量歷史
@@ -3112,8 +3290,9 @@ app.get('/api/nas/storage-history', (req, res) => {
     if (!query) return;
     const { hours } = query;
     if (nasMonAdvancedConfigured()) return nasMonProxy(res, '/api/storage/history', { hours }, { data: [] });
-    const data = nasHistorySince(hours).filter(p => p.used_gb != null).map(p => ({ t: p.t, used_gb: p.used_gb, total_gb: p.total_gb }));
-    res.json({ data, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
+    const history = historyDb.getHistory('nas', Date.now() - hours * 3600000);
+    const data = history.data.filter(p => p.used_gb != null).map(p => ({ t: p.t, used_gb: p.used_gb, total_gb: p.total_gb }));
+    res.json({ data, resolution: history.resolution, source: nasConfigured() ? 'nas_sampler' : 'not_configured' });
 });
 
 // 27. 儲存滿載預測 (線性迴歸估算剩餘天數)
@@ -3224,6 +3403,16 @@ app.delete('/api/nas/alerts/config/:metric', async (req, res) => {
    (帶 API Key)，再原樣轉發給前端。多個分頁共用同一條上游連線 (惰性建立/無人訂閱即斷開)，
    避免每個分頁各開一條 SSE 消耗 NAS 資源。上游斷線會自動退避重連。 */
 const sseClients = new Set();
+const sseBackpressure = createSseBackpressureManager({
+    maxClients: Number(process.env.SSE_MAX_CLIENTS) || 100,
+    maxWritableLength: Number(process.env.SSE_MAX_WRITABLE_BYTES) || 256 * 1024,
+    drainTimeoutMs: Number(process.env.SSE_DRAIN_TIMEOUT_MS) || 10_000,
+    onEvict: (client, reason) => {
+        sseClients.delete(client);
+        sysLog('NAS SSE', `移除緩慢或失效的 SSE client (${reason})`, reason !== 'closed');
+        if (sseClients.size === 0) resetSseUpstream();
+    }
+});
 const SSE_CONNECT_TIMEOUT_MS = 20_000;
 let sseUpstreamReq = null, sseConnectAttempt = null, sseReconnectTimer = null;
 
@@ -3264,7 +3453,7 @@ function sseConnectUpstream() {
         }
         sysLog('NAS SSE', '已連線上游即時推送串流');
         sseUpstreamReq = r;
-        r.data.on('data', chunk => { for (const c of sseClients) c.write(chunk); });
+        r.data.on('data', chunk => sseBackpressure.broadcast(chunk));
         const disconnected = () => {
             if (sseUpstreamReq !== r) return;
             sseUpstreamReq = null;
@@ -3287,11 +3476,24 @@ app.get('/api/nas/stream', (req, res) => {
     if (!nasMonAdvancedConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
         status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'stream'
     });
+    if (!sseBackpressure.add(res)) {
+        return res.status(503).json({ error: 'sse_client_limit', code: ERROR_CODES.API_AUTH_RATE_LIMITED });
+    }
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(':ok\n\n');
-    sseClients.add(res);
+    try {
+        res.write(':ok\n\n');
+        sseClients.add(res);
+    } catch (error) {
+        sseBackpressure.remove(res, 'initial_write_failed');
+        if (res.headersSent) {
+            res.destroy(error);
+            return;
+        }
+        return apiError(res, error, { status: 503, code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, publicMessage: 'sse_unavailable', module: 'api.nasMonitor', function: 'stream' });
+    }
     sseConnectUpstream();
     req.on('close', () => {
+        sseBackpressure.remove(res, 'client_closed');
         sseClients.delete(res);
         if (sseClients.size === 0) resetSseUpstream();
     });
@@ -3328,17 +3530,20 @@ app.post('/api/settings', (req, res) => {
 // 允許透過設定頁修改的欄位 (secret: GET 時只回「是否已設定」)
 const CONN_FIELDS = [
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
-    { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
+    { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_CONTROLLER_TLS_VERIFY' }, { key: 'UNIFI_CONTROLLER_CA_FILE' },
+    { key: 'UNIFI_CONTROLLER_TLS_INSECURE' }, { key: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP' },
+    { key: 'UNIFI_USERNAME' }, { key: 'UNIFI_PASSWORD', secret: true },
     { key: 'UNIFI_DEVICE_SSH_PORT' }, { key: 'UNIFI_DEVICE_SSH_USER' },
     { key: 'UNIFI_DEVICE_SSH_PASSWORD', secret: true },
     { key: 'UNIFI_DEVICE_SSH_TARGET_IDS', secret: true },
-    { key: 'UNIFI_DEVICE_SSH_HOST_KEYS', secret: true },
+    { key: 'UNIFI_DEVICE_SSH_HOST_KEYS', secret: true }, { key: 'UNIFI_DEVICE_SSH_ALLOW_UNPINNED' },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_TLS_VERIFY' },
     { key: 'UNIFI_NETWORK_SITE_ID' }, { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
     { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
-    { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
+    { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_TLS_VERIFY' }, { key: 'NAS_CA_FILE' },
+    { key: 'NAS_TLS_INSECURE' }, { key: 'NAS_ALLOW_INSECURE_HTTP' }, { key: 'NAS_USER' }, { key: 'NAS_PASSWORD', secret: true },
     { key: 'NAS_MONITOR_URL', restartRequired: true },
     { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
     { key: 'NAS_MONITOR_MODE', restartRequired: true },
@@ -3349,7 +3554,9 @@ const CONN_FIELDS = [
     { key: 'ADGUARD_URL' }, { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' },
     { key: 'ADGUARD_ALLOW_INSECURE_HTTP' }, { key: 'ADGUARD_TLS_VERIFY' }, { key: 'ADGUARD_CA_FILE' },
     { key: 'ADGUARD_USER' }, { key: 'ADGUARD_PASSWORD', secret: true },
-    { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true }
+    { key: 'LINUX_HOST' }, { key: 'LINUX_SSH_PORT' }, { key: 'LINUX_SSH_USER' }, { key: 'LINUX_SSH_PASSWORD', secret: true },
+    { key: 'UCG_SSH_HOST_KEY', secret: true }, { key: 'LINUX_SSH_HOST_KEY', secret: true },
+    { key: 'UCG_SSH_ALLOW_UNPINNED' }, { key: 'LINUX_SSH_ALLOW_UNPINNED' }
 ];
 const pendingRestartConnectionFields = new Set();
 const RECREATE_DEFAULTS = Object.freeze({
@@ -3389,12 +3596,12 @@ function persistEnvVars(updates) {
 function rebuildClients() {
     unifiClient = buildUnifiClient();
     unifiCloudClient = buildUnifiCloudClient();
-    ({ base: NAS_BASE, client: nasClient } = buildNasClient());
+    ({ base: NAS_BASE, client: nasClient, tls: nasTls } = buildNasClient());
     ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
     adguardConnection = buildAdguardConnection();
     resetSseUpstream({ reconnect: true });
     wiimIP = process.env.WIIM_IP || wiimIP;
-    localCookie = ''; cookieExpiry = 0;   // 重置 UniFi session
+    invalidateLocalSession();             // 重置 UniFi session + CSRF token
     nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
     ppbClient.reset();                    // 重置 PPB session/Agent (host/TLS/CA 可能已變更)
     Object.keys(wiimCache).forEach(k => delete wiimCache[k]);
@@ -3466,6 +3673,37 @@ app.post('/api/connections', (req, res) => {
                 publicMessage: error.message
             });
         }
+    }
+    try {
+        const desired = parseDesiredEnvFile(ENV_FILE);
+        const effective = { ...process.env, ...desired, ...updates };
+        if (effective.UNIFI_CONTROLLER_URL) resolveTlsPolicy({
+            url: effective.UNIFI_CONTROLLER_URL,
+            verify: effective.UNIFI_CONTROLLER_TLS_VERIFY,
+            insecure: effective.UNIFI_CONTROLLER_TLS_INSECURE,
+            caFile: effective.UNIFI_CONTROLLER_CA_FILE,
+            allowInsecureHttp: effective.UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP,
+            fields: { url: 'UNIFI_CONTROLLER_URL', verify: 'UNIFI_CONTROLLER_TLS_VERIFY', insecure: 'UNIFI_CONTROLLER_TLS_INSECURE', ca: 'UNIFI_CONTROLLER_CA_FILE', allowHttp: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP' }
+        });
+        if (effective.NAS_HOST) resolveTlsPolicy({
+            url: `${effective.NAS_SCHEME || 'https'}://${effective.NAS_HOST}:${effective.NAS_PORT || '9443'}`,
+            verify: effective.NAS_TLS_VERIFY,
+            insecure: effective.NAS_TLS_INSECURE,
+            caFile: effective.NAS_CA_FILE,
+            allowInsecureHttp: effective.NAS_ALLOW_INSECURE_HTTP,
+            fields: { url: 'NAS_HOST', verify: 'NAS_TLS_VERIFY', insecure: 'NAS_TLS_INSECURE', ca: 'NAS_CA_FILE', allowHttp: 'NAS_ALLOW_INSECURE_HTTP' }
+        });
+        if (effective.UCG_IP && effective.SSH_USER && !isPlaceholder(effective.SSH_PASSWORD)) {
+            resolveHostKeyPolicy({ fingerprint: effective.UCG_SSH_HOST_KEY, allowUnpinned: effective.UCG_SSH_ALLOW_UNPINNED, field: 'UCG_SSH_HOST_KEY' });
+        }
+        if (effective.LINUX_HOST && effective.LINUX_SSH_USER && !isPlaceholder(effective.LINUX_SSH_PASSWORD)) {
+            resolveHostKeyPolicy({ fingerprint: effective.LINUX_SSH_HOST_KEY, allowUnpinned: effective.LINUX_SSH_ALLOW_UNPINNED, field: 'LINUX_SSH_HOST_KEY' });
+        }
+    } catch (error) {
+        return apiError(res, error, {
+            status: 400, code: ERROR_CODES.API_VALIDATION_FAILED,
+            module: 'api.connections', function: 'validateTransportSecurity', publicMessage: error.message
+        });
     }
     try { persistEnvVars(updates); } catch (e) {
         if (e?.committed && e?.ambiguous) {
@@ -3546,6 +3784,33 @@ app.get('/api/config/backup', panelSecurity.requireAdmin, async (_req, res) => {
     }
 });
 
+// v2 is a file-backed stream: the SQLite snapshot never becomes a base64
+// string or a duplicated JSON object in the Node heap.
+app.get('/api/config/backup/v2', panelSecurity.requireAdmin, async (_req, res) => {
+    const directory = fs.mkdtempSync(path.join(DATA_DIR, '.backup-http-'));
+    const outputFile = path.join(directory, 'smarthub.backup');
+    try {
+        const result = await configBackupService.exportBackupV2({ outputFile });
+        res.set({
+            'Content-Type': BACKUP_V2_MEDIA_TYPE,
+            'Content-Length': String(result.bytes),
+            'Content-Disposition': `attachment; filename="smarthub-backup-${new Date().toISOString().slice(0, 10)}.backup"`,
+            'Cache-Control': 'no-store',
+            'X-SmartHub-Backup-SHA256': result.manifest.integrity
+        });
+        fs.createReadStream(result.file).pipe(res);
+        res.once('close', () => fs.rmSync(directory, { recursive: true, force: true }));
+    } catch (error) {
+        fs.rmSync(directory, { recursive: true, force: true });
+        apiError(res, error, {
+            status: error instanceof BackupValidationError ? error.httpStatus : 500,
+            code: error instanceof BackupValidationError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.SYS_CONFIG_INVALID,
+            publicMessage: error instanceof BackupValidationError ? error.message : undefined,
+            module: 'api.configBackup', function: 'exportV2', logMessage: 'Streaming configuration backup export failed'
+        });
+    }
+});
+
 app.post('/api/config/restore', panelSecurity.requireAdmin, (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.is(BACKUP_MEDIA_TYPE)) {
         return apiError(res, new Error(`Content-Type must be ${BACKUP_MEDIA_TYPE}`), {
@@ -3570,6 +3835,44 @@ app.post('/api/config/restore', panelSecurity.requireAdmin, (req, res) => {
             module: 'api.configBackup', function: 'restore', logMessage: 'Configuration restore staging failed',
             fields: validation ? { reason: error.code } : undefined
         });
+    }
+});
+
+app.post('/api/config/restore/v2', panelSecurity.requireAdmin, async (req, res) => {
+    if (!req.is(BACKUP_V2_MEDIA_TYPE)) {
+        return apiError(res, new Error(`Content-Type must be ${BACKUP_V2_MEDIA_TYPE}`), {
+            status: 415, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'unsupported_backup_content_type',
+            module: 'api.configBackup', function: 'restoreV2'
+        });
+    }
+    const directory = fs.mkdtempSync(path.join(DATA_DIR, '.backup-upload-'));
+    const file = path.join(directory, 'upload.backup');
+    const maxBytes = resolveBackupMaxBytes(process.env.SMARTHUB_BACKUP_MAX_BYTES);
+    let total = 0;
+    const limiter = new Transform({
+        transform(chunk, _encoding, callback) {
+            total += chunk.length;
+            callback(total > maxBytes ? new Error('backup payload is too large') : null, chunk);
+        }
+    });
+    try {
+        await pipeline(req, limiter, fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }));
+        const result = await configBackupService.stageRestoreV2File(file, req.get('x-smarthub-restore-confirmation'), { maxBytes });
+        logger.warning({
+            module: 'api.configBackup', function: 'restoreV2', code: ERROR_CODES.SYS_CONFIG_INVALID,
+            message: 'A validated streaming configuration restore was staged for the next process start',
+            fields: { restart_required: true, secrets_restored: false, backup_version: 2 }
+        });
+        res.status(202).json(result);
+    } catch (error) {
+        apiError(res, error, {
+            status: error instanceof BackupValidationError ? error.httpStatus : (total > maxBytes ? 413 : 500),
+            code: error instanceof BackupValidationError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.SYS_CONFIG_INVALID,
+            publicMessage: error instanceof BackupValidationError ? error.message : undefined,
+            module: 'api.configBackup', function: 'restoreV2', logMessage: 'Streaming configuration restore staging failed'
+        });
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
     }
 });
 
@@ -4055,6 +4358,8 @@ app.get('/sw.js', (req, res) => {
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---
 let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
+const wiimTlsInsecure = strictTlsBoolean(process.env.WIIM_TLS_INSECURE, 'WIIM_TLS_INSECURE', false);
+const wiimAllowInsecureHttp = strictTlsBoolean(process.env.WIIM_ALLOW_INSECURE_HTTP, 'WIIM_ALLOW_INSECURE_HTTP', false);
 const wiimCache = {};
 
 async function wiimGet(command) {
@@ -4072,12 +4377,16 @@ async function wiimGet(command) {
     try {
         const res = await axios.get(`https://${wiimIP}/httpapi.asp?command=${encodeURIComponent(command)}`, {
             headers,
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            httpsAgent: new https.Agent({ rejectUnauthorized: !wiimTlsInsecure }),
             timeout: 3000
         });
         result = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
     } catch (e1) {
         sysLog('WiiM Proxy', `[HTTPS 失敗] 命令: ${command}，錯誤: ${e1.message}。嘗試 HTTP 回退...`, true);
+        if (!wiimAllowInsecureHttp) {
+            sysLog('WiiM Proxy', 'HTTPS 失敗且 WIIM_ALLOW_INSECURE_HTTP 未明確啟用，拒絕明文回退。', true);
+            return null;
+        }
         try {
             const res = await axios.get(`http://${wiimIP}/httpapi.asp?command=${encodeURIComponent(command)}`, {
                 headers,
@@ -4180,8 +4489,8 @@ registerWiimCommandRoutes(app, {
     })
 });
 
-// 專輯封面代理：WiiM 回的 albumArtURI 常是裝置自簽 HTTPS 或外部 CDN，瀏覽器直連會被擋
-// 由後端抓取後轉發 (忽略自簽憑證)，記憶體快取 5 分鐘
+// 專輯封面代理：WiiM 回的 albumArtURI 常是裝置 HTTPS 或外部 CDN，瀏覽器直連會被擋。
+// 後端預設驗證 HTTPS；自簽／HTTP 只在明確的 WIIM_* insecure opt-in 下允許，記憶體快取 5 分鐘。
 const wiimArtCache = {};
 app.get('/api/wiim/art', async (req, res) => {
     const query = validatedInput(res, () => queryInput.parseWiimArtQuery(req.query), {
@@ -4192,7 +4501,9 @@ app.get('/api/wiim/art', async (req, res) => {
     // SSRF 防護：僅允許抓 WiiM 裝置本身，或非內網的公開 CDN；
     // 禁止以此代理探測其他內網位址 (10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x)
     try {
-        const host = new URL(u).hostname;
+        const parsedUrl = new URL(u);
+        if (parsedUrl.protocol === 'http:' && !wiimAllowInsecureHttp) return res.status(403).end();
+        const host = parsedUrl.hostname;
         const isPrivate = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || host === 'localhost';
         if (isPrivate && host !== wiimIP) return res.status(403).end();
     } catch { return res.status(400).end(); }
@@ -4205,7 +4516,7 @@ app.get('/api/wiim/art', async (req, res) => {
     try {
         const r = await axios.get(u, {
             responseType: 'arraybuffer', timeout: 6000,
-            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            httpsAgent: new https.Agent({ rejectUnauthorized: !wiimTlsInsecure }),
             headers: { 'User-Agent': 'wiim-temp/2.0' }
         });
         const type = r.headers['content-type'] || 'image/jpeg';
@@ -4724,7 +5035,8 @@ app.get('/api/ups/history', (req, res) => {
     });
     if (!query) return;
     const cutoff = Date.now() - query.hours * 3600000;
-    res.json({ history: historyDb.getSince('ups', cutoff) });
+    const history = historyDb.getHistory('ups', cutoff);
+    res.json({ history: history.data, resolution: history.resolution, point_budget: history.point_budget });
 });
 
 app.get('/api/ups/events', (req, res) => res.json({ events: historyDb.listUpsEvents() }));
@@ -4733,7 +5045,7 @@ app.get('/api/ups/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=ups_history.csv');
     let csv = 'time,input_v,output_v,battery_pct,load_pct,runtime_sec,on_battery\n';
-    for (const h of historyDb.getSince('ups', 0)) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
+    for (const h of historyDb.getHistory('ups', 0, { pointBudget: 50_000 }).data) csv += `${h.t},${h.inV ?? ''},${h.outV ?? ''},${h.batt ?? ''},${h.load ?? ''},${h.rt ?? ''},${h.ob}\n`;
     res.send(csv);
 });
 
@@ -4753,11 +5065,20 @@ function buildAdguardConnection() {
 let adguardConnection = buildAdguardConnection();
 const adgConfigured = () => adguardConnection.configured;
 let adgLastOkTs = 0;
+let adgLastFailureAt = null;
+let adgConsecutiveFailures = 0;
 async function adgReq(pathName, method = 'get', data, params) {
     if (!adguardConnection.client) throw new Error('AdGuard is not configured');
-    const result = await adguardConnection.client.request(pathName, { method, data, params });
-    adgLastOkTs = Date.now();
-    return result;
+    try {
+        const result = await adguardConnection.client.request(pathName, { method, data, params });
+        adgLastOkTs = Date.now();
+        adgConsecutiveFailures = 0;
+        return result;
+    } catch (error) {
+        adgLastFailureAt = Date.now();
+        adgConsecutiveFailures += 1;
+        throw error;
+    }
 }
 // 總覽：狀態 + 統計 (查詢數/攔截數/Top 網域/Top 客戶端)
 app.get('/api/adguard/overview', async (req, res) => {
@@ -4864,13 +5185,25 @@ const LINUX_CMD = [
     'cat /proc/stat', 'sleep 1; cat /proc/stat'
 ].join('; echo __S__; ');
 let linuxCache = null, linuxInflight = null;
+let linuxLastFailureAt = null;
+let linuxConsecutiveFailures = 0;
 const linuxSshPool = createSshConnectionPool({
-    getConfig: () => ({
-        host: process.env.LINUX_HOST,
-        port: parseInt(process.env.LINUX_SSH_PORT || '22', 10),
-        username: process.env.LINUX_SSH_USER,
-        password: process.env.LINUX_SSH_PASSWORD
-    })
+    getConfig: () => {
+        const policy = resolveHostKeyPolicy({
+            fingerprint: process.env.LINUX_SSH_HOST_KEY,
+            allowUnpinned: process.env.LINUX_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production'),
+            field: 'LINUX_SSH_HOST_KEY'
+        });
+        if (policy.error) throw new Error(policy.error);
+        return {
+            host: process.env.LINUX_HOST,
+            port: parseInt(process.env.LINUX_SSH_PORT || '22', 10),
+            username: process.env.LINUX_SSH_USER,
+            password: process.env.LINUX_SSH_PASSWORD,
+            hostKeyFingerprint: policy.fingerprint || '',
+            hostVerifier: policy.verifier
+        };
+    }
 });
 async function fetchLinuxSSH() {
     let out;
@@ -4909,10 +5242,21 @@ async function getLinuxCached() {
         ? Math.max(1, appSettings.deviceActiveBackendSampleSec - 1) * 1000
         : 10000;
     if (linuxCache && Date.now() - linuxCache.ts < cacheMs) return linuxCache.data;
-    if (!linuxInflight) linuxInflight = fetchLinuxSSH().finally(() => { linuxInflight = null; });
-    const data = await linuxInflight;
-    linuxCache = { ts: Date.now(), data };
-    return data;
+    if (!linuxInflight) {
+        linuxInflight = fetchLinuxSSH()
+            .then(data => {
+                linuxCache = { ts: Date.now(), data };
+                linuxConsecutiveFailures = 0;
+                return data;
+            })
+            .catch(error => {
+                linuxLastFailureAt = Date.now();
+                linuxConsecutiveFailures += 1;
+                throw error;
+            })
+            .finally(() => { linuxInflight = null; });
+    }
+    return linuxInflight;
 }
 app.get('/api/linux/stats', async (req, res) => {
     if (!linuxConfigured()) return res.json({ source: 'not_configured' });
@@ -4941,7 +5285,8 @@ app.get('/api/linux/history', (req, res) => {
         module: 'api.linux', function: 'listHistory'
     });
     if (!query) return;
-    res.json({ data: historyDb.getSince('linux', Date.now() - query.hours * 3600000) });
+    const history = historyDb.getHistory('linux', Date.now() - query.hours * 3600000);
+    res.json({ data: history.data, resolution: history.resolution, point_budget: history.point_budget });
 });
 
 /* ===================== 連線狀態一覽 (設定頁 📡 面板) =====================
@@ -5067,10 +5412,138 @@ app.get('/api/alerts/critical', (req, res) => {
 });
 
 // Liveness / readiness / 完整 diagnostics；/api/system/status 會沿用上方 Basic Auth。
+function operationalDependency({ configured, lastSuccessAt = null, lastFailureAt = null, consecutiveFailures = 0, staleAfterMs = 180_000, detail = null }) {
+    const now = Date.now();
+    const successTs = typeof lastSuccessAt === 'number' ? lastSuccessAt : Date.parse(lastSuccessAt || '');
+    const staleAge = Number.isFinite(successTs) ? Math.max(0, now - successTs) : null;
+    const status = !configured ? 'not_configured'
+        : !Number.isFinite(successTs) ? (consecutiveFailures ? 'degraded' : 'unknown')
+            : staleAge > staleAfterMs ? (consecutiveFailures > 2 ? 'critical' : 'degraded') : 'healthy';
+    return {
+        configured: Boolean(configured),
+        status,
+        detail,
+        last_success_at: Number.isFinite(successTs) ? new Date(successTs).toISOString() : null,
+        last_failure_at: lastFailureAt ? new Date(typeof lastFailureAt === 'number' ? lastFailureAt : Date.parse(lastFailureAt)).toISOString() : null,
+        stale_age_ms: staleAge,
+        consecutive_failures: Math.max(0, Number(consecutiveFailures) || 0)
+    };
+}
+
+const operationalIssueCodes = Object.freeze({
+    process: ERROR_CODES.SYS_MONITOR_FAILED,
+    sqlite: ERROR_CODES.DB_HEALTH_FAILED,
+    worker: ERROR_CODES.WORKER_STUCK,
+    ucg_ssh: ERROR_CODES.EXT_UNIFI_FAILED,
+    unifi_controller: ERROR_CODES.EXT_UNIFI_FAILED,
+    unifi_telemetry: ERROR_CODES.EXT_UNIFI_FAILED,
+    nas: ERROR_CODES.EXT_NAS_FAILED,
+    nas_monitor: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
+    ups: ERROR_CODES.EXT_UPS_FAILED,
+    adguard: ERROR_CODES.EXT_ADGUARD_FAILED,
+    linux: ERROR_CODES.EXT_LINUX_FAILED,
+    wiim: ERROR_CODES.EXT_WIIM_FAILED,
+    notification_transport: ERROR_CODES.EXT_NOTIFICATION_FAILED
+});
+const operationalIssueState = new Map();
+let operationalHealthBootstrapped = false;
+
+function observeOperationalDependencies(dependencies) {
+    const settings = loadNotifSettings();
+    const firstBaseline = !operationalHealthBootstrapped;
+    for (const [name, dependency] of Object.entries(dependencies)) {
+        const issueId = `operational:${name}`;
+        const previous = operationalIssueState.get(name);
+        const unhealthy = dependency.configured && ['degraded', 'critical'].includes(dependency.status);
+        if (unhealthy) {
+            const severity = dependency.status === 'critical' ? 'critical' : 'warning';
+            const event = issueTracker.report({
+                id: issueId,
+                code: operationalIssueCodes[name] || ERROR_CODES.SYS_MONITOR_FAILED,
+                severity,
+                message: `${name} operational dependency is ${dependency.status}`,
+                details: { dependency: name, status: dependency.status, consecutive_failures: dependency.consecutive_failures }
+            });
+            operationalIssueState.set(name, dependency.status);
+            if (event.shouldLog) logger.warning({
+                module: 'app.operationalHealth', function: 'dependency', code: event.issue.code,
+                message: event.issue.message,
+                fields: { dependency: name, status: dependency.status, occurrences: event.issue.occurrences }
+            });
+            if (!firstBaseline && previous === 'healthy' && settings.enabled && settings.triggerSystemWarning !== false) {
+                notify(`⚠️ SmartHub ${name} 狀態異常`, `狀態 ${dependency.status} · 連續失敗 ${dependency.consecutive_failures} 次`).catch(() => { });
+            }
+        } else if (previous && previous !== 'healthy' && dependency.status === 'healthy') {
+            issueTracker.resolve(issueId);
+            operationalIssueState.set(name, 'healthy');
+            if (!firstBaseline && settings.enabled && settings.triggerSystemRecovery !== false) {
+                notify(`✅ SmartHub ${name} 已恢復`, '依賴服務重新提供新鮮資料').catch(() => { });
+            }
+        } else {
+            operationalIssueState.set(name, dependency.status);
+        }
+    }
+    operationalHealthBootstrapped = true;
+}
+
 registerHealthRoutes(app, {
     monitor: systemMonitor, db: historyDb, taskTracker,
     version: APP_VERSION, buildIdentity: buildIdentity.public,
+    operationalHealth: () => {
+        const now = Date.now();
+        const database = historyDb.diagnostics();
+        const worker = taskTracker.getStatus();
+        const telemetry = unifiDeviceTelemetrySnapshot.diagnostics();
+        const ups = upsFetchState.snapshot();
+        const wiim = wiimCache.getStatusEx;
+        const notificationSettings = loadNotifSettings();
+        const recentReports = historyDb.listReportRuns(20);
+        const successfulReport = recentReports.find(report => report.deliveryStatus === 'sent');
+        const failedReports = recentReports.filter(report => report.deliveryStatus !== 'sent');
+        const notificationConfigured = notificationSettings.enabled === true && (
+            notificationSettings.channel === 'telegram'
+                ? Boolean(notificationSettings.botToken && notificationSettings.chatId)
+                : Boolean(notificationSettings.webhookUrl)
+        );
+        const dependencyConfigured = {
+            ucg_ssh: Boolean(process.env.UCG_IP && !isPlaceholder(process.env.SSH_PASSWORD)),
+            controller: Boolean(!isPlaceholder(process.env.UNIFI_USERNAME) && !isPlaceholder(process.env.UNIFI_PASSWORD)),
+            nas: nasConfigured(), nas_monitor: nasMonConfigured(),
+            ups: true, adguard: adgConfigured(), linux: linuxConfigured(), wiim: Boolean(wiimIP),
+            notifications: true
+        };
+        const dependencies = {
+            process: operationalDependency({ configured: true, lastSuccessAt: now, detail: 'event loop running' }),
+            sqlite: operationalDependency({ configured: true, lastSuccessAt: database.ok ? now : null, consecutiveFailures: database.ok ? 0 : 1, detail: database.ok ? 'quick health query passed' : database.last_error }),
+            worker: operationalDependency({ configured: true, lastSuccessAt: worker.status === 'critical' ? null : now, consecutiveFailures: worker.status === 'critical' ? 1 : 0, detail: worker.status }),
+            ucg_ssh: operationalDependency({ configured: dependencyConfigured.ucg_ssh, lastSuccessAt: hwCache?.ts || null, lastFailureAt: hwLastFailureAt, consecutiveFailures: hwConsecutiveFailures, detail: 'read-only SSH sampler' }),
+            unifi_controller: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: localSessionLastSuccessAt, lastFailureAt: localSessionLastFailureAt, consecutiveFailures: localSessionConsecutiveFailures, detail: localCookie ? 'session active' : 'session unavailable' }),
+            unifi_telemetry: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: telemetry.lastSuccessfulAt, lastFailureAt: telemetry.lastFailureAt || telemetry.lastErrorAt, consecutiveFailures: telemetry.consecutiveFailures, detail: telemetry.lastErrorReason || 'snapshot' }),
+            nas: operationalDependency({ configured: dependencyConfigured.nas, lastSuccessAt: nasLastSuccessAt, lastFailureAt: nasLastFailureAt, consecutiveFailures: nasConsecutiveFailures, detail: nasToken ? 'JWT active' : 'token unavailable' }),
+            nas_monitor: operationalDependency({ configured: dependencyConfigured.nas_monitor, lastSuccessAt: nasMonLastSuccessAt, lastFailureAt: nasMonLastFailureAt, consecutiveFailures: nasMonConsecutiveFailures, detail: nasMonConfigurationError ? 'configuration rejected' : 'last monitor response' }),
+            ups: operationalDependency({ configured: dependencyConfigured.ups, lastSuccessAt: ups.lastSuccessAt, consecutiveFailures: ups.consecutiveFailures, staleAfterMs: 180_000, detail: ups.failureReason || ups.fetchHealth }),
+            adguard: operationalDependency({ configured: dependencyConfigured.adguard, lastSuccessAt: adgLastOkTs || null, lastFailureAt: adgLastFailureAt, consecutiveFailures: adgConsecutiveFailures, detail: adgConfigured() ? 'last sampler result' : null }),
+            linux: operationalDependency({ configured: dependencyConfigured.linux, lastSuccessAt: linuxCache?.ts || null, lastFailureAt: linuxLastFailureAt, consecutiveFailures: linuxConsecutiveFailures, detail: 'read-only SSH sampler' }),
+            wiim: operationalDependency({ configured: dependencyConfigured.wiim, lastSuccessAt: wiim?.timestamp || null, detail: wiim ? 'last status snapshot' : null }),
+            notification_transport: operationalDependency({ configured: notificationConfigured, lastSuccessAt: successfulReport?.completedAt || null, lastFailureAt: failedReports[0]?.completedAt || null, consecutiveFailures: failedReports.length, detail: notificationConfigured ? 'last persisted delivery result' : 'no notification channel configured' })
+        };
+        observeOperationalDependencies(dependencies);
+        const statuses = Object.values(dependencies).map(entry => entry.status);
+        const status = statuses.includes('critical') ? 'critical'
+            : statuses.includes('degraded') ? 'degraded'
+                : statuses.includes('unknown') ? 'unknown' : 'healthy';
+        return { status, generated_at: new Date().toISOString(), process: { uptime_seconds: Math.floor(process.uptime()), node: process.version }, dependencies };
+    },
     runtimeDiagnostics: () => ({
+        process: {
+            rss_bytes: process.memoryUsage().rss,
+            heap_used_bytes: process.memoryUsage().heapUsed,
+            external_bytes: process.memoryUsage().external,
+            active_handles: typeof process._getActiveHandles === 'function' ? process._getActiveHandles().length : null,
+            active_requests: typeof process._getActiveRequests === 'function' ? process._getActiveRequests().length : null
+        },
+        database: historyDb.diagnostics(),
+        sse: sseBackpressure.snapshot(),
         activityLease: deviceActivity.snapshot(),
         backendSampling: {
             ...backendSamplers.snapshot(),
@@ -5195,9 +5668,11 @@ app.use((error, req, res, _next) => {
 
 refreshPublicSystemHealthSnapshot();
 const PORT = process.env.PORT || 3000;
+const BIND_ADDRESS = process.env.SMARTHUB_BIND_ADDRESS || '0.0.0.0';
 let httpServer;
 let shutdownPromise = null;
-const SHUTDOWN_TIMEOUT_MS = 5000;
+const configuredShutdownGrace = Number(process.env.SMARTHUB_SHUTDOWN_GRACE_MS) || 15_000;
+const SHUTDOWN_TIMEOUT_MS = Math.min(Math.max(configuredShutdownGrace, 1000), 19_000);
 
 function gracefulShutdown(signal, exitCode = 0) {
     if (shutdownPromise) return shutdownPromise;
@@ -5219,11 +5694,11 @@ function gracefulShutdown(signal, exitCode = 0) {
         linuxSshPool.close();
         unifiDeviceThermalCollector.close();
         ppbClient.close();
+        destroyAgent(unifiAgent);
+        destroyAgent(nasAgent);
 
         resetSseUpstream();
-        for (const client of sseClients) {
-            try { client.end(); } catch { }
-        }
+        sseBackpressure.closeAll();
         sseClients.clear();
 
         try { telegramCommandBot.stop(); } catch { }
@@ -5255,12 +5730,15 @@ function gracefulShutdown(signal, exitCode = 0) {
         if (!drained) {
             logger.warning({
                 module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.SYS_SHUTDOWN,
-                message: 'Shutdown deadline reached; skipping explicit SQLite close to avoid racing in-flight work',
-                fields: { timeout_ms: SHUTDOWN_TIMEOUT_MS, running_jobs: [...runningJobs] }
+                message: 'Shutdown deadline reached; forcing process termination with explicit incomplete-drain diagnostic',
+                fields: { timeout_ms: SHUTDOWN_TIMEOUT_MS, running_jobs: [...runningJobs], running_job_count: runningJobPromises.size }
             });
             if (typeof httpServer?.closeAllConnections === 'function') httpServer.closeAllConnections();
+            try { historyDb.flush(); historyDb.checkpoint(); } catch (error) {
+                logger.error({ module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.DB_CLOSE, message: 'Forced shutdown could not checkpoint SQLite', error });
+            }
         } else {
-            try { historyDb.close(); }
+            try { historyDb.flush(); historyDb.checkpoint(); historyDb.close(); }
             catch (error) {
                 logger.error({ module: 'app.lifecycle', function: 'gracefulShutdown', code: ERROR_CODES.DB_CLOSE, message: 'SQLite close failed during shutdown', error });
             }
@@ -5270,14 +5748,17 @@ function gracefulShutdown(signal, exitCode = 0) {
     return shutdownPromise;
 }
 
-httpServer = app.listen(PORT, () => {
+httpServer = app.listen(PORT, BIND_ADDRESS, () => {
     telegramCommandBot.start();
     reportRunner.start();
+    lifecycleTimeout(() => runSerialJob('historyCleanup', () => historyDb.cleanup(
+        appSettings.historyKeepDays, HISTORY_HARD_CAP, { telemetryHardCap: TELEMETRY_HARD_CAP }
+    )), 0, { unref: true });
     systemMonitor.ensureSample().then(status => {
         logger.info({
             module: 'app.lifecycle', function: 'listen', code: ERROR_CODES.SYS_READY,
             message: 'SYSTEM READY', fields: {
-                port: Number(PORT),
+                port: Number(PORT), bind_address: BIND_ADDRESS,
                 startup_ms: Date.now() - APP_STARTED_AT,
                 database: status.database.status,
                 database_latency_ms: status.database.latency_ms,

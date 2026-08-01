@@ -92,7 +92,7 @@ Hosted smoke 使用正式 `server.js`、動態 loopback port、loopback 假設�
 
 ## CI 與 Branch Protection
 
-Workflow 使用官方穩定 `actions/checkout@v7` 與 `actions/setup-node@v7`，兩者 action runtime 均為 Node 24；專案測試仍由 setup-node 安裝 Node.js 20。原 hosted action runtime 警告已消除，沒有使用 beta、第三方 fork 或不安全繞過環境變數。
+本歷史 PR #5 報告的 workflow 使用官方穩定 `actions/checkout@v7` 與 `actions/setup-node@v7`，當時專案測試仍由 setup-node 安裝 Node.js 20；本次 long-run hardening 已把 current branch 與 Docker runtime 升至 Node.js 24.18.x。原 hosted action runtime 警告已消除，沒有使用 beta、第三方 fork 或不安全繞過環境變數。
 
 Pull Request 與 `main` push 會執行 `SmartHub CI`。本次在確認 repository Admin 權限、`main` 沒有既有 branch protection 且 ruleset 為空後，已設定：
 

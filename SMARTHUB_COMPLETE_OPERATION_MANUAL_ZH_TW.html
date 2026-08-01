@@ -142,13 +142,14 @@ npm ci
 docker compose --env-file config/.env up -d --build
 docker compose --env-file config/.env ps
 curl -fsS http://127.0.0.1:3000/health
-curl -fsS http://127.0.0.1:3000/health/ready</pre><p>開啟 <code>http://&lt;主機 IP&gt;:3000</code>。<code>config/</code> 建議 0700、<code>config/.env</code> 必須 0600，且根目錄不要留下第二份 <code>.env</code>。Docker 容器內上游不能填 <code>localhost</code>／<code>127.0.0.1</code>。</p><h3>開發與假資料</h3><pre>SMARTHUB_ENV_FILE=config/.env npm start
+curl -fsS http://127.0.0.1:3000/health/ready</pre><p>本機隔離演練可使用 <code>http://127.0.0.1:3000</code>；正式對外必須以前置 Caddy／Nginx 終止 HTTPS，再反向代理至內部 port，不可把 <code>http://&lt;NAS IP&gt;:3000</code> 當作 production 入口。<code>config/</code> 建議 0700、<code>config/.env</code> 必須 0600，且根目錄不要留下第二份 <code>.env</code>。Docker 容器內上游不能填 <code>localhost</code>／<code>127.0.0.1</code>。</p><h3>開發與假資料</h3><pre>SMARTHUB_ENV_FILE=config/.env npm start
 # 另一個終端：純假資料預覽（port 3005）
 node server-mock.js</pre><h3>正式不可變發布</h3><ol><li>確認工作樹完全乾淨並完成安全備份，再執行完整 gate：<pre>npm ci
 npm run check:js
 npm test
 npm run check:css
 npm run test:smoke
+SOAK_DURATION_MS=90000 npm run test:soak
 npm audit --audit-level=low
 git diff --check
 
@@ -223,6 +224,7 @@ curl --user admin http://127.0.0.1:3000/api/system/status</pre><table><thead><tr
         <article class="doc-card"><h4><a data-doc-path="docs/operations/OBSERVABILITY.md" href="docs/operations/OBSERVABILITY.md">OBSERVABILITY.md</a></h4><p>log、health、report delivery、有界狀態、錯誤代碼與診斷命令。</p><p class="small">ready 失敗、worker、SQLite、log 或部署層監控問題使用。</p></article>
         <article class="doc-card"><h4><a data-doc-path="docs/operations/POLLING-INTERVALS.md" href="docs/operations/POLLING-INTERVALS.md">POLLING-INTERVALS.md</a></h4><p>頁面輪詢、heartbeat、scope、一般 5 秒與 UPS 專屬頻率的完整表。</p><p class="small">效能、資料即時性、多分頁與 collector 排程問題使用。</p></article>
         <article class="doc-card"><h4><a data-doc-path="docs/operations/PRODUCTION-RELEASE-CHECKLIST.md" href="docs/operations/PRODUCTION-RELEASE-CHECKLIST.md">PRODUCTION-RELEASE-CHECKLIST.md</a></h4><p>完整 gate、不可變成對映像、隔離演練、發布紀錄與回滾。</p><p class="small">正式部署或高風險發布時的唯一作業清單。</p></article>
+        <article class="doc-card"><h4><a data-doc-path="docs/operations/PRODUCTION_ACCEPTANCE.md" href="docs/operations/PRODUCTION_ACCEPTANCE.md">PRODUCTION_ACCEPTANCE.md</a></h4><p>Gate A-E 驗收矩陣、長期 soak 邊界與真實設備 NOT RUN 清單。</p><p class="small">把 local、hosted、設備與 DR 證據分開判定。</p></article>
       </div>
 
       <h3>docs/planning/：未來工作</h3>
@@ -234,7 +236,8 @@ curl --user admin http://127.0.0.1:3000/api/system/status</pre><table><thead><tr
       <h3>docs/reports/：歷史驗證與發布記錄</h3>
       <div class="grid">
         <article class="doc-card"><h4><a data-doc-path="docs/reports/FINAL-VERIFICATION-SUMMARY.md" href="docs/reports/FINAL-VERIFICATION-SUMMARY.md">FINAL-VERIFICATION-SUMMARY.md</a></h4><p>2026-07-16 的歷史驗證摘要與已知限制。</p><p class="small">保留稽核脈絡；不可當成目前分支的即時驗證結果。</p></article>
-        <article class="doc-card"><h4><a data-doc-path="docs/reports/PRODUCTION_READINESS_REPORT.md" href="docs/reports/PRODUCTION_READINESS_REPORT.md">PRODUCTION_READINESS_REPORT.md</a></h4><p>2026-07-29 稽核修復、生產就緒判定、測試、未執行項目與剩餘風險。</p><p class="small">目前最新的發布準備度證據；後續程式變更後需更新。</p></article>
+        <article class="doc-card"><h4><a data-doc-path="docs/reports/PRODUCTION_READINESS_REPORT.md" href="docs/reports/PRODUCTION_READINESS_REPORT.md">PRODUCTION_READINESS_REPORT.md</a></h4><p>2026-07-29 稽核修復、生產就緒判定、測試、未執行項目與剩餘風險。</p><p class="small">歷史發布準備度證據；後續程式變更以新報告為準。</p></article>
+        <article class="doc-card"><h4><a data-doc-path="docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md" href="docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md">PRODUCTION_LONG_RUN_HARDENING_REPORT.md</a></h4><p>2026-08-01 long-running hardening 的 finding、gate、soak、branch 比較與 NOT RUN 邊界。</p><p class="small">本分支最新的 production／long-run 交付證據。</p></article>
         <article class="doc-card"><h4><a data-doc-path="docs/reports/RELEASE-NOTES-v3.0.md" href="docs/reports/RELEASE-NOTES-v3.0.md">RELEASE-NOTES-v3.0.md</a></h4><p>v3.0 發布內容、升級提醒與當時的相容性說明。</p><p class="small">歷史發布記錄；現行部署流程仍以 operations 文件為準。</p></article>
       </div>
       <p class="back"><a href="#top">回到頁首 ↑</a></p>

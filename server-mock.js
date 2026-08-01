@@ -20,6 +20,7 @@ const adguardServicePolicy = require('./server/policies/adguard-service-policy')
 const { selectDockerActionTarget } = require('./server/policies/docker-action-policy');
 const {
     BACKUP_MEDIA_TYPE,
+    BACKUP_V2_MEDIA_TYPE,
     MAX_BACKUP_BYTES,
     BackupValidationError,
     createConfigBackupService
@@ -63,6 +64,7 @@ app.use(mockSecurity.authenticate);
 app.get('/api/security/csrf', mockSecurity.csrf);
 app.use(mockSecurity.protectWrites);
 app.use('/api/config/restore', express.raw({ type: BACKUP_MEDIA_TYPE, limit: MAX_BACKUP_BYTES }));
+app.use('/api/config/restore/v2', express.raw({ type: BACKUP_V2_MEDIA_TYPE, limit: '512mb' }));
 app.use(express.json({ limit: '256kb', strict: true }));
 
 function mockApiError(res, error, {
@@ -1412,14 +1414,16 @@ app.delete('/api/adguard/service-policies/:id', mockSecurity.requireAdmin, (req,
 const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'mock-connections.json');
 const mockConnDefaults = {
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
-    UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_USERNAME: 'demo',
-    UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'monitor',
+    UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_CONTROLLER_TLS_VERIFY: 'true', UNIFI_CONTROLLER_CA_FILE: '',
+    UNIFI_CONTROLLER_TLS_INSECURE: 'false', UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP: 'false', UNIFI_USERNAME: 'demo',
+    UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'monitor', UNIFI_DEVICE_SSH_ALLOW_UNPINNED: 'false',
     UNIFI_NETWORK_API_URL: 'https://192.168.0.1/proxy/network/integration',
     UNIFI_NETWORK_TLS_VERIFY: 'true',
     UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
     UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
     UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
-    NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_USER: '',
+    NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_TLS_VERIFY: 'true', NAS_CA_FILE: '',
+    NAS_TLS_INSECURE: 'false', NAS_ALLOW_INSECURE_HTTP: 'false', NAS_USER: '',
     NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '192.168.0.170',
     UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
@@ -1427,11 +1431,12 @@ const mockConnDefaults = {
     ADGUARD_URL: '', ADGUARD_HOST: '', ADGUARD_PORT: '80',
     ADGUARD_ALLOW_INSECURE_HTTP: 'false', ADGUARD_TLS_VERIFY: 'true', ADGUARD_CA_FILE: '',
     ADGUARD_USER: '',
-    LINUX_HOST: '', LINUX_SSH_PORT: '22', LINUX_SSH_USER: ''
+    LINUX_HOST: '', LINUX_SSH_PORT: '22', LINUX_SSH_USER: '', UCG_SSH_ALLOW_UNPINNED: 'false', LINUX_SSH_ALLOW_UNPINNED: 'false'
 };
 const mockSecretDefaults = {
     SSH_PASSWORD: false, UNIFI_PASSWORD: false, UNIFI_API_KEY: false,
     UNIFI_DEVICE_SSH_PASSWORD: false, UNIFI_DEVICE_SSH_TARGET_IDS: false, UNIFI_DEVICE_SSH_HOST_KEYS: false,
+    UCG_SSH_HOST_KEY: false, LINUX_SSH_HOST_KEY: false,
     UNIFI_NETWORK_API_KEY: true,
     NAS_PASSWORD: false, NAS_MONITOR_API_KEY: false, PPB_PASSWORD: false,
     ADGUARD_PASSWORD: false, LINUX_SSH_PASSWORD: false
@@ -1566,6 +1571,29 @@ app.get('/api/config/backup', mockSecurity.requireAdmin, async (_req, res) => {
         });
     }
 });
+app.get('/api/config/backup/v2', mockSecurity.requireAdmin, async (_req, res) => {
+    const directory = fs.mkdtempSync(path.join(MOCK_BACKUP_DIR, '.http-v2-'));
+    const outputFile = path.join(directory, 'smarthub.backup');
+    try {
+        const result = await mockConfigBackupService.exportBackupV2({ outputFile });
+        res.set({
+            'Content-Type': BACKUP_V2_MEDIA_TYPE,
+            'Content-Length': String(result.bytes),
+            'Content-Disposition': 'attachment; filename="smarthub-mock-backup.backup"',
+            'Cache-Control': 'no-store',
+            'X-SmartHub-Backup-SHA256': result.manifest.integrity
+        });
+        fs.createReadStream(result.file).pipe(res);
+        res.once('close', () => fs.rmSync(directory, { recursive: true, force: true }));
+    } catch (error) {
+        fs.rmSync(directory, { recursive: true, force: true });
+        mockApiError(res, error, {
+            status: error instanceof BackupValidationError ? error.httpStatus : 500,
+            code: error instanceof BackupValidationError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+            publicMessage: error instanceof BackupValidationError ? error.message : 'Internal server error'
+        });
+    }
+});
 app.post('/api/config/restore', mockSecurity.requireAdmin, (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.is(BACKUP_MEDIA_TYPE)) {
         return mockApiError(res, new Error(`Content-Type must be ${BACKUP_MEDIA_TYPE}`), {
@@ -1581,6 +1609,27 @@ app.post('/api/config/restore', mockSecurity.requireAdmin, (req, res) => {
             code: validation ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
             publicMessage: validation ? error.message : 'Internal server error'
         });
+    }
+});
+app.post('/api/config/restore/v2', mockSecurity.requireAdmin, async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.is(BACKUP_V2_MEDIA_TYPE)) {
+        return mockApiError(res, new Error(`Content-Type must be ${BACKUP_V2_MEDIA_TYPE}`), {
+            status: 415, code: ERROR_CODES.API_VALIDATION_FAILED, publicMessage: 'unsupported_backup_content_type'
+        });
+    }
+    const directory = fs.mkdtempSync(path.join(MOCK_BACKUP_DIR, '.upload-v2-'));
+    const file = path.join(directory, 'upload.backup');
+    try {
+        fs.writeFileSync(file, req.body, { mode: 0o600, flag: 'wx' });
+        res.status(202).json(await mockConfigBackupService.stageRestoreV2File(file, req.get('x-smarthub-restore-confirmation')));
+    } catch (error) {
+        mockApiError(res, error, {
+            status: error instanceof BackupValidationError ? error.httpStatus : 500,
+            code: error instanceof BackupValidationError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+            publicMessage: error instanceof BackupValidationError ? error.message : 'Internal server error'
+        });
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
     }
 });
 
