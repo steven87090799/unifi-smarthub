@@ -121,3 +121,15 @@ test('activity lease prunes expired sessions before eviction and bounds scopes p
     lease.mark('', 1000, { replace: true, sessionId: 'new' });
     assert.equal(lease.sessionCount(), 0);
 });
+
+test('out-of-order heartbeat sequences cannot restore or replace a newer lease', () => {
+    let now = 1000;
+    const lease = createActivityLease({ now: () => now });
+    const focused = lease.mark('nas', 30000, { sessionId: 'tab', sequence: 2 });
+    assert.equal(focused.stale, false);
+    const stale = lease.mark('ucg', 30000, { sessionId: 'tab', replace: true, sequence: 1 });
+    assert.equal(stale.stale, true);
+    assert.deepEqual(stale.accepted, []);
+    assert.equal(lease.isActive('nas'), true);
+    assert.equal(lease.isActive('ucg'), false);
+});

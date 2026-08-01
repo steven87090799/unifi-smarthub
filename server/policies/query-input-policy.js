@@ -199,7 +199,7 @@ function parseAdGuardQueryLogQuery(query) {
 }
 
 function parseHeartbeatQuery(query) {
-    exactQuery(query, { allowed: ['scope', 'focus', 'session'] });
+    exactQuery(query, { allowed: ['scope', 'focus', 'session', 'seq'] });
     const rawScope = scalarQueryValue(query.scope, { field: 'scope', defaultValue: '' });
     if (CONTROL_OR_WHITESPACE.test(rawScope)) reject('scope must not contain whitespace or control characters', 'scope');
     const scopes = rawScope === '' ? [] : rawScope.split(',');
@@ -212,7 +212,8 @@ function parseHeartbeatQuery(query) {
         focus: binaryFlagValue(query.focus, { field: 'focus', defaultValue: false }),
         session: query.session === undefined ? 'legacy' : safePathIdentifierValue(query.session, {
             field: 'session', max: 128
-        })
+        }),
+        seq: canonicalDecimalValue(query.seq, { field: 'seq', defaultValue: 0, max: Number.MAX_SAFE_INTEGER })
     };
 }
 

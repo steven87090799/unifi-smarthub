@@ -460,13 +460,13 @@ function parseConnectionUpdates(body, fields) {
     const updates = {};
     for (const [key, raw] of Object.entries(body)) {
         if (typeof raw !== 'string') reject(`${key} must be a string`, key);
+        const definition = definitions.get(key);
         // Optional WiiM is explicitly clearable; other blank fields retain the
         // existing "leave unchanged" contract for secret/configuration inputs.
         if (raw.trim() === '') {
-            if (key === 'WIIM_IP') updates[key] = '';
+            if (definition?.clearable || key === 'WIIM_IP') updates[key] = '';
             continue;
         }
-        const definition = definitions.get(key);
         const max = definition.secret ? 4096 : 2048;
         let value = stringValue(raw, { field: key, min: 1, max });
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);

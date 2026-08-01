@@ -191,10 +191,9 @@
         // 來源 DOM 變更時才更新鏡像；不建立固定輪詢器，避免背景耗用與 observer/timer 洩漏。
         function loadPinned() { try { return JSON.parse(localStorage.getItem('pinnedBlocks.v1')) || []; } catch { return []; } }
         function savePinned(arr) { localStorage.setItem('pinnedBlocks.v1', JSON.stringify(arr)); persistUiPreference('pinnedBlocks.v1', arr); }
-        const pinnedObservers = new Map();
+        const pinnedObservers = window.SmartHubFrontendLifecycle.createObserverRegistry();
         function disconnectPinnedObservers() {
-            pinnedObservers.forEach(({ observer }) => observer.disconnect());
-            pinnedObservers.clear();
+            pinnedObservers.disconnectAll();
         }
         function pageTitleOfBid(bid) {
             const src = document.querySelector(`[data-bid="${bid}"]`);
@@ -242,18 +241,24 @@
             if (!src || !mirror) return;
             mirror.replaceChildren(...[...src.childNodes].map(node => node.cloneNode(true)));
             mirror.className = `pinned-mirror ${src.className}`;
+            mirror.inert = true;
+            mirror.setAttribute('aria-hidden', 'true');
             mirror.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
             mirror.querySelectorAll('.pin-add-btn').forEach(e => e.remove());
+            mirror.querySelectorAll('button, a, input, select, textarea, form, [data-action], [tabindex], [onclick]').forEach(control => {
+                control.removeAttribute('data-action');
+                control.removeAttribute('tabindex');
+                control.removeAttribute('onclick');
+                if (control.matches('a')) control.removeAttribute('href');
+                if (control.matches('button, input, select, textarea')) control.disabled = true;
+            });
             const sc = src.querySelectorAll('canvas'), mc = mirror.querySelectorAll('canvas');
             sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch (error) { console.debug('Pinned chart copy failed', error); } });
         }
         function observePinnedSource(_bid, src, holder) {
-            const current = pinnedObservers.get(holder);
-            if (current?.src === src) return;
-            current?.observer.disconnect();
-            const observer = new MutationObserver(() => updatePinnedMirror(holder));
-            observer.observe(src, { childList: true, characterData: true, attributes: true, subtree: true });
-            pinnedObservers.set(holder, { observer, src });
+            pinnedObservers.observe(holder, src, () => updatePinnedMirror(holder), {
+                childList: true, characterData: true, attributes: true, subtree: true
+            });
         }
         function syncPinned() {
             if (document.visibilityState !== 'visible' || document.getElementById('page-overview')?.classList.contains('hidden')) return;
@@ -264,7 +269,15 @@
                 observePinnedSource(holder.dataset.mirrorOf, src, holder);
             });
         }
-        window.addEventListener('pagehide', disconnectPinnedObservers, { once: true });
+        window.addEventListener('pagehide', () => {
+            disconnectPinnedObservers();
+            disconnectNasSse();
+        });
+        window.addEventListener('pageshow', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (currentPage === 'overview') syncPinned();
+            if (currentPage === 'nas') hydratePage('nas', { force: true, only: ['nasAlertConfig'], generation: navigationGeneration });
+        });
 
         // 編輯模式時，為各分頁(除總覽外)的每個區塊注入「+ 加到總覽」按鈕
         function refreshPinButtons() {
@@ -823,7 +836,9 @@
 
         /* ==================== 導航 ==================== */
         let currentPage = 'overview';
+        let navigationGeneration = 0;
         function navigate(page) {
+            const generation = ++navigationGeneration;
             currentPage = page;
             // 重新觸發分頁進場動畫
             const target = document.getElementById('page-' + page);
@@ -841,9 +856,10 @@
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
             toggleSidebar(false);
             if (page !== 'nas') disconnectNasSse();
+            if (page !== 'overview') disconnectPinnedObservers();
             if (page === 'overview') syncPinned();
             sendHeartbeat(true);
-            hydratePage(page).finally(() => { if (currentPage === page) applyPolling(true); });
+            hydratePage(page, { generation }).then(() => { if (currentPage === page && generation === navigationGeneration) applyPolling(true); });
             applyPolling();
             requestAnimationFrame(() => {
                 [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
@@ -917,7 +933,7 @@
             clients: { fn: () => fetchClients() }, threats: { fn: () => fetchThreats() },
             cloud: { fn: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan()]) },
             isp: { fn: () => fetchIspMetrics() }, nas: { fn: () => fetchNas() },
-            nasAdvanced: { fn: () => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts(), fetchNasSleepStats()]) },
+            nasAdvanced: { fn: ({ generation = navigationGeneration } = {}) => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts({ generation }), fetchNasSleepStats()]) },
             docker: { fn: () => fetchNasDocker() }, trend: { fn: () => fetchTrends() },
             notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]) },
             reportLog: { fn: () => fetchReportLog() }, systemStatus: { fn: () => fetchSystemStatus() }, security: { fn: () => Promise.all([fetchSecuritySettings(), fetchBlockHistory()]) },
@@ -925,7 +941,15 @@
             wiimDeviceInfo: { fn: () => fetchWiimDeviceInfo() },
             wiimSystem: { fn: () => fetchWiimSystem() }, wiimPlayback: { fn: () => fetchWiimPlayback() },
             ups: { fn: () => fetchUps({ includeHistory: false }) }, upsHistory: { fn: () => fetchUps() }, ppbEvents: { fn: () => fetchPpbEvents() },
-            nasAlertConfig: { fn: async () => { const configured = await fetchAlertConfig(); if (configured) connectNasSse(); else disconnectNasSse(); } },
+            nasAlertConfig: { fn: async ({ generation = navigationGeneration } = {}) => {
+                const configured = await fetchAlertConfig({ generation });
+                if (generation !== navigationGeneration || currentPage !== 'nas' || document.visibilityState !== 'visible') {
+                    disconnectNasSse();
+                    return { configured, stale: true };
+                }
+                if (configured) connectNasSse(generation); else disconnectNasSse();
+                return { configured };
+            } },
             heartbeat: { fn: () => sendHeartbeat() }
         };
         const COMMON_POLL_JOBS = new Set(['critAlerts', 'heartbeat']);
@@ -950,27 +974,44 @@
             notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security', 'settings', 'connections']
         };
         let wiimPageInitialized = false;
-        const loadedPages = new Set();
-        const hydrationInFlight = new Map();
-        function hydratePage(page, { force = false } = {}) {
-            if (!force && loadedPages.has(page)) return Promise.resolve({ loaded: true, skipped: true });
-            if (!force && hydrationInFlight.has(page)) return hydrationInFlight.get(page);
-            if (page === 'wiim' && !wiimPageInitialized) {
-                wiimPageInitialized = true;
-                initWiimPage();
+        function validatePollJobReferences() {
+            const missing = new Set();
+            [PAGE_POLL_JOBS, PAGE_HYDRATION].forEach(map => Object.values(map).forEach(keys => keys.forEach(key => {
+                if (!Object.hasOwn(POLL_JOBS, key)) missing.add(key);
+            })));
+            if (missing.size) throw new Error(`Unknown polling job(s): ${[...missing].join(', ')}`);
+        }
+        validatePollJobReferences();
+        const frontendLifecycle = window.SmartHubFrontendLifecycle;
+        if (!frontendLifecycle) throw new Error('Frontend lifecycle helper is unavailable');
+        const hydrationCoordinator = frontendLifecycle.createHydrationCoordinator({
+            pages: PAGE_HYDRATION,
+            runJob: (key, context) => {
+                if (key === 'wiimDeviceInfo' && !wiimPageInitialized) {
+                    wiimPageInitialized = true;
+                    initWiimPage();
+                }
+                return POLL_JOBS[key].fn(context);
+            },
+            onError: (error, { page, key }) => dbg('Poll', `頁面 ${page} 的 ${key} 載入失敗`, error)
+        });
+        const hydrationInFlight = { has: page => hydrationCoordinator.isInFlight(page) };
+        function hydratePage(page, { force = false, only = null, generation = navigationGeneration } = {}) {
+            if (!force && hydrationCoordinator.isLoaded(page)) {
+                if (page === 'nas') return hydrationCoordinator.hydratePage(page, { force: true, only: ['nasAlertConfig'], generation });
+                return Promise.resolve({ loaded: true, skipped: true, results: [] });
             }
-            const jobs = [...(PAGE_HYDRATION[page] || [])];
-            const promise = Promise.all(jobs.map(key => POLL_JOBS[key]?.fn?.() || Promise.resolve()))
-                .then(() => { loadedPages.add(page); return { loaded: true }; })
-                .catch(error => { loadedPages.delete(page); throw error; })
-                .finally(() => hydrationInFlight.delete(page));
-            hydrationInFlight.set(page, promise);
-            return promise;
+            return hydrationCoordinator.hydratePage(page, { force, only, generation });
         }
         let pollTimers = {};
         let pollStartTimers = {};
         const pollRunning = new Set();
         let frontendPollingSettings = null;
+        const DEFAULT_CONNECTION_CLEARABLE_FIELDS = new Set([
+            'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+            'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
+        ]);
+        let connectionClearableFields = new Set(DEFAULT_CONNECTION_CLEARABLE_FIELDS);
         function getEffectivePollSec(key) {
             if (!frontendPollingSettings) return null;
             if (key === 'heartbeat') return frontendPollingSettings.heartbeatSec;
@@ -983,6 +1024,7 @@
             if (pollRunning.has(key)) return;
             pollRunning.add(key);
             try { await job.fn(); }
+            catch (error) { dbg('Poll', `${key} 輪詢失敗`, error); return { ok: false, error }; }
             finally {
                 pollRunning.delete(key);
                 if (currentPage === 'overview') syncPinned();
@@ -995,8 +1037,14 @@
                 delete pollTimers[k];
                 delete pollStartTimers[k];
                 const pageJobs = PAGE_POLL_JOBS[currentPage] || [];
-                if (document.visibilityState !== 'visible' || !frontendPollingSettings || hydrationInFlight.has(currentPage)
-                    || (!COMMON_POLL_JOBS.has(k) && !pageJobs.includes(k))) return;
+                if (!frontendLifecycle.shouldSchedulePollJob({
+                    visible: document.visibilityState === 'visible',
+                    configured: Boolean(frontendPollingSettings),
+                    hydrationPending: hydrationInFlight.has(currentPage),
+                    common: COMMON_POLL_JOBS.has(k),
+                    pageJobs,
+                    key: k
+                })) return;
                 const run = () => runPollJob(k, j);
                 if (runNow) pollStartTimers[k] = setTimeout(run, 0);
                 pollTimers[k] = setInterval(run, getEffectivePollSec(k) * 1000);
@@ -1014,20 +1062,38 @@
                 return value;
             } catch { return `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
         })();
+        let heartbeatSequence = 0;
+        function nextHeartbeatSequence() {
+            heartbeatSequence = heartbeatSequence >= Number.MAX_SAFE_INTEGER ? 1 : heartbeatSequence + 1;
+            return heartbeatSequence;
+        }
 
         async function sendHeartbeat(focus = false) {
             if (document.visibilityState !== 'visible') return;
             const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
-            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + `&session=${encodeURIComponent(heartbeatSessionId)}` + (focus ? '&focus=1' : '');
+            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + `&session=${encodeURIComponent(heartbeatSessionId)}&seq=${nextHeartbeatSequence()}` + (focus ? '&focus=1' : '');
             try { await fetch('/api/heartbeat' + query); } catch (e) { /* 靜默 */ }
         }
         function releaseDeviceFocus() {
-            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}`).catch(() => { /* 靜默 */ });
+            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}&seq=${nextHeartbeatSequence()}`).catch(() => { /* 靜默 */ });
         }
         document.addEventListener('visibilitychange', () => {
             applyPolling();
-            if (document.visibilityState === 'visible') sendHeartbeat(true);
-            else releaseDeviceFocus();
+            if (document.visibilityState === 'visible') {
+                sendHeartbeat(true);
+                if (currentPage === 'overview') syncPinned();
+                if (currentPage === 'nas') {
+                    hydratePage('nas', {
+                        force: true,
+                        only: ['nasAlertConfig'],
+                        generation: navigationGeneration
+                    }).then(() => { if (currentPage === 'nas') applyPolling(true); });
+                }
+            } else {
+                releaseDeviceFocus();
+                disconnectPinnedObservers();
+                disconnectNasSse();
+            }
         });
 
         // 共用小圖示 (線條 SVG，取代 emoji)
@@ -2931,12 +2997,14 @@
         }
 
         const NAS_LOG_MODULE_LABEL = { login: '登入', storage_manager: '儲存管理', snapshot: '快照', system: '系統', network: '網路', file_manager: '檔案管理', app_center: '應用中心', usb: 'USB', backup: '備份' };
-        async function fetchNasAlerts() {
+        async function fetchNasAlerts({ generation = navigationGeneration } = {}) {
             const list = document.getElementById('nas-alert-list');
             const colorMap = { critical: 'text-red-400 border-red-500/30 bg-red-500/5', error: 'text-red-400 border-red-500/30 bg-red-500/5', warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
+            const active = () => generation === navigationGeneration && currentPage === 'nas' && document.visibilityState === 'visible';
             try {
                 // 優先：選配的 NAS Monitor 警報 (可確認/清除)
                 const events = (await (await fetch('/api/nas/alerts')).json()).events || [];
+                if (!active()) return;
                 if (events.length) {
                     const unack = events.filter(e => !e.acknowledged).length;
                     document.getElementById('nas-alert-count').innerText = `— ${unack} 則待確認 / 共 ${events.length} 則`;
@@ -2966,6 +3034,7 @@
                 // 回退：UGOS 內建日誌中心 (真實系統事件)
                 const hideSelf = document.getElementById('nas-log-hideself')?.checked !== false;
                 const r = await (await fetch('/api/nas/logs?size=120' + (hideSelf ? '&hideSelf=1' : ''))).json();
+                if (!active()) return;
                 const logsAll = r.logs || [];
                 // 級別統計晶片 (依近期日誌計數，點擊篩選)
                 const counts = { all: logsAll.length };
@@ -3005,10 +3074,11 @@
         function setNasLogFilter(f) { nasLogFilter = f; fetchNasAlerts(); }
 
         /* ==================== NAS Monitor 警報閾值設定 (系統 B 選配) ==================== */
-        async function fetchAlertConfig() {
+        async function fetchAlertConfig({ generation = navigationGeneration } = {}) {
             const card = document.getElementById('nas-alert-config-card');
             try {
                 const d = await (await fetch('/api/nas/alerts/config')).json();
+                if (generation !== navigationGeneration || currentPage !== 'nas' || document.visibilityState !== 'visible') return false;
                 if (d.source === 'not_configured') { card.classList.add('hidden'); return false; }
                 card.classList.remove('hidden');
                 const rows = d.config || [];
@@ -3073,19 +3143,35 @@
 
         /* ==================== NAS Monitor 即時推送 (SSE)：連線正常時新警報立即刷新，不需等輪詢 ==================== */
         let nasSse = null;
-        function connectNasSse() {
-            if (nasSse) return;
-            const dot = document.getElementById('nas-sse-dot');
-            try {
-                nasSse = new EventSource('/api/nas/stream');
-                nasSse.addEventListener('open', () => { if (dot) { dot.textContent = '● 即時'; dot.className = 'text-[9px] text-emerald-500 normal-case'; } });
-                nasSse.addEventListener('error', () => { if (dot) { dot.textContent = '○ 離線 (輪詢中)'; dot.className = 'text-[9px] text-slate-600 normal-case'; } });
-                nasSse.addEventListener('message', () => { fetchNasAlerts(); }); // 收到任何事件就重新拉一次警報清單 (輪詢仍是保底)
-            } catch (error) { console.debug('NAS event stream setup failed', error); }
+        let nasSseGeneration = 0;
+        const nasSseLifecycle = window.SmartHubFrontendLifecycle.createScopedResource({
+            canStart: generation => generation === navigationGeneration
+                && currentPage === 'nas' && document.visibilityState === 'visible',
+            close: stream => stream?.close?.()
+        });
+        function connectNasSse(generation = navigationGeneration) {
+            if (nasSse || !nasSseLifecycle.connect(generation, requestedGeneration => {
+                const dot = document.getElementById('nas-sse-dot');
+                const stream = new EventSource('/api/nas/stream');
+                const streamGeneration = ++nasSseGeneration;
+                nasSse = stream;
+                const active = () => nasSse === stream && streamGeneration === nasSseGeneration
+                    && nasSseLifecycle.isCurrent(stream, requestedGeneration);
+                stream.addEventListener('open', () => {
+                    if (!active()) return;
+                    if (dot) { dot.textContent = '● 即時'; dot.className = 'text-[9px] text-emerald-500 normal-case'; }
+                });
+                stream.addEventListener('error', () => {
+                    if (!active()) return;
+                    if (dot) { dot.textContent = '○ 離線 (輪詢中)'; dot.className = 'text-[9px] text-slate-600 normal-case'; }
+                });
+                stream.addEventListener('message', () => { if (active()) fetchNasAlerts({ generation: requestedGeneration }); }); // SSE 只加速刷新，輪詢仍是保底
+                return stream;
+            })) return;
         }
         function disconnectNasSse() {
-            if (!nasSse) return;
-            nasSse.close();
+            nasSseGeneration++;
+            nasSseLifecycle.disconnect();
             nasSse = null;
             const dot = document.getElementById('nas-sse-dot');
             if (dot) { dot.textContent = '○ 未連線'; dot.className = 'text-[9px] text-slate-600 normal-case'; }
@@ -3743,10 +3829,21 @@
                 if (security.role !== 'admin') return;
                 const d = await (await fetch('/api/connections')).json();
                 dbg('Conn', '連線設定載入', d);
+                connectionClearableFields = new Set(Array.isArray(d.clearableFields) ? d.clearableFields : DEFAULT_CONNECTION_CLEARABLE_FIELDS);
                 for (const [k, v] of Object.entries(d.fields || {})) {
                     const el = document.getElementById('conn-' + k);
-                    if (el) el.value = v || '';
+                    if (el) {
+                        el.value = v || '';
+                        el.dataset.connectionInitialValue = el.value;
+                    }
                 }
+                document.querySelectorAll('.conn-input').forEach(el => {
+                    const key = el.id.replace('conn-', '');
+                    const clearable = connectionClearableFields.has(key);
+                    el.dataset.clearable = clearable ? 'true' : 'false';
+                    if (!Object.hasOwn(d.fields || {}, key)) el.dataset.connectionInitialValue = '';
+                    if (clearable && !el.placeholder) el.placeholder = '留空=清除';
+                });
                 for (const key of d.restartRequiredFields || []) {
                     const badge = document.getElementById('connset-' + key);
                     if (badge) badge.innerHTML = '';
@@ -3755,7 +3852,9 @@
                     const badge = document.getElementById('connset-' + k);
                     const input = document.getElementById('conn-' + k);
                     if (badge) badge.innerHTML = set ? '<span class="text-emerald-400">✓ 已設定</span>' : '<span class="text-amber-400">尚未設定</span>';
-                    if (input) input.placeholder = set ? '已設定 (留空=不變更)' : '尚未設定，請填入';
+                    if (input) input.placeholder = connectionClearableFields.has(k)
+                        ? (set ? '已設定 (留空=清除)' : '尚未設定，留空=維持未設定')
+                        : (set ? '已設定 (留空=不變更)' : '尚未設定，請填入');
                 }
                 for (const key of d.pendingRestartFields || []) {
                     const badge = document.getElementById('connset-' + key);
@@ -3785,7 +3884,9 @@
             const body = {};
             document.querySelectorAll('.conn-input').forEach(el => {
                 const key = el.id.replace('conn-', '');
-                if (key === 'WIIM_IP' || (el.value && el.value.trim())) body[key] = el.value.trim();
+                const value = el.value.trim();
+                const initial = el.dataset.connectionInitialValue ?? '';
+                if (value || (connectionClearableFields.has(key) && initial !== value)) body[key] = value;
             });
             dbg('Conn', '儲存欄位:', Object.keys(body));
             try {
@@ -3939,6 +4040,7 @@
         let wiimLastStatusObj = null;
         let wiimLastIp = '';
         let wiimIsLive = false;
+        let wiimPlaybackStale = false;
         let wiimCpuAlert = 70, wiimBoardAlert = 60; // 溫度警示門檻 (由後端 appSettings 同步) // 外部訊源 (Line-In/藍牙/光纖/同軸)：無曲目長度概念，進度顯示 LIVE
 
         // LinkPlay mode 欄位 → 訊源名稱（docs/integrations/wiim-amp-api.md）
@@ -4048,12 +4150,19 @@
                 if (!res.ok) throw new Error();
                 const data = await res.json();
                 dbg('WiiM', '播放狀態', data.source, data.player && data.player.status);
+                wiimPlaybackStale = data.stale === true || data.source === 'stale_cache';
 
                 // 裝置無回應：誠實顯示連線失敗，不顯示假曲目
                 if (data.source === 'not_configured' || data.source === 'unreachable') {
+                    wiimPlayerState = null;
+                    wiimIsLive = false;
+                    wiimPlaybackStale = false;
                     document.getElementById('wiim-htitle').textContent = data.source === 'not_configured' ? 'WiiM 尚未設定' : '無法連線 WiiM 裝置';
                     document.getElementById('wiim-hartist').textContent = data.source === 'not_configured' ? '選配整合未啟用' : `請確認 WIIM_IP (${data.ip || '--'}) 與裝置電源`;
                     const t = document.getElementById('ov-wiim-track'); if (t) t.textContent = data.source === 'not_configured' ? '未設定' : '無法連線';
+                    const p = document.getElementById('ov-wiim-play'); if (p) p.textContent = '--';
+                    const v = document.getElementById('ov-wiim-vol'); if (v) v.textContent = '--';
+                    updateWiimProgUI();
                     return;
                 }
 
@@ -4077,7 +4186,7 @@
                 }
                 wiimPlayerState = dev;
                 if (wiimPlayerState) {
-                    wiimIsLive = wiimIsExternalInput(wiimPlayerState.mode);
+                    wiimIsLive = !wiimPlaybackStale && wiimIsExternalInput(wiimPlayerState.mode);
                     wiimHighlightSource(wiimPlayerState.mode);
                     wiimIsMuted = parseInt(wiimPlayerState.mute) === 1;
                     document.getElementById('wiim-vico').innerHTML = wiimIsMuted
@@ -4101,10 +4210,12 @@
                     const srcLabel = wiimModeLabel(wiimPlayerState && wiimPlayerState.mode);
                     const title = wiimBadVal(meta.title) ? (wiimIsLive ? `${srcLabel} 輸入` : '無播放曲目') : meta.title;
                     const artist = wiimBadVal(meta.artist) ? (wiimIsLive ? '外部訊源即時輸入 · 無曲目資訊' : '-') : meta.artist;
-                    document.getElementById('wiim-htitle').textContent = title;
-                    document.getElementById('wiim-hartist').textContent = artist;
+                    document.getElementById('wiim-htitle').textContent = wiimPlaybackStale ? `⚠️ 最後已知：${title}` : title;
+                    document.getElementById('wiim-hartist').textContent = wiimPlaybackStale ? `裝置目前未確認在線 · ${artist}` : artist;
                     const ovT = document.getElementById('ov-wiim-track');
-                    if (ovT) ovT.textContent = wiimIsLive ? `${srcLabel} 輸入 (LIVE)` : title + (artist && artist !== '-' ? ' — ' + artist : '');
+                    if (ovT) ovT.textContent = wiimPlaybackStale
+                        ? `⚠️ 最後已知 · ${title}`
+                        : wiimIsLive ? `${srcLabel} 輸入 (LIVE)` : title + (artist && artist !== '-' ? ' — ' + artist : '');
 
                     let rateDepth = '';
                     if (meta.sampleRate) {
@@ -4172,13 +4283,14 @@
                 }
 
                 // 側邊欄與總覽徽章 (真實 API 可達性)
-                const reachable = data.source === 'wiim_api';
+                const stale = data.stale === true || data.source === 'stale_cache';
+                const reachable = data.source === 'wiim_api' && !stale;
                 const swDot = document.getElementById('side-wiim-dot');
                 const swState = document.getElementById('side-wiim-state');
                 const wiimStateClass = data.source === 'not_configured' ? 'bg-slate-600' : reachable ? 'bg-emerald-500' : 'bg-red-500';
                 if (swDot) swDot.className = `w-1.5 h-1.5 rounded-full ${wiimStateClass}`;
-                if (swState) swState.textContent = data.source === 'not_configured' ? '未設定' : reachable ? 'online' : 'offline';
-                setOverviewStatusDot('ov-wiim-badge', reachable ? 'ok' : data.source === 'not_configured' ? 'idle' : 'error', reachable ? '連線正常' : data.source === 'not_configured' ? '未設定' : '無法連線');
+                if (swState) swState.textContent = data.source === 'not_configured' ? '未設定' : reachable ? 'online' : stale ? 'stale' : 'offline';
+                setOverviewStatusDot('ov-wiim-badge', reachable ? 'ok' : data.source === 'not_configured' ? 'idle' : 'error', reachable ? '連線正常' : data.source === 'not_configured' ? '未設定' : stale ? '最後已知資料' : '無法連線');
 
                 // 遙控器與配件狀態動態讀取
                 const statusObj = data.status;
@@ -4192,7 +4304,7 @@
                         const e1 = document.getElementById('ov-wiim-temp');
                         if (e1) { e1.textContent = Math.round(wTemp); e1.style.color = tempColor(wTemp); }
                         const e2 = document.getElementById('ov-wiim-temp-status');
-                        if (e2) { e2.textContent = tempLabel(wTemp); e2.style.color = tempColor(wTemp); }
+                        if (e2) { e2.textContent = stale ? `最後已知 · ${tempLabel(wTemp)}` : tempLabel(wTemp); e2.style.color = stale ? '#f59e0b' : tempColor(wTemp); }
                         const e3 = document.getElementById('kpi-wiim-temp'); if (e3) e3.textContent = Math.round(wTemp);
                     }
                     if (!isNaN(wBoard)) {
@@ -4254,13 +4366,25 @@
                     }
 
                     const statusEl = document.getElementById('wiim-remote-status');
-                    if (remoteConnected || (batVal !== null && batVal > 0)) {
+                    if (stale) {
+                        statusEl.textContent = '最後已知資料';
+                        statusEl.className = 'text-amber-400 font-bold';
+                    } else if (remoteConnected || (batVal !== null && batVal > 0)) {
                         statusEl.textContent = '已連線';
                         statusEl.className = 'text-emerald-400 font-bold';
                     } else {
                         statusEl.textContent = '未配對 / 離線';
                         statusEl.className = 'text-slate-500 font-bold';
                     }
+                }
+                if (!statusObj && !stale) {
+                    wiimLastStatusObj = null;
+                    const clearIds = [
+                        ['ov-wiim-temp', '--'], ['ov-wiim-temp-status', '--'], ['kpi-wiim-temp', '--'],
+                        ['ov-wiim-board', '--°C'], ['wiim-remote-bat', '--'], ['wiim-remote-sig', '--'],
+                        ['wiim-remote-mac', '--'], ['wiim-remote-status', '未連線']
+                    ];
+                    clearIds.forEach(([id, value]) => { const element = document.getElementById(id); if (element) element.textContent = value; });
                 }
             } catch (e) {
                 console.error('WiiM system status fetch failed', e);
@@ -4568,7 +4692,7 @@
         }
 
         function tickWiimProg() {
-            if (wiimIsLive || wiimSeekDragging) return; // LIVE 訊源無進度概念；拖曳時不覆蓋預覽位置
+            if (wiimIsLive || wiimPlaybackStale || wiimSeekDragging) return; // LIVE/過期資料無法宣稱仍在播放；拖曳時不覆蓋預覽位置
             const currentMs = Number(wiimPlayerState?.curpos);
             const totalMs = Number(wiimPlayerState?.totlen);
             if (wiimPlayerState?.status === "play" && Number.isFinite(currentMs)
@@ -4691,6 +4815,7 @@
         /* ==================== WiiM 進階功能 ==================== */
         // 點擊或拖曳進度條跳轉 (setPlayerCmd:seek:<絕對秒數>)
         function wiimSeekPreview(ev) {
+            if (wiimPlaybackStale) return showToast('WiiM 目前只有最後已知資料，暫不能跳轉', true);
             if (wiimIsLive) return showToast('外部訊源 (LIVE) 模式無法跳轉進度', true);
             if (wiimTimelineOwnedBySource()) return null;
             if (!wiimPlayerState || !wiimPlayerState.totlen) return null;
@@ -4704,7 +4829,7 @@
             return { sec, ratio };
         }
         function wiimSeekStart(ev) {
-            if (wiimIsLive || wiimTimelineOwnedBySource() || !wiimPlayerState?.totlen) return;
+            if (wiimPlaybackStale || wiimIsLive || wiimTimelineOwnedBySource() || !wiimPlayerState?.totlen) return;
             wiimSeekDragging = true;
             ev.currentTarget.setPointerCapture?.(ev.pointerId);
             wiimSeekPreview(ev);

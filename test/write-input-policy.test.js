@@ -247,6 +247,10 @@ test('connection updates reject .env injection, bad types, oversized values, and
         PASSWORD: 'spaces and # are data'
     });
     assert.deepEqual(parseConnectionUpdates({ PASSWORD: '   ' }, fields), {});
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: '   ' }, fields), {});
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: '   ' }, fields.map(field => field.key === 'UNIFI_NETWORK_CA_FILE' ? { ...field, clearable: true } : field)), {
+        UNIFI_NETWORK_CA_FILE: ''
+    });
 
     for (const injection of ['safe\nEVIL=1', 'safe\rEVIL=1', 'safe\r\nEVIL=1', 'safe\0EVIL=1']) {
         validationError(() => parseConnectionUpdates({ PASSWORD: injection }, fields), 'PASSWORD');

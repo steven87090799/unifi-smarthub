@@ -109,6 +109,7 @@ function readConfiguration(environment = process.env) {
         tlsVerify: tlsPolicy ? tlsPolicy.verify : true,
         tlsInsecure: tlsPolicy?.insecure === true,
         caFile: environment.UNIFI_NETWORK_CA_FILE || '',
+        tlsPolicy,
         allowInsecureHttp: allowInsecureHttp === true
     };
 }
@@ -174,9 +175,7 @@ function createUniFiTrafficListClient({ transport, getEnvironment = () => proces
                     'Content-Type': 'application/json',
                     'X-API-Key': config.apiKey
                 },
-                tlsVerify: config.tlsVerify,
-                tlsInsecure: config.tlsInsecure,
-                caFile: config.caFile,
+                tls: config.tlsPolicy,
                 allowInsecureHttp: config.allowInsecureHttp,
                 timeout: timeoutMs,
                 ...(data ? { data } : {})

@@ -170,14 +170,15 @@ test('generic history parsers support route-specific integer bounds and defaults
 });
 
 test('heartbeat and WiiM status queries use exact bounded enums', () => {
-    assert.deepEqual(parseHeartbeatQuery({}), { scope: '', scopes: [], focus: false, session: 'legacy' });
+    assert.deepEqual(parseHeartbeatQuery({}), { scope: '', scopes: [], focus: false, session: 'legacy', seq: 0 });
     assert.deepEqual(parseHeartbeatQuery({ scope: 'trend,nas,ups', focus: '1' }), {
-        scope: 'trend,nas,ups', scopes: ['trend', 'nas', 'ups'], focus: true, session: 'legacy'
+        scope: 'trend,nas,ups', scopes: ['trend', 'nas', 'ups'], focus: true, session: 'legacy', seq: 0
     });
     assert.deepEqual(parseHeartbeatQuery({ scope: 'ucg,unifi-device-telemetry', session: 'ucg-tab' }).scopes, [
         'ucg', 'unifi-device-telemetry'
     ]);
     assert.equal(parseHeartbeatQuery({ scope: 'general', session: 'tab-1' }).session, 'tab-1');
+    assert.equal(parseHeartbeatQuery({ scope: 'general', seq: '42' }).seq, 42);
     assert.deepEqual(parseWiimStatusQuery({}), { type: 'all' });
     assert.deepEqual(parseWiimStatusQuery({ type: 'play' }), { type: 'play' });
 
@@ -185,6 +186,8 @@ test('heartbeat and WiiM status queries use exact bounded enums', () => {
         validationError(() => parseHeartbeatQuery({ scope }), 'scope');
     }
     validationError(() => parseHeartbeatQuery({ focus: 'true' }), 'focus');
+    validationError(() => parseHeartbeatQuery({ seq: '01' }), 'seq');
+    validationError(() => parseHeartbeatQuery({ seq: '1.5' }), 'seq');
     validationError(() => parseHeartbeatQuery({ scope: 'trend', extra: '1' }), 'extra');
     validationError(() => parseWiimStatusQuery({ type: 'ALL' }), 'type');
     validationError(() => parseWiimStatusQuery({ type: ['all', 'play'] }), 'type');

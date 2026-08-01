@@ -2,6 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
     EMPTY_LIST_SENTINEL,
     UniFiTrafficListError,
@@ -40,6 +43,16 @@ test('configuration derives the official local Integration API base and fails cl
         tlsVerify: true,
         tlsInsecure: false,
         caFile: '',
+        tlsPolicy: {
+            url: 'https://192.168.1.1/proxy/network/integration',
+            protocol: 'https:',
+            verify: true,
+            insecure: false,
+            allowInsecureHttp: false,
+            ca: undefined,
+            mode: 'verified',
+            warning: false
+        },
         allowInsecureHttp: false
     });
     const missing = readConfiguration({ UNIFI_CONTROLLER_URL: 'https://192.168.1.1' });
@@ -88,7 +101,8 @@ test('replace performs a full official PUT, retains the empty-list sentinel, and
         transport: async request => {
             requests.push(request);
             assert.equal(request.headers['X-API-Key'], 'integration-key');
-            assert.equal(request.tlsVerify, true);
+            assert.equal(request.tls.verify, true);
+            assert.equal(request.tls.ca, undefined);
             if (request.method === 'PUT') remote = { id: LIST_ID, ...request.data };
             return { data: remote };
         }
@@ -132,4 +146,71 @@ test('replace rejects wrong list identity, unsafe matcher types, and classifies 
     await assert.rejects(unavailable.replace([]), error => (
         error instanceof UniFiTrafficListError && error.code === 'upstream_http_503' && error.retryable === true
     ));
+});
+
+test('Network TLS transport receives one resolved CA byte buffer and never rereads a path during a replace', async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-network-ca-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const caFile = path.join(directory, 'network-ca.pem');
+    fs.writeFileSync(caFile, 'ca-before', { mode: 0o600 });
+    const environment = { ...ENV, UNIFI_NETWORK_CA_FILE: caFile };
+    const configured = readConfiguration(environment);
+    assert.equal(configured.configured, true);
+    assert.equal(Buffer.isBuffer(configured.tlsPolicy.ca), true);
+    assert.equal(configured.tlsPolicy.ca.toString(), 'ca-before');
+
+    let remote = list([EMPTY_LIST_SENTINEL]);
+    const seen = [];
+    const client = createUniFiTrafficListClient({
+        getEnvironment: () => environment,
+        transport: async request => {
+            seen.push(request);
+            if (seen.length === 1) fs.writeFileSync(caFile, 'ca-after', { mode: 0o600 });
+            if (request.method === 'PUT') remote = { id: LIST_ID, ...request.data };
+            return { data: remote };
+        }
+    });
+    await client.replace(['8.8.8.8']);
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].tls.ca.toString(), 'ca-before');
+    assert.equal(seen[1].tls.ca.toString(), 'ca-before');
+    assert.equal(Object.hasOwn(seen[0], 'caFile'), false);
+});
+
+test('Network TLS policy ignores stale CA paths in explicit insecure HTTPS and HTTP modes', () => {
+    const missingCa = '/definitely/missing/smarthub-network-ca.pem';
+    const insecure = readConfiguration({
+        ...ENV,
+        UNIFI_NETWORK_TLS_VERIFY: 'false',
+        UNIFI_NETWORK_TLS_INSECURE: 'true',
+        UNIFI_NETWORK_CA_FILE: missingCa
+    });
+    assert.equal(insecure.configured, true);
+    assert.equal(insecure.tlsPolicy.ca, undefined);
+    assert.equal(insecure.tlsPolicy.insecure, true);
+
+    const http = readConfiguration({
+        ...ENV,
+        UNIFI_NETWORK_API_URL: 'http://192.168.1.1',
+        UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'true',
+        UNIFI_NETWORK_CA_FILE: missingCa
+    });
+    assert.equal(http.configured, true);
+    assert.equal(http.tlsPolicy.protocol, 'http:');
+    assert.equal(http.tlsPolicy.ca, undefined);
+
+    const missing = readConfiguration({ ...ENV, UNIFI_NETWORK_CA_FILE: missingCa });
+    assert.equal(missing.configured, false);
+    assert.ok(missing.missing.includes('UNIFI_NETWORK_CA_FILE'));
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-network-ca-large-'));
+    try {
+        const largeCa = path.join(directory, 'large.pem');
+        fs.writeFileSync(largeCa, Buffer.alloc(1024 * 1024 + 1, 65), { mode: 0o600 });
+        const oversized = readConfiguration({ ...ENV, UNIFI_NETWORK_CA_FILE: largeCa });
+        assert.equal(oversized.configured, false);
+        assert.ok(oversized.missing.includes('UNIFI_NETWORK_CA_FILE'));
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
 });

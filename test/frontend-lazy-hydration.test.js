@@ -6,12 +6,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+const lifecycleSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'frontend-lifecycle.js'), 'utf8');
 
 test('initial boot is essentials-only and page hydration is once-per-page with retry state', () => {
     assert.match(source, /const PAGE_HYDRATION = \{/u);
-    assert.match(source, /const loadedPages = new Set\(\)/u);
-    assert.match(source, /const hydrationInFlight = new Map\(\)/u);
-    assert.match(source, /function hydratePage\(page, \{ force = false \} = \{\}\)/u);
+    assert.match(source, /createHydrationCoordinator/u);
+    assert.match(source, /function hydratePage\(page, \{ force = false, only = null, generation = navigationGeneration \} = \{\}\)/u);
+    assert.match(source, /validatePollJobReferences\(\)/u);
+    assert.match(source, /shouldSchedulePollJob/u);
+    assert.match(lifecycleSource, /Promise\.all\(jobs\.map/u);
+    assert.match(lifecycleSource, /completedJobs/u);
     const loadBlock = source.slice(source.indexOf("window.addEventListener('load'"), source.indexOf('/* ==================== 前端輪詢管理'));
     assert.doesNotMatch(loadBlock, /fetchConnections\(\)|fetchNasAdvanced\(\)|fetchWiFiNetworks\(\)|fetchLinux\(\)|fetchAdguard\(\)|fetchWiimDeviceInfo\(\)/u);
     assert.match(loadBlock, /fetchAppSettings\(\)/u);
@@ -19,11 +23,14 @@ test('initial boot is essentials-only and page hydration is once-per-page with r
 });
 
 test('NAS SSE is page-scoped and pinned mirrors are change-driven', () => {
-    assert.match(source, /nasAlertConfig: \{ fn: async \(\) =>/u);
+    assert.match(source, /nasAlertConfig: \{ fn: async \(\{ generation = navigationGeneration \} = \{\}\) =>/u);
     assert.match(source, /if \(page !== 'nas'\) disconnectNasSse\(\)/u);
-    assert.match(source, /new MutationObserver\(\(\) => updatePinnedMirror\(holder\)\)/u);
+    assert.match(source, /createObserverRegistry/u);
+    assert.match(source, /pinnedObservers\.observe\(holder, src/u);
     assert.doesNotMatch(source, /setInterval\(syncPinned/u);
     assert.doesNotMatch(source, /mirror\.innerHTML\s*=/u);
+    assert.match(source, /mirror\.inert = true/u);
+    assert.match(source, /mirror\.querySelectorAll\('button, a, input/u);
 });
 
 test('NAS alert rows use text nodes and delegated safe data attributes', () => {

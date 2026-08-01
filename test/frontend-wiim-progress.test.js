@@ -20,3 +20,9 @@ test('WiiM local progress adds milliseconds numerically instead of concatenating
     assert.match(html, /Math\.min\(totalMs, currentMs \+ 1000\)/);
     assert.doesNotMatch(html, /wiimPlayerState\.curpos \+ 1000/);
 });
+
+test('WiiM stale status is visibly non-live and cannot advance local progress or seek', () => {
+    assert.match(html, /wiimPlaybackStale = data\.stale === true \|\| data\.source === 'stale_cache'/u);
+    assert.match(html, /wiimPlaybackStale \|\| wiimSeekDragging/u);
+    assert.match(html, /wiimPlaybackStale \? `⚠️ 最後已知：/u);
+});

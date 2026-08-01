@@ -1185,7 +1185,10 @@ app.get('/api/wiim/status', (req, res) => {
     res.json({
         ...out,
         ip: mockConn.WIIM_IP,
-        source: 'wiim_api'
+        source: 'wiim_api',
+        stale: false,
+        last_success_at: Date.now(),
+        age_ms: 0
     });
 });
 
@@ -1450,8 +1453,12 @@ const MOCK_RESTART_REQUIRED_FIELDS = Object.freeze([
     'NAS_MONITOR_API_KEY',
     'NAS_MONITOR_MODE'
 ]);
+const MOCK_CLEARABLE_FIELDS = new Set([
+    'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+    'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
+]);
 const MOCK_CONN_FIELDS = [
-    ...Object.keys(mockConnDefaults).map(key => ({ key, restartRequired: MOCK_RESTART_REQUIRED_FIELDS.includes(key) })),
+    ...Object.keys(mockConnDefaults).map(key => ({ key, clearable: MOCK_CLEARABLE_FIELDS.has(key), restartRequired: MOCK_RESTART_REQUIRED_FIELDS.includes(key) })),
     ...Object.keys(mockSecretDefaults).map(key => ({ key, secret: true, restartRequired: MOCK_RESTART_REQUIRED_FIELDS.includes(key) }))
 ];
 
@@ -1506,6 +1513,7 @@ function validateMockAdguardConnection(updates) {
 app.get('/api/connections', (req, res) => res.json({
     fields: mockConn,
     secretsSet: mockConnSecrets,
+    clearableFields: [...MOCK_CLEARABLE_FIELDS],
     restartRequiredFields: [...MOCK_RESTART_REQUIRED_FIELDS],
     pendingRestartFields: [...mockPendingRestartFields]
 }));
