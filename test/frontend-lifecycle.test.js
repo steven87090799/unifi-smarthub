@@ -51,6 +51,51 @@ test('hydration is structured, safe while pending, and retries only failed jobs'
     assert.deepEqual(calls, ['heartbeat', 'nasAlerts', 'nasAlerts']);
 });
 
+test('undefined fetch results remain incomplete and retry on the next hydration', async () => {
+    let attempts = 0;
+    const coordinator = createHydrationCoordinator({
+        pages: { wifi: ['networks'] },
+        runJob: async () => {
+            attempts += 1;
+            return attempts === 1 ? undefined : { ok: true, data: ['home'] };
+        }
+    });
+
+    const first = await coordinator.hydratePage('wifi', { generation: 1 });
+    assert.equal(first.loaded, false);
+    assert.equal(first.failures[0].key, 'networks');
+    assert.deepEqual(coordinator.completedJobs('wifi'), new Set());
+    const second = await coordinator.hydratePage('wifi', { generation: 2 });
+    assert.equal(second.loaded, true);
+    assert.equal(attempts, 2);
+    assert.deepEqual(coordinator.completedJobs('wifi'), new Set(['networks']));
+});
+
+test('late hydration results from an old generation never complete the new page', async () => {
+    const pending = deferred();
+    let calls = 0;
+    const coordinator = createHydrationCoordinator({
+        pages: { cloud: ['sites'] },
+        runJob: async () => {
+            calls += 1;
+            if (calls === 1) return pending.promise;
+            return { ok: true, data: ['new'] };
+        }
+    });
+
+    const oldGeneration = coordinator.hydratePage('cloud', { generation: 1 });
+    const newGeneration = coordinator.hydratePage('cloud', { generation: 2 });
+    assert.equal(coordinator.isInFlight('cloud'), true);
+    pending.resolve({ ok: true, data: ['old'] });
+    const [oldResult, newResult] = await Promise.all([oldGeneration, newGeneration]);
+    assert.equal(oldResult.stale, true);
+    assert.equal(oldResult.loaded, false);
+    assert.equal(newResult.loaded, true);
+    assert.equal(calls, 2);
+    assert.deepEqual(coordinator.completedJobs('cloud'), new Set(['sites']));
+    assert.equal(coordinator.isInFlight('cloud'), false);
+});
+
 test('scoped resource lifecycle prevents duplicate and stale-generation connections', () => {
     let visible = true;
     let page = 'nas';

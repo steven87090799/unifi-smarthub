@@ -18,7 +18,7 @@ test('initial boot is essentials-only and page hydration is once-per-page with r
     assert.match(lifecycleSource, /completedJobs/u);
     const loadBlock = source.slice(source.indexOf("window.addEventListener('load'"), source.indexOf('/* ==================== 前端輪詢管理'));
     assert.doesNotMatch(loadBlock, /fetchConnections\(\)|fetchNasAdvanced\(\)|fetchWiFiNetworks\(\)|fetchLinux\(\)|fetchAdguard\(\)|fetchWiimDeviceInfo\(\)/u);
-    assert.match(loadBlock, /fetchAppSettings\(\)/u);
+    assert.match(loadBlock, /fetchAppSettings\(/u);
     assert.match(loadBlock, /hydratePage\('overview'\)/u);
 });
 

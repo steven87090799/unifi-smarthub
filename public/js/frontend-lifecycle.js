@@ -9,6 +9,11 @@
         pages = {},
         runJob,
         isStaleResult = value => value?.stale === true,
+        isSuccessfulResult = value => value !== undefined
+            && value !== null
+            && value !== false
+            && value?.ok !== false
+            && value?.stale !== true,
         onError = () => {}
     } = {}) {
         if (typeof runJob !== 'function') throw new TypeError('runJob is required');
@@ -22,6 +27,9 @@
             if (inFlight.has(page)) {
                 const pending = inFlight.get(page);
                 if (generations.get(page) === generation) return pending;
+                // Mark the older request stale before it resolves.  Its late
+                // result must never mark the newly selected page complete.
+                generations.set(page, generation);
                 return pending.then(() => hydratePage(page, { force, only, generation }));
             }
             const requested = Array.isArray(only) ? only : [...(pages[page] || [])];
@@ -35,12 +43,26 @@
             promise = Promise.all(jobs.map(async key => {
                 try {
                     const value = await runJob(key, { page, generation });
-                    return { key, ok: !isStaleResult(value), value };
+                    const ok = isSuccessfulResult(value) && !isStaleResult(value);
+                    if (!ok && value?.error) {
+                        try { onError(value.error, { page, key, generation, retryable: value.retryable !== false }); }
+                        catch { /* diagnostics must not reject hydration */ }
+                    }
+                    return { key, ok, retryable: value?.retryable !== false, stale: value?.stale === true, value };
                 } catch (error) {
                     try { onError(error, { page, key, generation }); } catch { /* diagnostics must not reject hydration */ }
-                    return { key, ok: false, error };
+                    return { key, ok: false, retryable: true, error };
                 }
             })).then(results => {
+                const staleGeneration = generations.get(page) !== generation;
+                if (staleGeneration) {
+                    return {
+                        loaded: false,
+                        stale: true,
+                        results: results.map(result => ({ ...result, ok: false, stale: true })),
+                        failures: results.map(result => ({ ...result, ok: false, stale: true }))
+                    };
+                }
                 const nextCompleted = completedJobs.get(page) || new Set();
                 results.filter(result => result.ok).forEach(result => nextCompleted.add(result.key));
                 completedJobs.set(page, nextCompleted);

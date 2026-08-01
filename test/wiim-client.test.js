@@ -9,6 +9,64 @@ const {
     parseWiimTemperatures
 } = require('../server/services/wiim-client');
 
+const deferred = () => {
+    let resolve;
+    const promise = new Promise(next => { resolve = next; });
+    return { promise, resolve };
+};
+
+test('parallel WiiM status requests share one per-command in-flight request', async () => {
+    const gate = deferred();
+    let calls = 0;
+    const client = createWiimClient({
+        getIp: () => '192.168.1.20',
+        request: async () => {
+            calls += 1;
+            await gate.promise;
+            return { state: 'play' };
+        }
+    });
+    const requests = [
+        client.get('getStatusEx'),
+        client.get('getStatusEx', { forceRefresh: true }),
+        client.get('getStatusEx')
+    ];
+    await Promise.resolve();
+    assert.equal(calls, 1);
+    assert.equal(client.inflightCount(), 1);
+    gate.resolve();
+    const results = await Promise.all(requests);
+    assert.equal(calls, 1);
+    assert.equal(new Set(results.map(result => result.sampleId)).size, 1);
+    assert.equal(results[0].fetchedAt, results[1].fetchedAt);
+    assert.equal(client.inflightCount(), 0);
+});
+
+test('offline status keeps the old sample but never reports the device online', async () => {
+    let now = 0;
+    let offline = false;
+    const client = createWiimClient({
+        getIp: () => '192.168.1.20',
+        now: () => now,
+        freshCacheMs: 10,
+        maxStaleMs: 100,
+        request: async () => {
+            if (offline) throw new Error('device offline');
+            return { state: 'play' };
+        }
+    });
+    const live = await client.get('getStatusEx');
+    now = 20;
+    offline = true;
+    const stale = await client.get('getStatusEx', { allowStale: true });
+    assert.equal(stale.source, 'stale_cache');
+    assert.equal(stale.data, live.data);
+    assert.equal(client.health('getStatusEx').online, false);
+    assert.equal(client.health('getStatusEx').consecutiveFailures, 1);
+    now = 200;
+    assert.equal(client.peek('getStatusEx').source, 'unreachable');
+});
+
 test('WiiM client returns explicit not_configured and live results', async () => {
     let calls = 0;
     const client = createWiimClient({

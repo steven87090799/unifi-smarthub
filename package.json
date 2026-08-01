@@ -13,7 +13,7 @@
     "start": "node server.js",
     "test": "node --test --test-concurrency=4 test/*.test.js",
     "test:smoke": "node scripts/runtime-smoke.js",
-    "test:soak": "node scripts/runtime-soak.js --duration-ms=${SOAK_DURATION_MS:-90000}",
+    "test:soak": "node scripts/runtime-soak.js",
     "release:build": "node scripts/release-build.js"
   },
   "dependencies": {

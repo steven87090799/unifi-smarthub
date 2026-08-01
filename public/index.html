@@ -3618,7 +3618,10 @@
                     <!-- 伺服器端間隔 -->
                     <div
                         class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
-                        <h3 class="text-lg font-bold text-white tracking-wider">⚙️ 伺服器端取樣間隔（秒）</h3>
+                        <div class="flex flex-wrap items-center gap-3">
+                            <h3 class="text-lg font-bold text-white tracking-wider">⚙️ 伺服器端取樣間隔（秒）</h3>
+                            <span id="settings-load-state" class="px-2 py-1 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">設定載入中</span>
+                        </div>
                         <p class="text-[10px] text-slate-500">後端背景排程，無論誰連線都套用（存於伺服器）。每格下方說明它控制什麼。</p>
                         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
