@@ -37,16 +37,19 @@ unit tests.
 
 ## Final delivery record
 
-The following fields are completed after implementation and delivery:
+Implementation and local delivery evidence is recorded below. Hosted evidence is
+reported separately after the final branch push because it is tied to the exact
+GitHub commit SHA, not to an older local result.
 
-- `FINAL_HEAD_SHA`: pending
-- `COMMITS`: pending
-- `FILES_CHANGED`: pending
-- `CONFIRMED_FINDINGS`: pending
-- `LEGACY_BRANCH_DISPOSITION`: pending
-- `DEPENDABOT`: pending
-- `VALIDATION`: pending
-- `SOAK`: pending
-- `HOSTED_CI`: pending
-- `REAL_ENVIRONMENT_GATES`: pending
-- `FINAL_VERDICT`: pending; allowed values are `BLOCKED`, `LOCAL_AND_CI_READY_REAL_ENV_PENDING`, `STAGING_READY`, or `PRODUCTION_ACCEPTANCE_COMPLETE`.
+- `IMPLEMENTATION_HEAD_SHA`: `f2104544f9b267e068437c085b56c7ee58070541`
+- `COMMITS`: `f210454` — `fix: harden post-merge production audit findings`; a documentation-only audit closure commit follows after this record is staged.
+- `FILES_CHANGED`: 34 implementation/audit files; user-owned untracked `scripts/runtime-smoke-test.js` was preserved and not staged.
+- `CONFIRMED_FINDINGS`: heartbeat scope contract; WiiM artwork SSRF boundary; empty-disabled WiiM integration; NAS alert DOM construction; lazy page hydration; observer-based pinned cards; strict UniFi Network TLS; unused `cors` removal; documentation truth.
+- `LEGACY_BRANCH_DISPOSITION`: recorded in [LEGACY_BRANCH_DISPOSITION.md](LEGACY_BRANCH_DISPOSITION.md); no legacy branch was merged, cherry-picked, or deleted.
+- `DEPENDABOT`: PR #8 (`express` 5.2.1) and PR #9 (`dotenv` 17.4.2) remain open, non-draft, clean/mergeable with their own `Repository gate` PASS; neither was merged or upgraded here.
+- `VALIDATION`: `npm test` PASS 615/615; `npm run check:js` PASS (161 files); `npm run build:css` and `npm run check:css` PASS; `npm run test:smoke` PASS with health/readiness/auth/CSRF/restart persistence; `git diff --check` PASS; both Compose configurations PASS; both Docker builds PASS; strict clean temporary-worktree `npm run release:build` PASS with OCI identity verification for both images; `cors` absent from the runtime dependency tree.
+- `SOAK`: 90,000 ms PASS; requests 1,851; SSE clients 3; active upstream SSE 0; active handles peak 9; active requests peak 1; RSS 91,095,040 → 112,885,760 → 112,885,760 bytes; heap 19,414,776 → 28,570,128 → 19,394,040 bytes.
+- `SCANNERS`: `trivy`, `gitleaks`, and `trufflehog` were not installed; pinned vulnerability scan and full-history secret scan are `NOT RUN`. Working-tree/tracked marker audit is recorded in [SECRET_AUDIT.md](SECRET_AUDIT.md).
+- `HOSTED_CI`: pending final branch push and Draft PR creation; the final handoff records the exact PR HEAD, check-run name, run URL, and conclusion.
+- `REAL_ENVIRONMENT_GATES`: `NOT RUN` for real UCG/UniFi/WiiM/NAS/UPS/AdGuard/Linux devices, staging deployment, independent DR restore, production traffic, and 24/72-hour observation; hardware/PMIC/thermal acceptance is also `NOT RUN`.
+- `FINAL_VERDICT`: `LOCAL_AND_CI_READY_REAL_ENV_PENDING`.
