@@ -1,4 +1,8 @@
-# SmartHub Production / Long-running Hardening Report
+# SmartHub Production / Long-running Hardening Report (Historical PR #7)
+
+> Historical record only. PR #7 has been merged into `main`; this document is
+> not the current branch's hosted-CI or acceptance evidence. The current
+> post-merge audit is [POST_MERGE_AUDIT_HARDENING.md](POST_MERGE_AUDIT_HARDENING.md).
 
 日期：2026-08-01  
 Repository：`steven87090799/unifi-smarthub`  

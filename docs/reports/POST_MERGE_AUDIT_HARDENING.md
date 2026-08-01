@@ -1,0 +1,52 @@
+# Post-Merge Production Audit Hardening
+
+## Baseline audit
+
+- `START_BASE_SHA`: `cb48da28fe58932dc26f1d785787a4293a6bae17`
+- `BASE_AUDIT_SHA`: `cb48da28fe58932dc26f1d785787a4293a6bae17`
+- `BRANCH`: `fix/post-merge-audit-hardening`
+- `AUDIT_TIME`: 2026-08-01 Asia/Taipei
+
+This report records the audit before source changes on the new branch created from
+the latest `origin/main`. Classifications are intentionally preserved as the
+baseline disposition; the final section is updated after implementation and
+validation.
+
+| Finding | Baseline classification | Root cause / evidence | Planned disposition |
+|---|---|---|---|
+| Activity heartbeat scope isolation | CONFIRMED / P1 | `public/js/app.js` sends `ucg,unifi-device-telemetry`, while `server/policies/query-input-policy.js` omits `unifi-device-telemetry` from `ACTIVITY_SCOPES`; the heartbeat route therefore rejects the documented UCG contract. | Fix the shared contract, preserve per-session lease/focus/expiry isolation, and add backend/frontend contract tests. |
+| WiiM artwork proxy boundary | CONFIRMED / P1 | `/api/wiim/art` in `server.js` uses a broad hostname regex, does not validate all DNS answers, does not pin the connection target, accepts upstream content without a bounded stream/MIME/byte policy, and has no deterministic bounded total-size cache. | Extract an independently testable proxy service with strict URL, DNS, redirect, TLS, stream, MIME, cache, and safe-error policies. |
+| Optional WiiM integration | CONFIRMED / P2 | `server.js` and `server-mock.js` use `192.168.0.170` as a default; hot reload uses `process.env.WIIM_IP || wiimIP`, so clearing the setting retains the previous address. Samplers, diagnostics, commands, and status routes can operate as if WiiM were configured. | Make empty configuration a real disabled state in production, mock, runtime reads, startup, diagnostics, commands, and page hydration. |
+| NAS alert configuration DOM XSS | CONFIRMED / P2 | `fetchAlertConfig()` interpolates server-provided `metric` and other fields into `innerHTML`; the action attribute is escaped but the rendered text boundary is not a safe DOM construction boundary. | Build rows with DOM APIs/text nodes and safe data attributes; retain delegated action dispatch without inline handlers; add payload tests. |
+| Lazy initial hydration | CONFIRMED / P2 | `window.load` invokes fetchers for UCG, NAS, WiiM, UPS, AdGuard, Linux, settings, notification, reports, and other pages before navigation. Page-aware recurring polling does not prevent this initial fan-out. | Restrict boot to essentials and hydrate each page once on first navigation, with retry after failure and no duplicate requests. |
+| Pinned-card synchronization | CONFIRMED / P2/P3 | Pinned mirrors use `setInterval(syncPinned, 2000)`, copy `innerHTML`, and separately copy canvas pixels. The interval and mirror lifecycle are not tied to pin/rerender teardown. | Replace with change-driven observers/explicit updates, disconnect observers on unpin/rerender/teardown, and preserve IDs/CSP/chart behavior. |
+| UniFi Network TLS | PARTIALLY_FIXED | `server/integrations/unifi-traffic-list-client.js` defaults TLS verification to true and rejects non-loopback HTTP, but still exposes `UNIFI_NETWORK_TLS_VERIFY=false` as an accepted loopback opt-out and requires the final environment contract/docs/test matrix to be explicit. | Align the final policy with strict TLS and explicit insecure opt-in semantics without weakening existing protections. |
+| Unused `cors` dependency | CONFIRMED / P3 | The server comment says CORS was removed and source search found no runtime import, but `cors` remains in `package.json` and the lockfile. | Verify the dependency tree and remove only the unused package files if no consumer exists. |
+| Documentation truth | CONFIRMED / P2/P3 | `.env.example` and WiiM integration docs advertise the hardcoded WiiM IP; release/acceptance documents still describe the historical PR #7 scope rather than this post-merge audit. | Update configuration, TLS, no-fake-data, polling/scope, report, and historical-PR wording to match the resulting implementation. |
+| Legacy branch salvage | NOT YET CLASSIFIED | Remote branch deltas include `codex/polling-cache-hardening` and `codex/unifi-device-telemetry` commits not reachable from `origin/main`; semantic disposition requires commit-by-commit comparison. | Record each unique commit as already in main, superseded, salvaged, deferred, obsolete, or unsafe; do not wholesale merge. |
+| Dependabot Express 5 / dotenv 17 | CONFIRMED / DEFERRED | PR #8 and PR #9 are open non-draft dependency branches after PR #7; compatibility and conflict/rebase state require a live report. | Do not merge or upgrade in this task. Document risks and recommendation. |
+| Secret audit | NOT RUN (full history) | `.env` and `config/` are ignored; no `gitleaks` or `trufflehog` executable is installed. Working-tree pattern checks can be performed, but a full-history scanner must remain explicitly NOT RUN. | Audit ignored/config/PEM/key/token patterns without installing scanners; report exact scope and limitations. |
+
+## Validation plan
+
+The final report will separate local tests, isolated runtime/soak evidence,
+Compose/build/Trivy evidence, hosted CI on the exact final SHA, and real-device,
+staging, backup/restore, and long-duration environment gates. Unexecuted real
+environment gates will remain `NOT RUN` and will not be inferred from mocks or
+unit tests.
+
+## Final delivery record
+
+The following fields are completed after implementation and delivery:
+
+- `FINAL_HEAD_SHA`: pending
+- `COMMITS`: pending
+- `FILES_CHANGED`: pending
+- `CONFIRMED_FINDINGS`: pending
+- `LEGACY_BRANCH_DISPOSITION`: pending
+- `DEPENDABOT`: pending
+- `VALIDATION`: pending
+- `SOAK`: pending
+- `HOSTED_CI`: pending
+- `REAL_ENVIRONMENT_GATES`: pending
+- `FINAL_VERDICT`: pending; allowed values are `BLOCKED`, `LOCAL_AND_CI_READY_REAL_ENV_PENDING`, `STAGING_READY`, or `PRODUCTION_ACCEPTANCE_COMPLETE`.

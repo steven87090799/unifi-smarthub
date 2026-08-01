@@ -1130,16 +1130,16 @@ app.get('/sw.js', (req, res) => res.type('application/javascript').send(
 let mockWiimHistory = [];
 
 function pollMockWiimTemp() {
+    if (!mockConn?.WIIM_IP) return;
     const cpu = parseFloat((45 + Math.random() * 8).toFixed(1));
     const board = parseFloat((38 + Math.random() * 5).toFixed(1));
     const ts = Math.floor(Date.now() / 1000);
     mockWiimHistory.push({ ts, cpu, board });
     if (mockWiimHistory.length > 5000) mockWiimHistory.shift();
 }
-pollMockWiimTemp();
-setInterval(pollMockWiimTemp, 10000);
 
 app.get('/api/wiim/history', (req, res) => {
+    if (!mockConn?.WIIM_IP) return res.json({ interval: 10, cpu_alert: 70, board_alert: 60, data: [], source: 'not_configured' });
     res.json({
         interval: 10,
         cpu_alert: 70,
@@ -1151,6 +1151,7 @@ app.get('/api/wiim/history', (req, res) => {
 app.get('/api/wiim/status', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseWiimStatusQuery(req.query));
     if (!query) return;
+    if (!mockConn?.WIIM_IP) return res.json({ player: null, meta: null, status: null, ip: null, source: 'not_configured' });
     const { type } = query;
     const out = {};
     if (type === 'all' || type === 'play') {
@@ -1183,7 +1184,8 @@ app.get('/api/wiim/status', (req, res) => {
     }
     res.json({
         ...out,
-        ip: "192.168.0.170"
+        ip: mockConn.WIIM_IP,
+        source: 'wiim_api'
     });
 });
 
@@ -1206,7 +1208,9 @@ const mockWiimCommandResults = {
         wlanGetConnectState: 'OK'
 };
 registerWiimCommandRoutes(app, {
+    isConfigured: () => Boolean(mockConn?.WIIM_IP),
     execute: async command => {
+        if (!mockConn?.WIIM_IP) return null;
         const value = mockWiimCommandResults[command];
         return value == null ? 'OK' : (typeof value === 'string' ? value : JSON.stringify(value));
     }
@@ -1418,13 +1422,13 @@ const mockConnDefaults = {
     UNIFI_CONTROLLER_TLS_INSECURE: 'false', UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP: 'false', UNIFI_USERNAME: 'demo',
     UNIFI_DEVICE_SSH_PORT: '22', UNIFI_DEVICE_SSH_USER: 'monitor', UNIFI_DEVICE_SSH_ALLOW_UNPINNED: 'false',
     UNIFI_NETWORK_API_URL: 'https://192.168.0.1/proxy/network/integration',
-    UNIFI_NETWORK_TLS_VERIFY: 'true',
+    UNIFI_NETWORK_TLS_VERIFY: 'true', UNIFI_NETWORK_CA_FILE: '', UNIFI_NETWORK_TLS_INSECURE: 'false', UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'false',
     UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
     UNIFI_THREAT_BLOCK_LIST_ID: '22222222-2222-4222-8222-222222222222',
     UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
     NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_TLS_VERIFY: 'true', NAS_CA_FILE: '',
     NAS_TLS_INSECURE: 'false', NAS_ALLOW_INSECURE_HTTP: 'false', NAS_USER: '',
-    NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '192.168.0.170',
+    NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '',
     UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
     PPB_TLS_VERIFY: 'true', PPB_TLS_INSECURE: 'false', PPB_CA_FILE: '',
@@ -1478,6 +1482,8 @@ let mockConn = savedMockConnections.fields;
 let mockConnSecrets = savedMockConnections.secretsSet;
 const mockAppliedConn = { ...mockConn };
 const mockPendingRestartFields = new Set();
+if (mockConn.WIIM_IP) pollMockWiimTemp();
+setInterval(pollMockWiimTemp, 10000);
 const mockAdguardAxios = Object.freeze({
     create() {
         return { request: async () => ({ data: {} }) };
@@ -1513,7 +1519,7 @@ app.get('/api/connections/status', (_req, res) => res.json({
         { name: 'UniFi Threat Blocking', configured: true, ok: true, detail: 'healthy' },
         { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
         { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, detail: mockConn.NAS_MONITOR_URL || '' },
-        { name: 'WiiM Amp', configured: true, ok: true, detail: mockConn.WIIM_IP },
+        { name: 'WiiM Amp', configured: Boolean(mockConn.WIIM_IP), ok: mockConn.WIIM_IP ? true : null, detail: mockConn.WIIM_IP || '' },
         { name: 'UPS', configured: true, ok: true, detail: 'NUT mock' },
         { name: 'AdGuard 裝置政策', configured: mockAdguardServicePolicies.length > 0, ok: true, detail: `${mockAdguardServicePolicies.length} 筆 · healthy` }
     ]

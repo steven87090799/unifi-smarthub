@@ -37,7 +37,10 @@ test('configuration derives the official local Integration API base and fails cl
         siteId: SITE_ID,
         listId: LIST_ID,
         listName: 'SmartHub Threat Blocks',
-        tlsVerify: true
+        tlsVerify: true,
+        tlsInsecure: false,
+        caFile: '',
+        allowInsecureHttp: false
     });
     const missing = readConfiguration({ UNIFI_CONTROLLER_URL: 'https://192.168.1.1' });
     assert.equal(missing.configured, false);
@@ -58,11 +61,20 @@ test('configuration rejects credential-bearing remote plaintext and ambiguous UR
     }
     const loopback = readConfiguration({
         ...ENV,
-        UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080',
-        UNIFI_NETWORK_TLS_VERIFY: 'false'
+        UNIFI_NETWORK_API_URL: 'https://127.0.0.1:8080',
+        UNIFI_NETWORK_TLS_VERIFY: 'false',
+        UNIFI_NETWORK_TLS_INSECURE: 'true'
     });
     assert.equal(loopback.configured, true);
     assert.equal(loopback.tlsVerify, false);
+    assert.equal(loopback.tlsInsecure, true);
+    const remoteHttp = readConfiguration({
+        ...ENV,
+        UNIFI_NETWORK_API_URL: 'http://192.168.1.1',
+        UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'true'
+    });
+    assert.equal(remoteHttp.configured, true);
+    assert.equal(remoteHttp.allowInsecureHttp, true);
     const invalidTls = readConfiguration({ ...ENV, UNIFI_NETWORK_TLS_VERIFY: 'FALSE' });
     assert.equal(invalidTls.configured, false);
     assert.ok(invalidTls.missing.includes('UNIFI_NETWORK_TLS_VERIFY'));

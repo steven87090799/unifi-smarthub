@@ -41,13 +41,16 @@ UNIFI_NETWORK_SITE_ID=<uuid>
 UNIFI_THREAT_BLOCK_LIST_ID=<uuid>
 UNIFI_THREAT_BLOCK_LIST_NAME=SmartHub Threat Blocks
 UNIFI_NETWORK_TLS_VERIFY=true
+UNIFI_NETWORK_CA_FILE=
+UNIFI_NETWORK_TLS_INSECURE=false
+UNIFI_NETWORK_ALLOW_INSECURE_HTTP=false
 ```
 
 若未明確設定 `UNIFI_NETWORK_API_URL`，會由 `UNIFI_CONTROLLER_URL` 推導 `/proxy/network/integration`。
 
 安全契約：
 
-- 非 loopback 必須 HTTPS；TLS 預設驗證。
+- TLS 預設驗證；私有 CA 使用 `UNIFI_NETWORK_CA_FILE`。只有明確 `UNIFI_NETWORK_TLS_INSECURE=true` 才可停用驗證，只有明確 `UNIFI_NETWORK_ALLOW_INSECURE_HTTP=true` 才可使用非 loopback HTTP。
 - 清單必須是名稱、ID 完全相符的專用 `IPV4_ADDRESSES` list。
 - 不得與人工項目或其他自動化共用。
 - 只接受單一公網 IPv4；管理位址、私有、loopback、link-local、reserved 與 IPv6 都拒絕。

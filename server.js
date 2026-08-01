@@ -125,6 +125,8 @@ const {
     presentUnifiDeviceTelemetry,
     telemetryHistoryRows
 } = require('./server/services/unifi-device-telemetry');
+const { formatWiimHost, normalizeWiimIp } = require('./server/services/wiim-config');
+const { createArtworkCache, fetchArtwork } = require('./server/services/wiim-art-proxy');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -941,9 +943,12 @@ const scheduledBackupEnabled = strictTlsBoolean(
 const scheduledBackupIntervalHours = Math.min(Math.max(Number(process.env.SMARTHUB_BACKUP_INTERVAL_HOURS) || 24, 1), 168);
 const scheduledBackupRetentionCount = Math.min(Math.max(Number(process.env.SMARTHUB_BACKUP_RETENTION_COUNT) || 7, 1), 90);
 const threatTrafficListClient = createUniFiTrafficListClient({
-    transport: ({ tlsVerify, ...request }) => axios({
+    transport: ({ tlsVerify, tlsInsecure, caFile, ...request }) => axios({
         ...request,
-        httpsAgent: new https.Agent({ rejectUnauthorized: tlsVerify !== false })
+        httpsAgent: new https.Agent({
+            rejectUnauthorized: tlsVerify !== false && tlsInsecure !== true,
+            ...(caFile ? { ca: fs.readFileSync(caFile) } : {})
+        })
     }),
     getEnvironment: () => process.env
 });
@@ -2087,7 +2092,7 @@ async function notificationWatcher() {
         }
     }
     // WiiM 離線/恢復 (轉態才通知)
-    if (s.triggerWiimOffline) {
+    if (s.triggerWiimOffline && wiimIP) {
         let ok = false;
         try { ok = !!(await wiimGet('getStatusEx')); }
         catch (error) {
@@ -2099,7 +2104,7 @@ async function notificationWatcher() {
         }
         wiimWasOnline = ok;
     }
-    if (s.triggerWiimHighVolume || s.triggerWiimPlaybackChange) {
+    if (wiimIP && (s.triggerWiimHighVolume || s.triggerWiimPlaybackChange)) {
         try {
             const raw = await wiimGet('getPlayerStatus');
             const status = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {});
@@ -3539,7 +3544,8 @@ const CONN_FIELDS = [
     { key: 'UNIFI_DEVICE_SSH_HOST_KEYS', secret: true }, { key: 'UNIFI_DEVICE_SSH_ALLOW_UNPINNED' },
     { key: 'UNIFI_API_KEY', secret: true },
     { key: 'UNIFI_NETWORK_API_URL' }, { key: 'UNIFI_NETWORK_API_KEY', secret: true },
-    { key: 'UNIFI_NETWORK_TLS_VERIFY' },
+    { key: 'UNIFI_NETWORK_TLS_VERIFY' }, { key: 'UNIFI_NETWORK_CA_FILE' },
+    { key: 'UNIFI_NETWORK_TLS_INSECURE' }, { key: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP' },
     { key: 'UNIFI_NETWORK_SITE_ID' }, { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
     { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
     { key: 'NAS_HOST' }, { key: 'NAS_PORT' }, { key: 'NAS_SCHEME' }, { key: 'NAS_TLS_VERIFY' }, { key: 'NAS_CA_FILE' },
@@ -3600,7 +3606,7 @@ function rebuildClients() {
     ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
     adguardConnection = buildAdguardConnection();
     resetSseUpstream({ reconnect: true });
-    wiimIP = process.env.WIIM_IP || wiimIP;
+    wiimIP = normalizeWiimIp(process.env.WIIM_IP);
     invalidateLocalSession();             // 重置 UniFi session + CSRF token
     nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
     ppbClient.reset();                    // 重置 PPB session/Agent (host/TLS/CA 可能已變更)
@@ -3684,6 +3690,14 @@ app.post('/api/connections', (req, res) => {
             caFile: effective.UNIFI_CONTROLLER_CA_FILE,
             allowInsecureHttp: effective.UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP,
             fields: { url: 'UNIFI_CONTROLLER_URL', verify: 'UNIFI_CONTROLLER_TLS_VERIFY', insecure: 'UNIFI_CONTROLLER_TLS_INSECURE', ca: 'UNIFI_CONTROLLER_CA_FILE', allowHttp: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP' }
+        });
+        if (effective.UNIFI_NETWORK_API_URL || effective.UNIFI_CONTROLLER_URL) resolveTlsPolicy({
+            url: effective.UNIFI_NETWORK_API_URL || `${effective.UNIFI_CONTROLLER_URL.replace(/\/$/u, '')}/proxy/network/integration`,
+            verify: effective.UNIFI_NETWORK_TLS_VERIFY,
+            insecure: effective.UNIFI_NETWORK_TLS_INSECURE,
+            caFile: effective.UNIFI_NETWORK_CA_FILE,
+            allowInsecureHttp: effective.UNIFI_NETWORK_ALLOW_INSECURE_HTTP,
+            fields: { url: 'UNIFI_NETWORK_API_URL', verify: 'UNIFI_NETWORK_TLS_VERIFY', insecure: 'UNIFI_NETWORK_TLS_INSECURE', ca: 'UNIFI_NETWORK_CA_FILE', allowHttp: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP' }
         });
         if (effective.NAS_HOST) resolveTlsPolicy({
             url: `${effective.NAS_SCHEME || 'https'}://${effective.NAS_HOST}:${effective.NAS_PORT || '9443'}`,
@@ -4091,7 +4105,7 @@ async function buildReport() {
     }
 
     // ── WiiM ──
-    const wiim24h = historyDb.getSince('wiim', dayAgo);
+    const wiim24h = wiimIP ? historyDb.getSince('wiim', dayAgo) : [];
     if (wiim24h.length) {
         const cpus = wiim24h.map(h => h.cpu).filter(v => v !== null);
         const boards = wiim24h.map(h => h.board).filter(v => v !== null);
@@ -4357,12 +4371,13 @@ app.get('/sw.js', (req, res) => {
 });
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---
-let wiimIP = process.env.WIIM_IP || '192.168.0.170'; // let：連線設定頁可熱更新
+let wiimIP = normalizeWiimIp(process.env.WIIM_IP); // 空值代表選配 WiiM 完全停用
 const wiimTlsInsecure = strictTlsBoolean(process.env.WIIM_TLS_INSECURE, 'WIIM_TLS_INSECURE', false);
 const wiimAllowInsecureHttp = strictTlsBoolean(process.env.WIIM_ALLOW_INSECURE_HTTP, 'WIIM_ALLOW_INSECURE_HTTP', false);
 const wiimCache = {};
 
 async function wiimGet(command) {
+    if (!wiimIP) return null;
     const cacheKey = command;
     const now = Date.now();
     const isCacheable = ['getPlayerStatus', 'getMetaInfo', 'getStatusEx', 'getPresetInfo', 'getbtdiscoveryresult'].includes(command);
@@ -4374,8 +4389,9 @@ async function wiimGet(command) {
 
     const headers = { 'User-Agent': 'wiim-temp/2.0' };
     let result = null;
+    const host = formatWiimHost(wiimIP);
     try {
-        const res = await axios.get(`https://${wiimIP}/httpapi.asp?command=${encodeURIComponent(command)}`, {
+        const res = await axios.get(`https://${host}/httpapi.asp?command=${encodeURIComponent(command)}`, {
             headers,
             httpsAgent: new https.Agent({ rejectUnauthorized: !wiimTlsInsecure }),
             timeout: 3000
@@ -4388,7 +4404,7 @@ async function wiimGet(command) {
             return null;
         }
         try {
-            const res = await axios.get(`http://${wiimIP}/httpapi.asp?command=${encodeURIComponent(command)}`, {
+            const res = await axios.get(`http://${host}/httpapi.asp?command=${encodeURIComponent(command)}`, {
                 headers,
                 timeout: 3000
             });
@@ -4414,6 +4430,7 @@ async function wiimGet(command) {
 
 // 只記錄真實裝置回傳的溫度；連不上時跳過本次取樣，不偽造數據混入歷史
 async function pollWiimTemp() {
+    if (!wiimIP) return;
     const raw = await wiimGet('getStatusEx');
     if (!raw) { sysLog('WiiM Poll', 'WiiM 裝置無回應，跳過本次溫度取樣', true); return; }
     let cpu = null, board = null;
@@ -4439,6 +4456,7 @@ registerBackendSampler({
 });
 
 app.get('/api/wiim/history', (req, res) => {
+    if (!wiimIP) return res.json({ interval: 10, cpu_alert: appSettings.wiimCpuAlert ?? 70, board_alert: appSettings.wiimBoardAlert ?? 60, data: [], source: 'not_configured' });
     res.json({
         interval: 10,
         cpu_alert: appSettings.wiimCpuAlert ?? 70,
@@ -4452,6 +4470,7 @@ app.get('/api/wiim/status', async (req, res) => {
         module: 'api.wiim', function: 'getStatus'
     });
     if (!query) return;
+    if (!wiimIP) return res.json({ player: null, meta: null, status: null, ip: null, source: 'not_configured' });
     const { type } = query;
     const out = {};
     const targets = [];
@@ -4483,6 +4502,7 @@ app.get('/api/wiim/status', async (req, res) => {
 
 registerWiimCommandRoutes(app, {
     execute: command => wiimGet(command),
+    isConfigured: () => Boolean(wiimIP),
     onUnexpectedError: (error, _req, res) => apiError(res, error, {
         status: 502, code: ERROR_CODES.EXT_WIIM_FAILED, publicMessage: 'WiiM command transport failed',
         module: 'api.wiim', function: 'command', logMessage: 'WiiM command transport failed'
@@ -4491,40 +4511,28 @@ registerWiimCommandRoutes(app, {
 
 // 專輯封面代理：WiiM 回的 albumArtURI 常是裝置 HTTPS 或外部 CDN，瀏覽器直連會被擋。
 // 後端預設驗證 HTTPS；自簽／HTTP 只在明確的 WIIM_* insecure opt-in 下允許，記憶體快取 5 分鐘。
-const wiimArtCache = {};
+const wiimArtCache = createArtworkCache();
 app.get('/api/wiim/art', async (req, res) => {
     const query = validatedInput(res, () => queryInput.parseWiimArtQuery(req.query), {
         module: 'api.wiim', function: 'getAlbumArt'
     });
     if (!query) return;
+    if (!wiimIP) return res.status(404).end();
     const { u } = query;
-    // SSRF 防護：僅允許抓 WiiM 裝置本身，或非內網的公開 CDN；
-    // 禁止以此代理探測其他內網位址 (10.x / 172.16-31.x / 192.168.x / 127.x / 169.254.x)
-    try {
-        const parsedUrl = new URL(u);
-        if (parsedUrl.protocol === 'http:' && !wiimAllowInsecureHttp) return res.status(403).end();
-        const host = parsedUrl.hostname;
-        const isPrivate = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || host === 'localhost';
-        if (isPrivate && host !== wiimIP) return res.status(403).end();
-    } catch { return res.status(400).end(); }
-    // AirPlay 的封面 URI 固定不變、內容隨曲目更換 → 以前端傳來的曲名 (v) 作為快取版本鍵
+    // 只允許公開 CDN，或精確設定的 WiiM IP；每次 DNS 解析的所有答案都必須通過檢查，
+    // 並由 transport lookup 固定到已驗證的地址，避免 DNS rebinding / redirect SSRF。
     const key = u + '|' + query.v;
-    const hit = wiimArtCache[key];
-    if (hit && Date.now() - hit.ts < 5 * 60 * 1000) {
-        res.set('Content-Type', hit.type); return res.send(hit.buf);
-    }
+    const hit = wiimArtCache.get(key);
+    if (hit) { res.set('Content-Type', hit.type); return res.send(hit.buffer); }
     try {
-        const r = await axios.get(u, {
-            responseType: 'arraybuffer', timeout: 6000,
-            httpsAgent: new https.Agent({ rejectUnauthorized: !wiimTlsInsecure }),
-            headers: { 'User-Agent': 'wiim-temp/2.0' }
+        const result = await fetchArtwork(u, {
+            axiosInstance: axios,
+            allowedPrivateAddresses: [wiimIP],
+            allowInsecureTls: wiimTlsInsecure,
+            allowInsecureHttp: wiimAllowInsecureHttp
         });
-        const type = r.headers['content-type'] || 'image/jpeg';
-        wiimArtCache[key] = { buf: r.data, type, ts: Date.now() };
-        // 快取上限 20 張，超過清最舊
-        const keys = Object.keys(wiimArtCache);
-        if (keys.length > 20) delete wiimArtCache[keys.sort((a, b) => wiimArtCache[a].ts - wiimArtCache[b].ts)[0]];
-        res.set('Content-Type', type); res.send(r.data);
+        wiimArtCache.set(key, result);
+        res.set('Content-Type', result.type); res.send(result.buffer);
     } catch (e) {
         sysLog('WiiM Art', `封面抓取失敗: ${e.message}`, true);
         res.status(502).end();
@@ -4544,6 +4552,7 @@ app.get('/api/wiim/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=wiim_temp_log.csv');
     let csv = 'timestamp,iso_time,cpu_c,board_tmp102_c\n';
+    if (!wiimIP) return res.send(csv);
     for (const h of historyDb.getSince('wiim', 0)) {
         // 使用 ISO 格式時間
         const iso = new Date(h.ts * 1000).toISOString();
@@ -5304,7 +5313,7 @@ async function checkCloudStatus() {
 }
 app.get('/api/connections/status', async (req, res) => {
     const fresh = (ts, sec) => ts && (Date.now() - ts) < sec * 1000;
-    const wiimHit = wiimCache['getStatusEx'];
+    const wiimHit = wiimIP ? wiimCache['getStatusEx'] : null;
     const cloud = await checkCloudStatus();
     const threatBlocks = threatIpBlockingService.snapshot();
     const adguardPolicies = adguardServicePolicyService.snapshot();
@@ -5322,7 +5331,7 @@ app.get('/api/connections/status', async (req, res) => {
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
             { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
-            { name: 'WiiM Amp', configured: true, ok: fresh(wiimHit && wiimHit.timestamp, 120), detail: wiimHit ? '有回應' : '無快取' },
+            { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? fresh(wiimHit && wiimHit.timestamp, 120) : null, detail: wiimIP ? (wiimHit ? '有回應' : '無快取') : '未設定' },
             { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), detail: upsDetail },
             { name: 'AdGuard Home', configured: adgConfigured(), ok: fresh(adgLastOkTs, 180), detail: adgLastOkTs ? '有回應' : '尚無資料' },
             { name: 'AdGuard 裝置政策', configured: adguardPolicies.policies.length > 0, ok: adguardPolicies.reconcile.status === 'healthy' ? true : (adguardPolicies.reconcile.status === 'degraded' ? false : null), detail: `${adguardPolicies.policies.length} 筆 · ${adguardPolicies.reconcile.status}` },
@@ -5343,7 +5352,7 @@ function refreshPublicSystemHealthSnapshot() {
         : historyDb.diagnostics().ok;
     const worker = system?.worker || taskTracker.getStatus();
     const ups = upsFetchState.snapshot();
-    const wiim = wiimCache.getStatusEx;
+    const wiim = wiimIP ? wiimCache['getStatusEx'] : null;
     publicSystemHealth.update([
         { online: true, critical: true },
         { online: databaseOk, critical: true },
@@ -5495,7 +5504,7 @@ registerHealthRoutes(app, {
         const worker = taskTracker.getStatus();
         const telemetry = unifiDeviceTelemetrySnapshot.diagnostics();
         const ups = upsFetchState.snapshot();
-        const wiim = wiimCache.getStatusEx;
+        const wiim = wiimIP ? wiimCache['getStatusEx'] : null;
         const notificationSettings = loadNotifSettings();
         const recentReports = historyDb.listReportRuns(20);
         const successfulReport = recentReports.find(report => report.deliveryStatus === 'sent');
@@ -5621,10 +5630,13 @@ async function startupDiagnostics() {
     } else sysLog('Diag', '⏭️ NAS Monitor：未設定，略過');
 
     // 6. WiiM
-    warnIfLocalhost('WIIM_IP', wiimIP);
-    const wiimOk = await wiimGet('getStatusEx');
-    if (wiimOk) sysLog('Diag', `✅ WiiM Amp (${wiimIP})：正常`);
-    else sysLog('Diag', `❌ WiiM Amp (${wiimIP})：HTTPS/HTTP 皆無回應 — 檢查 IP 是否正確、裝置是否開機、容器可否達該網段 (新韌體須帶 User-Agent，已內建)`, true);
+    if (!wiimIP) sysLog('Diag', '⏭️ WiiM Amp：未設定，略過');
+    else {
+        warnIfLocalhost('WIIM_IP', wiimIP);
+        const wiimOk = await wiimGet('getStatusEx');
+        if (wiimOk) sysLog('Diag', `✅ WiiM Amp (${wiimIP})：正常`);
+        else sysLog('Diag', `❌ WiiM Amp (${wiimIP})：HTTPS/HTTP 皆無回應 — 檢查 IP 是否正確、裝置是否開機、容器可否達該網段 (新韌體須帶 User-Agent，已內建)`, true);
+    }
 
     // 7. UPS
     warnIfLocalhost('PPB_HOST', PPB_HOST());

@@ -63,6 +63,11 @@ function safeChildEnvironment({ port, dataDir }) {
         SSH_USER: '',
         SSH_PASSWORD: '',
         UNIFI_CONTROLLER_URL: 'http://127.0.0.1:1',
+        UNIFI_NETWORK_API_URL: 'http://127.0.0.1:1',
+        UNIFI_NETWORK_TLS_VERIFY: 'true',
+        UNIFI_NETWORK_CA_FILE: '',
+        UNIFI_NETWORK_TLS_INSECURE: 'false',
+        UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'false',
         UNIFI_USERNAME: '',
         UNIFI_PASSWORD: '',
         UNIFI_API_KEY: '',
@@ -384,7 +389,7 @@ async function assertSafeLocalWrites(runtime, client) {
     const deviceFingerprint = `SHA256:${'A'.repeat(43)}`;
     response = await client.write('POST', '/api/connections', {
         UPS_SOURCE: 'ppb', PPB_HOST: '127.0.0.1', PPB_PORT: '3052', PPB_PASSWORD: secret,
-        UNIFI_NETWORK_TLS_VERIFY: 'false', UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor',
+        UNIFI_NETWORK_TLS_VERIFY: 'false', UNIFI_NETWORK_TLS_INSECURE: 'true', UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor',
         UNIFI_DEVICE_SSH_PASSWORD: deviceSecret, UNIFI_DEVICE_SSH_TARGET_IDS: 'AA:BB:CC:DD:EE:FF',
         UNIFI_DEVICE_SSH_HOST_KEYS: `AA:BB:CC:DD:EE:FF=${deviceFingerprint}`
     });
@@ -392,7 +397,7 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(response.status, 200, `${runtime.label} connections: ${text}`);
     body = JSON.parse(text);
     assert.equal(body.ok, true);
-    assert.equal(body.changed, 10);
+    assert.equal(body.changed, 11);
 
     response = await client.read('/api/connections');
     text = await response.text();

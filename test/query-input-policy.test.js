@@ -174,6 +174,9 @@ test('heartbeat and WiiM status queries use exact bounded enums', () => {
     assert.deepEqual(parseHeartbeatQuery({ scope: 'trend,nas,ups', focus: '1' }), {
         scope: 'trend,nas,ups', scopes: ['trend', 'nas', 'ups'], focus: true, session: 'legacy'
     });
+    assert.deepEqual(parseHeartbeatQuery({ scope: 'ucg,unifi-device-telemetry', session: 'ucg-tab' }).scopes, [
+        'ucg', 'unifi-device-telemetry'
+    ]);
     assert.equal(parseHeartbeatQuery({ scope: 'general', session: 'tab-1' }).session, 'tab-1');
     assert.deepEqual(parseWiimStatusQuery({}), { type: 'all' });
     assert.deepEqual(parseWiimStatusQuery({ type: 'play' }), { type: 'play' });

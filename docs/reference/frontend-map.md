@@ -27,8 +27,10 @@
 | `showChartDetail()` | 固定顯示資料點明細 |
 | `renderHtmlChartLegend()` | 可鍵盤操作圖例 |
 | `initUiSystem()` | 表格、卡片、Modal、Loading／Empty／Error |
+| `hydratePage()` | 首次頁面 hydration、重試與 in-flight 去重 |
+| `renderPinned()`／`updatePinnedMirror()` | 釘選卡片與 change-driven MutationObserver 鏡像 |
 
-總覽或目前裝置頁可見時，相關一般資料與後端取樣由設定值驅動，預設為 5 秒；UPS 狀態獨立預設 3 秒。UCG 頁的 UniFi 裝置卡每 5 秒只讀 snapshot／history，並送出獨立 `unifi-device-telemetry` scope；真正 Controller／Device SSH 取樣預設為可見 60 秒、閒置 300 秒。heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope，不送 `general`。切頁、背景分頁或租約到期後立即回到低頻。
+初始啟動只讀取必要的設定、健康與重大事件；`PAGE_HYDRATION` 以 `loadedPages` 在首次進入頁面時載入該頁資料，失敗不標記完成以便重試。總覽或目前裝置頁可見時，相關一般資料與後端取樣由設定值驅動，預設為 5 秒；UPS 狀態獨立預設 3 秒。UCG 頁的 UniFi 裝置卡每 5 秒只讀 snapshot／history，並送出獨立 `unifi-device-telemetry` scope；真正 Controller／Device SSH 取樣預設為可見 60 秒、閒置 300 秒。heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope，不送 `general`。切頁、背景分頁或租約到期後立即回到低頻。
 UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLING-INTERVALS.md](../operations/POLLING-INTERVALS.md)。
 
 ## 主要功能錨點
