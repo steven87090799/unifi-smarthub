@@ -7,11 +7,14 @@ const dotenv = require('dotenv');
 const BACKUP_FORMAT = 'unifi-smarthub-backup';
 const BACKUP_VERSION = 1;
 const BACKUP_MEDIA_TYPE = 'application/vnd.unifi-smarthub.backup+json';
+const BACKUP_V2_MEDIA_TYPE = 'application/vnd.unifi-smarthub.backup+stream';
 const RESTORE_CONFIRMATION = 'RESTORE';
 const MAX_BACKUP_BYTES = 64 * 1024 * 1024;
 // Keep enough envelope room for base64 expansion, four bounded JSON files,
 // masked env metadata, and the manifest under the 64 MiB restore parser cap.
 const MAX_DATABASE_BYTES = 43 * 1024 * 1024;
+const DEFAULT_V2_MAX_BYTES = 512 * 1024 * 1024;
+const MAX_V2_MAX_BYTES = 1024 * 1024 * 1024;
 const MAX_CONFIG_FILE_BYTES = 1024 * 1024;
 const PENDING_DIR_NAME = '.restore-pending';
 const TRANSACTION_FILE_NAME = '.restore-transaction.json';
@@ -32,6 +35,13 @@ class BackupValidationError extends Error {
         this.httpStatus = options.httpStatus || 400;
         this.code = options.code || 'invalid_backup';
     }
+}
+
+function resolveBackupMaxBytes(value) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0
+        ? Math.min(parsed, MAX_V2_MAX_BYTES)
+        : DEFAULT_V2_MAX_BYTES;
 }
 
 function sha256(value) {
@@ -63,9 +73,9 @@ function assertExactKeys(value, allowed, field) {
     }
 }
 
-function validateDatabaseFile(file) {
+function validateDatabaseFile(file, { maxBytes = MAX_DATABASE_BYTES } = {}) {
     const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_DATABASE_BYTES) {
+    if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes) {
         throw new BackupValidationError('database snapshot is missing or too large');
     }
     const db = new Database(file, { readonly: true, fileMustExist: true });
@@ -203,6 +213,29 @@ function syncDirectory(directory) {
     } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
 }
 
+function sha256File(file) {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash('sha256');
+        const input = fs.createReadStream(file);
+        input.on('data', chunk => hash.update(chunk));
+        input.once('error', reject);
+        input.once('end', () => resolve(hash.digest('hex')));
+    });
+}
+
+async function writeArchiveEntry(stream, name, file) {
+    const stat = fs.statSync(file);
+    const header = Buffer.from(`${JSON.stringify({ name, bytes: stat.size })}\n`);
+    if (!stream.write(header)) await new Promise(resolve => stream.once('drain', resolve));
+    for await (const chunk of fs.createReadStream(file)) {
+        if (!stream.write(chunk)) await new Promise(resolve => stream.once('drain', resolve));
+    }
+}
+
+function archiveSafeName(name) {
+    return name === 'smarthub.db' || RESTORABLE_FILES.includes(name);
+}
+
 function restoreTargets(dataDir) {
     return ['smarthub.db', ...RESTORABLE_FILES].map(name => ({ name, target: path.join(dataDir, name) }));
 }
@@ -256,7 +289,7 @@ function applyPendingRestore(options) {
     }
     if (!pending || pending.version !== 1 || !Array.isArray(pending.files)) throw new Error('invalid pending restore metadata');
     const stagedDatabase = path.join(pendingDirectory, 'smarthub.db');
-    validateDatabaseFile(stagedDatabase);
+    validateDatabaseFile(stagedDatabase, { maxBytes: pending.databaseMaxBytes || MAX_DATABASE_BYTES });
     if (sha256(fs.readFileSync(stagedDatabase)) !== pending.databaseSha256) throw new Error('pending database integrity check failed');
     for (const name of pending.files) {
         if (!RESTORABLE_FILES.includes(name)) throw new Error(`unsafe pending restore file ${name}`);
@@ -335,7 +368,7 @@ function createConfigBackupService(options) {
         const databaseFile = path.join(tempDirectory, 'smarthub.db');
         try {
             await database.backup(databaseFile);
-            validateDatabaseFile(databaseFile);
+            validateDatabaseFile(databaseFile, { maxBytes: MAX_DATABASE_BYTES });
             const databaseBytes = fs.readFileSync(databaseFile);
             const files = {};
             for (const name of RESTORABLE_FILES) {
@@ -426,19 +459,206 @@ function createConfigBackupService(options) {
         return { staged: true, restartRequired: true, secretsRestored: false };
     }
 
+    async function exportBackupV2({ outputFile, maxBytes = resolveBackupMaxBytes(process.env.SMARTHUB_BACKUP_MAX_BYTES) } = {}) {
+        const destination = path.resolve(outputFile || path.join(
+            process.env.SMARTHUB_BACKUP_DIR ? path.resolve(process.env.SMARTHUB_BACKUP_DIR) : dataDir,
+            `smarthub-${new Date().toISOString().replace(/[:.]/gu, '-')}.backup`
+        ));
+        const tempDirectory = fs.mkdtempSync(path.join(dataDir, '.backup-v2-'));
+        fs.chmodSync(tempDirectory, 0o700);
+        const databaseFile = path.join(tempDirectory, 'smarthub.db');
+        try {
+            await database.backup(databaseFile);
+            validateDatabaseFile(databaseFile, { maxBytes });
+            const entries = [{ name: 'smarthub.db', file: databaseFile }];
+            for (const name of RESTORABLE_FILES) {
+                const file = path.join(dataDir, name);
+                try {
+                    const stat = fs.statSync(file);
+                    if (!stat.isFile() || stat.size > MAX_CONFIG_FILE_BYTES) throw new BackupValidationError(`${name} is not a safe config file`);
+                    JSON.parse(fs.readFileSync(file, 'utf8'));
+                    entries.push({ name, file });
+                } catch (error) {
+                    if (error.code !== 'ENOENT') throw error;
+                }
+            }
+            const manifestEntries = [];
+            for (const entry of entries) {
+                const stat = fs.statSync(entry.file);
+                manifestEntries.push({ name: entry.name, bytes: stat.size, sha256: await sha256File(entry.file) });
+            }
+            const manifestMaterial = {
+                format: BACKUP_FORMAT, backupVersion: 2, applicationVersion: appVersion,
+                createdAt: new Date().toISOString(), entries: manifestEntries,
+                environment: maskedEnvironment(envFile)
+            };
+            const manifest = { ...manifestMaterial, integrity: sha256(JSON.stringify(manifestMaterial)) };
+            fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+            const output = fs.createWriteStream(destination, { flags: 'wx', mode: 0o600 });
+            await new Promise(async (resolve, reject) => {
+                output.once('error', reject);
+                try {
+                    const header = Buffer.from(`SMARTHUB-BACKUP-V2\n${Buffer.byteLength(JSON.stringify(manifest))}\n${JSON.stringify(manifest)}\n`);
+                    if (!output.write(header)) await new Promise(done => output.once('drain', done));
+                    for (const entry of entries) await writeArchiveEntry(output, entry.name, entry.file);
+                    if (!output.write(Buffer.from('END\n'))) await new Promise(done => output.once('drain', done));
+                    output.end(resolve);
+                } catch (error) { reject(error); output.destroy(); }
+            });
+            const stat = fs.statSync(destination);
+            if (stat.size > maxBytes) throw new BackupValidationError('generated v2 backup exceeds the configured size limit', { httpStatus: 413, code: 'backup_too_large' });
+            return { file: destination, manifest, bytes: stat.size, mediaType: BACKUP_V2_MEDIA_TYPE };
+        } catch (error) {
+            try { fs.unlinkSync(destination); } catch { }
+            throw error;
+        } finally {
+            fs.rmSync(tempDirectory, { recursive: true, force: true });
+        }
+    }
+
+    async function stageRestoreV2File(file, confirmation, { maxBytes = resolveBackupMaxBytes(process.env.SMARTHUB_BACKUP_MAX_BYTES) } = {}) {
+        if (confirmation !== RESTORE_CONFIRMATION) throw new BackupValidationError('restore confirmation is required', { code: 'confirmation_required' });
+        const stat = fs.statSync(file);
+        if (!stat.isFile() || stat.size <= 0 || stat.size > maxBytes) throw new BackupValidationError('v2 backup is empty or too large');
+        const pendingDirectory = path.join(dataDir, PENDING_DIR_NAME);
+        if (fs.existsSync(pendingDirectory)) throw new BackupValidationError('a restore is already pending', { httpStatus: 409, code: 'restore_pending' });
+        const stagingDirectory = fs.mkdtempSync(path.join(dataDir, '.restore-v2-'));
+        fs.chmodSync(stagingDirectory, 0o700);
+        const handle = await fs.promises.open(file, 'r');
+        let offset = 0;
+        let currentOutput = null;
+        const readExactly = async length => {
+            const result = Buffer.allocUnsafe(length);
+            let read = 0;
+            while (read < length) {
+                const current = await handle.read(result, read, length - read, offset);
+                if (!current.bytesRead) throw new BackupValidationError('truncated v2 backup');
+                read += current.bytesRead;
+                offset += current.bytesRead;
+            }
+            return result;
+        };
+        const readLine = async maxLength => {
+            const chunks = [];
+            let total = 0;
+            while (total < maxLength) {
+                const byte = await readExactly(1);
+                total += 1;
+                if (byte[0] === 10) return Buffer.concat(chunks).toString('utf8');
+                chunks.push(byte);
+            }
+            throw new BackupValidationError('v2 archive header line is too long');
+        };
+        try {
+            if ((await readLine(64)) !== 'SMARTHUB-BACKUP-V2') throw new BackupValidationError('unsupported v2 backup header', { code: 'unsupported_backup' });
+            const manifestBytes = Number(await readLine(32));
+            if (!Number.isSafeInteger(manifestBytes) || manifestBytes <= 0 || manifestBytes > 2 * 1024 * 1024) throw new BackupValidationError('v2 manifest is invalid');
+            const manifest = JSON.parse((await readExactly(manifestBytes)).toString('utf8'));
+            await readLine(1); // manifest newline
+            if (manifest.format !== BACKUP_FORMAT || manifest.backupVersion !== 2
+                || manifest.applicationVersion?.split('.')[0] !== appVersion.split('.')[0]) {
+                throw new BackupValidationError('unsupported or incompatible v2 backup', { code: 'incompatible_version' });
+            }
+            if (!Array.isArray(manifest.entries) || manifest.entries.length === 0 || manifest.entries.length > RESTORABLE_FILES.length + 1
+                || !/^[a-f0-9]{64}$/u.test(manifest.integrity || '')
+                || !Number.isFinite(Date.parse(manifest.createdAt))) throw new BackupValidationError('v2 manifest is invalid');
+            const manifestNames = new Set();
+            for (const entry of manifest.entries) {
+                assertPlainObject(entry, 'manifest entry');
+                assertExactKeys(entry, ['name', 'bytes', 'sha256'], 'manifest entry');
+                if (!archiveSafeName(entry.name) || manifestNames.has(entry.name)
+                    || !Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || entry.bytes > maxBytes
+                    || !/^[a-f0-9]{64}$/u.test(entry.sha256 || '')) throw new BackupValidationError('v2 manifest entry is invalid');
+                manifestNames.add(entry.name);
+            }
+            if (!manifestNames.has('smarthub.db')) throw new BackupValidationError('v2 manifest is missing the database');
+            const expectedMaterial = { format: manifest.format, backupVersion: manifest.backupVersion, applicationVersion: manifest.applicationVersion, createdAt: manifest.createdAt, entries: manifest.entries, environment: manifest.environment };
+            if (sha256(JSON.stringify(expectedMaterial)) !== manifest.integrity) throw new BackupValidationError('v2 manifest integrity check failed');
+            const expected = new Map(manifest.entries.map(entry => [entry.name, entry]));
+            const seen = new Set();
+            for (;;) {
+                const entryLine = await readLine(512);
+                if (entryLine === 'END') break;
+                let entry;
+                try { entry = JSON.parse(entryLine); } catch { throw new BackupValidationError('v2 entry header is invalid'); }
+                if (!archiveSafeName(entry.name) || seen.has(entry.name) || !expected.has(entry.name)) throw new BackupValidationError('v2 archive contains an unsafe or unexpected file');
+                if (!Number.isSafeInteger(entry.bytes) || entry.bytes < 0 || entry.bytes > maxBytes) throw new BackupValidationError('v2 entry size is invalid');
+                const destinationFile = path.join(stagingDirectory, entry.name);
+                const output = fs.createWriteStream(destinationFile, { flags: 'wx', mode: 0o600 });
+                currentOutput = output;
+                let outputError = null;
+                output.on('error', error => { outputError = error; });
+                const hash = crypto.createHash('sha256');
+                let remaining = entry.bytes;
+                while (remaining > 0) {
+                    const chunk = await readExactly(Math.min(1024 * 1024, remaining));
+                    remaining -= chunk.length;
+                    hash.update(chunk);
+                    if (!output.write(chunk)) await new Promise(done => output.once('drain', done));
+                }
+                if (outputError) throw outputError;
+                await new Promise((resolve, reject) => {
+                    if (outputError) return reject(outputError);
+                    output.once('error', reject);
+                    output.end(resolve);
+                });
+                const expectedEntry = expected.get(entry.name);
+                if (expectedEntry.bytes !== entry.bytes || expectedEntry.sha256 !== hash.digest('hex')) throw new BackupValidationError(`v2 checksum mismatch for ${entry.name}`);
+                seen.add(entry.name);
+                currentOutput = null;
+            }
+            await handle.close();
+            if (offset !== stat.size) throw new BackupValidationError('v2 backup contains trailing bytes');
+            if (!seen.has('smarthub.db') || [...expected.keys()].some(name => !seen.has(name))) throw new BackupValidationError('v2 backup is missing a manifest entry');
+            validateDatabaseFile(path.join(stagingDirectory, 'smarthub.db'), { maxBytes });
+            const fileSha256 = {};
+            for (const name of seen) if (name !== 'smarthub.db') fileSha256[name] = await sha256File(path.join(stagingDirectory, name));
+            writeJsonDurably(path.join(stagingDirectory, 'pending.json'), {
+                version: 1, stagedAt: new Date().toISOString(), sourceCreatedAt: manifest.createdAt,
+                databaseSha256: await sha256File(path.join(stagingDirectory, 'smarthub.db')),
+                databaseMaxBytes: maxBytes,
+                files: [...seen].filter(name => name !== 'smarthub.db').sort(), fileSha256
+            });
+            syncDirectory(stagingDirectory);
+            fs.renameSync(stagingDirectory, pendingDirectory);
+            syncDirectory(dataDir);
+            return { staged: true, restartRequired: true, secretsRestored: false, backupVersion: 2 };
+        } catch (error) {
+            try { currentOutput?.destroy(); } catch { }
+            try { await handle.close(); } catch { }
+            fs.rmSync(stagingDirectory, { recursive: true, force: true });
+            throw error;
+        }
+    }
+
+    async function createScheduledBackup({ directory, retentionCount = 7 } = {}) {
+        const targetDirectory = path.resolve(directory || process.env.SMARTHUB_BACKUP_DIR || path.join(dataDir, 'backups'));
+        fs.mkdirSync(targetDirectory, { recursive: true, mode: 0o700 });
+        const outputFile = path.join(targetDirectory, `smarthub-${new Date().toISOString().replace(/[:.]/gu, '-')}.backup`);
+        const result = await exportBackupV2({ outputFile });
+        const files = fs.readdirSync(targetDirectory).filter(name => name.endsWith('.backup')).sort().reverse();
+        for (const name of files.slice(Math.max(Number(retentionCount) || 7, 1))) {
+            try { fs.unlinkSync(path.join(targetDirectory, name)); } catch { }
+        }
+        return result;
+    }
+
     function status() {
         return { pending: fs.existsSync(path.join(dataDir, PENDING_DIR_NAME, 'pending.json')) };
     }
 
-    return { exportBackup, stageRestore, status };
+    return { exportBackup, stageRestore, exportBackupV2, stageRestoreV2File, createScheduledBackup, status };
 }
 
 module.exports = {
     BACKUP_FORMAT,
     BACKUP_VERSION,
     BACKUP_MEDIA_TYPE,
+    BACKUP_V2_MEDIA_TYPE,
     RESTORE_CONFIRMATION,
     MAX_BACKUP_BYTES,
+    MAX_V2_MAX_BYTES,
+    resolveBackupMaxBytes,
     RESTORABLE_FILES,
     BackupValidationError,
     applyPendingRestore,

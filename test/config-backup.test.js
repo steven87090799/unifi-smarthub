@@ -87,6 +87,84 @@ test('export produces a consistent SQLite snapshot and never exports live env se
     db.close();
 });
 
+test('v2 backup streams a large snapshot, stages restore, and rejects truncation or checksum tampering', async t => {
+    const source = await fixture(t);
+    const backupFile = path.join(source.directory, 'smarthub-v2.backup');
+    const exported = await source.service.exportBackupV2({ outputFile: backupFile, maxBytes: 80 * 1024 * 1024 });
+    assert.equal(exported.mediaType, 'application/vnd.unifi-smarthub.backup+stream');
+    assert.ok(exported.bytes > 0);
+    assert.match(fs.readFileSync(backupFile, 'utf8', { encoding: 'utf8', flag: 'r' }).slice(0, 20), /^SMARTHUB-BACKUP-V2/u);
+
+    const destination = tempDir(t);
+    write(path.join(destination, '.env'), 'PANEL_PASSWORD=destination-secret\n');
+    const destinationDb = createHistoryDb(destination);
+    const destinationService = createConfigBackupService({
+        dataDir: destination,
+        envFile: path.join(destination, '.env'),
+        appVersion: '3.0.0',
+        database: destinationDb
+    });
+    destinationDb.close();
+    assert.deepEqual(await destinationService.stageRestoreV2File(backupFile, 'RESTORE'), {
+        staged: true, restartRequired: true, secretsRestored: false, backupVersion: 2
+    });
+    const applied = applyPendingRestore({ dataDir: destination });
+    assert.equal(applied.applied, true);
+    const restored = new Database(path.join(destination, 'smarthub.db'), { readonly: true });
+    assert.equal(restored.pragma('quick_check')[0].quick_check, 'ok');
+    restored.close();
+    source.database.close();
+
+    const truncated = path.join(source.directory, 'truncated.backup');
+    fs.copyFileSync(backupFile, truncated);
+    fs.truncateSync(truncated, fs.statSync(truncated).size - 1);
+    await assert.rejects(() => source.service.stageRestoreV2File(truncated, 'RESTORE'), /truncated|checksum|trailing/u);
+
+    const corrupted = path.join(source.directory, 'corrupted.backup');
+    const bytes = fs.readFileSync(backupFile);
+    const sqliteOffset = bytes.indexOf(Buffer.from('SQLite format 3\u0000'));
+    assert.ok(sqliteOffset > 0);
+    bytes[sqliteOffset + 32] ^= 0x01;
+    fs.writeFileSync(corrupted, bytes, { mode: 0o600 });
+    await assert.rejects(() => source.service.stageRestoreV2File(corrupted, 'RESTORE'), /checksum mismatch/u);
+});
+
+test('v2 backup accepts a database larger than the legacy 43 MiB envelope', async t => {
+    const directory = tempDir(t);
+    const envFile = path.join(directory, '.env');
+    write(envFile, 'PANEL_PASSWORD=large-db-secret\n');
+    let database = createHistoryDb(directory);
+    database.close();
+    const raw = new Database(path.join(directory, 'smarthub.db'));
+    raw.exec('CREATE TABLE large_backup_fixture (payload BLOB NOT NULL)');
+    const insert = raw.prepare('INSERT INTO large_backup_fixture (payload) VALUES (?)');
+    const payload = Buffer.alloc(1024 * 1024, 7);
+    const transaction = raw.transaction(() => {
+        for (let index = 0; index < 50; index += 1) insert.run(payload);
+    });
+    transaction();
+    raw.close();
+    database = createHistoryDb(directory);
+    const service = createConfigBackupService({ dataDir: directory, envFile, appVersion: '3.0.0', database });
+    const outputFile = path.join(directory, 'large-v2.backup');
+    const result = await service.exportBackupV2({ outputFile, maxBytes: 80 * 1024 * 1024 });
+    assert.ok(result.bytes > 43 * 1024 * 1024);
+    database.close();
+});
+
+test('optional scheduled backup helper writes v2 files and bounds retention', async t => {
+    const f = await fixture(t);
+    t.after(() => f.database.close());
+    const directory = path.join(f.directory, 'scheduled-backups');
+    for (let index = 0; index < 3; index += 1) {
+        await f.service.createScheduledBackup({ directory, retentionCount: 2 });
+        await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    const files = fs.readdirSync(directory).filter(name => name.endsWith('.backup'));
+    assert.equal(files.length, 2);
+    assert.ok(files.every(name => fs.statSync(path.join(directory, name)).size > 0));
+});
+
 test('restore rejects missing confirmation, incompatible versions, corruption, and duplicate pending work', async t => {
     const f = await fixture(t);
     t.after(() => f.database.close());
