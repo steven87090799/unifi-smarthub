@@ -60,6 +60,46 @@ async function openPanelStream(baseUrl) {
     return { controller, reader };
 }
 
+async function startSseRuntime(t, upstreamPort, maxClients) {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-sse-limit-'));
+    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    const envFile = path.join(dataDir, '.env');
+    fs.writeFileSync(envFile, '# isolated SSE limit config\n', { mode: 0o600 });
+    const port = await unusedPort();
+    const child = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
+        cwd: ROOT,
+        env: {
+            ...process.env,
+            NODE_ENV: 'production', PORT: String(port), DATA_DIR: dataDir,
+            SMARTHUB_BIND_ADDRESS: '127.0.0.1', PANEL_REQUIRE_HTTPS: 'false',
+            PANEL_ALLOW_INSECURE_HTTP: 'false', SMARTHUB_ENV_FILE: envFile,
+            PANEL_PASSWORD: ADMIN_PASSWORD, PANEL_READONLY_PASSWORD: 'sse-readonly-secret',
+            MONITOR_ENABLED: 'false', SSE_MAX_CLIENTS: String(maxClients),
+            UCG_IP: '127.0.0.1', SSH_PORT: '1', SSH_USER: '', SSH_PASSWORD: '',
+            UNIFI_CONTROLLER_URL: 'http://127.0.0.1:1', UNIFI_USERNAME: '', UNIFI_PASSWORD: '',
+            UNIFI_API_KEY: '', NAS_HOST: '', NAS_USER: '', NAS_PASSWORD: '',
+            NAS_MONITOR_URL: `http://127.0.0.1:${upstreamPort}`, NAS_MONITOR_API_KEY: API_KEY,
+            NAS_MONITOR_MODE: 'full', WIIM_IP: '127.0.0.1', UPS_SOURCE: 'nut', NUT_HOST: '127.0.0.1',
+            ADGUARD_HOST: '', LINUX_HOST: '', LOG_LEVEL: 'ERROR'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let output = '';
+    const retain = chunk => { output = `${output}${chunk}`.slice(-50_000); };
+    child.stdout.on('data', retain);
+    child.stderr.on('data', retain);
+    const closed = new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', (code, signal) => resolve({ code, signal }));
+    });
+    t.after(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    });
+    const baseUrl = `http://127.0.0.1:${port}`;
+    await waitForHealth(baseUrl, child, () => output);
+    return { child, baseUrl, closed, output: () => output };
+}
+
 test('stalled NAS Monitor SSE handshakes are coalesced and shutdown-owned', { timeout: 30_000 }, async t => {
     let upstreamRequests = 0;
     const upstreamSockets = new Set();
@@ -133,4 +173,41 @@ test('stalled NAS Monitor SSE handshakes are coalesced and shutdown-owned', { ti
     const result = await closed;
     assert.deepEqual(result, { code: 0, signal: null });
     await waitFor(() => upstreamSockets.size === 0, 'stalled upstream socket cleanup');
+});
+
+test('SSE max-client admission returns clean 503 before any SSE bytes and reclaims capacity', { timeout: 30_000 }, async t => {
+    const upstream = http.createServer((req, res) => {
+        if (req.url === '/api/stream') {
+            res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            res.write(':upstream\n\n');
+            return;
+        }
+        res.writeHead(404).end();
+    });
+    await new Promise((resolve, reject) => {
+        upstream.once('error', reject);
+        upstream.listen(0, '127.0.0.1', resolve);
+    });
+    t.after(() => new Promise(resolve => upstream.close(resolve)));
+    const runtime = await startSseRuntime(t, upstream.address().port, 1);
+    const first = await openPanelStream(runtime.baseUrl);
+    t.after(() => first.controller.abort());
+
+    const second = await fetch(`${runtime.baseUrl}/api/nas/stream`, {
+        headers: { Authorization: AUTHORIZATION }
+    });
+    assert.equal(second.status, 503);
+    assert.match(second.headers.get('content-type') || '', /application\/json/u);
+    const secondBody = await second.text();
+    assert.doesNotMatch(secondBody, /:ok/u);
+    assert.doesNotMatch(runtime.output(), /ERR_HTTP_HEADERS_SENT/u);
+
+    first.controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const third = await openPanelStream(runtime.baseUrl);
+    third.controller.abort();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.doesNotMatch(runtime.output(), /ERR_HTTP_HEADERS_SENT/u);
+    runtime.child.kill('SIGTERM');
+    assert.deepEqual(await runtime.closed, { code: 0, signal: null });
 });

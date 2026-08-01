@@ -33,6 +33,7 @@ const {
 } = require('./server/integrations/tls-policy');
 const { resolveHostKeyPolicy } = require('./server/integrations/ssh-host-key-policy');
 const { createSseBackpressureManager } = require('./server/services/sse-backpressure');
+const { rebuildAuthRetryHeaders, shouldRetryControllerRequest } = require('./server/integrations/unifi-auth-retry');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
 const envFileState = loadEnvFile(ENV_FILE, {
     environment: process.env,
@@ -354,18 +355,10 @@ function buildUnifiClient() {
     c.interceptors.response.use(undefined, async error => {
         const config = error?.config;
         const response = error?.response;
-        const pathName = String(config?.url || '');
-        const authSpecific = response?.status === 401
-            || (response?.status === 403 && /loginrequired|invalid.?session|csrf/i.test(JSON.stringify(response.data || '')));
-        const method = String(config?.method || 'get').toUpperCase();
-        const safeMethod = ['GET', 'HEAD', 'OPTIONS'].includes(method);
-        const authRejectedBeforeMutation = response?.status === 401;
-        if (!config || config._smartHubAuthRetry || pathName.includes('/api/auth/login')
-            || !authSpecific || (!safeMethod && !authRejectedBeforeMutation)) throw error;
+        if (!shouldRetryControllerRequest({ config, response })) throw error;
         config._smartHubAuthRetry = true;
         const cookie = await refreshLocalSession();
-        config.headers = { ...(config.headers || {}), Cookie: cookie };
-        if (unifiCsrfToken) config.headers['x-csrf-token'] = unifiCsrfToken;
+        config.headers = rebuildAuthRetryHeaders(config.headers, cookie, unifiCsrfToken);
         return c.request(config);
     });
     return c;
@@ -1034,6 +1027,10 @@ app.delete('/api/security/threat-blocks/:id', panelSecurity.requireAdmin, async 
     }
 });
 const HISTORY_HARD_CAP = 100000;
+const TELEMETRY_HARD_CAP = Math.min(
+    Math.max(Number(process.env.UNIFI_TELEMETRY_HARD_CAP) || HISTORY_HARD_CAP, 1),
+    1000000
+);
 const systemMonitor = new SystemMonitor({
     dataDir: DATA_DIR, db: historyDb, taskTracker, issueTracker, logger,
     version: APP_VERSION, buildIdentity: buildIdentity.public
@@ -1161,7 +1158,9 @@ app.post('/api/ui-preferences', (req, res) => {
 
 // SQLite cleanup is yielding and bounded. Schedule it after listen so a large
 // existing history cannot delay the container health endpoint from opening.
-lifecycleInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP)), 60 * 60 * 1000);
+lifecycleInterval(() => runSerialJob('historyCleanup', () => historyDb.cleanup(
+    appSettings.historyKeepDays, HISTORY_HARD_CAP, { telemetryHardCap: TELEMETRY_HARD_CAP }
+)), 60 * 60 * 1000);
 let lastHistoryFlushTs = Date.now();
 lifecycleInterval(() => {
     const gap = Math.max(Number(appSettings.historyFlushMin) || 10, 1) * 60 * 1000;
@@ -2491,7 +2490,7 @@ async function sampleUnifiDeviceTelemetry() {
         collectedAt: snapshot.collectedAt,
         stale: snapshot.stale,
         rows: telemetryHistoryRows(snapshot)
-    }, { keepDays: appSettings.historyKeepDays, hardCap: HISTORY_HARD_CAP });
+    }, { keepDays: appSettings.historyKeepDays, hardCap: TELEMETRY_HARD_CAP });
 }
 
 async function sampleTrends() {
@@ -3477,12 +3476,21 @@ app.get('/api/nas/stream', (req, res) => {
     if (!nasMonAdvancedConfigured()) return apiError(res, new Error('NAS Monitor is not configured'), {
         status: 503, code: ERROR_CODES.SYS_CONFIG_INVALID, publicMessage: 'nas_monitor_not_configured', module: 'api.nasMonitor', function: 'stream'
     });
-    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(':ok\n\n');
     if (!sseBackpressure.add(res)) {
         return res.status(503).json({ error: 'sse_client_limit', code: ERROR_CODES.API_AUTH_RATE_LIMITED });
     }
-    sseClients.add(res);
+    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    try {
+        res.write(':ok\n\n');
+        sseClients.add(res);
+    } catch (error) {
+        sseBackpressure.remove(res, 'initial_write_failed');
+        if (res.headersSent) {
+            res.destroy(error);
+            return;
+        }
+        return apiError(res, error, { status: 503, code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, publicMessage: 'sse_unavailable', module: 'api.nasMonitor', function: 'stream' });
+    }
     sseConnectUpstream();
     req.on('close', () => {
         sseBackpressure.remove(res, 'client_closed');
@@ -5743,7 +5751,9 @@ function gracefulShutdown(signal, exitCode = 0) {
 httpServer = app.listen(PORT, BIND_ADDRESS, () => {
     telegramCommandBot.start();
     reportRunner.start();
-    lifecycleTimeout(() => runSerialJob('historyCleanup', () => historyDb.cleanup(appSettings.historyKeepDays, HISTORY_HARD_CAP)), 0, { unref: true });
+    lifecycleTimeout(() => runSerialJob('historyCleanup', () => historyDb.cleanup(
+        appSettings.historyKeepDays, HISTORY_HARD_CAP, { telemetryHardCap: TELEMETRY_HARD_CAP }
+    )), 0, { unref: true });
     systemMonitor.ensureSample().then(status => {
         logger.info({
             module: 'app.lifecycle', function: 'listen', code: ERROR_CODES.SYS_READY,

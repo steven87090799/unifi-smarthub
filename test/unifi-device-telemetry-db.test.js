@@ -66,14 +66,27 @@ test('stale, invalid, and unsafe values are rejected while offline residual temp
     assert.equal(db.listUnifiTelemetrySince(0)[0].temperature, null);
 });
 
-test('retention and hard cap prevent unbounded telemetry growth', t => {
+test('emergency telemetry cap downsamples complete buckets before raw deletion', async t => {
     const directory = fixture(t);
-    const db = createHistoryDb(directory);
+    const now = Date.parse('2026-01-01T00:10:00.000Z');
+    const db = createHistoryDb(directory, { now: () => now });
     t.after(() => db.close());
-    for (let index = 0; index < 4; index += 1) {
-        db.insertUnifiTelemetryBatch({ collectedAt: new Date(Date.now() - (3 - index) * 1000).toISOString(), stale: false, rows: [row(`device-${index}`)] }, { keepDays: 30, hardCap: 2 });
+    for (let index = 0; index < 120; index += 1) {
+        db.insertUnifiTelemetryBatch({
+            collectedAt: new Date(now - 2 * 60 * 1000 + (index % 5) * 1000).toISOString(),
+            stale: false, rows: [row(`device-${index}`)]
+        }, { keepDays: 30, hardCap: 50 });
     }
-    const rows = db.listUnifiTelemetrySince(0);
-    assert.equal(rows.length, 2);
-    assert.deepEqual(rows.map(value => value.deviceId), ['device-2', 'device-3']);
+    const sqlite = new Database(db.file, { readonly: true });
+    assert.ok(sqlite.prepare('SELECT COUNT(*) count FROM unifi_device_telemetry').get().count <= 50);
+    assert.ok(sqlite.prepare("SELECT COUNT(*) count FROM unifi_device_telemetry_rollups WHERE resolution='1m'").get().count >= 70);
+    sqlite.close();
+    const history = db.listUnifiTelemetryHistory(now - 10 * 60 * 1000, { pointBudget: 200 });
+    assert.equal(history.data.length, 120);
+    assert.equal(new Set(history.data.map(value => value.deviceId)).size, 120);
+    const firstCleanup = await db.cleanup(30, 1000, { telemetryHardCap: 50 });
+    const secondCleanup = await db.cleanup(30, 1000, { telemetryHardCap: 50 });
+    assert.equal(secondCleanup.rollups_created, 0);
+    assert.equal(db.diagnostics().capacity.telemetry_pressure, false);
+    assert.ok(firstCleanup.rollups_created >= 0);
 });

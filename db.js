@@ -103,6 +103,7 @@ function normalizeClaimToken(value) {
 function createHistoryDb(dataDir, options = {}) {
     const logger = typeof options === 'function' ? null : options.logger;
     const legacyLogger = typeof options === 'function' ? options : null;
+    const currentTime = typeof options.now === 'function' ? options.now : Date.now;
     const slowQueryMs = Math.max(Number(options.slowQueryMs || process.env.DB_SLOW_QUERY_MS) || 1000, 1);
     const maxPendingPoints = Math.max(Number(options.maxPendingPoints) || 1000, 1);
     const maxPendingBytes = Math.max(Number(options.maxPendingBytes) || 1024 * 1024, 1024);
@@ -442,6 +443,15 @@ function createHistoryDb(dataDir, options = {}) {
     let lastError = null;
     let closed = false;
     const cleanupState = { inflight: null, last: null };
+    const capacityState = {
+        history_raw_cap: null,
+        telemetry_raw_cap: null,
+        telemetry_raw_count: 0,
+        telemetry_rollup_count: 0,
+        telemetry_emergency_rollups: 0,
+        telemetry_pressure: false,
+        history_pressure: {}
+    };
 
     function measure(operation, table, fn, { transaction = false } = {}) {
         const started = performance.now();
@@ -481,15 +491,18 @@ function createHistoryDb(dataDir, options = {}) {
     const getLatestStmt = db.prepare('SELECT ts, data FROM history WHERE series = ? ORDER BY ts DESC, id DESC LIMIT 1');
     const deleteSeriesStmt = db.prepare('DELETE FROM history WHERE series = ?');
     const deleteBeforeStmt = db.prepare('DELETE FROM history WHERE series = ? AND ts < ?');
-    const countPointsStmt = db.prepare('SELECT COUNT(*) AS count FROM history WHERE series = ?');
-    const deleteOldestStmt = db.prepare(`
+    const deleteBeforeBatchStmt = db.prepare(`
         DELETE FROM history WHERE id IN (
-            SELECT id FROM history WHERE series = ? ORDER BY ts ASC, id ASC LIMIT ?
+            SELECT id FROM history WHERE series = ? AND ts < ? ORDER BY ts ASC, id ASC LIMIT ?
         )
     `);
-    const insertHistoryRollupStmt = db.prepare(`
-        INSERT OR IGNORE INTO history_rollups (series, resolution, bucket_ts, data, sample_count)
+    const countPointsStmt = db.prepare('SELECT COUNT(*) AS count FROM history WHERE series = ?');
+    const upsertHistoryRollupStmt = db.prepare(`
+        INSERT INTO history_rollups (series, resolution, bucket_ts, data, sample_count)
         VALUES (@series, @resolution, @bucket_ts, @data, @sample_count)
+        ON CONFLICT(series, resolution, bucket_ts) DO UPDATE SET
+            data = excluded.data,
+            sample_count = excluded.sample_count
     `);
     const listHistoryRollupStmt = db.prepare(`
         SELECT bucket_ts AS ts, data, sample_count
@@ -505,8 +518,6 @@ function createHistoryDb(dataDir, options = {}) {
         ORDER BY bucket_ts ASC, id ASC
         LIMIT ?
     `);
-    const deleteHistoryRollupStmt = db.prepare('DELETE FROM history_rollups WHERE series = ? AND bucket_ts < ?');
-    const countHistoryRollupStmt = db.prepare('SELECT COUNT(*) AS count FROM history_rollups WHERE series = ?');
     const listHistoryBucketCandidates = {
         '1m': db.prepare('SELECT DISTINCT ((ts / 60000) * 60000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY bucket_ts ASC LIMIT ?'),
         '5m': db.prepare('SELECT DISTINCT ((ts / 300000) * 300000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY bucket_ts ASC LIMIT ?'),
@@ -514,6 +525,36 @@ function createHistoryDb(dataDir, options = {}) {
     };
     const listHistoryBucketRows = db.prepare('SELECT ts, data FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY ts ASC, id ASC');
     const deleteHistoryBucketStmt = db.prepare('DELETE FROM history WHERE series = ? AND ts >= ? AND ts < ?');
+    const listHistoryRollupPromotionCandidates = {
+        '1m': db.prepare(`
+            SELECT DISTINCT ((bucket_ts / 300000) * 300000) AS bucket_ts
+            FROM history_rollups
+            WHERE series = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+            ORDER BY bucket_ts ASC
+            LIMIT ?
+        `),
+        '5m': db.prepare(`
+            SELECT DISTINCT ((bucket_ts / 3600000) * 3600000) AS bucket_ts
+            FROM history_rollups
+            WHERE series = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+            ORDER BY bucket_ts ASC
+            LIMIT ?
+        `)
+    };
+    const listHistoryRollupBucketRowsStmt = db.prepare(`
+        SELECT bucket_ts AS ts, data, sample_count
+        FROM history_rollups
+        WHERE series = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+        ORDER BY bucket_ts ASC, id ASC
+    `);
+    const deleteHistoryRollupBucketStmt = db.prepare(`
+        DELETE FROM history_rollups
+        WHERE series = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+    `);
+    const deleteExpiredHistoryRollupStmt = db.prepare(`
+        DELETE FROM history_rollups
+        WHERE series = ? AND resolution = ? AND bucket_ts + ? <= ?
+    `);
     const deleteUnifiTelemetryBatchStmt = db.prepare('DELETE FROM unifi_device_telemetry WHERE sampled_ts < ? AND id IN (SELECT id FROM unifi_device_telemetry WHERE sampled_ts < ? ORDER BY sampled_ts ASC, device_id ASC, id ASC LIMIT ?)');
     const insertUnifiTelemetryStmt = db.prepare(`
         INSERT OR IGNORE INTO unifi_device_telemetry (sampled_ts, device_id, data)
@@ -533,10 +574,13 @@ function createHistoryDb(dataDir, options = {}) {
         ORDER BY sampled_ts ASC, device_id ASC, id ASC
         LIMIT ?
     `);
-    const insertUnifiTelemetryRollupStmt = db.prepare(`
-        INSERT OR IGNORE INTO unifi_device_telemetry_rollups
+    const upsertUnifiTelemetryRollupStmt = db.prepare(`
+        INSERT INTO unifi_device_telemetry_rollups
             (device_id, resolution, bucket_ts, data, sample_count)
         VALUES (@device_id, @resolution, @bucket_ts, @data, @sample_count)
+        ON CONFLICT(device_id, resolution, bucket_ts) DO UPDATE SET
+            data = excluded.data,
+            sample_count = excluded.sample_count
     `);
     const listUnifiTelemetryRollupStmt = db.prepare(`
         SELECT device_id, bucket_ts, data, sample_count
@@ -559,14 +603,38 @@ function createHistoryDb(dataDir, options = {}) {
     };
     const listUnifiTelemetryBucketRowsStmt = db.prepare('SELECT sampled_ts, data FROM unifi_device_telemetry WHERE device_id = ? AND sampled_ts >= ? AND sampled_ts < ? ORDER BY sampled_ts ASC, id ASC');
     const deleteUnifiTelemetryBucketStmt = db.prepare('DELETE FROM unifi_device_telemetry WHERE device_id = ? AND sampled_ts >= ? AND sampled_ts < ?');
-    const deleteOldUnifiTelemetryRollupStmt = db.prepare('DELETE FROM unifi_device_telemetry_rollups WHERE bucket_ts < ?');
-    const deleteOldUnifiTelemetryStmt = db.prepare('DELETE FROM unifi_device_telemetry WHERE sampled_ts < ?');
-    const countUnifiTelemetryStmt = db.prepare('SELECT COUNT(*) AS count FROM unifi_device_telemetry');
-    const deleteOldestUnifiTelemetryStmt = db.prepare(`
-        DELETE FROM unifi_device_telemetry WHERE id IN (
-            SELECT id FROM unifi_device_telemetry ORDER BY sampled_ts ASC, device_id ASC, id ASC LIMIT ?
-        )
+    const listUnifiTelemetryRollupPromotionCandidates = {
+        '1m': db.prepare(`
+            SELECT DISTINCT device_id, ((bucket_ts / 300000) * 300000) AS bucket_ts
+            FROM unifi_device_telemetry_rollups
+            WHERE resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+            ORDER BY bucket_ts ASC, device_id ASC
+            LIMIT ?
+        `),
+        '5m': db.prepare(`
+            SELECT DISTINCT device_id, ((bucket_ts / 3600000) * 3600000) AS bucket_ts
+            FROM unifi_device_telemetry_rollups
+            WHERE resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+            ORDER BY bucket_ts ASC, device_id ASC
+            LIMIT ?
+        `)
+    };
+    const listUnifiTelemetryRollupBucketRowsStmt = db.prepare(`
+        SELECT device_id, bucket_ts AS ts, data, sample_count
+        FROM unifi_device_telemetry_rollups
+        WHERE device_id = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+        ORDER BY bucket_ts ASC, id ASC
     `);
+    const deleteUnifiTelemetryRollupBucketStmt = db.prepare(`
+        DELETE FROM unifi_device_telemetry_rollups
+        WHERE device_id = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
+    `);
+    const deleteExpiredUnifiTelemetryRollupStmt = db.prepare(`
+        DELETE FROM unifi_device_telemetry_rollups
+        WHERE resolution = ? AND bucket_ts + ? <= ?
+    `);
+    const countUnifiTelemetryStmt = db.prepare('SELECT COUNT(*) AS count FROM unifi_device_telemetry');
+    const countUnifiTelemetryRollupsStmt = db.prepare('SELECT COUNT(*) AS count FROM unifi_device_telemetry_rollups');
     const insertUpsEventStmt = db.prepare(`
         INSERT INTO ups_events (start_ts, end_ts, duration_sec, min_battery, start_voltage)
         VALUES (@start_ts, @end_ts, @duration_sec, @min_battery, @start_voltage)
@@ -965,13 +1033,18 @@ function createHistoryDb(dataDir, options = {}) {
     const insertPointsBatch = db.transaction(rows => {
         for (const row of rows) insertPointStmt.run(row.series, row.ts, row.data);
     });
-    const insertUnifiTelemetryTransaction = db.transaction((rows, cutoff, hardCap) => {
+    const insertUnifiTelemetryTransaction = db.transaction((rows, hardCap, now) => {
         let inserted = 0;
         for (const row of rows) inserted += insertUnifiTelemetryStmt.run(row).changes;
-        // Retention is maintained by the yielding cleanup worker after older
-        // samples have been rolled up. Deleting here would make keepDays a lie.
-        const excess = countUnifiTelemetryStmt.get().count - hardCap;
-        if (excess > 0) deleteOldestUnifiTelemetryStmt.run(excess);
+        // A cap is an emergency storage bound, not permission to discard the
+        // oldest samples. Complete raw buckets are downsampled first so a
+        // pressure event retains continuity in the rollup table.
+        const emergency = emergencyDownsampleUnifiTelemetry(hardCap, now);
+        capacityState.telemetry_raw_cap = hardCap;
+        capacityState.telemetry_raw_count = countUnifiTelemetryStmt.get().count;
+        capacityState.telemetry_rollup_count = countUnifiTelemetryRollupsStmt.get().count;
+        capacityState.telemetry_emergency_rollups += emergency.created;
+        capacityState.telemetry_pressure = capacityState.telemetry_raw_count > hardCap;
         return inserted;
     });
     function writeThreatIpAudit(entry) {
@@ -1415,74 +1488,157 @@ function createHistoryDb(dataDir, options = {}) {
         return result;
     }
 
-    function rollupResolutionForTimestamp(timestamp, now) {
-        const age = now - timestamp;
-        if (age > 30 * 86400000) return '1h';
-        if (age > 7 * 86400000) return '5m';
-        if (age > RAW_RETENTION_MS) return '1m';
-        return null;
+    function totalSampleCount(rows) {
+        return rows.reduce((sum, row) => sum + Math.max(1, Number(row.sample_count) || 1), 0);
+    }
+
+    // Every promotion is an upsert followed by source deletion in the same
+    // outer SQLite transaction. Re-running a bucket therefore replaces a
+    // possibly incomplete target instead of trusting INSERT OR IGNORE.
+    function promoteHistoryRawBucket(series, bucket, targetResolution, windowMs) {
+        const rows = listHistoryBucketRows.all(series, bucket, bucket + windowMs);
+        if (!rows.length) return { processed: 0, deleted: 0, created: 0 };
+        const result = upsertHistoryRollupStmt.run({
+            series, resolution: targetResolution, bucket_ts: bucket,
+            data: JSON.stringify(aggregatePayload(rows)), sample_count: totalSampleCount(rows)
+        });
+        const deleted = deleteHistoryBucketStmt.run(series, bucket, bucket + windowMs).changes;
+        return { processed: rows.length, deleted, created: result.changes ? 1 : 0 };
+    }
+
+    function promoteHistoryRollupBucket(series, sourceResolution, targetResolution, bucket, targetWindowMs) {
+        const rows = listHistoryRollupBucketRowsStmt.all(
+            series, sourceResolution, bucket, bucket + targetWindowMs
+        );
+        if (!rows.length) return { processed: 0, deleted: 0, created: 0 };
+        const result = upsertHistoryRollupStmt.run({
+            series, resolution: targetResolution, bucket_ts: bucket,
+            data: JSON.stringify(aggregatePayload(rows)), sample_count: totalSampleCount(rows)
+        });
+        const deleted = deleteHistoryRollupBucketStmt.run(
+            series, sourceResolution, bucket, bucket + targetWindowMs
+        ).changes;
+        return { processed: rows.length, deleted, created: result.changes ? 1 : 0 };
     }
 
     function rollupSeriesBatch(series, keepDays, now) {
         const retentionCutoff = now - Math.max(Number(keepDays) || 1, 1) * 86400000;
-        let processed = 0;
-        let deleted = 0;
-        let created = 0;
-        for (const [resolution, windowMs] of Object.entries(ROLLUP_WINDOWS)) {
-            const lower = resolution === '1h' ? retentionCutoff
-                : resolution === '5m' ? Math.max(retentionCutoff, now - 30 * 86400000)
-                    : Math.max(retentionCutoff, now - 7 * 86400000);
-            const upper = resolution === '1h' ? now - 30 * 86400000
-                : resolution === '5m' ? now - 7 * 86400000
-                    : now - RAW_RETENTION_MS;
-            if (lower >= upper) continue;
-            const candidates = listHistoryBucketCandidates[resolution].all(series, lower, upper, ROLLUP_BATCH_BUCKETS);
-            for (const candidate of candidates) {
-                const bucket = Number(candidate.bucket_ts);
-                const rows = listHistoryBucketRows.all(series, bucket, bucket + windowMs);
-                if (!rows.length) continue;
-                const payload = aggregatePayload(rows);
-                const inserted = insertHistoryRollupStmt.run({
-                    series, resolution, bucket_ts: bucket, data: JSON.stringify(payload), sample_count: rows.length
-                });
-                if (inserted.changes === 1) created += 1;
-                const removed = deleteHistoryBucketStmt.run(series, bucket, bucket + windowMs).changes;
-                processed += rows.length;
-                deleted += removed;
-            }
+        const result = { processed: 0, deleted: 0, created: 0 };
+        const add = value => {
+            result.processed += value.processed;
+            result.deleted += value.deleted;
+            result.created += value.created;
+        };
+        const rawUpper = now - RAW_RETENTION_MS;
+        for (const candidate of listHistoryBucketCandidates['1m'].all(
+            series, retentionCutoff, rawUpper, ROLLUP_BATCH_BUCKETS
+        )) {
+            const bucket = Number(candidate.bucket_ts);
+            if (bucket < retentionCutoff || bucket + ROLLUP_WINDOWS['1m'] > rawUpper) continue;
+            add(promoteHistoryRawBucket(series, bucket, '1m', ROLLUP_WINDOWS['1m']));
         }
-        return { processed, deleted, created };
+        const fiveMinuteUpper = now - 7 * 86400000;
+        for (const candidate of listHistoryRollupPromotionCandidates['1m'].all(
+            series, '1m', retentionCutoff, fiveMinuteUpper, ROLLUP_BATCH_BUCKETS
+        )) {
+            const bucket = Number(candidate.bucket_ts);
+            if (bucket < retentionCutoff || bucket + ROLLUP_WINDOWS['5m'] > fiveMinuteUpper) continue;
+            add(promoteHistoryRollupBucket(series, '1m', '5m', bucket, ROLLUP_WINDOWS['5m']));
+        }
+        const oneHourUpper = now - 30 * 86400000;
+        for (const candidate of listHistoryRollupPromotionCandidates['5m'].all(
+            series, '5m', retentionCutoff, oneHourUpper, ROLLUP_BATCH_BUCKETS
+        )) {
+            const bucket = Number(candidate.bucket_ts);
+            if (bucket < retentionCutoff || bucket + ROLLUP_WINDOWS['1h'] > oneHourUpper) continue;
+            add(promoteHistoryRollupBucket(series, '5m', '1h', bucket, ROLLUP_WINDOWS['1h']));
+        }
+        return result;
+    }
+
+    function promoteUnifiTelemetryRawBucket(deviceId, bucket, targetResolution, windowMs) {
+        const rows = listUnifiTelemetryBucketRowsStmt.all(deviceId, bucket, bucket + windowMs);
+        if (!rows.length) return { processed: 0, deleted: 0, created: 0 };
+        const result = upsertUnifiTelemetryRollupStmt.run({
+            device_id: deviceId, resolution: targetResolution, bucket_ts: bucket,
+            data: JSON.stringify(aggregatePayload(rows)), sample_count: totalSampleCount(rows)
+        });
+        const deleted = deleteUnifiTelemetryBucketStmt.run(deviceId, bucket, bucket + windowMs).changes;
+        return { processed: rows.length, deleted, created: result.changes ? 1 : 0 };
+    }
+
+    function promoteUnifiTelemetryRollupBucket(deviceId, sourceResolution, targetResolution, bucket, targetWindowMs) {
+        const rows = listUnifiTelemetryRollupBucketRowsStmt.all(
+            deviceId, sourceResolution, bucket, bucket + targetWindowMs
+        );
+        if (!rows.length) return { processed: 0, deleted: 0, created: 0 };
+        const result = upsertUnifiTelemetryRollupStmt.run({
+            device_id: deviceId, resolution: targetResolution, bucket_ts: bucket,
+            data: JSON.stringify(aggregatePayload(rows)), sample_count: totalSampleCount(rows)
+        });
+        const deleted = deleteUnifiTelemetryRollupBucketStmt.run(
+            deviceId, sourceResolution, bucket, bucket + targetWindowMs
+        ).changes;
+        return { processed: rows.length, deleted, created: result.changes ? 1 : 0 };
     }
 
     function rollupUnifiTelemetryBatch(keepDays, now) {
         const retentionCutoff = now - Math.max(Number(keepDays) || 1, 1) * 86400000;
+        const result = { processed: 0, deleted: 0, created: 0 };
+        const add = value => {
+            result.processed += value.processed;
+            result.deleted += value.deleted;
+            result.created += value.created;
+        };
+        const rawUpper = now - RAW_RETENTION_MS;
+        for (const candidate of listUnifiTelemetryBucketCandidates['1m'].all(
+            retentionCutoff, rawUpper, ROLLUP_BATCH_BUCKETS
+        )) {
+            const deviceId = candidate.device_id;
+            const bucket = Number(candidate.bucket_ts);
+            if (bucket < retentionCutoff || bucket + ROLLUP_WINDOWS['1m'] > rawUpper) continue;
+            add(promoteUnifiTelemetryRawBucket(deviceId, bucket, '1m', ROLLUP_WINDOWS['1m']));
+        }
+        const fiveMinuteUpper = now - 7 * 86400000;
+        for (const candidate of listUnifiTelemetryRollupPromotionCandidates['1m'].all(
+            '1m', retentionCutoff, fiveMinuteUpper, ROLLUP_BATCH_BUCKETS
+        )) {
+            const deviceId = candidate.device_id;
+            const bucket = Number(candidate.bucket_ts);
+            if (bucket < retentionCutoff || bucket + ROLLUP_WINDOWS['5m'] > fiveMinuteUpper) continue;
+            add(promoteUnifiTelemetryRollupBucket(deviceId, '1m', '5m', bucket, ROLLUP_WINDOWS['5m']));
+        }
+        const oneHourUpper = now - 30 * 86400000;
+        for (const candidate of listUnifiTelemetryRollupPromotionCandidates['5m'].all(
+            '5m', retentionCutoff, oneHourUpper, ROLLUP_BATCH_BUCKETS
+        )) {
+            const deviceId = candidate.device_id;
+            const bucket = Number(candidate.bucket_ts);
+            if (bucket < retentionCutoff || bucket + ROLLUP_WINDOWS['1h'] > oneHourUpper) continue;
+            add(promoteUnifiTelemetryRollupBucket(deviceId, '5m', '1h', bucket, ROLLUP_WINDOWS['1h']));
+        }
+        return result;
+    }
+
+    function emergencyDownsampleUnifiTelemetry(hardCap, now) {
+        let created = 0;
         let processed = 0;
         let deleted = 0;
-        let created = 0;
-        for (const [resolution, windowMs] of Object.entries(ROLLUP_WINDOWS)) {
-            const lower = resolution === '1h' ? retentionCutoff
-                : resolution === '5m' ? Math.max(retentionCutoff, now - 30 * 86400000)
-                    : Math.max(retentionCutoff, now - 7 * 86400000);
-            const upper = resolution === '1h' ? now - 30 * 86400000
-                : resolution === '5m' ? now - 7 * 86400000
-                    : now - RAW_RETENTION_MS;
-            if (lower >= upper) continue;
-            const candidates = listUnifiTelemetryBucketCandidates[resolution].all(lower, upper, ROLLUP_BATCH_BUCKETS);
+        const cap = Math.max(Number(hardCap) || 1, 1);
+        while (countUnifiTelemetryStmt.get().count > cap) {
+            const candidates = listUnifiTelemetryBucketCandidates['1m'].all(0, now - ROLLUP_WINDOWS['1m'], ROLLUP_BATCH_BUCKETS);
+            let progress = 0;
             for (const candidate of candidates) {
-                const deviceId = candidate.device_id;
-                const bucket = Number(candidate.bucket_ts);
-                const rows = listUnifiTelemetryBucketRowsStmt.all(deviceId, bucket, bucket + windowMs);
-                if (!rows.length) continue;
-                const payload = aggregatePayload(rows);
-                const inserted = insertUnifiTelemetryRollupStmt.run({
-                    device_id: deviceId, resolution, bucket_ts: bucket,
-                    data: JSON.stringify(payload), sample_count: rows.length
-                });
-                if (inserted.changes === 1) created += 1;
-                const removed = deleteUnifiTelemetryBucketStmt.run(deviceId, bucket, bucket + windowMs).changes;
-                processed += rows.length;
-                deleted += removed;
+                const value = promoteUnifiTelemetryRawBucket(
+                    candidate.device_id, Number(candidate.bucket_ts), '1m', ROLLUP_WINDOWS['1m']
+                );
+                processed += value.processed;
+                deleted += value.deleted;
+                created += value.created;
+                progress += value.deleted;
+                if (countUnifiTelemetryStmt.get().count <= cap) break;
             }
+            if (!progress) break;
         }
         return { processed, deleted, created };
     }
@@ -1504,7 +1660,7 @@ function createHistoryDb(dataDir, options = {}) {
 
     function getHistory(series, cutoffMs = 0, { pointBudget = ROLLUP_POINT_BUDGET } = {}) {
         return measure('getHistory', 'history', () => {
-            const now = Date.now();
+            const now = Number(currentTime());
             const cutoff = Math.max(0, Number(cutoffMs) || 0);
             const span = Math.max(0, now - cutoff);
             const resolution = span <= RAW_RETENTION_MS ? 'raw'
@@ -1512,54 +1668,40 @@ function createHistoryDb(dataDir, options = {}) {
                     : span <= 30 * 86400000 ? '5m' : '1h';
             const budget = Math.min(Math.max(Number(pointBudget) || ROLLUP_POINT_BUDGET, 100), 50_000);
             const queryLimit = Math.min(100_000, Math.max(10_000, budget * 8));
-            let points;
-            if (resolution === 'raw') {
-                const rawRows = getSinceBudgetStmt.all(series, cutoff, queryLimit)
-                    .concat(pendingPoints.filter(row => row.series === series && row.ts >= cutoff))
-                    .sort((a, b) => a.ts - b.ts);
-                points = rawRows.map(row => decodePoint(row, series));
-            } else {
-                const rawStart = Math.max(cutoff, now - RAW_RETENTION_MS);
-                const targetWindow = ROLLUP_WINDOWS[resolution];
-                const grouped = new Map();
-                const addPayload = (ts, data, sampleCount = 1) => {
-                    const bucket = Math.floor(ts / targetWindow) * targetWindow;
-                    const current = grouped.get(bucket) || { ts: bucket, rows: [] };
-                    current.rows.push({ data, sample_count: sampleCount });
-                    grouped.set(bucket, current);
-                };
-                const addRollupRange = (tier, lower, upper) => {
-                    if (lower >= upper) return;
-                    for (const row of listHistoryRollupRangeStmt.all(series, tier, lower, upper, queryLimit)) {
-                        let data;
-                        try { data = JSON.parse(row.data); } catch { data = {}; }
-                        addPayload(row.ts, data, row.sample_count);
-                    }
-                };
-                if (resolution === '1m') {
-                    addRollupRange('1m', cutoff, rawStart);
-                } else if (resolution === '5m') {
-                    addRollupRange('5m', cutoff, now - 7 * 86400000);
-                    addRollupRange('1m', Math.max(cutoff, now - 7 * 86400000), rawStart);
-                } else {
-                    addRollupRange('1h', cutoff, now - 30 * 86400000);
-                    addRollupRange('5m', Math.max(cutoff, now - 30 * 86400000), now - 7 * 86400000);
-                    addRollupRange('1m', Math.max(cutoff, now - 7 * 86400000), rawStart);
-                }
-                for (const row of getSinceBudgetStmt.all(series, rawStart, queryLimit)) {
-                    let data;
-                    try { data = JSON.parse(row.data); } catch { data = {}; }
-                    addPayload(row.ts, data);
-                }
-                for (const row of pendingPoints.filter(row => row.series === series && row.ts >= rawStart)) {
-                    let data;
-                    try { data = JSON.parse(row.data); } catch { data = {}; }
-                    addPayload(row.ts, data);
-                }
-                points = [...grouped.values()]
-                    .sort((a, b) => a.ts - b.ts)
-                    .map(group => addPointTimestamp(aggregatePayload(group.rows), group.ts, series));
+            const outputWindow = ROLLUP_WINDOWS[resolution] || 1;
+            const grouped = new Map();
+            const sourcePriority = { raw: 0, '1m': 1, '5m': 2, '1h': 3 };
+            const addSource = (source, ts, data, sampleCount = 1) => {
+                const bucket = resolution === 'raw' ? ts : Math.floor(ts / outputWindow) * outputWindow;
+                const current = grouped.get(bucket) || { ts: bucket, sources: new Map() };
+                const rows = current.sources.get(source) || [];
+                rows.push({ data, sample_count: sampleCount });
+                current.sources.set(source, rows);
+                grouped.set(bucket, current);
+            };
+            for (const row of getSinceBudgetStmt.all(series, cutoff, queryLimit)) {
+                let data;
+                try { data = JSON.parse(row.data); } catch { data = {}; }
+                addSource('raw', row.ts, data);
             }
+            for (const pending of pendingPoints.filter(row => row.series === series && row.ts >= cutoff)) {
+                let data;
+                try { data = JSON.parse(pending.data); } catch { data = {}; }
+                addSource('raw', pending.ts, data);
+            }
+            for (const source of Object.keys(ROLLUP_WINDOWS)) {
+                for (const row of listHistoryRollupRangeStmt.all(series, source, cutoff, now, queryLimit)) {
+                    let data;
+                    try { data = JSON.parse(row.data); } catch { data = {}; }
+                    addSource(source, row.ts, data, row.sample_count);
+                }
+            }
+            const points = [...grouped.values()]
+                .sort((a, b) => a.ts - b.ts)
+                .map(group => {
+                    const source = [...group.sources.keys()].sort((a, b) => sourcePriority[b] - sourcePriority[a])[0];
+                    return addPointTimestamp(aggregatePayload(group.sources.get(source)), group.ts, series);
+                });
             return { resolution, data: downsamplePoints(points, budget), point_budget: budget };
         });
     }
@@ -1675,10 +1817,9 @@ function createHistoryDb(dataDir, options = {}) {
             }
             rows.push({ sampled_ts: sampledTs, device_id: deviceId, data });
         }
-        const days = Math.min(Math.max(Number(keepDays) || 1, 1), 365);
         const cap = Math.min(Math.max(Number(hardCap) || 1, 1), 1000000);
         const inserted = measure('insertUnifiTelemetryBatch', 'unifi_device_telemetry', () => (
-            insertUnifiTelemetryTransaction(rows, Date.now() - days * 86400000, cap)
+            insertUnifiTelemetryTransaction(rows, cap, Number(currentTime()))
         ), { transaction: true });
         return { inserted, rejected };
     }
@@ -1696,65 +1837,76 @@ function createHistoryDb(dataDir, options = {}) {
 
     function listUnifiTelemetryHistory(cutoffMs = 0, { pointBudget = 10_000 } = {}) {
         const cutoff = Math.max(0, Number(cutoffMs) || 0);
-        const now = Date.now();
+        const now = Number(currentTime());
         const span = Math.max(0, now - cutoff);
         const resolution = span <= RAW_RETENTION_MS ? 'raw'
             : span <= 7 * 86400000 ? '1m' : span <= 30 * 86400000 ? '5m' : '1h';
-        const windowMs = ROLLUP_WINDOWS[resolution] || 0;
         const maxRows = Math.min(Math.max(Number(pointBudget) || 10_000, 100), 50_000);
         return measure('listUnifiTelemetryHistory', 'unifi_device_telemetry', () => {
             const queryLimit = Math.min(100_000, Math.max(10_000, maxRows * 8));
-            const rawCutoff = resolution === 'raw' ? cutoff : Math.max(cutoff, now - RAW_RETENTION_MS);
-            const rows = listUnifiTelemetryBudgetStmt.all(rawCutoff, queryLimit).map(row => {
-                let data;
-                try { data = JSON.parse(row.data); } catch { data = {}; }
-                return { ts: row.sampled_ts, deviceId: row.device_id, data, sampleCount: 1 };
-            });
-            if (resolution === 'raw') return {
-                resolution,
-                data: rows.slice(0, maxRows).map(row => ({ collectedAt: new Date(row.ts).toISOString(), deviceId: row.deviceId, ...row.data })),
-                point_budget: maxRows
-            };
+            const outputWindow = ROLLUP_WINDOWS[resolution] || 1;
+            const sourcePriority = { raw: 0, '1m': 1, '5m': 2, '1h': 3 };
             const grouped = new Map();
-            const addRow = row => {
-                const bucket = Math.floor(row.ts / windowMs) * windowMs;
+            const addSource = (source, row) => {
+                const bucket = resolution === 'raw'
+                    ? row.ts : Math.floor(row.ts / outputWindow) * outputWindow;
                 const key = `${row.deviceId}:${bucket}`;
-                const current = grouped.get(key) || { ts: bucket, deviceId: row.deviceId, rows: [] };
-                current.rows.push({ data: row.data, sample_count: row.sampleCount });
+                const current = grouped.get(key) || { ts: bucket, deviceId: row.deviceId, sources: new Map() };
+                const rows = current.sources.get(source) || [];
+                rows.push({ data: row.data, sample_count: row.sampleCount });
+                current.sources.set(source, rows);
                 grouped.set(key, current);
             };
-            const addRollupRange = (tier, lower, upper) => {
-                if (lower >= upper) return;
-                for (const row of listUnifiTelemetryRollupRangeStmt.all(tier, lower, upper, queryLimit)) {
+            for (const row of listUnifiTelemetryBudgetStmt.all(cutoff, queryLimit)) {
+                let data;
+                try { data = JSON.parse(row.data); } catch { data = {}; }
+                addSource('raw', { ts: row.sampled_ts, deviceId: row.device_id, data, sampleCount: 1 });
+            }
+            for (const tier of Object.keys(ROLLUP_WINDOWS)) {
+                for (const row of listUnifiTelemetryRollupRangeStmt.all(tier, cutoff, now, queryLimit)) {
                     let data;
                     try { data = JSON.parse(row.data); } catch { data = {}; }
-                    addRow({ ts: row.bucket_ts, deviceId: row.device_id, data, sampleCount: row.sample_count });
+                    addSource(tier, { ts: row.bucket_ts, deviceId: row.device_id, data, sampleCount: row.sample_count });
                 }
-            };
-            if (resolution === '1m') {
-                addRollupRange('1m', cutoff, rawCutoff);
-            } else if (resolution === '5m') {
-                addRollupRange('5m', cutoff, now - 7 * 86400000);
-                addRollupRange('1m', Math.max(cutoff, now - 7 * 86400000), rawCutoff);
-            } else {
-                addRollupRange('1h', cutoff, now - 30 * 86400000);
-                addRollupRange('5m', Math.max(cutoff, now - 30 * 86400000), now - 7 * 86400000);
-                addRollupRange('1m', Math.max(cutoff, now - 7 * 86400000), rawCutoff);
             }
-            rows.forEach(addRow);
             const data = [...grouped.values()].sort((a, b) => a.ts - b.ts || a.deviceId.localeCompare(b.deviceId))
                 .slice(0, maxRows)
-                .map(group => ({ collectedAt: new Date(group.ts).toISOString(), deviceId: group.deviceId, ...aggregatePayload(group.rows) }));
+                .map(group => {
+                    const source = [...group.sources.keys()].sort((a, b) => sourcePriority[b] - sourcePriority[a])[0];
+                    return { collectedAt: new Date(group.ts).toISOString(), deviceId: group.deviceId, ...aggregatePayload(group.sources.get(source)) };
+                });
             return { resolution, data, point_budget: maxRows };
         });
     }
 
+    function emergencyDownsampleHistory(series, hardCap, now) {
+        let created = 0;
+        let processed = 0;
+        let deleted = 0;
+        const cap = Math.max(Number(hardCap) || 1, 1);
+        while (countPointsStmt.get(series).count > cap) {
+            const candidates = listHistoryBucketCandidates['1m'].all(series, 0, now - ROLLUP_WINDOWS['1m'], ROLLUP_BATCH_BUCKETS);
+            let progress = 0;
+            for (const candidate of candidates) {
+                const value = promoteHistoryRawBucket(series, Number(candidate.bucket_ts), '1m', ROLLUP_WINDOWS['1m']);
+                processed += value.processed;
+                deleted += value.deleted;
+                created += value.created;
+                progress += value.deleted;
+                if (countPointsStmt.get(series).count <= cap) break;
+            }
+            if (!progress) break;
+        }
+        return { processed, deleted, created, pressure: countPointsStmt.get(series).count > cap };
+    }
+
     function pruneRaw(series, keepDays = 30, hardCap = 100000) {
         const days = Math.max(Number(keepDays) || 1, 1);
-        deleteBeforeStmt.run(series, Date.now() - days * 86400000);
-        const count = countPointsStmt.get(series).count;
-        const excess = count - Math.max(Number(hardCap) || 1, 1);
-        if (excess > 0) deleteOldestStmt.run(series, excess);
+        const now = Number(currentTime());
+        deleteBeforeStmt.run(series, now - days * 86400000);
+        const emergency = emergencyDownsampleHistory(series, hardCap, now);
+        capacityState.history_raw_cap = Math.max(Number(hardCap) || 1, 1);
+        capacityState.history_pressure[series] = emergency.pressure;
     }
 
     function prune(series, keepDays = 30, hardCap = 100000) {
@@ -2420,18 +2572,25 @@ function createHistoryDb(dataDir, options = {}) {
                 attemptCount: row.attempt_count
             })));
         },
-        cleanup(keepDays = 30, hardCap = 100000, { batchSize = 100 } = {}) {
+        cleanup(keepDays = 30, hardCap = 100000, { batchSize = 100, telemetryHardCap = hardCap, now: requestedNow } = {}) {
             if (cleanupState.inflight) return cleanupState.inflight;
             cleanupState.inflight = (async () => {
                 const started = performance.now();
+                const now = Number.isFinite(Number(requestedNow)) ? Number(requestedNow) : Number(currentTime());
+                const retentionDays = Math.max(Number(keepDays) || 1, 1);
+                const historyCap = Math.max(Number(hardCap) || 1, 1);
+                const telemetryCap = Math.max(Number(telemetryHardCap) || historyCap, 1);
+                const retentionCutoff = now - retentionDays * 86400000;
                 const diagnostics = {
                     started_at: new Date().toISOString(), completed_at: null, duration_ms: null,
-                    rows_processed: 0, rows_deleted: 0, rollups_created: 0, last_error: null
+                    rows_processed: 0, rows_deleted: 0, rollups_created: 0, last_error: null,
+                    retention_days: retentionDays,
+                    raw_caps: { history: historyCap, telemetry: telemetryCap },
+                    raw_pressure: { history: {}, telemetry: false }
                 };
                 cleanupState.last = diagnostics;
                 try {
                     flush();
-                    const now = Date.now();
                     for (const series of HISTORY_SERIES) {
                         for (;;) {
                             const result = db.transaction(() => rollupSeriesBatch(series, keepDays, now))();
@@ -2441,9 +2600,25 @@ function createHistoryDb(dataDir, options = {}) {
                             if (result.processed < ROLLUP_BATCH_BUCKETS) break;
                             await new Promise(resolve => setImmediate(resolve));
                         }
-                        diagnostics.rows_deleted += db.transaction(() => (
-                            deleteHistoryRollupStmt.run(series, now - Math.max(Number(keepDays) || 1, 1) * 86400000).changes
-                        ))();
+                        for (const [resolution, windowMs] of Object.entries(ROLLUP_WINDOWS)) {
+                            diagnostics.rows_deleted += db.transaction(() => (
+                                deleteExpiredHistoryRollupStmt.run(series, resolution, windowMs, retentionCutoff).changes
+                            ))();
+                        }
+                        for (;;) {
+                            const amount = Math.max(Number(batchSize) || 100, 1);
+                            const removed = db.transaction(() => deleteBeforeBatchStmt.run(series, retentionCutoff, amount).changes)();
+                            diagnostics.rows_deleted += removed;
+                            if (removed < amount) break;
+                            await new Promise(resolve => setImmediate(resolve));
+                        }
+                        const emergency = db.transaction(() => emergencyDownsampleHistory(series, historyCap, now))();
+                        diagnostics.rows_processed += emergency.processed;
+                        diagnostics.rows_deleted += emergency.deleted;
+                        diagnostics.rollups_created += emergency.created;
+                        diagnostics.raw_pressure.history[series] = emergency.pressure;
+                        capacityState.history_raw_cap = historyCap;
+                        capacityState.history_pressure[series] = emergency.pressure;
                         await new Promise(resolve => setImmediate(resolve));
                     }
                     for (;;) {
@@ -2454,29 +2629,28 @@ function createHistoryDb(dataDir, options = {}) {
                         if (result.processed < ROLLUP_BATCH_BUCKETS) break;
                         await new Promise(resolve => setImmediate(resolve));
                     }
-                    diagnostics.rows_deleted += db.transaction(() => (
-                        deleteOldUnifiTelemetryRollupStmt.run(now - Math.max(Number(keepDays) || 1, 1) * 86400000).changes
-                    ))();
-                    const cutoff = now - RAW_RETENTION_MS;
-                    const cap = Math.max(Number(hardCap) || 1, 1);
-                    for (const series of HISTORY_SERIES) {
-                        let excess = countPointsStmt.get(series).count - cap;
-                        while (excess > 0) {
-                            const amount = Math.min(excess, Math.max(Number(batchSize) || 100, 1));
-                            const removed = db.transaction(() => deleteOldestStmt.run(series, amount).changes)();
-                            diagnostics.rows_deleted += removed;
-                            excess -= removed;
-                            if (!removed) break;
-                            await new Promise(resolve => setImmediate(resolve));
-                        }
+                    for (const [resolution, windowMs] of Object.entries(ROLLUP_WINDOWS)) {
+                        diagnostics.rows_deleted += db.transaction(() => (
+                            deleteExpiredUnifiTelemetryRollupStmt.run(resolution, windowMs, retentionCutoff).changes
+                        ))();
                     }
                     for (;;) {
                         const amount = Math.max(Number(batchSize) || 100, 1);
-                        const removed = db.transaction(() => deleteUnifiTelemetryBatchStmt.run(cutoff, cutoff, amount).changes)();
+                        const removed = db.transaction(() => deleteUnifiTelemetryBatchStmt.run(retentionCutoff, retentionCutoff, amount).changes)();
                         diagnostics.rows_deleted += removed;
                         if (removed < amount) break;
                         await new Promise(resolve => setImmediate(resolve));
                     }
+                    const emergency = db.transaction(() => emergencyDownsampleUnifiTelemetry(telemetryCap, now))();
+                    diagnostics.rows_processed += emergency.processed;
+                    diagnostics.rows_deleted += emergency.deleted;
+                    diagnostics.rollups_created += emergency.created;
+                    capacityState.telemetry_raw_cap = telemetryCap;
+                    capacityState.telemetry_raw_count = countUnifiTelemetryStmt.get().count;
+                    capacityState.telemetry_rollup_count = countUnifiTelemetryRollupsStmt.get().count;
+                    capacityState.telemetry_emergency_rollups += emergency.created;
+                    capacityState.telemetry_pressure = capacityState.telemetry_raw_count > telemetryCap;
+                    diagnostics.raw_pressure.telemetry = capacityState.telemetry_pressure;
                     try { db.pragma('incremental_vacuum(200)'); } catch { }
                     diagnostics.completed_at = new Date().toISOString();
                     diagnostics.duration_ms = Number((performance.now() - started).toFixed(2));
@@ -2522,6 +2696,15 @@ function createHistoryDb(dataDir, options = {}) {
                         started_at: null, completed_at: null, duration_ms: null,
                         rows_processed: 0, rows_deleted: 0, rollups_created: 0, last_error: null,
                         in_flight: Boolean(cleanupState.inflight)
+                    },
+                    capacity: {
+                        history_raw_cap: capacityState.history_raw_cap,
+                        history_pressure: { ...capacityState.history_pressure },
+                        telemetry_raw_cap: capacityState.telemetry_raw_cap,
+                        telemetry_raw_count: capacityState.telemetry_raw_count,
+                        telemetry_rollup_count: capacityState.telemetry_rollup_count,
+                        telemetry_emergency_rollups: capacityState.telemetry_emergency_rollups,
+                        telemetry_pressure: capacityState.telemetry_pressure
                     }
                 };
             } catch (error) {

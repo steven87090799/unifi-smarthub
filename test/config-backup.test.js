@@ -108,7 +108,16 @@ test('v2 backup streams a large snapshot, stages restore, and rejects truncation
     assert.deepEqual(await destinationService.stageRestoreV2File(backupFile, 'RESTORE'), {
         staged: true, restartRequired: true, secretsRestored: false, backupVersion: 2
     });
-    const applied = applyPendingRestore({ dataDir: destination });
+    const originalReadFileSync = fs.readFileSync;
+    let wholeDatabaseRead = false;
+    fs.readFileSync = function guardedReadFile(file, ...args) {
+        if (path.basename(String(file)) === 'smarthub.db' && String(file).includes('.restore-pending')) wholeDatabaseRead = true;
+        return originalReadFileSync.call(this, file, ...args);
+    };
+    let applied;
+    try { applied = applyPendingRestore({ dataDir: destination }); }
+    finally { fs.readFileSync = originalReadFileSync; }
+    assert.equal(wholeDatabaseRead, false);
     assert.equal(applied.applied, true);
     const restored = new Database(path.join(destination, 'smarthub.db'), { readonly: true });
     assert.equal(restored.pragma('quick_check')[0].quick_check, 'ok');

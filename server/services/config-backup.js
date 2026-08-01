@@ -16,6 +16,7 @@ const MAX_DATABASE_BYTES = 43 * 1024 * 1024;
 const DEFAULT_V2_MAX_BYTES = 512 * 1024 * 1024;
 const MAX_V2_MAX_BYTES = 1024 * 1024 * 1024;
 const MAX_CONFIG_FILE_BYTES = 1024 * 1024;
+const DATABASE_HASH_BUFFER_BYTES = 1024 * 1024;
 const PENDING_DIR_NAME = '.restore-pending';
 const TRANSACTION_FILE_NAME = '.restore-transaction.json';
 const BACKUP_DIR_NAME = 'restore-backups';
@@ -223,6 +224,24 @@ function sha256File(file) {
     });
 }
 
+function sha256FileSync(file) {
+    const descriptor = fs.openSync(file, 'r');
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(DATABASE_HASH_BUFFER_BYTES);
+    let position = 0;
+    try {
+        for (;;) {
+            const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, position);
+            if (bytesRead === 0) break;
+            hash.update(buffer.subarray(0, bytesRead));
+            position += bytesRead;
+        }
+        return hash.digest('hex');
+    } finally {
+        fs.closeSync(descriptor);
+    }
+}
+
 async function writeArchiveEntry(stream, name, file) {
     const stat = fs.statSync(file);
     const header = Buffer.from(`${JSON.stringify({ name, bytes: stat.size })}\n`);
@@ -290,7 +309,7 @@ function applyPendingRestore(options) {
     if (!pending || pending.version !== 1 || !Array.isArray(pending.files)) throw new Error('invalid pending restore metadata');
     const stagedDatabase = path.join(pendingDirectory, 'smarthub.db');
     validateDatabaseFile(stagedDatabase, { maxBytes: pending.databaseMaxBytes || MAX_DATABASE_BYTES });
-    if (sha256(fs.readFileSync(stagedDatabase)) !== pending.databaseSha256) throw new Error('pending database integrity check failed');
+    if (sha256FileSync(stagedDatabase) !== pending.databaseSha256) throw new Error('pending database integrity check failed');
     for (const name of pending.files) {
         if (!RESTORABLE_FILES.includes(name)) throw new Error(`unsafe pending restore file ${name}`);
         const bytes = fs.readFileSync(path.join(pendingDirectory, name));

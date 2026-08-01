@@ -57,6 +57,19 @@ test('an explicitly trusted loopback proxy may assert HTTPS and receives a Secur
     assert.match(response.headers.get('set-cookie') || '', /Secure/u);
 });
 
+test('explicit insecure migration mode keeps HTTP transport and session cookie semantics consistent', async t => {
+    const harness = await createHarness({ requireHttps: true, allowInsecureHttp: true });
+    t.after(harness.close);
+    assert.equal(harness.boundary.getState().enforceHttps, false);
+    const response = await fetch(`${harness.origin}/api/auth/login`, {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin-secret', remember: false })
+    });
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(response.headers.get('set-cookie') || '', /Secure/u);
+});
+
 test('admin can read and write with same-origin CSRF proof', async t => {
     const harness = await createHarness();
     t.after(harness.close);
