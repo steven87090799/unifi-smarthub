@@ -57,12 +57,12 @@ The short soak uses only loopback fake Controller／NAS Monitor servers and does
 | Metric | Value |
 |---|---:|
 | Duration | 90,000 ms |
-| RSS start / peak / end | 94,453,760 / 112,279,552 / 112,246,784 bytes |
-| Heap start / peak / end | 19,574,024 / 28,549,272 / 21,834,264 bytes |
-| External start / peak / end | 4,027,744 / 13,375,314 / 8,482,372 bytes |
+| RSS start / peak / end | 93,798,400 / 108,363,776 / 108,363,776 bytes |
+| Heap start / peak / end | 19,780,160 / 28,901,576 / 22,615,096 bytes |
+| External start / peak / end | 4,027,744 / 12,944,365 / 9,630,317 bytes |
 | Active handles peak | 13 |
-| Active requests peak | 3 |
-| Requests | 1,851 |
+| Active requests peak | 1 |
+| Requests | 1,883 |
 | SSE clients | 3 |
 | Active upstream SSE at end | 0 |
 
