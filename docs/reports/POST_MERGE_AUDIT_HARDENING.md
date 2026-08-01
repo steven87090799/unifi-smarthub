@@ -64,7 +64,7 @@ hosted run do not prove the current branch head.
 - `FOLLOW_UP_BRANCH`: `fix/post-merge-audit-hardening`
 - `FOLLOW_UP_PR`: `#14` (`main` base, Draft/Open/unmerged)
 - `FOLLOW_UP_START_HEAD`: `7da2a96e4ca3c1b2cf7e76bce015aa7eefe03286`
-- `FOLLOW_UP_IMPLEMENTATION_HEAD`: `a58aff3` (`fix: harden WiiM and frontend lifecycle follow-up`)
+- `FOLLOW_UP_IMPLEMENTATION_HEAD`: `a58aff3` (`fix: harden WiiM and frontend lifecycle follow-up`); `e8d35f9` is the follow-up CSS utility-scan compatibility fix before the final documentation head.
 - `FOLLOW_UP_SCOPE`: WiiM numeric DNS pin／mapped and compatible IPv6 policy／redirect and HTTP boundaries／bounded artwork fetcher; typed WiiM live/fresh/stale/unreachable state; finite temperature parsing; hydration/SSE/pinned lifecycle; heartbeat ordering; resolved Network TLS policy; clearable path metadata.
 - `FOLLOW_UP_BEHAVIOR_TESTS`: `test/frontend-lifecycle.test.js` exercises pending hydration, common-job scheduling, partial retry, generation-scoped resources, and observer teardown; `test/wiim-art-proxy.test.js` includes a real local pinned socket request.
 - `FOLLOW_UP_TARGETED_VALIDATION`: PASS for syntax, `git diff --check`, frontend lifecycle/WiiM/artwork/heartbeat/query/TLS/write-route targeted suites; production and mock route contracts both passed. Full release gates are recorded only after the final documentation commit.
