@@ -1,4 +1,4 @@
-FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
+FROM node:26.5.0-alpine@sha256:e88a35be04478413b7c71c455cd9865de9b9360e1f43456be5951032d7ac1a66
 
 # tini 作為 PID 1，正確處理訊號與殭屍程序 (SSH 子連線清理)
 # nut：提供 upsc 客戶端，容器內才能讀取 NAS/主機上 NUT server 的 UPS 數據 (UPS_SOURCE=nut)
