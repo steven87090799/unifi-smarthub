@@ -4,8 +4,8 @@
 Repository：`steven87090799/unifi-smarthub`  
 Branch：`fix/production-long-run-hardening`  
 START_MAIN_SHA：`1f931756a1599eb2f239f998b8812edd75d15847`  
-FINAL_HEAD_SHA：`af4f6cc4fa2b6ab0b583da1fb2322fabb240c3ee`（最後程式／測試提交；此後僅更新本報告的交付 metadata）
-PR：Draft PR to `main`；本地已準備但尚未建立（push 被 OAuth `workflow` scope 拒絕）
+PR：[#7](https://github.com/steven87090799/unifi-smarthub/pull/7)，Draft／Open，target `main`
+Hosted final-head gate：必須在目前 PR HEAD 上取得 PASS 才能 Ready／Merge；GitHub PR #7 checks 是 live source of truth。
 
 ## 結論
 
@@ -20,10 +20,12 @@ PR：Draft PR to `main`；本地已準備但尚未建立（push 被 OAuth `workf
 | SSH identity | UCG／Linux 未驗 host key，device pinning 不一致 | shared fingerprint policy；configured integration missing／mismatch fail closed；per-device diagnostics |
 | Session recovery | cached controller cookie／CSRF 過期後沒有 bounded recovery | auth-specific invalidate、single-flight login、safe GET retry once；NoPermission／timeout 不誤重送 |
 | Panel transport | HTTP 3000 與 forwarded headers 可能繞過 secure cookie／HTTPS policy | explicit HTTPS policy、trusted proxy allowlist、health-only local bypass、Secure／HttpOnly／SameSite 保留 |
-| Long-term history | raw hard cap 會在 retention window 前先刪掉舊資料 | raw tail、hierarchical rollups、weighted numeric aggregation、null preservation、point budget |
+| Long-term history | raw hard cap 會在 retention window 前先刪掉舊資料，tier crossing 只掃 raw | transactional raw→1m→5m→1h promotion、complete-bucket upsert/delete、delayed-cleanup query fallback、weighted numeric aggregation、null preservation |
+| Telemetry emergency cap | global row cap 可能在 rollup 前直接刪除 raw telemetry | separate observable cap、complete raw bucket emergency downsample、no blind oldest-row deletion、per-device continuity |
 | SQLite cleanup | 大批量同步清理可能長時間 block event loop | bounded batches、event-loop yield、coalesced cleanup、diagnostic counters |
-| Backup memory | v1 whole-file + Base64 + JSON duplicated heap | streaming backup v2、manifest／SHA256／quick_check、staging、atomic replacement、rollback |
-| Shutdown／SSE | upstream、SSE slow clients、pending jobs 沒有一致 drain boundary | explicit app grace、agent／SSE cleanup、bounded writer／eviction、WAL checkpoint |
+| Backup memory | v1 whole-file + Base64 + JSON duplicated heap；v2 restore hash 仍可能整檔讀 DB | streaming backup v2、bounded 1 MiB synchronous DB hashing、manifest／SHA256／quick_check、staging、atomic replacement、rollback |
+| Shutdown／SSE | upstream、SSE slow clients、pending jobs 沒有一致 drain boundary；capacity rejection 在 response 已開始後才發生 | explicit app grace、admission-before-headers、bounded writer／eviction、WAL checkpoint |
+| UniFi relogin | retry headers 可殘留上一個 session 的 CSRF token | case-insensitive header rebuild；fresh token only；no stale token when login omits CSRF |
 | Long-run evidence | runtime smoke 不能代表 soak | current-architecture `scripts/runtime-soak.js`，CI blocking 90 秒，30m／24h／72h separately NOT RUN |
 | Operational visibility | process health 與 external dependency outage 混在一起 | authenticated `/health/operational`，freshness／failures／cooldown；container probe 不因外部 outage restart |
 | Supply chain／containers | image tag、actions、SBOM／scan 證據不足 | Node/Docker/action pinning、Dependabot、OCI labels、pinned Trivy SBOM + HIGH/CRITICAL scan、no production `latest` |
@@ -35,17 +37,18 @@ PR：Draft PR to `main`；本地已準備但尚未建立（push 被 OAuth `workf
 | Gate | Result | Evidence |
 |---|---|---|
 | `npm ci` | PASS | 282 packages installed; no `--force` |
-| `npm run check:js` | PASS | 154 files |
-| `npm test` | PASS | 598/598, 0 fail |
+| `npm run check:js` | PASS | 156 files |
+| `npm test` | PASS | 605/605, 0 fail |
 | `npm run check:css` | PASS | checked-in CSS |
 | `npm audit --audit-level=low` | PASS | 0 vulnerabilities |
 | `npm run test:smoke` | PASS | health／ready 200、CSRF／readonly 403、two SIGTERM exits 0 |
 | `npm run test:soak` | PASS | 90,000 ms blocking CI-equivalent short soak |
 | Compose config (default/profile) | PASS | both `config --quiet` |
 | SmartHub／NAS Monitor Docker build | PASS | Node 24.18.0 Alpine exact digest |
+| `npm run release:build` (isolated clean worktree) | PASS | clean detached worktree; user untracked file preserved |
 | SBOM and HIGH/CRITICAL image scan | PASS | pinned Trivy digest; both images exit 0 |
 | `git diff --check` | PASS | no whitespace errors |
-| Hosted `SmartHub CI / Repository gate` | NOT RUN | push rejected because the active OAuth token lacks `workflow` scope |
+| Hosted `SmartHub CI / Repository gate` | MUST PASS ON CURRENT PR HEAD | live result is tracked by GitHub PR #7; an older green SHA is not final-head evidence |
 
 ## Short soak evidence
 
@@ -106,4 +109,4 @@ All of the following remain **NOT RUN**: real UniFi／NAS／UPS／AdGuard／Linu
 
 ## Delivery status
 
-The required delivery terminal state is a pushed `fix/production-long-run-hardening` branch with a Draft PR targeting `main`, no merge. The local branch is complete through the recorded implementation head, but GitHub rejected the push because the active OAuth token has `gist`, `read:org`, and `repo` scopes without `workflow`; therefore hosted CI and PR creation are **NOT RUN**. Re-authenticate with `workflow` scope, push the exact branch head, then create the Draft PR. An unpushed local commit is not hosted-CI evidence.
+PR #7 is the single Draft PR for this work and targets `main`; it must remain Draft and unmerged. The branch is pushed normally. Before Ready or Merge, inspect the live PR checks and require `SmartHub CI / Repository gate` to be PASS on the exact current PR HEAD. The previous green result for an older SHA is historical evidence only.
