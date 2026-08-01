@@ -9,7 +9,7 @@
 | Repository | `steven87090799/unifi-smarthub` |
 | Branch | `fix/production-long-run-hardening` |
 | START_MAIN_SHA | `1f931756a1599eb2f239f998b8812edd75d15847` |
-| FINAL_HEAD_SHA | 交付最後提交後以最終 `git rev-parse HEAD` 記錄 |
+| FINAL_HEAD_SHA | `af4f6cc4fa2b6ab0b583da1fb2322fabb240c3ee`（最後程式／測試提交） |
 | PR | Draft PR to `main`; 不自動 merge |
 | Runtime baseline | Node.js `24.18.x`；Docker base image exact patch + digest |
 

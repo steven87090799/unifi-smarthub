@@ -4,7 +4,7 @@
 Repository：`steven87090799/unifi-smarthub`  
 Branch：`fix/production-long-run-hardening`  
 START_MAIN_SHA：`1f931756a1599eb2f239f998b8812edd75d15847`  
-FINAL_HEAD_SHA：交付最後提交後以 `git rev-parse HEAD` 填入  
+FINAL_HEAD_SHA：`af4f6cc4fa2b6ab0b583da1fb2322fabb240c3ee`（最後程式／測試提交；此後僅更新本報告的交付 metadata）
 PR：Draft PR to `main`；不 merge
 
 ## 結論
@@ -54,12 +54,12 @@ The short soak uses only loopback fake Controller／NAS Monitor servers and does
 | Metric | Value |
 |---|---:|
 | Duration | 90,000 ms |
-| RSS start / peak / end | 94,240,768 / 101,220,352 / 83,755,008 bytes |
-| Heap start / peak / end | 19,504,352 / 29,066,608 / 21,311,688 bytes |
-| External start / peak / end | 4,028,160 / 12,355,387 / 7,400,115 bytes |
-| Active handles peak | 10 |
-| Active requests peak | 1 |
-| Requests | 1,852 |
+| RSS start / peak / end | 94,453,760 / 112,279,552 / 112,246,784 bytes |
+| Heap start / peak / end | 19,574,024 / 28,549,272 / 21,834,264 bytes |
+| External start / peak / end | 4,027,744 / 13,375,314 / 8,482,372 bytes |
+| Active handles peak | 13 |
+| Active requests peak | 3 |
+| Requests | 1,851 |
 | SSE clients | 3 |
 | Active upstream SSE at end | 0 |
 
