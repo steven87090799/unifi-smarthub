@@ -1038,7 +1038,7 @@
                 delete pollStartTimers[k];
                 const pageJobs = PAGE_POLL_JOBS[currentPage] || [];
                 if (!frontendLifecycle.shouldSchedulePollJob({
-                    visible: document.visibilityState === 'visible',
+                    isVisible: document.visibilityState === 'visible',
                     configured: Boolean(frontendPollingSettings),
                     hydrationPending: hydrationInFlight.has(currentPage),
                     common: COMMON_POLL_JOBS.has(k),

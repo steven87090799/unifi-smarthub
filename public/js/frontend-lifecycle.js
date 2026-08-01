@@ -125,8 +125,8 @@
         };
     }
 
-    function shouldSchedulePollJob({ visible, configured, hydrationPending, common, pageJobs = [], key } = {}) {
-        if (!visible || !configured) return false;
+    function shouldSchedulePollJob({ isVisible, configured, hydrationPending, common, pageJobs = [], key } = {}) {
+        if (!isVisible || !configured) return false;
         if (hydrationPending && !common) return false;
         return common || pageJobs.includes(key);
     }

@@ -35,8 +35,8 @@ test('hydration is structured, safe while pending, and retries only failed jobs'
 
     const first = coordinator.hydratePage('nas', { generation: 1 });
     assert.equal(coordinator.isInFlight('nas'), true);
-    assert.equal(shouldSchedulePollJob({ visible: true, configured: true, hydrationPending: true, common: true, key: 'heartbeat' }), true);
-    assert.equal(shouldSchedulePollJob({ visible: true, configured: true, hydrationPending: true, common: false, pageJobs: ['nasAlerts'], key: 'nasAlerts' }), false);
+    assert.equal(shouldSchedulePollJob({ isVisible: true, configured: true, hydrationPending: true, common: true, key: 'heartbeat' }), true);
+    assert.equal(shouldSchedulePollJob({ isVisible: true, configured: true, hydrationPending: true, common: false, pageJobs: ['nasAlerts'], key: 'nasAlerts' }), false);
     pending.resolve();
     const firstResult = await first;
     assert.equal(firstResult.loaded, false);
