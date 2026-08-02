@@ -13,14 +13,13 @@
     "start": "node server.js",
     "test": "node --test --test-concurrency=4 test/*.test.js",
     "test:smoke": "node scripts/runtime-smoke.js",
-    "test:soak": "node scripts/runtime-soak.js --duration-ms=${SOAK_DURATION_MS:-90000}",
+    "test:soak": "node scripts/runtime-soak.js",
     "release:build": "node scripts/release-build.js"
   },
   "dependencies": {
     "axios": "^1.7.2",
     "better-sqlite3": "^12.11.1",
     "chart.js": "4.5.1",
-    "cors": "^2.8.5",
     "d3": "7.9.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

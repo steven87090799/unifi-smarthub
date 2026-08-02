@@ -191,6 +191,9 @@ test('connection updates reject .env injection, bad types, oversized values, and
         { key: 'UNIFI_CONTROLLER_URL' },
         { key: 'UNIFI_NETWORK_API_URL' },
         { key: 'UNIFI_NETWORK_TLS_VERIFY' },
+        { key: 'UNIFI_NETWORK_TLS_INSECURE' },
+        { key: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP' },
+        { key: 'UNIFI_NETWORK_CA_FILE' },
         { key: 'UNIFI_NETWORK_SITE_ID' },
         { key: 'UNIFI_THREAT_BLOCK_LIST_ID' },
         { key: 'UNIFI_THREAT_BLOCK_LIST_NAME' },
@@ -244,6 +247,10 @@ test('connection updates reject .env injection, bad types, oversized values, and
         PASSWORD: 'spaces and # are data'
     });
     assert.deepEqual(parseConnectionUpdates({ PASSWORD: '   ' }, fields), {});
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: '   ' }, fields), {});
+    assert.deepEqual(parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: '   ' }, fields.map(field => field.key === 'UNIFI_NETWORK_CA_FILE' ? { ...field, clearable: true } : field)), {
+        UNIFI_NETWORK_CA_FILE: ''
+    });
 
     for (const injection of ['safe\nEVIL=1', 'safe\rEVIL=1', 'safe\r\nEVIL=1', 'safe\0EVIL=1']) {
         validationError(() => parseConnectionUpdates({ PASSWORD: injection }, fields), 'PASSWORD');
@@ -261,6 +268,12 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration?key=leak' }, fields), 'UNIFI_NETWORK_API_URL');
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080' }, fields).UNIFI_NETWORK_API_URL, 'http://127.0.0.1:8080');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_VERIFY: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_VERIFY');
+    assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_TLS_INSECURE: 'true' }, fields).UNIFI_NETWORK_TLS_INSECURE, 'true');
+    assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'true' }, fields).UNIFI_NETWORK_ALLOW_INSECURE_HTTP, 'true');
+    assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: '/etc/ssl/certs/network-ca.pem' }, fields).UNIFI_NETWORK_CA_FILE, '/etc/ssl/certs/network-ca.pem');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_INSECURE: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_INSECURE');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'TRUE' }, fields), 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP');
+    validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: 'relative.pem' }, fields), 'UNIFI_NETWORK_CA_FILE');
     validationError(() => parseConnectionUpdates({ ADGUARD_URL: 'https://adguard.internal/control' }, fields), 'ADGUARD_URL');
     validationError(() => parseConnectionUpdates({ ADGUARD_URL: 'https://adguard.internal?key=leak' }, fields), 'ADGUARD_URL');
     validationError(() => parseConnectionUpdates({ ADGUARD_ALLOW_INSECURE_HTTP: '1' }, fields), 'ADGUARD_ALLOW_INSECURE_HTTP');
@@ -281,6 +294,14 @@ test('connection updates reject .env injection, bad types, oversized values, and
         validationError(() => parseConnectionUpdates({ ADGUARD_CA_FILE: attack }, fields), 'ADGUARD_CA_FILE');
     }
     validationError(() => parseConnectionUpdates({ WAN_IFACE: 'eth0;id' }, fields), 'WAN_IFACE');
+});
+
+test('optional WiiM accepts literal addresses and an explicit empty clear', () => {
+    const fields = [{ key: 'WIIM_IP' }];
+    assert.equal(parseConnectionUpdates({ WIIM_IP: '192.168.0.170' }, fields).WIIM_IP, '192.168.0.170');
+    assert.equal(parseConnectionUpdates({ WIIM_IP: '[fd00::170]' }, fields).WIIM_IP, 'fd00::170');
+    assert.deepEqual(parseConnectionUpdates({ WIIM_IP: '' }, fields), { WIIM_IP: '' });
+    validationError(() => parseConnectionUpdates({ WIIM_IP: 'wiim.local' }, fields), 'WIIM_IP');
 });
 
 test('quoted .env serialization round-trips spaces, hashes, equals, quotes, and backslashes', () => {

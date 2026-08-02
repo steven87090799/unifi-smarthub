@@ -6,7 +6,7 @@ const CANONICAL_DECIMAL = /^(?:0|[1-9][0-9]*)$/u;
 const CONTROL_OR_WHITESPACE = /[\s\u0000-\u001f\u007f-\u009f]/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const SAFE_PATH_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u;
-const ACTIVITY_SCOPES = Object.freeze(['general', 'trend', 'ucg', 'nas', 'wiim', 'linux', 'ups']);
+const ACTIVITY_SCOPES = Object.freeze(['general', 'trend', 'ucg', 'unifi-device-telemetry', 'nas', 'wiim', 'linux', 'ups']);
 
 const QUERY_LIMITS = Object.freeze({
     nasLogsPage: Object.freeze({ defaultValue: 0, min: 0, max: 1000000 }),
@@ -199,7 +199,7 @@ function parseAdGuardQueryLogQuery(query) {
 }
 
 function parseHeartbeatQuery(query) {
-    exactQuery(query, { allowed: ['scope', 'focus', 'session'] });
+    exactQuery(query, { allowed: ['scope', 'focus', 'session', 'seq'] });
     const rawScope = scalarQueryValue(query.scope, { field: 'scope', defaultValue: '' });
     if (CONTROL_OR_WHITESPACE.test(rawScope)) reject('scope must not contain whitespace or control characters', 'scope');
     const scopes = rawScope === '' ? [] : rawScope.split(',');
@@ -212,7 +212,8 @@ function parseHeartbeatQuery(query) {
         focus: binaryFlagValue(query.focus, { field: 'focus', defaultValue: false }),
         session: query.session === undefined ? 'legacy' : safePathIdentifierValue(query.session, {
             field: 'session', max: 128
-        })
+        }),
+        seq: canonicalDecimalValue(query.seq, { field: 'seq', defaultValue: 0, max: Number.MAX_SAFE_INTEGER })
     };
 }
 

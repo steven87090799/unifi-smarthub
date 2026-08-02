@@ -5,14 +5,16 @@ SmartHub 透過 LinkPlay `httpapi.asp` 讀取 WiiM 狀態並執行受限控制�
 ## 連線與取樣
 
 ```env
-WIIM_IP=192.168.0.170
+WIIM_IP=
 ```
 
-- 先嘗試 `https://<ip>/httpapi.asp?command=...`，再回退 HTTP；單次 timeout 3 秒。
-- HTTPS 目前接受設備自簽憑證，只應在可信內網使用。
-- 常用唯讀指令有 2 秒快取；失聯時可回最後一筆快取，但正式狀態標示來源／不可達。
+- `WIIM_IP` 必須是實際 IPv4/IPv6 literal；留空即停用整合，不會啟動取樣、診斷、指令或頁面資料讀取。
+- 先嘗試 `https://<ip>/httpapi.asp?command=...`；只有明確設定 `WIIM_ALLOW_INSECURE_HTTP=true` 才允許 HTTP。
+- `WIIM_TLS_INSECURE=true` 才會對精確設定的 WiiM literal endpoint 停用 HTTPS 憑證驗證；預設仍驗證 TLS。`WIIM_ALLOW_INSECURE_HTTP=true` 只放行精確設定的 WiiM private literal，public artwork CDN 仍必須使用已驗證的 HTTPS。
+- 封面代理固定每一跳 DNS 解析地址，最多跟隨 3 次 redirect、只接受影像 MIME，單項最多 2 MiB；同時最多 4 個 upstream、最多排隊 16 個工作、單次 deadline 7 秒，並使用有項數／總大小／TTL 上限的 LRU 快取與同 key 去重。
+- 常用唯讀指令有 2 秒快取；失聯時最多保留 5 分鐘的 `stale_cache` 顯示資料。stale 不代表在線、不寫入溫度歷史、不觸發成功／恢復通知，也不能回報異動命令成功。
 - `getStatusEx` 的溫度寫入 SQLite；WiiM 頁活動時使用一般裝置取樣設定，預設 5 秒，閒置時回到設定的低頻。
-- 正式服務不把模擬數據寫入歷史。
+- 只有至少一個有限數值溫度欄位才寫入 SQLite；malformed、缺欄位、`NaN`、`Infinity` 與 `null/null` 回應會跳過。正式服務不把模擬數據寫入歷史。
 
 ## SmartHub 路由
 

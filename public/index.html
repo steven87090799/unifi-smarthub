@@ -1047,7 +1047,7 @@
                         class="text-slate-400">UCG-Ultra</span><span class="text-slate-500 mono ml-auto"
                         id="sys-uptime">連線中...</span></div>
                 <div class="flex items-center gap-2 text-[10px]"
-                    title="綠 online=後端已呼叫到 NAS 真實 API；琥珀 demo=顯示展示假資料（未設定 NAS 帳密）；紅=連線失敗（非 PING，是 API 可達性）"><span
+                    title="綠 online=後端已呼叫到 NAS 真實 API；灰=尚未設定；紅=連線失敗（非 PING，是 API 可達性）"><span
                         class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-nas-dot"></span><span
                         class="text-slate-400">UGREEN NAS</span><span class="text-slate-500 mono ml-auto"
                         id="side-nas-state">--</span></div>
@@ -3269,8 +3269,24 @@
                                         id="conn-UNIFI_NETWORK_TLS_VERIFY"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
                                         <option value="true">true（預設；建議）</option>
-                                        <option value="false">false（僅限受信任內網自簽憑證）</option>
+                                        <option value="false">false（必須同時明確啟用 insecure）</option>
                                     </select>
+                                </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">Network CA file（容器內絕對路徑）</label><input
+                                        id="conn-UNIFI_NETWORK_CA_FILE" placeholder="/app/config/unifi-network-ca.pem"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">明確停用 TLS 驗證</label><select id="conn-UNIFI_NETWORK_TLS_INSECURE"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            <option value="false">false（預設）</option><option value="true">true（明確風險）</option>
+                                        </select>
+                                    </div>
+                                    <div><label class="text-[9px] text-slate-500 uppercase font-bold">允許非 loopback HTTP</label><select id="conn-UNIFI_NETWORK_ALLOW_INSECURE_HTTP"
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            <option value="false">false（預設）</option><option value="true">true（明確風險）</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Network Site UUID</label><input
                                         id="conn-UNIFI_NETWORK_SITE_ID" placeholder="00000000-0000-0000-0000-000000000000"
@@ -3602,7 +3618,10 @@
                     <!-- 伺服器端間隔 -->
                     <div
                         class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-4">
-                        <h3 class="text-lg font-bold text-white tracking-wider">⚙️ 伺服器端取樣間隔（秒）</h3>
+                        <div class="flex flex-wrap items-center gap-3">
+                            <h3 class="text-lg font-bold text-white tracking-wider">⚙️ 伺服器端取樣間隔（秒）</h3>
+                            <span id="settings-load-state" class="px-2 py-1 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20">設定載入中</span>
+                        </div>
                         <p class="text-[10px] text-slate-500">後端背景排程，無論誰連線都套用（存於伺服器）。每格下方說明它控制什麼。</p>
                         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -4769,6 +4788,7 @@
         <span id="toast-text"></span>
     </div>
 
+    <script src="/js/frontend-lifecycle.js"></script>
     <script src="/js/app.js"></script>
 </body>
 

@@ -18,7 +18,7 @@
 
     async function fetchWebPushState() {
         const status = document.getElementById('web-push-status');
-        if (!status) return false;
+        if (!status) return { ok: true, data: null };
         const subscribeButton = document.getElementById('web-push-subscribe');
         const unsubscribeButton = document.getElementById('web-push-unsubscribe');
         const isAdmin = document.documentElement.dataset.panelRole === 'admin';
@@ -42,14 +42,14 @@
             subscribeButton.disabled = !isAdmin || !!browserError || !!configuration;
             unsubscribeButton.disabled = !isAdmin || !localSubscription;
             for (const button of [subscribeButton, unsubscribeButton]) button.classList.toggle('opacity-50', button.disabled);
-            return true;
+            return { ok: true, data: state };
         } catch (error) {
             webPushConfig = null;
             status.textContent = `Web Push 狀態讀取失敗：${error.message}`;
             status.className = 'text-[9px] text-red-400';
             subscribeButton.disabled = true;
             unsubscribeButton.disabled = true;
-            return false;
+            return { ok: false, retryable: true, error };
         }
     }
 
@@ -58,7 +58,10 @@
         const browserError = capabilityError();
         if (browserError) return showToast(browserError, true);
         try {
-            if (!webPushConfig?.configured && !await fetchWebPushState()) throw new Error('無法取得 Web Push 設定');
+            if (!webPushConfig?.configured) {
+                const stateResult = await fetchWebPushState();
+                if (stateResult?.ok !== true) throw new Error('無法取得 Web Push 設定');
+            }
             if (!webPushConfig?.configured || !webPushConfig.publicKey) throw new Error('伺服器尚未完成 VAPID 設定');
             const permission = await Notification.requestPermission();
             if (permission !== 'granted') throw new Error(permission === 'denied' ? '通知權限已被拒絕' : '未授予通知權限');

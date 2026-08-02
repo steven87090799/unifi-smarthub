@@ -109,3 +109,18 @@ test('an unreachable WiiM transport is not reported as a successful command', as
     assert.equal(response.status, 502);
     assert.equal((await response.json()).code, ROUTE_CODES.TRANSPORT_FAILED);
 });
+
+test('an unconfigured optional WiiM is rejected before command transport', async t => {
+    const app = express();
+    let called = false;
+    registerWiimCommandRoutes(app, {
+        isConfigured: () => false,
+        execute: async () => { called = true; return 'unexpected'; }
+    });
+    const server = await new Promise(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/wiim/cmd?command=getStatusEx`);
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, ROUTE_CODES.NOT_CONFIGURED);
+    assert.equal(called, false);
+});

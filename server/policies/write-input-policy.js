@@ -401,6 +401,8 @@ const ENUM_FIELDS = Object.freeze({
     NAS_SCHEME: ['http', 'https'],
     NAS_MONITOR_MODE: ['docker_only', 'full'],
     UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
+    UNIFI_NETWORK_TLS_INSECURE: ['true', 'false'],
+    UNIFI_NETWORK_ALLOW_INSECURE_HTTP: ['true', 'false'],
     UNIFI_CONTROLLER_TLS_VERIFY: ['true', 'false'],
     UNIFI_CONTROLLER_TLS_INSECURE: ['true', 'false'],
     UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP: ['true', 'false'],
@@ -458,11 +460,20 @@ function parseConnectionUpdates(body, fields) {
     const updates = {};
     for (const [key, raw] of Object.entries(body)) {
         if (typeof raw !== 'string') reject(`${key} must be a string`, key);
-        if (raw.trim() === '') continue;
         const definition = definitions.get(key);
+        // Optional WiiM is explicitly clearable; other blank fields retain the
+        // existing "leave unchanged" contract for secret/configuration inputs.
+        if (raw.trim() === '') {
+            if (definition?.clearable || key === 'WIIM_IP') updates[key] = '';
+            continue;
+        }
         const max = definition.secret ? 4096 : 2048;
         let value = stringValue(raw, { field: key, min: 1, max });
         if (PORT_FIELDS.has(key)) value = canonicalPort(value, key);
+        else if (key === 'WIIM_IP') {
+            value = value.replace(/^\[|\]$/gu, '');
+            if (net.isIP(value) === 0) reject('WIIM_IP must be a literal IPv4 or IPv6 address', key);
+        }
         else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_HOST_KEYS') value = unifiDeviceSshHostKeysValue(value, key);
         else if (['UCG_SSH_HOST_KEY', 'LINUX_SSH_HOST_KEY'].includes(key)) {
@@ -493,7 +504,7 @@ function parseConnectionUpdates(body, fields) {
             value = stringValue(value, { field: key, min: 1, max: 32, pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u });
         } else if (key === 'NUT_UPS_NAME') {
             value = stringValue(value, { field: key, min: 1, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u });
-        } else if (['PPB_CA_FILE', 'UNIFI_CONTROLLER_CA_FILE', 'NAS_CA_FILE'].includes(key)) {
+        } else if (['PPB_CA_FILE', 'UNIFI_CONTROLLER_CA_FILE', 'NAS_CA_FILE', 'UNIFI_NETWORK_CA_FILE'].includes(key)) {
             value = stringValue(value, {
                 field: key,
                 min: 2,

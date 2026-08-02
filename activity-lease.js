@@ -21,6 +21,7 @@ function createActivityLease({
     // Each browser tab owns its own set of leases.  Releasing one hidden tab
     // must not make another visible tab look idle.
     const sessions = new Map();
+    const lastSequences = new Map();
     let evictions = 0;
     let expiredSessionsRemoved = 0;
 
@@ -37,6 +38,7 @@ function createActivityLease({
             }
             if (leases.size === 0) {
                 sessions.delete(sessionId);
+                lastSequences.delete(sessionId);
                 expiredSessionsRemoved += 1;
             }
         }
@@ -52,12 +54,32 @@ function createActivityLease({
         const oldest = sessions.keys().next().value;
         if (oldest === undefined) return;
         sessions.delete(oldest);
+        lastSequences.delete(oldest);
         evictions += 1;
     }
 
-    function mark(scopeList, requestedMs, { replace = false, sessionId = 'legacy' } = {}) {
+    function mark(scopeList, requestedMs, { replace = false, sessionId = 'legacy', sequence = 0 } = {}) {
         const nowMs = now();
         prune(nowMs);
+        const key = String(sessionId || 'legacy');
+        const candidateSequence = Number(sequence);
+        const sequenced = Number.isSafeInteger(candidateSequence) && candidateSequence > 0;
+        const lastSequence = lastSequences.get(key) || 0;
+        if (sequenced && candidateSequence <= lastSequence) {
+            const leases = sessions.get(key);
+            return {
+                accepted: [],
+                activated: [],
+                expiresAt: leases ? Math.max(...leases.values(), nowMs) : nowMs,
+                stale: true,
+                sequence: lastSequence
+            };
+        }
+        if (sequenced) {
+            lastSequences.delete(key);
+            lastSequences.set(key, candidateSequence);
+            while (lastSequences.size > maxSessions) lastSequences.delete(lastSequences.keys().next().value);
+        }
         const expiresAt = nowMs + duration(requestedMs);
         const requested = String(scopeList || '').split(',').map(scope => scope.trim()).filter(Boolean);
         const accepted = [...new Set(requested.filter(scope => allowed.has(scope)))]
@@ -66,7 +88,6 @@ function createActivityLease({
         // The caller can use this to take one prompt sample without letting every
         // five-second heartbeat continually reset its sampling interval.
         const activated = accepted.filter(scope => !isActive(scope));
-        const key = String(sessionId || 'legacy');
         if (replace) sessions.delete(key);
         if (accepted.length) {
             const leases = sessions.get(key) || new Map();
@@ -75,7 +96,7 @@ function createActivityLease({
             ensureCapacity(key);
             refreshSession(key, leases);
         }
-        return { accepted, activated, expiresAt };
+        return { accepted, activated, expiresAt, stale: false, sequence: sequenced ? candidateSequence : lastSequence };
     }
 
     function isActive(scope) {

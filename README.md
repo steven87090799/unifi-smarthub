@@ -11,6 +11,7 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
 - 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
 - 長期硬化報告：[docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md](docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md)
+- Post-merge audit：[docs/reports/POST_MERGE_AUDIT_HARDENING.md](docs/reports/POST_MERGE_AUDIT_HARDENING.md)
 - Production Acceptance：[docs/operations/PRODUCTION_ACCEPTANCE.md](docs/operations/PRODUCTION_ACCEPTANCE.md)
 
 ## 主要能力
@@ -73,6 +74,8 @@ node server-mock.js
 | 面板登入 | `PANEL_PASSWORD`；唯讀帳號另設 `PANEL_READONLY_*` |
 
 沒有設定的整合會顯示未設定或空狀態，不應阻止主服務就緒。
+
+`WIIM_IP` 是選配 literal IP；留空即停用 WiiM，不會產生模擬溫度、播放狀態或診斷資料。
 
 ## 安全與部署邊界
 

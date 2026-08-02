@@ -10,7 +10,8 @@ const ROUTE_CODES = Object.freeze({
     METHOD_NOT_ALLOWED: 'WIIM_COMMAND_METHOD_NOT_ALLOWED',
     CONFIRMATION_REQUIRED: 'WIIM_COMMAND_CONFIRMATION_REQUIRED',
     INVALID_REQUEST: 'WIIM_COMMAND_INVALID_REQUEST',
-    TRANSPORT_FAILED: 'WIIM_COMMAND_TRANSPORT_FAILED'
+    TRANSPORT_FAILED: 'WIIM_COMMAND_TRANSPORT_FAILED',
+    NOT_CONFIGURED: 'WIIM_NOT_CONFIGURED'
 });
 
 function sendError(res, status, code, message) {
@@ -34,9 +35,11 @@ function registerWiimCommandRoutes(app, options = {}) {
     }
     if (typeof options.execute !== 'function') throw new TypeError('WiiM command executor is required');
     const execute = options.execute;
+    const isConfigured = typeof options.isConfigured === 'function' ? options.isConfigured : () => true;
     const onUnexpectedError = typeof options.onUnexpectedError === 'function' ? options.onUnexpectedError : null;
 
     async function run(req, res, decision) {
+        if (!isConfigured()) return sendError(res, 503, ROUTE_CODES.NOT_CONFIGURED, 'WiiM is not configured');
         try {
             const raw = await execute(decision.command, decision, req);
             if (raw == null) throw new Error('WiiM command returned no response');

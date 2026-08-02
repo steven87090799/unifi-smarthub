@@ -1,4 +1,9 @@
-# SmartHub Production Acceptance
+# SmartHub Production Acceptance (Historical PR #7 Matrix)
+
+> This matrix records the historical PR #7 delivery. PR #7 is merged; do not
+> use its branch/check state as evidence for later work. The current
+> post-merge audit and exact final-head evidence belong to
+> `docs/reports/POST_MERGE_AUDIT_HARDENING.md`.
 
 本文件是 `fix/production-long-run-hardening` 的驗收矩陣。它區分本機程式證據、隔離 runtime 證據、hosted CI、真實設備與長期 soak；mock、smoke 或 short soak 不得代替真實設備或 24／72 小時觀察。
 

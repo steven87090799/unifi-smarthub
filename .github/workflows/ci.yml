@@ -66,7 +66,7 @@ jobs:
         timeout-minutes: 5
 
       - name: Run blocking short runtime soak
-        run: SOAK_DURATION_MS=90000 npm run test:soak
+        run: SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak
         timeout-minutes: 5
 
       - name: Generate SBOM and scan built images

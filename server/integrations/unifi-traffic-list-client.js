@@ -1,6 +1,7 @@
 'use strict';
 
 const net = require('node:net');
+const { resolveTlsPolicy } = require('./tls-policy');
 
 const DEFAULT_LIST_NAME = 'SmartHub Threat Blocks';
 const EMPTY_LIST_SENTINEL = '192.0.2.1';
@@ -25,7 +26,7 @@ function configuredValue(value) {
     return typeof value === 'string' && value.trim() !== '' && !/your_/iu.test(value);
 }
 
-function normalizeBaseUrl(value) {
+function normalizeBaseUrl(value, { allowInsecureHttp = false } = {}) {
     let parsed;
     try { parsed = new URL(value); }
     catch { throw new UniFiTrafficListError('UniFi Network API URL is invalid', { code: 'invalid_api_url' }); }
@@ -35,7 +36,7 @@ function normalizeBaseUrl(value) {
     if (parsed.search || parsed.hash) {
         throw new UniFiTrafficListError('UniFi Network API URL must not contain query or fragment data', { code: 'invalid_api_url' });
     }
-    if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)) {
+    if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname) && !allowInsecureHttp) {
         throw new UniFiTrafficListError('UniFi Network API URL must use HTTPS outside loopback', { code: 'insecure_api_url' });
     }
     return parsed.toString().replace(/\/$/u, '');
@@ -43,6 +44,13 @@ function normalizeBaseUrl(value) {
 
 function parseTlsVerify(value) {
     if (value === undefined || value === null || value === '') return true;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return null;
+}
+
+function parseStrictBoolean(value, fallback) {
+    if (value === undefined || value === null || value === '') return fallback;
     if (value === 'true') return true;
     if (value === 'false') return false;
     return null;
@@ -64,12 +72,31 @@ function readConfiguration(environment = process.env) {
     if (typeof listName !== 'string' || listName.trim().length < 1 || listName.trim().length > 128) {
         missing.push('UNIFI_THREAT_BLOCK_LIST_NAME');
     }
+    const tlsInsecure = parseStrictBoolean(environment.UNIFI_NETWORK_TLS_INSECURE, false);
+    const allowInsecureHttp = parseStrictBoolean(environment.UNIFI_NETWORK_ALLOW_INSECURE_HTTP, false);
     if (tlsVerify === null) missing.push('UNIFI_NETWORK_TLS_VERIFY');
+    if (tlsInsecure === null) missing.push('UNIFI_NETWORK_TLS_INSECURE');
+    if (allowInsecureHttp === null) missing.push('UNIFI_NETWORK_ALLOW_INSECURE_HTTP');
+    if (tlsVerify === false && tlsInsecure !== true) missing.push('UNIFI_NETWORK_TLS_INSECURE');
     let baseUrl = null;
+    let tlsPolicy = null;
     if (missing.length === 0) {
         const source = explicitUrl || `${controllerUrl.replace(/\/$/u, '')}/proxy/network/integration`;
-        try { baseUrl = normalizeBaseUrl(source); }
-        catch { missing.push('UNIFI_NETWORK_API_URL'); }
+        try {
+            baseUrl = normalizeBaseUrl(source, { allowInsecureHttp });
+            tlsPolicy = resolveTlsPolicy({
+                url: baseUrl,
+                verify: tlsVerify === false ? 'false' : 'true',
+                insecure: tlsInsecure ? 'true' : 'false',
+                caFile: environment.UNIFI_NETWORK_CA_FILE || '',
+                allowInsecureHttp,
+                fields: {
+                    url: 'UNIFI_NETWORK_API_URL', verify: 'UNIFI_NETWORK_TLS_VERIFY',
+                    insecure: 'UNIFI_NETWORK_TLS_INSECURE', ca: 'UNIFI_NETWORK_CA_FILE',
+                    allowHttp: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP'
+                }
+            });
+        } catch (error) { missing.push(error.field || 'UNIFI_NETWORK_API_URL'); }
     }
     return {
         configured: missing.length === 0,
@@ -79,7 +106,11 @@ function readConfiguration(environment = process.env) {
         siteId,
         listId,
         listName: typeof listName === 'string' ? listName.trim() : '',
-        tlsVerify: tlsVerify === null ? true : tlsVerify
+        tlsVerify: tlsPolicy ? tlsPolicy.verify : true,
+        tlsInsecure: tlsPolicy?.insecure === true,
+        caFile: environment.UNIFI_NETWORK_CA_FILE || '',
+        tlsPolicy,
+        allowInsecureHttp: allowInsecureHttp === true
     };
 }
 
@@ -144,7 +175,8 @@ function createUniFiTrafficListClient({ transport, getEnvironment = () => proces
                     'Content-Type': 'application/json',
                     'X-API-Key': config.apiKey
                 },
-                tlsVerify: config.tlsVerify,
+                tls: config.tlsPolicy,
+                allowInsecureHttp: config.allowInsecureHttp,
                 timeout: timeoutMs,
                 ...(data ? { data } : {})
             });

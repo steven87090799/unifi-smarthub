@@ -63,6 +63,11 @@ function safeChildEnvironment({ port, dataDir }) {
         SSH_USER: '',
         SSH_PASSWORD: '',
         UNIFI_CONTROLLER_URL: 'http://127.0.0.1:1',
+        UNIFI_NETWORK_API_URL: 'http://127.0.0.1:1',
+        UNIFI_NETWORK_TLS_VERIFY: 'true',
+        UNIFI_NETWORK_CA_FILE: '',
+        UNIFI_NETWORK_TLS_INSECURE: 'false',
+        UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'false',
         UNIFI_USERNAME: '',
         UNIFI_PASSWORD: '',
         UNIFI_API_KEY: '',
@@ -384,7 +389,7 @@ async function assertSafeLocalWrites(runtime, client) {
     const deviceFingerprint = `SHA256:${'A'.repeat(43)}`;
     response = await client.write('POST', '/api/connections', {
         UPS_SOURCE: 'ppb', PPB_HOST: '127.0.0.1', PPB_PORT: '3052', PPB_PASSWORD: secret,
-        UNIFI_NETWORK_TLS_VERIFY: 'false', UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor',
+        UNIFI_NETWORK_TLS_VERIFY: 'false', UNIFI_NETWORK_TLS_INSECURE: 'true', UNIFI_DEVICE_SSH_PORT: '2222', UNIFI_DEVICE_SSH_USER: 'monitor',
         UNIFI_DEVICE_SSH_PASSWORD: deviceSecret, UNIFI_DEVICE_SSH_TARGET_IDS: 'AA:BB:CC:DD:EE:FF',
         UNIFI_DEVICE_SSH_HOST_KEYS: `AA:BB:CC:DD:EE:FF=${deviceFingerprint}`
     });
@@ -392,7 +397,7 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(response.status, 200, `${runtime.label} connections: ${text}`);
     body = JSON.parse(text);
     assert.equal(body.ok, true);
-    assert.equal(body.changed, 10);
+    assert.equal(body.changed, 11);
 
     response = await client.read('/api/connections');
     text = await response.text();
@@ -408,10 +413,24 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_PASSWORD, true);
     assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_TARGET_IDS, true);
     assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_HOST_KEYS, true);
+    assert.deepEqual(body.clearableFields, [
+        'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+        'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
+    ]);
     assert.equal(text.includes(secret), false, `${runtime.label} secret leaked in readback`);
     assert.equal(text.includes(deviceSecret), false, `${runtime.label} device secret leaked in readback`);
     assert.equal(text.includes('aa:bb:cc:dd:ee:ff'), false, `${runtime.label} target MAC leaked in readback`);
     assert.equal(text.includes(deviceFingerprint), false, `${runtime.label} host key leaked in readback`);
+
+    response = await client.write('POST', '/api/connections', { WIIM_IP: '192.0.2.55' });
+    assert.equal(response.status, 200, `${runtime.label} set clearable WiiM IP: ${await response.text()}`);
+    response = await client.write('POST', '/api/connections', { WIIM_IP: '' });
+    text = await response.text();
+    assert.equal(response.status, 200, `${runtime.label} clearable WiiM IP: ${text}`);
+    body = JSON.parse(text);
+    assert.equal(body.changed, 1);
+    body = await client.read('/api/connections').then(readResponse => readResponse.json());
+    assert.equal(body.fields.WIIM_IP, '');
 
     response = await client.write('POST', '/api/connections', {
         NAS_MONITOR_URL: 'http://nas-monitor:8000',

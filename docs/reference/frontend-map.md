@@ -27,15 +27,17 @@
 | `showChartDetail()` | 固定顯示資料點明細 |
 | `renderHtmlChartLegend()` | 可鍵盤操作圖例 |
 | `initUiSystem()` | 表格、卡片、Modal、Loading／Empty／Error |
+| `hydratePage()`／`frontend-lifecycle.js` | 首次頁面 hydration、per-job 完成集、重試與 in-flight generation 去重 |
+| `renderPinned()`／`updatePinnedMirror()` | 釘選卡片與 change-driven、inert 的 MutationObserver 鏡像 |
 
-總覽或目前裝置頁可見時，相關一般資料與後端取樣由設定值驅動，預設為 5 秒；UPS 狀態獨立預設 3 秒。UCG 頁的 UniFi 裝置卡每 5 秒只讀 snapshot／history，並送出獨立 `unifi-device-telemetry` scope；真正 Controller／Device SSH 取樣預設為可見 60 秒、閒置 300 秒。heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope，不送 `general`。切頁、背景分頁或租約到期後立即回到低頻。
+初始啟動只讀取必要的設定、健康與重大事件；`PAGE_HYDRATION` 由 `frontend-lifecycle.js` 以每頁 completed job set 載入，失敗只重試失敗 job，並以 generation 丟棄過期結果。hydration pending 不會阻擋 heartbeat／重大事件 common jobs。總覽或目前裝置頁可見時，相關一般資料與後端取樣由設定值驅動，預設為 5 秒；UPS 狀態獨立預設 3 秒。UCG 頁的 UniFi 裝置卡每 5 秒只讀 snapshot／history，並送出獨立 `unifi-device-telemetry` scope；真正 Controller／Device SSH 取樣預設為可見 60 秒、閒置 300 秒。heartbeat 只送 `PAGE_ACTIVITY_SCOPES` 的實際 scope、不送 `general`，並帶 per-tab monotonic sequence。切頁、背景分頁或租約到期後立即回到低頻。
 UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLING-INTERVALS.md](../operations/POLLING-INTERVALS.md)。
 
 ## 主要功能錨點
 
 | 名稱 | 用途 |
 |---|---|
-| `renderPinned()` | 總覽釘選卡片 |
+| `renderPinned()` | 總覽釘選卡片；離開／hidden 時 teardown observer，返回 Overview 再同步 |
 | `fetchTrends()` | 趨勢與資料品質提示 |
 | `fetchHardware()`／`fetchClients()`／`fetchWiFiNetworks()` | UCG／客戶端／WiFi |
 | `fetchUnifiDeviceTelemetry()` | UniFi 裝置 snapshot／history、stale／unsupported 顯示；所有上游字串先 escape |
@@ -58,6 +60,7 @@ UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLI
 - `public/js/bootstrap.js`：首屏主題與 Service Worker 註冊。
 - `public/js/action-dispatcher.js`：以 `data-action` 與 escaped data 分派動態操作，readonly 不執行 admin action。
 - `public/js/app.js`：Dashboard 輪詢、渲染、設定與互動主程式。
+- `public/js/frontend-lifecycle.js`：可測試的 hydration、page-scoped resource 與 observer lifecycle primitive。
 - `public/js/web-push.js`：瀏覽器訂閱／取消訂閱；Web Push 是額外通知 fan-out。
 - `public/assets/tailwind.css`：由 `npm run build:css` 產生；`npm run check:css` 驗證。
 - Chart.js、D3、TopoJSON、world-atlas：由 `/vendor/<package>/<version>/...` 同源提供。

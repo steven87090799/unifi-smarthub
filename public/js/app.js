@@ -188,10 +188,13 @@
 
         /* ========== 釘選區塊到總覽 (跨分頁即時鏡像複製) ========== */
         // 原理：不搬移原區塊(避免破壞原頁與 id-based 更新)，而是在總覽放一份「鏡像」。
-        // 鏡像每 2 秒把來源區塊的 innerHTML 複製過來並清除內部 id (避免重複 id 干擾 getElementById)，
-        // canvas 圖表則以 drawImage 同步點陣，達到「兩個一模一樣且都即時」的效果。
+        // 來源 DOM 變更時才更新鏡像；不建立固定輪詢器，避免背景耗用與 observer/timer 洩漏。
         function loadPinned() { try { return JSON.parse(localStorage.getItem('pinnedBlocks.v1')) || []; } catch { return []; } }
         function savePinned(arr) { localStorage.setItem('pinnedBlocks.v1', JSON.stringify(arr)); persistUiPreference('pinnedBlocks.v1', arr); }
+        const pinnedObservers = window.SmartHubFrontendLifecycle.createObserverRegistry();
+        function disconnectPinnedObservers() {
+            pinnedObservers.disconnectAll();
+        }
         function pageTitleOfBid(bid) {
             const src = document.querySelector(`[data-bid="${bid}"]`);
             const sec = src && src.closest('main > section');
@@ -207,8 +210,9 @@
         function unpinBlock(bid) { savePinned(loadPinned().filter(b => b !== bid)); renderPinned(); }
         function renderPinned() {
             const wrap = document.getElementById('ov-pinned'); if (!wrap) return;
+            disconnectPinnedObservers();
             const arr = loadPinned();
-            wrap.innerHTML = '';
+            wrap.replaceChildren();
             arr.forEach(bid => {
                 const src = document.querySelector(`[data-bid="${bid}"]`);
                 if (!src) return; // 來源不存在(改版) → 略過
@@ -231,25 +235,49 @@
             });
             syncPinned();
         }
+        function updatePinnedMirror(holder) {
+            const src = document.querySelector(`[data-bid="${holder.dataset.mirrorOf}"]`);
+            const mirror = holder.querySelector('.pinned-mirror');
+            if (!src || !mirror) return;
+            mirror.replaceChildren(...[...src.childNodes].map(node => node.cloneNode(true)));
+            mirror.className = `pinned-mirror ${src.className}`;
+            mirror.inert = true;
+            mirror.setAttribute('aria-hidden', 'true');
+            mirror.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
+            mirror.querySelectorAll('.pin-add-btn').forEach(e => e.remove());
+            mirror.querySelectorAll('button, a, input, select, textarea, form, [data-action], [tabindex], [onclick]').forEach(control => {
+                control.removeAttribute('data-action');
+                control.removeAttribute('tabindex');
+                control.removeAttribute('onclick');
+                if (control.matches('a')) control.removeAttribute('href');
+                if (control.matches('button, input, select, textarea')) control.disabled = true;
+            });
+            const sc = src.querySelectorAll('canvas'), mc = mirror.querySelectorAll('canvas');
+            sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch (error) { console.debug('Pinned chart copy failed', error); } });
+        }
+        function observePinnedSource(_bid, src, holder) {
+            pinnedObservers.observe(holder, src, () => updatePinnedMirror(holder), {
+                childList: true, characterData: true, attributes: true, subtree: true
+            });
+        }
         function syncPinned() {
             if (document.visibilityState !== 'visible' || document.getElementById('page-overview')?.classList.contains('hidden')) return;
             document.querySelectorAll('#ov-pinned [data-mirror-of]').forEach(holder => {
                 const src = document.querySelector(`[data-bid="${holder.dataset.mirrorOf}"]`);
-                const mirror = holder.querySelector('.pinned-mirror');
-                if (!src || !mirror) return;
-                mirror.innerHTML = src.innerHTML;
-                // 保留來源元素自己的 class (例如 grid grid-cols-2)，否則鏡像只復製到子元素、外層排版跟版面比例會跑掉
-                mirror.className = `pinned-mirror ${src.className}`;
-                // 清除鏡像內部 id，避免與來源重複 (id-based 更新只會命中來源)
-                mirror.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
-                // 移除鏡像內的 + / 拖曳殘留按鈕
-                mirror.querySelectorAll('.pin-add-btn').forEach(e => e.remove());
-                // 圖表 canvas：把來源點陣畫到鏡像 canvas
-                const sc = src.querySelectorAll('canvas'), mc = mirror.querySelectorAll('canvas');
-                sc.forEach((c, i) => { try { const d = mc[i]; if (d && c.width) { d.width = c.width; d.height = c.height; d.getContext('2d').drawImage(c, 0, 0); } } catch (error) { console.debug('Pinned chart copy failed', error); } });
+                if (!src) return;
+                updatePinnedMirror(holder);
+                observePinnedSource(holder.dataset.mirrorOf, src, holder);
             });
         }
-        setInterval(syncPinned, 2000);
+        window.addEventListener('pagehide', () => {
+            disconnectPinnedObservers();
+            disconnectNasSse();
+        });
+        window.addEventListener('pageshow', () => {
+            if (document.visibilityState !== 'visible') return;
+            if (currentPage === 'overview') syncPinned();
+            if (currentPage === 'nas') hydratePage('nas', { force: true, only: ['nasAlertConfig'], generation: navigationGeneration });
+        });
 
         // 編輯模式時，為各分頁(除總覽外)的每個區塊注入「+ 加到總覽」按鈕
         function refreshPinButtons() {
@@ -808,7 +836,9 @@
 
         /* ==================== 導航 ==================== */
         let currentPage = 'overview';
+        let navigationGeneration = 0;
         function navigate(page) {
+            const generation = ++navigationGeneration;
             currentPage = page;
             // 重新觸發分頁進場動畫
             const target = document.getElementById('page-' + page);
@@ -825,9 +855,12 @@
             document.getElementById('page-title').innerText = PAGE_META[page][0];
             document.getElementById('page-subtitle').innerText = PAGE_META[page][1];
             toggleSidebar(false);
+            if (page !== 'nas') disconnectNasSse();
+            if (page !== 'overview') disconnectPinnedObservers();
             if (page === 'overview') syncPinned();
             sendHeartbeat(true);
-            applyPolling(true);
+            hydratePage(page, { generation }).then(() => { if (currentPage === page && generation === navigationGeneration) applyPolling(true); });
+            applyPolling();
             requestAnimationFrame(() => {
                 [hwChart, threatChart, trendChart, ovHourlyChart, secHourlyChart, nasSystemChart, nasTrafficChart, nasStorageChart, nasTempChart, upsVoltChart, upsLoadChart, wiimChart, ucgHistChart, nasHeroChart, upsHeroChart].forEach(c => c && c.resize());
                 replayPageChartEntrances(page);
@@ -881,70 +914,64 @@
             initUcgHistChart();
             initNasHeroChart();
             initUpsHeroChart();
-            fetchUcgHist();
-            fetchUcgSpikes();
-            fetchPpbEvents();
             initWorldMap();
-            fetchSecuritySettings();
-            fetchHardware();
-            fetchClients();
-            fetchWiFiNetworks();
-            fetchCloudSites();
-            fetchCloudDevices();
-            fetchCloudHosts();
-            fetchCloudSdwan();
-            fetchIspMetrics();
-            fetchThreats();
-            fetchSwitchMatrix();
-            fetchUnifiDeviceTelemetry();
-            fetchBlockHistory();
-            fetchTrends();
-            fetchNas();
-            fetchNasAdvanced();
-            fetchNasCharts();
-            fetchNasSleepStats();
-            fetchNasDocker();
-            fetchNasAlerts();
-            // NAS Monitor 為選配；未設定時不要建立 EventSource，避免每次載入留下 503 錯誤。
-            fetchAlertConfig().then(configured => { if (configured) connectNasSse(); });
-            fetchNotifSettings();
-            fetchWebPushState();
-            fetchNotifLog();
-            fetchAppSettings();
-            fetchReportLog();
-            fetchSystemStatus();
-            fetchConnections();
-            fetchConfigBackupStatus();
-            fetchUps();
-            fetchAdguard(); fetchAdgLog(); fetchAdguardServicePolicies();
-            fetchLinux(); fetchLnxChart();
-            fetchWiimDeviceInfo();
-            initWiimPage();
             initWiimSrcDrag();
-            refreshSideUps();
             setTheme(localStorage.getItem('theme') === 'light' ? 'light' : 'dark');
             checkLastSpeedtest();
+            // Safe local defaults make the visible heartbeat and common jobs
+            // independent from slow or unavailable device hydration. Settings
+            // refreshes in the background and never blocks the first heartbeat.
+            fetchAppSettings({ retry: true });
             sendHeartbeat(true);
-            applyPolling();
+            Promise.allSettled([fetchCritAlerts(), fetchSystemStatus()]);
+            // Mark hydration in flight before rebuilding timers. The lifecycle
+            // helper then permits heartbeat/common jobs immediately but keeps
+            // page-specific polling paused until overview hydration settles.
+            const overviewHydration = hydratePage('overview');
+            applyPolling(true);
+            overviewHydration.then(() => {
+                if (currentPage === 'overview') applyPolling(true);
+            });
         });
 
         /* ==================== 前端輪詢管理（間隔由 /api/settings 提供） ==================== */
+        const combineHydrationResults = results => {
+            const list = Array.isArray(results) ? results : [results];
+            const failures = list.filter(result => result === undefined || result === false || result?.ok === false || result?.stale === true);
+            if (failures.length) {
+                const failure = failures.find(result => result?.error) || failures[0];
+                return { ok: false, retryable: failure?.retryable !== false, error: failure?.error || new Error('hydration job failed'), results: list };
+            }
+            return { ok: true, data: list };
+        };
         const POLL_JOBS = {
-            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]) },
-            linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]) },
+            adguard: { fn: () => Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]).then(combineHydrationResults) },
+            linuxMon: { fn: () => Promise.all([fetchLinux(), fetchLnxChart()]).then(combineHydrationResults) },
             critAlerts: { fn: () => fetchCritAlerts() }, hardware: { fn: () => fetchHardware() },
             ucgHist: { fn: () => fetchUcgHist() }, ucgSpikes: { fn: () => fetchUcgSpikes() }, switches: { fn: () => fetchSwitchMatrix() },
+            wifi: { fn: () => fetchWiFiNetworks() }, blockHistory: { fn: () => fetchBlockHistory() },
             unifiTelemetry: { fn: () => fetchUnifiDeviceTelemetry() },
             clients: { fn: () => fetchClients() }, threats: { fn: () => fetchThreats() },
-            cloud: { fn: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan()]) },
+            cloud: { fn: () => Promise.all([fetchCloudSites(), fetchCloudDevices(), fetchCloudHosts(), fetchCloudSdwan()]).then(combineHydrationResults) },
             isp: { fn: () => fetchIspMetrics() }, nas: { fn: () => fetchNas() },
-            nasAdvanced: { fn: () => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts(), fetchNasSleepStats()]) },
+            nasAdvanced: { fn: ({ generation = navigationGeneration } = {}) => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts({ generation }), fetchNasSleepStats()]).then(combineHydrationResults) },
             docker: { fn: () => fetchNasDocker() }, trend: { fn: () => fetchTrends() },
-            notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]) },
-            reportLog: { fn: () => fetchReportLog() }, systemStatus: { fn: () => fetchSystemStatus() }, security: { fn: () => fetchSecuritySettings() },
+            notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]).then(combineHydrationResults) },
+            reportLog: { fn: () => fetchReportLog() }, systemStatus: { fn: () => fetchSystemStatus() }, security: { fn: () => Promise.all([fetchSecuritySettings(), fetchBlockHistory()]).then(combineHydrationResults) },
+            settings: { fn: () => fetchAppSettings({ retry: true }) }, connections: { fn: () => Promise.all([fetchConnections(), fetchConfigBackupStatus()]).then(combineHydrationResults) },
+            wiimDeviceInfo: { fn: () => fetchWiimDeviceInfo() },
             wiimSystem: { fn: () => fetchWiimSystem() }, wiimPlayback: { fn: () => fetchWiimPlayback() },
             ups: { fn: () => fetchUps({ includeHistory: false }) }, upsHistory: { fn: () => fetchUps() }, ppbEvents: { fn: () => fetchPpbEvents() },
-            heartbeat: { fn: () => sendHeartbeat() }
+            nasAlertConfig: { fn: async ({ generation = navigationGeneration } = {}) => {
+                const configured = await fetchAlertConfig({ generation });
+                if (generation !== navigationGeneration || currentPage !== 'nas' || document.visibilityState !== 'visible') {
+                    disconnectNasSse();
+                    return { configured, stale: true };
+                }
+                if (configured?.ok === true) connectNasSse(generation); else disconnectNasSse();
+                return configured;
+            } },
+            heartbeat: { fn: () => sendHeartbeat().then(() => ({ ok: true })) }
         };
         const COMMON_POLL_JOBS = new Set(['critAlerts', 'heartbeat']);
         const PAGE_POLL_JOBS = {
@@ -959,22 +986,107 @@
             overview: ['trend', 'ucg', 'nas', 'wiim', 'ups'], clients: ['trend'], security: ['trend'],
             cloud: ['trend'], ucg: ['ucg', 'unifi-device-telemetry'], nas: ['nas'], wiim: ['wiim'], ups: ['ups'], linuxhost: ['linux']
         };
+        const PAGE_HYDRATION = {
+            overview: ['hardware', 'clients', 'threats', 'trend', 'isp', 'nas', 'wiimSystem', 'ups'],
+            clients: ['clients'], security: ['threats', 'security'], wifi: ['wifi'], cloud: ['cloud'],
+            ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches', 'unifiTelemetry'],
+            nas: ['nas', 'nasAdvanced', 'nasAlertConfig', 'docker'], wiim: ['wiimDeviceInfo'],
+            ups: ['upsHistory', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
+            notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security', 'settings', 'connections']
+        };
+        let wiimPageInitialized = false;
+        function validatePollJobReferences() {
+            const missing = new Set();
+            [PAGE_POLL_JOBS, PAGE_HYDRATION].forEach(map => Object.values(map).forEach(keys => keys.forEach(key => {
+                if (!Object.hasOwn(POLL_JOBS, key)) missing.add(key);
+            })));
+            if (missing.size) throw new Error(`Unknown polling job(s): ${[...missing].join(', ')}`);
+        }
+        validatePollJobReferences();
+        const frontendLifecycle = window.SmartHubFrontendLifecycle;
+        if (!frontendLifecycle) throw new Error('Frontend lifecycle helper is unavailable');
+        const hydrationCoordinator = frontendLifecycle.createHydrationCoordinator({
+            pages: PAGE_HYDRATION,
+            runJob: (key, context) => {
+                if (key === 'wiimDeviceInfo' && !wiimPageInitialized) {
+                    wiimPageInitialized = true;
+                    initWiimPage();
+                }
+                return POLL_JOBS[key].fn(context);
+            },
+            onError: (error, { page, key }) => dbg('Poll', `頁面 ${page} 的 ${key} 載入失敗`, error)
+        });
+        const hydrationInFlight = { has: page => hydrationCoordinator.isInFlight(page) };
+        function hydratePage(page, { force = false, only = null, generation = navigationGeneration } = {}) {
+            if (!force && hydrationCoordinator.isLoaded(page)) {
+                if (page === 'nas') return hydrationCoordinator.hydratePage(page, { force: true, only: ['nasAlertConfig'], generation });
+                return Promise.resolve({ loaded: true, skipped: true, results: [] });
+            }
+            return hydrationCoordinator.hydratePage(page, { force, only, generation });
+        }
         let pollTimers = {};
         let pollStartTimers = {};
         const pollRunning = new Set();
-        let frontendPollingSettings = null;
+        const SAFE_FRONTEND_DEFAULTS = Object.freeze({
+            deviceActiveFrontendPollSec: 5,
+            deviceActiveBackendSampleSec: 5,
+            deviceIdleBackendSampleSec: 600,
+            unifiTelemetryActiveSec: 60,
+            unifiTelemetryIdleSec: 300,
+            heartbeatSec: 5,
+            activeLeaseSec: 30,
+            upsFrontendPollSec: 3,
+            upsActiveBackendSampleSec: 3,
+            upsIdleBackendSampleSec: 10,
+            upsHistoryFrontendPollSec: 10,
+            upsPpbEventsFrontendPollSec: 10,
+            upsPpbEventActiveBackendSampleSec: 10,
+            upsPpbEventIdleBackendSampleSec: 60,
+            watcherSec: 20,
+            autoDefenseSec: 30,
+            toastSec: 10,
+            historyFlushMin: 10,
+            historyKeepDays: 30,
+            reportHour: 8,
+            reportHour2: 20
+        });
+        let frontendPollingSettings = { ...SAFE_FRONTEND_DEFAULTS };
+        let settingsRetryTimer = null;
+        let settingsRetryAttempt = 0;
+        const SETTINGS_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 30_000];
+        function setSettingsLoadState(state, detail = '') {
+            document.documentElement.dataset.settingsLoadState = state;
+            const element = document.getElementById('settings-load-state');
+            if (!element) return;
+            const meta = {
+                loading: ['設定載入中', 'bg-amber-500/10 text-amber-300 border-amber-500/20'],
+                ready: ['設定已載入', 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'],
+                fallback: ['設定載入失敗，使用安全預設', 'bg-red-500/10 text-red-300 border-red-500/20']
+            }[state] || ['設定狀態未知', 'bg-slate-500/10 text-slate-300 border-slate-500/20'];
+            element.textContent = detail || meta[0];
+            element.className = `px-2 py-1 rounded-full text-[9px] font-bold ${meta[1]}`;
+        }
+        const DEFAULT_CONNECTION_CLEARABLE_FIELDS = new Set([
+            'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+            'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
+        ]);
+        let connectionClearableFields = new Set(DEFAULT_CONNECTION_CLEARABLE_FIELDS);
         function getEffectivePollSec(key) {
-            if (!frontendPollingSettings) return null;
-            if (key === 'heartbeat') return frontendPollingSettings.heartbeatSec;
-            if (key === 'ups') return frontendPollingSettings.upsFrontendPollSec;
-            if (key === 'upsHistory') return frontendPollingSettings.upsHistoryFrontendPollSec;
-            if (key === 'ppbEvents') return frontendPollingSettings.upsPpbEventsFrontendPollSec;
-            return frontendPollingSettings.deviceActiveFrontendPollSec;
+            if (key === 'heartbeat') return Number(frontendPollingSettings.heartbeatSec) || SAFE_FRONTEND_DEFAULTS.heartbeatSec;
+            if (key === 'ups') return Number(frontendPollingSettings.upsFrontendPollSec) || SAFE_FRONTEND_DEFAULTS.upsFrontendPollSec;
+            if (key === 'upsHistory') return Number(frontendPollingSettings.upsHistoryFrontendPollSec) || SAFE_FRONTEND_DEFAULTS.upsHistoryFrontendPollSec;
+            if (key === 'ppbEvents') return Number(frontendPollingSettings.upsPpbEventsFrontendPollSec) || SAFE_FRONTEND_DEFAULTS.upsPpbEventsFrontendPollSec;
+            return Number(frontendPollingSettings.deviceActiveFrontendPollSec) || SAFE_FRONTEND_DEFAULTS.deviceActiveFrontendPollSec;
         }
         async function runPollJob(key, job) {
             if (pollRunning.has(key)) return;
             pollRunning.add(key);
-            try { await job.fn(); } finally { pollRunning.delete(key); }
+            try { await job.fn(); }
+            catch (error) { dbg('Poll', `${key} 輪詢失敗`, error); return { ok: false, error }; }
+            finally {
+                pollRunning.delete(key);
+                if (currentPage === 'overview') syncPinned();
+            }
         }
         function applyPolling(runNow = false) {
             Object.entries(POLL_JOBS).forEach(([k, j]) => {
@@ -983,7 +1095,14 @@
                 delete pollTimers[k];
                 delete pollStartTimers[k];
                 const pageJobs = PAGE_POLL_JOBS[currentPage] || [];
-                if (document.visibilityState !== 'visible' || !frontendPollingSettings || (!COMMON_POLL_JOBS.has(k) && !pageJobs.includes(k))) return;
+                if (!frontendLifecycle.shouldSchedulePollJob({
+                    isVisible: document.visibilityState === 'visible',
+                    configured: Boolean(frontendPollingSettings),
+                    hydrationPending: hydrationInFlight.has(currentPage),
+                    common: COMMON_POLL_JOBS.has(k),
+                    pageJobs,
+                    key: k
+                })) return;
                 const run = () => runPollJob(k, j);
                 if (runNow) pollStartTimers[k] = setTimeout(run, 0);
                 pollTimers[k] = setInterval(run, getEffectivePollSec(k) * 1000);
@@ -1001,20 +1120,38 @@
                 return value;
             } catch { return `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
         })();
+        let heartbeatSequence = 0;
+        function nextHeartbeatSequence() {
+            heartbeatSequence = heartbeatSequence >= Number.MAX_SAFE_INTEGER ? 1 : heartbeatSequence + 1;
+            return heartbeatSequence;
+        }
 
         async function sendHeartbeat(focus = false) {
             if (document.visibilityState !== 'visible') return;
             const scopes = PAGE_ACTIVITY_SCOPES[currentPage] || [];
-            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + `&session=${encodeURIComponent(heartbeatSessionId)}` + (focus ? '&focus=1' : '');
+            const query = '?scope=' + encodeURIComponent(scopes.join(',')) + `&session=${encodeURIComponent(heartbeatSessionId)}&seq=${nextHeartbeatSequence()}` + (focus ? '&focus=1' : '');
             try { await fetch('/api/heartbeat' + query); } catch (e) { /* 靜默 */ }
         }
         function releaseDeviceFocus() {
-            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}`).catch(() => { /* 靜默 */ });
+            fetch(`/api/heartbeat?scope=&focus=1&session=${encodeURIComponent(heartbeatSessionId)}&seq=${nextHeartbeatSequence()}`).catch(() => { /* 靜默 */ });
         }
         document.addEventListener('visibilitychange', () => {
             applyPolling();
-            if (document.visibilityState === 'visible') sendHeartbeat(true);
-            else releaseDeviceFocus();
+            if (document.visibilityState === 'visible') {
+                sendHeartbeat(true);
+                if (currentPage === 'overview') syncPinned();
+                if (currentPage === 'nas') {
+                    hydratePage('nas', {
+                        force: true,
+                        only: ['nasAlertConfig'],
+                        generation: navigationGeneration
+                    }).then(() => { if (currentPage === 'nas') applyPolling(true); });
+                }
+            } else {
+                releaseDeviceFocus();
+                disconnectPinnedObservers();
+                disconnectNasSse();
+            }
         });
 
         // 共用小圖示 (線條 SVG，取代 emoji)
@@ -1193,7 +1330,11 @@
                 trendChart.data.datasets[1].data = hist.map(p => p.threats24h);
                 trendChart.data.datasets[2].data = hist.map(p => p.latency);
                 updateChartWithEntrance(trendChart);
-            } catch (e) { console.error('Trends fetch failed'); }
+                return { ok: true, data: hist };
+            } catch (error) {
+                console.error('Trends fetch failed');
+                return { ok: false, retryable: true, error };
+            }
         }
 
         /* ==================== 威脅世界地圖 ==================== */
@@ -1340,10 +1481,12 @@
                     chartLabels.push(new Date().toLocaleTimeString());
                     updateChartWithEntrance(hwChart);
                 }
+                return { ok: true, data };
             } catch (e) {
                 document.getElementById('side-ucg-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
                 setOverviewStatusDot('ov-ucg-badge', 'error', '連線失敗');
                 console.error('Hardware fetch failed', e);
+                return { ok: false, retryable: true, error: e };
             }
         }
 
@@ -1354,7 +1497,10 @@
                 const res = await fetch('/api/network/switches');
                 if (!res.ok) throw new Error();
                 const { devices } = await res.json();
-                if (!devices || !devices.length) { wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">無法取得裝置清單</p>'; return; }
+                if (!devices || !devices.length) {
+                    wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">無法取得裝置清單</p>';
+                    return { ok: true, data: devices || [] };
+                }
                 wrap.innerHTML = devices.map(d => `
                 <div>
                     <p class="text-[11px] font-bold text-slate-300 mb-2">${escapeHtml(d.name)} <span class="text-slate-600 font-normal">（${escapeHtml(DEV_TYPE_LABEL[d.type] || d.type)} · ${escapeHtml(d.model)}）</span></p>
@@ -1375,10 +1521,12 @@
                             </div>`).join('')}
                     </div>
                 </div>`).join('');
+                return { ok: true, data: devices };
             } catch (e) {
                 // 只有在還沒成功渲染過時才顯示提示 (避免暫時性斷線清空已顯示的內容)
                 if (!wrap.querySelector('.grid')) wrap.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">連線中，稍候自動重試…</p>';
                 console.error('Switch matrix fetch failed', e);
+                return { ok: false, retryable: true, error: e };
             }
         }
 
@@ -1445,7 +1593,7 @@
         }
         async function fetchUnifiDeviceTelemetry() {
             const wrap = document.getElementById('unifi-telemetry-devices');
-            if (!wrap) return;
+            if (!wrap) return { ok: true, data: null };
             try {
                 const [snapshotResponse, historyResponse] = await Promise.all([
                     fetch('/api/network/devices/telemetry'),
@@ -1476,9 +1624,11 @@
                     <span class="text-slate-600">${escapeHtml(telemetryTimestamp(row.collectedAt))}</span>
                     <span class="text-cyan-300 font-bold mono">${telemetryNumber(row.temperature, '°C', 1)}</span>
                 </div>`).join('') : '<p class="text-[10px] text-slate-500">尚無可用的真實溫度紀錄</p>';
+                return { ok: true, data: snapshot };
             } catch (error) {
                 if (!wrap.querySelector('article')) wrap.innerHTML = '<p class="text-xs text-amber-400 text-center py-6 xl:col-span-2">遙測快照暫時無法讀取，稍後自動重試</p>';
                 console.error('UniFi device telemetry fetch failed', error);
+                return { ok: false, retryable: true, error };
             }
         }
 
@@ -1516,7 +1666,11 @@
                 document.getElementById('kpi-clients').innerText = allClients.length - blockedCount;
                 const ovClients = document.getElementById('ov-ucg-clients'); if (ovClients) ovClients.innerText = (allClients.length - blockedCount) + ' 台';
                 document.getElementById('kpi-clients-sub').innerText = `封鎖中 ${blockedCount} 台`;
-            } catch (e) { console.error('Clients fetch failed'); }
+                return { ok: true, data: allClients };
+            } catch (error) {
+                console.error('Clients fetch failed');
+                return { ok: false, retryable: true, error };
+            }
         }
 
         function filterClients() {
@@ -1728,7 +1882,7 @@
                 const list = document.getElementById('block-history-list');
                 if (history.length === 0) {
                     list.innerHTML = '<p class="text-xs text-slate-500 py-4">尚無封鎖紀錄</p>';
-                    return;
+                    return { ok: true, data: history };
                 }
                 list.innerHTML = history.map(h => {
                     const isBlock = h.action === 'block';
@@ -1745,7 +1899,10 @@
                     </div>
                 </div>`;
                 }).join('');
-            } catch (e) { /* 靜默失敗 */ }
+                return { ok: true, data: history };
+            } catch (error) {
+                return { ok: false, retryable: true, error };
+            }
         }
 
         /* ==================== WiFi ==================== */
@@ -1769,7 +1926,11 @@
                         if (net) toggleWiFi(net._id, input.checked);
                     });
                 });
-            } catch (e) { console.error('WiFi fetch failed'); }
+                return { ok: true, data: networks };
+            } catch (error) {
+                console.error('WiFi fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function toggleWiFi(id, state) {
@@ -1826,6 +1987,7 @@
                 const res = await fetch('/api/cloud/sites');
                 if (!res.ok) throw new Error();
                 const result = await res.json();
+                if (result.source === 'error') throw new Error(result.error || 'Cloud sites unavailable');
                 const sites = result.data || [];
                 ['cloud-status-badge', 'cloud-status-badge-sec'].forEach(id => {
                     const badge = document.getElementById(id);
@@ -1859,7 +2021,11 @@
                         </div>
                     </div>`;
                 });
-            } catch (e) { console.error('Fetch cloud sites failed', e); }
+                return { ok: true, data: sites };
+            } catch (error) {
+                console.error('Fetch cloud sites failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function fetchCloudDevices() {
@@ -1867,6 +2033,7 @@
                 const res = await fetch('/api/cloud/devices');
                 if (!res.ok) throw new Error();
                 const result = await res.json();
+                if (result.source === 'error') throw new Error(result.error || 'Cloud devices unavailable');
                 const groups = result.data || [];
                 const devices = groups.flatMap(group => Array.isArray(group.devices)
                     ? group.devices.map(device => ({ ...device, hostName: group.hostName || '' }))
@@ -1894,14 +2061,20 @@
                         </div>
                     </div>`;
                 });
-            } catch (e) { console.error('Fetch cloud devices failed', e); }
+                return { ok: true, data: groups };
+            } catch (error) {
+                console.error('Fetch cloud devices failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function fetchCloudHosts() {
             try {
                 const res = await fetch('/api/cloud/hosts');
                 if (!res.ok) throw new Error();
-                const hosts = (await res.json()).data || [];
+                const result = await res.json();
+                if (result.source === 'error') throw new Error(result.error || 'Cloud hosts unavailable');
+                const hosts = result.data || [];
                 const container = document.getElementById('cloud-hosts-content');
                 container.innerHTML = hosts.length ? '' : '<p class="text-[10px] text-amber-400/80 text-center py-4">未設定 Site Manager API Key — 於 設定 → 設備連線設定 填入後啟用</p>';
                 hosts.forEach(host => {
@@ -1920,7 +2093,11 @@
                         </div>
                     </div>`;
                 });
-            } catch (e) { console.error('Fetch cloud hosts failed', e); }
+                return { ok: true, data: hosts };
+            } catch (error) {
+                console.error('Fetch cloud hosts failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function fetchCloudSdwan() {
@@ -1928,6 +2105,7 @@
                 const res = await fetch('/api/cloud/sdwan');
                 if (!res.ok) throw new Error();
                 const result = await res.json();
+                if (result.source === 'error') throw new Error(result.error || 'Cloud SD-WAN unavailable');
                 const configs = result.data || [];
                 const container = document.getElementById('cloud-sdwan-content');
                 container.innerHTML = configs.length ? '' : result.source === 'not_configured'
@@ -1945,14 +2123,20 @@
                         <span class="px-2 py-0.5 rounded text-[8px] bg-blue-950 text-blue-400 border border-blue-900/40 font-bold">CONNECTED</span>
                     </div>`;
                 });
-            } catch (e) { console.error('Fetch cloud SD-WAN configs failed', e); }
+                return { ok: true, data: configs };
+            } catch (error) {
+                console.error('Fetch cloud SD-WAN configs failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function fetchIspMetrics() {
             try {
                 const res = await fetch('/api/cloud/isp-metrics');
                 if (!res.ok) throw new Error();
-                const metrics = (await res.json()).data || {};
+                const result = await res.json();
+                if (result.source === 'error') throw new Error(result.error || 'Cloud ISP metrics unavailable');
+                const metrics = result.data || {};
                 const ispName = metrics.ispName || 'Unknown ISP';
                 const ispDisplayName = /chunghwa/i.test(ispName) && !/中華電信/.test(ispName)
                     ? `${ispName}（中華電信）`
@@ -1963,7 +2147,11 @@
                 document.getElementById('isp-speed-down').innerText = (metrics.downloadSpeedMbps || '--') + ' Mbps';
                 document.getElementById('isp-speed-up').innerText = (metrics.uploadSpeedMbps || '--') + ' Mbps';
                 document.getElementById('kpi-wan-sub').innerText = `延遲 ${metrics.latency || '--'} ms · ${ispDisplayName}`;
-            } catch (e) { console.error('Fetch ISP metrics failed', e); }
+                return { ok: true, data: metrics };
+            } catch (error) {
+                console.error('Fetch ISP metrics failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         /* ==================== 威脅 ==================== */
@@ -2333,7 +2521,11 @@
                     }
                 }
                 fetchThreatBlocks();
-            } catch (e) { console.error('Threats fetch failed', e); }
+                return { ok: true, data: threats };
+            } catch (error) {
+                console.error('Threats fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         /* ==================== 自動防禦聯動 ==================== */
@@ -2347,7 +2539,10 @@
                 const txt = document.getElementById('ov-autodef-text');
                 if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${autoDefenseOn ? 'bg-amber-500 animate-pulse' : 'bg-slate-600'}`;
                 if (txt) txt.innerText = autoDefenseOn ? '自動防禦：啟用中' : '自動防禦：關閉';
-            } catch (e) { /* 靜默 */ }
+                return { ok: true, data: s };
+            } catch (error) {
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function toggleAutoDefense(on) {
@@ -2402,8 +2597,14 @@
                     fetch('/api/nas/overview'), fetch('/api/nas/disks'), fetch('/api/nas/volumes'), fetch('/api/nas/ups')
                 ]);
                 const ov = await ovRes.json();
-                const vols = (await volRes.json()).volumes || [];
-                const ups = (await upsRes.json()).ups || {};
+                const diskPayload = await diskRes.json();
+                const volumePayload = await volRes.json();
+                const upsPayload = await upsRes.json();
+                const payloads = [ov, diskPayload, volumePayload, upsPayload];
+                const failed = payloads.find(payload => payload.source === 'error');
+                if (failed) throw new Error(failed.error || 'NAS data unavailable');
+                const vols = volumePayload.volumes || [];
+                const ups = upsPayload.ups || {};
                 // 硬碟卡：溫度/休眠狀態取自 get_all(免喚醒)；型號/容量/通電時數來自 disk/list。
                 // disk/list 實測回應時間僅 0.00005 秒 (UGOS 內部記憶體快取，非即時 SMART 查詢)，
                 // 不會喚醒休眠硬碟，可安全定期呼叫。真正會發 SMART 指令、有喚醒風險的是 smart/info，
@@ -2641,11 +2842,13 @@
 
                 // 原始資料
                 document.getElementById('nas-raw').innerText = JSON.stringify({ overview: ov, disks, volumes: vols, ups }, null, 2);
-            } catch (e) {
+                return { ok: true, data: { overview: ov, disks, volumes: vols, ups } };
+            } catch (error) {
                 document.getElementById('side-nas-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
                 document.getElementById('side-nas-state').innerText = 'error';
                 setOverviewStatusDot('ov-nas-badge', 'error', '連線失敗');
-                console.error('NAS fetch failed', e);
+                console.error('NAS fetch failed', error);
+                return { ok: false, retryable: true, error };
             }
         }
 
@@ -2705,6 +2908,8 @@
                     fetch('/api/nas/traffic-summary').then(r => r.json()),
                     fetch('/api/nas/storage-forecast').then(r => r.json())
                 ]);
+                const failed = [dt, ts, sf].find(payload => payload.source === 'error');
+                if (failed) throw new Error(failed.error || 'NAS advanced data unavailable');
                 const d = dt.data || {}, t = ts.data || {}, f = sf.data || {};
                 const setT = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML = v; };
                 setT('nas-uptime-pct', `${d.uptime_percent ?? '--'}<span class="text-sm text-slate-500">%</span>`);
@@ -2716,7 +2921,11 @@
                 setT('nas-forecast-days', `${f.days_until_full ?? '--'}<span class="text-sm text-slate-500"> 天</span>`);
                 setT('nas-forecast-sub', `日均成長 ${f.daily_growth_gb ?? '--'} GB · 已用 ${f.current_used_percent ?? '--'}%`);
                 setT('nas-forecast-date', f.projected_full_date ?? '--');
-            } catch (e) { console.error('NAS advanced fetch failed', e); }
+                return { ok: true, data: { downtime: d, traffic: t, forecast: f } };
+            } catch (error) {
+                console.error('NAS advanced fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         let nasHistWinMin = 1440; // 系統/流量/溫度三張圖共用的範圍 (分鐘)；儲存趨勢圖固定看 30 天
@@ -2734,7 +2943,9 @@
             const rangeLbl = document.getElementById('nas-hist-rangelbl');
             if (rangeLbl) rangeLbl.textContent = nasHistWinMin >= 60 ? `近 ${nasHistWinMin / 60} 小時` : `近 ${nasHistWinMin} 分`;
             try {
-                const rawSys = (await (await fetch(`/api/nas/system-history?hours=${hrs}`)).json()).data || [];
+                const sysPayload = await (await fetch(`/api/nas/system-history?hours=${hrs}`)).json();
+                if (sysPayload.source === 'error') throw new Error(sysPayload.error || 'NAS system history unavailable');
+                const rawSys = sysPayload.data || [];
                 seedHeroChart(nasHeroChart, nasHeroLabels, [nasHeroTempData, nasHeroUsageData], rawSys, [
                     point => point.temperature, point => point.cpu
                 ]);
@@ -2747,20 +2958,25 @@
                 updateChartWithEntrance(nasSystemChart);
                 document.getElementById('nas-sys-cnt') && (document.getElementById('nas-sys-cnt').textContent = rawSys.length > sys.length ? `${rawSys.length} 點 · 繪製 ${sys.length}` : `${sys.length} 點`);
 
-                const rawTraffic = (await (await fetch(`/api/nas/traffic-history?hours=${hrs}`)).json()).data || [];
+                const trafficPayload = await (await fetch(`/api/nas/traffic-history?hours=${hrs}`)).json();
+                if (trafficPayload.source === 'error') throw new Error(trafficPayload.error || 'NAS traffic history unavailable');
+                const rawTraffic = trafficPayload.data || [];
                 const tr = downsampleRows(rawTraffic, ['download_mbps', 'upload_mbps']);
                 nasTrafficChart.data.labels = fmtH(tr);
                 nasTrafficChart.data.datasets[0].data = tr.map(p => p.download_mbps);
                 nasTrafficChart.data.datasets[1].data = tr.map(p => p.upload_mbps);
                 updateChartWithEntrance(nasTrafficChart);
 
-                const rawStorage = (await (await fetch('/api/nas/storage-history?hours=720')).json()).data || [];
+                const storagePayload = await (await fetch('/api/nas/storage-history?hours=720')).json();
+                if (storagePayload.source === 'error') throw new Error(storagePayload.error || 'NAS storage history unavailable');
+                const rawStorage = storagePayload.data || [];
                 const st = downsampleRows(rawStorage, ['used_gb']);
                 nasStorageChart.data.labels = fmtD(st);
                 nasStorageChart.data.datasets[0].data = st.map(p => p.used_gb);
                 updateChartWithEntrance(nasStorageChart);
 
                 const tpRes = await (await fetch(`/api/nas/temperature-history?hours=${hrs}`)).json();
+                if (tpRes.source === 'error') throw new Error(tpRes.error || 'NAS temperature history unavailable');
                 const rawTemps = (tpRes.data || []).slice().sort((a, b) => new Date(a.t) - new Date(b.t));
                 const diskNames = tpRes.diskNames || [];
                 // Chart.js 在替換 datasets 時會忘記 legend toggle 的狀態；以硬碟名稱保存，下一輪輪詢也不會復活。
@@ -2788,7 +3004,11 @@
                 // 尚未累積足夠歷史時提示（自建取樣器需要時間累積）
                 const note = document.getElementById('nas-charts-note');
                 if (note) note.classList.toggle('hidden', rawTemps.length >= 2);
-            } catch (e) { console.error('NAS charts fetch failed', e); }
+                return { ok: true, data: { system: rawSys, traffic: rawTraffic, storage: rawStorage, temperature: rawTemps } };
+            } catch (error) {
+                console.error('NAS charts fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function fetchNasDocker() {
@@ -2796,6 +3016,7 @@
                 const response = await fetch('/api/nas/docker');
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 const payload = await response.json();
+                if (payload.source === 'error') throw new Error(payload.error || 'NAS Docker data unavailable');
                 const containers = payload.containers || [];
                 const running = containers.filter(c => c.state === 'running').length;
                 document.getElementById('nas-docker-running').innerText = running;
@@ -2864,7 +3085,11 @@
                         else dockerAction(c.id, button.dataset.dockerAction);
                     });
                 }
-            } catch (e) { console.error('NAS docker fetch failed', e); }
+                return { ok: true, data: payload };
+            } catch (error) {
+                console.error('NAS docker fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function dockerAction(id, action) {
@@ -2918,12 +3143,18 @@
         }
 
         const NAS_LOG_MODULE_LABEL = { login: '登入', storage_manager: '儲存管理', snapshot: '快照', system: '系統', network: '網路', file_manager: '檔案管理', app_center: '應用中心', usb: 'USB', backup: '備份' };
-        async function fetchNasAlerts() {
+        async function fetchNasAlerts({ generation = navigationGeneration } = {}) {
             const list = document.getElementById('nas-alert-list');
             const colorMap = { critical: 'text-red-400 border-red-500/30 bg-red-500/5', error: 'text-red-400 border-red-500/30 bg-red-500/5', warning: 'text-amber-400 border-amber-500/30 bg-amber-500/5', info: 'text-slate-400 border-slate-700/40 bg-slate-900/30' };
+            const active = () => generation === navigationGeneration && currentPage === 'nas' && document.visibilityState === 'visible';
             try {
                 // 優先：選配的 NAS Monitor 警報 (可確認/清除)
-                const events = (await (await fetch('/api/nas/alerts')).json()).events || [];
+                const eventsResponse = await fetch('/api/nas/alerts');
+                if (!eventsResponse.ok) throw new Error(`HTTP ${eventsResponse.status}`);
+                const eventsPayload = await eventsResponse.json();
+                if (eventsPayload.source === 'error') throw new Error(eventsPayload.error || 'NAS alerts unavailable');
+                const events = eventsPayload.events || [];
+                if (!active()) return { ok: false, stale: true, retryable: false };
                 if (events.length) {
                     const unack = events.filter(e => !e.acknowledged).length;
                     document.getElementById('nas-alert-count').innerText = `— ${unack} 則待確認 / 共 ${events.length} 則`;
@@ -2948,11 +3179,15 @@
                             if (alert) ackAlert(alert.id);
                         });
                     }
-                    return;
+                    return { ok: true, data: events };
                 }
                 // 回退：UGOS 內建日誌中心 (真實系統事件)
                 const hideSelf = document.getElementById('nas-log-hideself')?.checked !== false;
-                const r = await (await fetch('/api/nas/logs?size=120' + (hideSelf ? '&hideSelf=1' : ''))).json();
+                const logsResponse = await fetch('/api/nas/logs?size=120' + (hideSelf ? '&hideSelf=1' : ''));
+                if (!logsResponse.ok) throw new Error(`HTTP ${logsResponse.status}`);
+                const r = await logsResponse.json();
+                if (r.source === 'error') throw new Error(r.error || 'NAS logs unavailable');
+                if (!active()) return { ok: false, stale: true, retryable: false };
                 const logsAll = r.logs || [];
                 // 級別統計晶片 (依近期日誌計數，點擊篩選)
                 const counts = { all: logsAll.length };
@@ -2985,32 +3220,66 @@
                         </div>
                     </div>`;
                 });
-            } catch (e) { console.error('NAS alerts fetch failed', e); }
+                return { ok: true, data: [] };
+            } catch (error) {
+                console.error('NAS alerts fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         let nasLogFilter = 'all';
         function setNasLogFilter(f) { nasLogFilter = f; fetchNasAlerts(); }
 
         /* ==================== NAS Monitor 警報閾值設定 (系統 B 選配) ==================== */
-        async function fetchAlertConfig() {
+        async function fetchAlertConfig({ generation = navigationGeneration } = {}) {
             const card = document.getElementById('nas-alert-config-card');
+            if (!card) return { ok: true, data: null };
             try {
                 const d = await (await fetch('/api/nas/alerts/config')).json();
-                if (d.source === 'not_configured') { card.classList.add('hidden'); return false; }
+                if (generation !== navigationGeneration || currentPage !== 'nas' || document.visibilityState !== 'visible') return { ok: false, stale: true, retryable: false };
+                if (d.source === 'not_configured') { card.classList.add('hidden'); return { ok: true, data: null }; }
                 card.classList.remove('hidden');
                 const rows = d.config || [];
-                document.getElementById('nas-alert-config-list').innerHTML = rows.length ? rows.map(c => `
-                    <div class="flex items-center gap-2 text-[11px] bg-slate-900/40 rounded-lg px-3 py-2">
-                        <span class="font-bold text-slate-200 w-32 truncate mono">${c.metric ?? '--'}</span>
-                        <span class="text-slate-500">${c.condition === 'below' ? '低於' : '高於'}</span>
-                        <span class="text-amber-400 font-bold mono">${c.threshold ?? '--'}</span>
-                        <span class="ml-auto flex items-center gap-2">
-                            ${c.enabled === false ? '<span class="text-slate-600">已停用</span>' : '<span class="text-emerald-500">啟用中</span>'}
-                            <button data-action="nas-alert-delete" data-metric="${escapeActionData(c.metric)}" class="text-slate-500 hover:text-red-400 transition" title="刪除"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>
-                        </span>
-                    </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-2">尚無自訂閾值，全部使用系統預設值</p>';
-                return true;
-            } catch { card.classList.add('hidden'); return false; }
+                const list = document.getElementById('nas-alert-config-list');
+                list.replaceChildren();
+                if (!rows.length) {
+                    const empty = document.createElement('p');
+                    empty.className = 'text-xs text-slate-500 text-center py-2';
+                    empty.textContent = '尚無自訂閾值，全部使用系統預設值';
+                    list.appendChild(empty);
+                } else rows.forEach(c => {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center gap-2 text-[11px] bg-slate-900/40 rounded-lg px-3 py-2';
+                    const metric = document.createElement('span');
+                    metric.className = 'font-bold text-slate-200 w-32 truncate mono';
+                    metric.textContent = c.metric ?? '--';
+                    const condition = document.createElement('span');
+                    condition.className = 'text-slate-500';
+                    condition.textContent = c.condition === 'below' ? '低於' : '高於';
+                    const threshold = document.createElement('span');
+                    threshold.className = 'text-amber-400 font-bold mono';
+                    threshold.textContent = c.threshold ?? '--';
+                    const actions = document.createElement('span');
+                    actions.className = 'ml-auto flex items-center gap-2';
+                    const state = document.createElement('span');
+                    state.className = c.enabled === false ? 'text-slate-600' : 'text-emerald-500';
+                    state.textContent = c.enabled === false ? '已停用' : '啟用中';
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'text-slate-500 hover:text-red-400 transition';
+                    remove.title = '刪除';
+                    remove.textContent = '刪除';
+                    remove.dataset.action = 'nas-alert-delete';
+                    remove.dataset.metric = String(c.metric ?? '');
+                    actions.append(state, remove);
+                    row.append(metric, condition, threshold, actions);
+                    list.appendChild(row);
+                });
+                return { ok: true, data: d };
+            } catch (error) {
+                card.classList.add('hidden');
+                return { ok: false, retryable: true, error };
+            }
         }
         async function saveAlertConfig() {
             const metric = document.getElementById('nac-metric').value.trim();
@@ -3035,25 +3304,52 @@
 
         /* ==================== NAS Monitor 即時推送 (SSE)：連線正常時新警報立即刷新，不需等輪詢 ==================== */
         let nasSse = null;
-        function connectNasSse() {
-            if (nasSse) return;
+        let nasSseGeneration = 0;
+        const nasSseLifecycle = window.SmartHubFrontendLifecycle.createScopedResource({
+            canStart: generation => generation === navigationGeneration
+                && currentPage === 'nas' && document.visibilityState === 'visible',
+            close: stream => stream?.close?.()
+        });
+        function connectNasSse(generation = navigationGeneration) {
+            if (nasSse || !nasSseLifecycle.connect(generation, requestedGeneration => {
+                const dot = document.getElementById('nas-sse-dot');
+                const stream = new EventSource('/api/nas/stream');
+                const streamGeneration = ++nasSseGeneration;
+                nasSse = stream;
+                const active = () => nasSse === stream && streamGeneration === nasSseGeneration
+                    && nasSseLifecycle.isCurrent(stream, requestedGeneration);
+                stream.addEventListener('open', () => {
+                    if (!active()) return;
+                    if (dot) { dot.textContent = '● 即時'; dot.className = 'text-[9px] text-emerald-500 normal-case'; }
+                });
+                stream.addEventListener('error', () => {
+                    if (!active()) return;
+                    if (dot) { dot.textContent = '○ 離線 (輪詢中)'; dot.className = 'text-[9px] text-slate-600 normal-case'; }
+                });
+                stream.addEventListener('message', () => { if (active()) fetchNasAlerts({ generation: requestedGeneration }); }); // SSE 只加速刷新，輪詢仍是保底
+                return stream;
+            })) return;
+        }
+        function disconnectNasSse() {
+            nasSseGeneration++;
+            nasSseLifecycle.disconnect();
+            nasSse = null;
             const dot = document.getElementById('nas-sse-dot');
-            try {
-                nasSse = new EventSource('/api/nas/stream');
-                nasSse.addEventListener('open', () => { if (dot) { dot.textContent = '● 即時'; dot.className = 'text-[9px] text-emerald-500 normal-case'; } });
-                nasSse.addEventListener('error', () => { if (dot) { dot.textContent = '○ 離線 (輪詢中)'; dot.className = 'text-[9px] text-slate-600 normal-case'; } });
-                nasSse.addEventListener('message', () => { fetchNasAlerts(); }); // 收到任何事件就重新拉一次警報清單 (輪詢仍是保底)
-            } catch (error) { console.debug('NAS event stream setup failed', error); }
+            if (dot) { dot.textContent = '○ 未連線'; dot.className = 'text-[9px] text-slate-600 normal-case'; }
         }
 
         async function fetchNasSleepStats() {
             const el = document.getElementById('nas-sleep-stats');
-            if (!el) return;
+            if (!el) return { ok: true, data: null };
             try {
                 const r = await (await fetch('/api/nas/sleep-stats')).json();
+                if (r.source === 'error') throw new Error(r.error || 'NAS sleep statistics unavailable');
                 const days = r.days || [];
                 const awakeSessions = r.awakeSessions || [];
-                if (!days.length) { el.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">尚無休眠紀錄（機械碟近期可能持續運轉，或日誌不足）</p>'; return; }
+                if (!days.length) {
+                    el.innerHTML = '<p class="text-xs text-slate-500 text-center py-4">尚無休眠紀錄（機械碟近期可能持續運轉，或日誌不足）</p>';
+                    return { ok: true, data: { days: [] } };
+                }
                 const bar = pct => {
                     const c = pct >= 60 ? 'bg-emerald-500' : pct >= 30 ? 'bg-amber-500' : 'bg-red-500';
                     return `<div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="${c} h-full" style="width:${pct}%"></div></div>`;
@@ -3143,7 +3439,11 @@
                         </div>
                         ${d.wakes.length ? `<p class="text-[8px] text-slate-600 mt-1.5 truncate" title="${d.wakes.map(w => w.drive + ' ' + w.time).join(', ')}">喚醒時刻：${d.wakes.slice(0, 12).map(w => w.time).join(' ')}${d.wakes.length > 12 ? ' …' : ''}</p>` : ''}
                     </div>`).join('');
-            } catch (e) { el.innerHTML = '<p class="text-xs text-red-400 text-center py-4">休眠統計讀取失敗</p>'; }
+                return { ok: true, data: { days, awakeSessions } };
+            } catch (error) {
+                el.innerHTML = '<p class="text-xs text-red-400 text-center py-4">休眠統計讀取失敗</p>';
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function ackAlert(id) {
@@ -3581,17 +3881,22 @@
                 const version = document.getElementById('sysdiag-version'), sampled = document.getElementById('sysdiag-sampled');
                 if (version) version.textContent = `Version ${d.app_version || '--'} · Trend ${(d.trend_data || []).length}/60 samples`;
                 if (sampled) sampled.textContent = `Sampled ${new Date(d.sampled_at).toLocaleString('zh-TW')}`;
+                return { ok: true, data: d };
             } catch (error) {
                 const tone = diagTone('unknown');
                 if (badge) { badge.textContent = tone.label; badge.className = `px-2.5 py-1 rounded-full text-[9px] font-bold uppercase border ${tone.badge}`; }
                 const wrap = document.getElementById('sysdiag-summary');
                 if (wrap) wrap.innerHTML = `<div class="col-span-full rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-xs text-red-400">Diagnostics API 無法讀取：${escapeHtml(error.message)}</div>`;
+                return { ok: false, retryable: true, error };
             }
         }
 
-        async function fetchAppSettings() {
+        async function fetchAppSettings({ retry = false, attempt = settingsRetryAttempt } = {}) {
+            setSettingsLoadState('loading');
             try {
-                const s = await (await fetch('/api/settings')).json();
+                const response = await fetch('/api/settings', { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const s = await response.json();
                 const set = (id, v) => { const e = document.getElementById(id); if (e) e.value = v; };
                 set('srv-deviceActiveFrontendPollSec', s.deviceActiveFrontendPollSec);
                 set('srv-deviceActiveBackendSampleSec', s.deviceActiveBackendSampleSec);
@@ -3614,20 +3919,40 @@
                 const re = document.getElementById('report-enabled'); if (re) re.checked = !!s.reportEnabled;
                 set('report-freq', s.reportFreq); set('report-hour', s.reportHour);
                 set('report-hour2', s.reportHour2 ?? 20); toggleReportHour2();
-                frontendPollingSettings = s;
+                frontendPollingSettings = { ...SAFE_FRONTEND_DEFAULTS, ...s };
+                settingsRetryAttempt = 0;
+                clearTimeout(settingsRetryTimer);
+                settingsRetryTimer = null;
+                setSettingsLoadState('ready');
                 applyPolling(true);
-            } catch (e) { console.error('app settings fetch failed', e); }
+                return { ok: true, data: s };
+            } catch (error) {
+                console.error('app settings fetch failed', error);
+                setSettingsLoadState('fallback', attempt < SETTINGS_RETRY_DELAYS_MS.length ? '設定載入失敗，將自動重試' : '設定載入失敗，使用安全預設');
+                if (attempt === 0) showToast('伺服器設定載入失敗，已使用安全預設並將重試', true);
+                if (retry && !settingsRetryTimer && attempt < SETTINGS_RETRY_DELAYS_MS.length) {
+                    const nextAttempt = attempt + 1;
+                    settingsRetryTimer = setTimeout(() => {
+                        settingsRetryTimer = null;
+                        fetchAppSettings({ retry: true, attempt: nextAttempt });
+                    }, SETTINGS_RETRY_DELAYS_MS[attempt]);
+                    settingsRetryAttempt = nextAttempt;
+                }
+                return { ok: false, retryable: true, error };
+            }
         }
         /* ==================== 重大事件警報橫幅 ==================== */
         let critDismissed = new Set(JSON.parse(localStorage.getItem('critDismissed') || '[]'));
         let critActiveIds = [];
         async function fetchCritAlerts() {
             try {
-                const d = await (await fetch('/api/alerts/critical')).json();
+                const response = await fetch('/api/alerts/critical');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const d = await response.json();
                 const alerts = (d.alerts || []).filter(a => !critDismissed.has(a.id));
                 critActiveIds = alerts.map(a => a.id);
                 const banner = document.getElementById('crit-alert-banner'), txt = document.getElementById('crit-alert-text');
-                if (!banner) return;
+                if (!banner) return { ok: true, data: d };
                 if (alerts.length) {
                     txt.textContent = alerts.length > 1 ? `${alerts[0].msg}　(+${alerts.length - 1} 則警報)` : alerts[0].msg;
                     banner.classList.remove('hidden'); banner.classList.add('flex');
@@ -3639,7 +3964,11 @@
                 let changed = false;
                 critDismissed.forEach(id => { if (!liveIds.has(id)) { critDismissed.delete(id); changed = true; } });
                 if (changed) localStorage.setItem('critDismissed', JSON.stringify([...critDismissed]));
-            } catch (error) { console.debug('Critical alert refresh failed', error); }
+                return { ok: true, data: d };
+            } catch (error) {
+                console.debug('Critical alert refresh failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
         function dismissCritAlerts() {
             critActiveIds.forEach(id => critDismissed.add(id));
@@ -3682,7 +4011,11 @@
                 const result = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(result.error || '儲存失敗');
                 toastSec = num('srv-toastSec') || toastSec;
-                frontendPollingSettings = result.settings;
+                frontendPollingSettings = { ...SAFE_FRONTEND_DEFAULTS, ...result.settings };
+                settingsRetryAttempt = 0;
+                clearTimeout(settingsRetryTimer);
+                settingsRetryTimer = null;
+                setSettingsLoadState('ready');
                 applyPolling(true);
                 showToast('伺服器設定已儲存並套用');
             } catch (e) { showToast(`儲存失敗: ${e.message}`, true); }
@@ -3695,13 +4028,24 @@
                 if (telemetrySettings) telemetrySettings.classList.toggle('hidden', security.role !== 'admin');
                 const saveButton = document.getElementById('save-connections-button');
                 if (saveButton) saveButton.classList.toggle('hidden', security.role !== 'admin');
-                if (security.role !== 'admin') return;
+                if (security.role !== 'admin') return { ok: true, data: null };
                 const d = await (await fetch('/api/connections')).json();
                 dbg('Conn', '連線設定載入', d);
+                connectionClearableFields = new Set(Array.isArray(d.clearableFields) ? d.clearableFields : DEFAULT_CONNECTION_CLEARABLE_FIELDS);
                 for (const [k, v] of Object.entries(d.fields || {})) {
                     const el = document.getElementById('conn-' + k);
-                    if (el) el.value = v || '';
+                    if (el) {
+                        el.value = v || '';
+                        el.dataset.connectionInitialValue = el.value;
+                    }
                 }
+                document.querySelectorAll('.conn-input').forEach(el => {
+                    const key = el.id.replace('conn-', '');
+                    const clearable = connectionClearableFields.has(key);
+                    el.dataset.clearable = clearable ? 'true' : 'false';
+                    if (!Object.hasOwn(d.fields || {}, key)) el.dataset.connectionInitialValue = '';
+                    if (clearable && !el.placeholder) el.placeholder = '留空=清除';
+                });
                 for (const key of d.restartRequiredFields || []) {
                     const badge = document.getElementById('connset-' + key);
                     if (badge) badge.innerHTML = '';
@@ -3710,14 +4054,20 @@
                     const badge = document.getElementById('connset-' + k);
                     const input = document.getElementById('conn-' + k);
                     if (badge) badge.innerHTML = set ? '<span class="text-emerald-400">✓ 已設定</span>' : '<span class="text-amber-400">尚未設定</span>';
-                    if (input) input.placeholder = set ? '已設定 (留空=不變更)' : '尚未設定，請填入';
+                    if (input) input.placeholder = connectionClearableFields.has(k)
+                        ? (set ? '已設定 (留空=清除)' : '尚未設定，留空=維持未設定')
+                        : (set ? '已設定 (留空=不變更)' : '尚未設定，請填入');
                 }
                 for (const key of d.pendingRestartFields || []) {
                     const badge = document.getElementById('connset-' + key);
                     if (badge) badge.innerHTML = '<span class="text-amber-400">已儲存，待 recreate</span>';
                 }
                 renderConnStatus();
-            } catch (e) { dbg('Conn', '載入失敗', e); }
+                return { ok: true, data: d };
+            } catch (error) {
+                dbg('Conn', '載入失敗', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         // 由後端記憶體現況直接彙整 (原本從側邊欄 DOM 推斷，時常不準)
@@ -3740,7 +4090,9 @@
             const body = {};
             document.querySelectorAll('.conn-input').forEach(el => {
                 const key = el.id.replace('conn-', '');
-                if (el.value && el.value.trim()) body[key] = el.value.trim();
+                const value = el.value.trim();
+                const initial = el.dataset.connectionInitialValue ?? '';
+                if (value || (connectionClearableFields.has(key) && initial !== value)) body[key] = value;
             });
             dbg('Conn', '儲存欄位:', Object.keys(body));
             try {
@@ -3761,7 +4113,7 @@
         /* ==================== 設定備份 / 還原 ==================== */
         async function fetchConfigBackupStatus() {
             const badge = document.getElementById('backup-restore-state');
-            if (!badge) return;
+            if (!badge) return { ok: true, data: null };
             try {
                 const response = await fetch('/api/config/backup/status', { cache: 'no-store' });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -3770,9 +4122,11 @@
                 badge.className = state.pending
                     ? 'px-2 py-1 rounded-full text-[9px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30'
                     : 'px-2 py-1 rounded-full text-[9px] font-bold bg-slate-800 text-slate-400 border border-slate-700';
+                return { ok: true, data: state };
             } catch (error) {
                 badge.textContent = '狀態不可用';
                 badge.className = 'px-2 py-1 rounded-full text-[9px] font-bold bg-red-500/10 text-red-300 border border-red-500/30';
+                return { ok: false, retryable: true, error };
             }
         }
 
@@ -3840,10 +4194,13 @@
 
         async function fetchReportLog() {
             const el = document.getElementById('report-log');
-            if (!el) return;
+            if (!el) return { ok: true, data: null };
             try {
                 const runs = (await (await fetch('/api/reports/log?limit=20')).json()).runs || [];
-                if (!runs.length) { el.innerHTML = '<p class="text-[10px] text-slate-500 text-center py-3">尚無報表執行紀錄</p>'; return; }
+                if (!runs.length) {
+                    el.innerHTML = '<p class="text-[10px] text-slate-500 text-center py-3">尚無報表執行紀錄</p>';
+                    return { ok: true, data: runs };
+                }
                 const statusMeta = status => status === 'sent'
                     ? ['✅ 已送出', 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5']
                     : status === 'partial'
@@ -3864,14 +4221,22 @@
                         <pre class="mt-2 pt-2 border-t border-slate-700/40 whitespace-pre-wrap text-[10px] leading-relaxed text-slate-300 mono">${escapeHtml(run.body || '')}</pre>
                     </details>`;
                 }).join('');
-            } catch (e) { el.innerHTML = '<p class="text-[10px] text-red-400 text-center py-3">報表執行紀錄讀取失敗</p>'; }
+                return { ok: true, data: runs };
+            } catch (error) {
+                el.innerHTML = '<p class="text-[10px] text-red-400 text-center py-3">報表執行紀錄讀取失敗</p>';
+                return { ok: false, retryable: true, error };
+            }
         }
 
         async function fetchNotifLog() {
             try {
                 const log = (await (await fetch('/api/notifications/log')).json()).log || [];
                 const el = document.getElementById('notif-log');
-                if (!log.length) { el.innerHTML = '<p class="text-xs text-slate-500 text-center py-8">尚無推播紀錄。啟用並設定管道後，威脅或 NAS 警報會自動推播。</p>'; return; }
+                if (!el) return { ok: true, data: log };
+                if (!log.length) {
+                    el.innerHTML = '<p class="text-xs text-slate-500 text-center py-8">尚無推播紀錄。啟用並設定管道後，威脅或 NAS 警報會自動推播。</p>';
+                    return { ok: true, data: log };
+                }
                 el.innerHTML = log.map(e => `
                 <div class="flex items-start gap-3 p-3 rounded-lg border ${e.ok ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5'}">
                     <span class="text-sm shrink-0 mt-0.5">${e.ok ? '✅' : '⚠️'}</span>
@@ -3882,7 +4247,11 @@
                         <p class="text-[9px] text-slate-600 mono mt-0.5">${escapeHtml(e.channel)} · ${escapeHtml(new Date(e.ts).toLocaleString('zh-TW'))}</p>
                     </div>
                 </div>`).join('');
-            } catch (e) { console.error('notif log fetch failed', e); }
+                return { ok: true, data: log };
+            } catch (error) {
+                console.error('notif log fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
 
         /* ==================== WiiM 音響整合前端 JS 邏輯 ==================== */
@@ -3892,8 +4261,9 @@
         let wiimPlayerState = null;
         let wiimIsMuted = false;
         let wiimLastStatusObj = null;
-        let wiimLastIp = '192.168.0.170';
+        let wiimLastIp = '';
         let wiimIsLive = false;
+        let wiimPlaybackStale = false;
         let wiimCpuAlert = 70, wiimBoardAlert = 60; // 溫度警示門檻 (由後端 appSettings 同步) // 外部訊源 (Line-In/藍牙/光纖/同軸)：無曲目長度概念，進度顯示 LIVE
 
         // LinkPlay mode 欄位 → 訊源名稱（docs/integrations/wiim-amp-api.md）
@@ -4003,13 +4373,20 @@
                 if (!res.ok) throw new Error();
                 const data = await res.json();
                 dbg('WiiM', '播放狀態', data.source, data.player && data.player.status);
+                wiimPlaybackStale = data.stale === true || data.source === 'stale_cache';
 
                 // 裝置無回應：誠實顯示連線失敗，不顯示假曲目
-                if (data.source === 'unreachable') {
-                    document.getElementById('wiim-htitle').textContent = '無法連線 WiiM 裝置';
-                    document.getElementById('wiim-hartist').textContent = `請確認 WIIM_IP (${data.ip}) 與裝置電源`;
-                    const t = document.getElementById('ov-wiim-track'); if (t) t.textContent = '無法連線';
-                    return;
+                if (data.source === 'not_configured' || data.source === 'unreachable') {
+                    wiimPlayerState = null;
+                    wiimIsLive = false;
+                    wiimPlaybackStale = false;
+                    document.getElementById('wiim-htitle').textContent = data.source === 'not_configured' ? 'WiiM 尚未設定' : '無法連線 WiiM 裝置';
+                    document.getElementById('wiim-hartist').textContent = data.source === 'not_configured' ? '選配整合未啟用' : `請確認 WIIM_IP (${data.ip || '--'}) 與裝置電源`;
+                    const t = document.getElementById('ov-wiim-track'); if (t) t.textContent = data.source === 'not_configured' ? '未設定' : '無法連線';
+                    const p = document.getElementById('ov-wiim-play'); if (p) p.textContent = '--';
+                    const v = document.getElementById('ov-wiim-vol'); if (v) v.textContent = '--';
+                    updateWiimProgUI();
+                    return { ok: true, data };
                 }
 
                 // 播放器狀態 — 進度防抖動：輪詢回報常比本地秒針慢半拍，直接覆蓋會前進→倒退跳動。
@@ -4032,7 +4409,7 @@
                 }
                 wiimPlayerState = dev;
                 if (wiimPlayerState) {
-                    wiimIsLive = wiimIsExternalInput(wiimPlayerState.mode);
+                    wiimIsLive = !wiimPlaybackStale && wiimIsExternalInput(wiimPlayerState.mode);
                     wiimHighlightSource(wiimPlayerState.mode);
                     wiimIsMuted = parseInt(wiimPlayerState.mute) === 1;
                     document.getElementById('wiim-vico').innerHTML = wiimIsMuted
@@ -4056,10 +4433,12 @@
                     const srcLabel = wiimModeLabel(wiimPlayerState && wiimPlayerState.mode);
                     const title = wiimBadVal(meta.title) ? (wiimIsLive ? `${srcLabel} 輸入` : '無播放曲目') : meta.title;
                     const artist = wiimBadVal(meta.artist) ? (wiimIsLive ? '外部訊源即時輸入 · 無曲目資訊' : '-') : meta.artist;
-                    document.getElementById('wiim-htitle').textContent = title;
-                    document.getElementById('wiim-hartist').textContent = artist;
+                    document.getElementById('wiim-htitle').textContent = wiimPlaybackStale ? `⚠️ 最後已知：${title}` : title;
+                    document.getElementById('wiim-hartist').textContent = wiimPlaybackStale ? `裝置目前未確認在線 · ${artist}` : artist;
                     const ovT = document.getElementById('ov-wiim-track');
-                    if (ovT) ovT.textContent = wiimIsLive ? `${srcLabel} 輸入 (LIVE)` : title + (artist && artist !== '-' ? ' — ' + artist : '');
+                    if (ovT) ovT.textContent = wiimPlaybackStale
+                        ? `⚠️ 最後已知 · ${title}`
+                        : wiimIsLive ? `${srcLabel} 輸入 (LIVE)` : title + (artist && artist !== '-' ? ' — ' + artist : '');
 
                     let rateDepth = '';
                     if (meta.sampleRate) {
@@ -4096,8 +4475,10 @@
                     }
                 }
                 updateWiimProgUI();
-            } catch (e) {
-                console.error('WiiM playback fetch failed', e);
+                return { ok: true, data };
+            } catch (error) {
+                console.error('WiiM playback fetch failed', error);
+                return { ok: false, retryable: true, error };
             }
         }
 
@@ -4115,6 +4496,7 @@
         }
 
         async function fetchWiimSystem() {
+            let firstError = null;
             try {
                 const res = await fetch('/api/wiim/status?type=status');
                 if (!res.ok) throw new Error();
@@ -4127,12 +4509,14 @@
                 }
 
                 // 側邊欄與總覽徽章 (真實 API 可達性)
-                const reachable = data.source !== 'unreachable';
+                const stale = data.stale === true || data.source === 'stale_cache';
+                const reachable = data.source === 'wiim_api' && !stale;
                 const swDot = document.getElementById('side-wiim-dot');
                 const swState = document.getElementById('side-wiim-state');
-                if (swDot) swDot.className = `w-1.5 h-1.5 rounded-full ${reachable ? 'bg-emerald-500' : 'bg-red-500'}`;
-                if (swState) swState.textContent = reachable ? 'online' : 'offline';
-                setOverviewStatusDot('ov-wiim-badge', reachable ? 'ok' : 'error', reachable ? '連線正常' : '無法連線');
+                const wiimStateClass = data.source === 'not_configured' ? 'bg-slate-600' : reachable ? 'bg-emerald-500' : 'bg-red-500';
+                if (swDot) swDot.className = `w-1.5 h-1.5 rounded-full ${wiimStateClass}`;
+                if (swState) swState.textContent = data.source === 'not_configured' ? '未設定' : reachable ? 'online' : stale ? 'stale' : 'offline';
+                setOverviewStatusDot('ov-wiim-badge', reachable ? 'ok' : data.source === 'not_configured' ? 'idle' : 'error', reachable ? '連線正常' : data.source === 'not_configured' ? '未設定' : stale ? '最後已知資料' : '無法連線');
 
                 // 遙控器與配件狀態動態讀取
                 const statusObj = data.status;
@@ -4146,7 +4530,7 @@
                         const e1 = document.getElementById('ov-wiim-temp');
                         if (e1) { e1.textContent = Math.round(wTemp); e1.style.color = tempColor(wTemp); }
                         const e2 = document.getElementById('ov-wiim-temp-status');
-                        if (e2) { e2.textContent = tempLabel(wTemp); e2.style.color = tempColor(wTemp); }
+                        if (e2) { e2.textContent = stale ? `最後已知 · ${tempLabel(wTemp)}` : tempLabel(wTemp); e2.style.color = stale ? '#f59e0b' : tempColor(wTemp); }
                         const e3 = document.getElementById('kpi-wiim-temp'); if (e3) e3.textContent = Math.round(wTemp);
                     }
                     if (!isNaN(wBoard)) {
@@ -4208,7 +4592,10 @@
                     }
 
                     const statusEl = document.getElementById('wiim-remote-status');
-                    if (remoteConnected || (batVal !== null && batVal > 0)) {
+                    if (stale) {
+                        statusEl.textContent = '最後已知資料';
+                        statusEl.className = 'text-amber-400 font-bold';
+                    } else if (remoteConnected || (batVal !== null && batVal > 0)) {
                         statusEl.textContent = '已連線';
                         statusEl.className = 'text-emerald-400 font-bold';
                     } else {
@@ -4216,8 +4603,18 @@
                         statusEl.className = 'text-slate-500 font-bold';
                     }
                 }
-            } catch (e) {
-                console.error('WiiM system status fetch failed', e);
+                if (!statusObj && !stale) {
+                    wiimLastStatusObj = null;
+                    const clearIds = [
+                        ['ov-wiim-temp', '--'], ['ov-wiim-temp-status', '--'], ['kpi-wiim-temp', '--'],
+                        ['ov-wiim-board', '--°C'], ['wiim-remote-bat', '--'], ['wiim-remote-sig', '--'],
+                        ['wiim-remote-mac', '--'], ['wiim-remote-status', '未連線']
+                    ];
+                    clearIds.forEach(([id, value]) => { const element = document.getElementById(id); if (element) element.textContent = value; });
+                }
+            } catch (error) {
+                firstError = error;
+                console.error('WiiM system status fetch failed', error);
             }
 
             // 獲取歷史紀錄
@@ -4248,9 +4645,9 @@
                     const diffSec = Math.round(Date.now() / 1000 - last.ts);
 
                     const statusObj = wiimLastStatusObj || {};
-                    const devName = statusObj.DeviceName || 'WiiM Amp';
-                    const fw = statusObj.firmware || 'Linkplay.5.2.814734';
-                    const hw = statusObj.hardware || 'AmlogicA113';
+                    const devName = statusObj.DeviceName || '--';
+                    const fw = statusObj.firmware || '--';
+                    const hw = statusObj.hardware || '--';
 
                     document.getElementById('wiim-agolbl').textContent = `${diffSec} 秒前更新`;
                     // 設備摘要移到 Hero 播放卡底部 (與溫度卡分離，版面協調)
@@ -4260,9 +4657,13 @@
 
                 renderWiimChart();
                 renderWiimLogTable();
-            } catch (e) {
-                console.error('WiiM history fetch failed', e);
+            } catch (error) {
+                firstError ||= error;
+                console.error('WiiM history fetch failed', error);
             }
+            return firstError
+                ? { ok: false, retryable: true, error: firstError }
+                : { ok: true, data: { history: wiimRawHistory } };
         }
 
         function fmtWiimDur(s) {
@@ -4522,7 +4923,7 @@
         }
 
         function tickWiimProg() {
-            if (wiimIsLive || wiimSeekDragging) return; // LIVE 訊源無進度概念；拖曳時不覆蓋預覽位置
+            if (wiimIsLive || wiimPlaybackStale || wiimSeekDragging) return; // LIVE/過期資料無法宣稱仍在播放；拖曳時不覆蓋預覽位置
             const currentMs = Number(wiimPlayerState?.curpos);
             const totalMs = Number(wiimPlayerState?.totlen);
             if (wiimPlayerState?.status === "play" && Number.isFinite(currentMs)
@@ -4645,6 +5046,7 @@
         /* ==================== WiiM 進階功能 ==================== */
         // 點擊或拖曳進度條跳轉 (setPlayerCmd:seek:<絕對秒數>)
         function wiimSeekPreview(ev) {
+            if (wiimPlaybackStale) return showToast('WiiM 目前只有最後已知資料，暫不能跳轉', true);
             if (wiimIsLive) return showToast('外部訊源 (LIVE) 模式無法跳轉進度', true);
             if (wiimTimelineOwnedBySource()) return null;
             if (!wiimPlayerState || !wiimPlayerState.totlen) return null;
@@ -4658,7 +5060,7 @@
             return { sec, ratio };
         }
         function wiimSeekStart(ev) {
-            if (wiimIsLive || wiimTimelineOwnedBySource() || !wiimPlayerState?.totlen) return;
+            if (wiimPlaybackStale || wiimIsLive || wiimTimelineOwnedBySource() || !wiimPlayerState?.totlen) return;
             wiimSeekDragging = true;
             ev.currentTarget.setPointerCapture?.(ev.pointerId);
             wiimSeekPreview(ev);
@@ -4708,7 +5110,7 @@
         // 設備與網路資訊面板 (getStatusEx + getStaticIpInfo)
         async function fetchWiimDeviceInfo() {
             const el = document.getElementById('wiim-devinfo');
-            if (!el) return;
+            if (!el) return { ok: true, data: null };
             try {
                 const [st, ip] = await Promise.all([
                     fetch('/api/wiim/cmd?command=getStatusEx').then(r => r.json()),
@@ -4718,7 +5120,10 @@
                 try { s = JSON.parse(st.result); } catch (error) { dbg('WiiM', '設備資訊格式錯誤', error); }
                 try { n = JSON.parse(ip.result); } catch (error) { dbg('WiiM', '網路資訊格式錯誤', error); }
                 dbg('WiiM', '設備資訊', s, n);
-                if (!Object.keys(s).length) { el.innerHTML = '<p class="text-slate-500 text-center py-4">裝置無回應 (檢查 WIIM_IP 與網路)</p>'; return; }
+                if (!Object.keys(s).length) {
+                    el.innerHTML = '<p class="text-slate-500 text-center py-4">裝置無回應 (檢查 WIIM_IP 與網路)</p>';
+                    return { ok: false, retryable: true, error: new Error('WiiM device info unavailable') };
+                }
                 const row = (k, v) => v ? `<div class="flex justify-between gap-3 border-b border-slate-800/40 pb-1.5"><span class="text-slate-500 shrink-0">${escapeHtml(k)}</span><span class="text-slate-300 mono text-right break-all">${escapeHtml(v)}</span></div>` : '';
                 el.innerHTML =
                     row('設備名稱', s.DeviceName) + row('韌體', s.firmware) + row('硬體', s.hardware || s.project) +
@@ -4727,7 +5132,12 @@
                     row('WLAN IP 模式', n.wlanStaticIpEnable == 1 ? '靜態' : 'DHCP') +
                     row('閘道', n.wlanGateWay) + row('DNS', n.wlanDnsServer) +
                     row('設備時間', s.date && s.time ? `${s.date} ${s.time}` : null);
-            } catch (e) { dbg('WiiM', '設備資訊讀取失敗', e); el.innerHTML = '<p class="text-slate-500 text-center py-4">讀取失敗</p>'; }
+                return { ok: true, data: { status: s, network: n } };
+            } catch (error) {
+                dbg('WiiM', '設備資訊讀取失敗', error);
+                el.innerHTML = '<p class="text-slate-500 text-center py-4">讀取失敗</p>';
+                return { ok: false, retryable: true, error };
+            }
         }
 
         // 以 getPresetInfo 取回捷徑名稱，為 1-12 按鈕加上標籤
@@ -4781,7 +5191,11 @@
                     point => point.cpuTemp, point => point.cpuUsage
                 ]);
                 renderUcgHistChart();
-            } catch (e) { console.error('UCG history fetch failed', e); }
+                return { ok: true, data: ucgHistRaw };
+            } catch (error) {
+                console.error('UCG history fetch failed', error);
+                return { ok: false, retryable: true, error };
+            }
         }
         function renderUcgHistChart() {
             if (!ucgHistChart) return;
@@ -4819,7 +5233,7 @@
             const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'ucg-history.csv'; a.click();
         }
         async function fetchUcgSpikes() {
-            const el = document.getElementById('ucg-spike-list'); if (!el) return;
+            const el = document.getElementById('ucg-spike-list'); if (!el) return { ok: true, data: null };
             try {
                 const [settingsRes, histRes] = await Promise.all([
                     fetch('/api/notifications/settings'), fetch('/api/hardware/history?hours=168')
@@ -4845,7 +5259,11 @@
                         <span class="text-red-400 font-bold mono">最高 ${e.max}°C</span>
                     </div>`;
                 }).join('') : '<p class="text-xs text-emerald-400 text-center py-4">✅ 近 7 天沒有超過門檻的溫度事件</p>';
-            } catch (e) { el.innerHTML = '<p class="text-xs text-red-400 text-center py-4">分析失敗</p>'; }
+                return { ok: true, data: events };
+            } catch (error) {
+                el.innerHTML = '<p class="text-xs text-red-400 text-center py-4">分析失敗</p>';
+                return { ok: false, retryable: true, error };
+            }
         }
 
         function initUpsCharts() {
@@ -4873,6 +5291,7 @@
         }
 
         async function fetchUps(options = {}) {
+            let firstError = null;
             // 即時狀態
             try {
                 const s = await (await fetch('/api/ups/status')).json();
@@ -4926,8 +5345,13 @@
                         }
                     }
                 }
-            } catch (e) { dbg('UPS', '狀態讀取失敗', e); }
-            if (options.includeHistory === false) return;
+            } catch (error) {
+                firstError = error;
+                dbg('UPS', '狀態讀取失敗', error);
+            }
+            if (options.includeHistory === false) {
+                return firstError ? { ok: false, retryable: true, error: firstError } : { ok: true, data: null };
+            }
             // 歷史 + 事件
             try {
                 const h = (await (await fetch(`/api/ups/history?hours=${upsRangeHours}`)).json()).history || [];
@@ -4963,7 +5387,10 @@
                 upsLoadChart.data.datasets[0].data = plottedLoad.map(p => p.batt);
                 upsLoadChart.data.datasets[1].data = plottedLoad.map(p => p.load);
                 updateChartWithEntrance(upsLoadChart);
-            } catch (e) { dbg('UPS', '歷史讀取失敗', e); }
+            } catch (error) {
+                firstError ||= error;
+                dbg('UPS', '歷史讀取失敗', error);
+            }
             try {
                 const evs = (await (await fetch('/api/ups/events')).json()).events || [];
                 document.getElementById('ups-event-count').textContent = evs.length ? `(共 ${evs.length} 次)` : '';
@@ -4975,7 +5402,11 @@
                     <td class="py-2 pr-3 mono text-slate-300">${e.durationSec != null ? (e.durationSec >= 60 ? Math.round(e.durationSec / 60) + ' 分' : e.durationSec + ' 秒') : '--'}</td>
                     <td class="py-2 pr-3 mono text-right ${e.minBattery <= 50 ? 'text-red-400' : 'text-slate-300'}">${e.minBattery ?? '--'}%</td>
                 </tr>`).join('') : '<tr><td colspan="4" class="py-6 text-center text-slate-500">✅ 尚無斷電事件記錄</td></tr>';
-            } catch (e) { dbg('UPS', '事件讀取失敗', e); }
+            } catch (error) {
+                firstError ||= error;
+                dbg('UPS', '事件讀取失敗', error);
+            }
+            return firstError ? { ok: false, retryable: true, error: firstError } : { ok: true, data: null };
         }
 
         function setUpsRange(hours, btn) {
@@ -4997,10 +5428,10 @@
 
         async function fetchPpbEvents() {
             const card = document.getElementById('ppb-events-card'), list = document.getElementById('ppb-events-list');
-            if (!list) return;
+            if (!list) return { ok: true, data: null };
             try {
                 const r = await (await fetch('/api/ups/ppb-events')).json();
-                if (r.error) { card.classList.add('hidden'); return; } // 沒設定 PPB 帳密時直接隱藏整卡，不留錯誤訊息干擾
+                if (r.error) { card.classList.add('hidden'); return { ok: true, data: r }; } // 沒設定 PPB 帳密時直接隱藏整卡，不留錯誤訊息干擾
                 card.classList.remove('hidden');
                 const events = r.events || [];
                 document.getElementById('ppb-events-count').textContent = events.length ? `共 ${events.length} 筆` : '';
@@ -5020,7 +5451,11 @@
                         <span class="flex-grow text-slate-300">${escapeHtml(e.desc)}</span>
                         <span class="text-slate-500 mono shrink-0">${escapeHtml(e.ts)}</span>
                     </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
-            } catch (e) { list.innerHTML = '<p class="text-xs text-red-400 text-center py-4">讀取失敗</p>'; }
+                return { ok: true, data: r };
+            } catch (error) {
+                list.innerHTML = '<p class="text-xs text-red-400 text-center py-4">讀取失敗</p>';
+                return { ok: false, retryable: true, error };
+            }
         }
 
         /* ==================== AdGuard Home ==================== */
@@ -5028,7 +5463,8 @@
         async function fetchAdguard() {
             try {
                 const d = await (await fetch('/api/adguard/overview')).json();
-                if (d.source !== 'adguard') return false;
+                if (d.source === 'error') throw new Error(d.error || 'AdGuard overview unavailable');
+                if (d.source !== 'adguard') return { ok: true, data: d };
                 const st = d.stats || {}, sts = d.status || {};
                 document.getElementById('adg-version').textContent = sts.version || '';
                 document.getElementById('adg-queries').textContent = (st.num_dns_queries ?? 0).toLocaleString();
@@ -5053,8 +5489,11 @@
                 const maxC = tc.length ? Object.values(tc[0])[0] : 1;
                 const aliasName = ip => { const c = allClients.find(x => x.ip === ip); return c ? `${c.name} (${ip})` : ip; };
                 document.getElementById('adg-top-clients').innerHTML = tc.slice(0, 10).map(o => { const [k, v] = Object.entries(o)[0]; return bar(0, maxC, aliasName(k), v, 'bg-blue-500'); }).join('') || '<p class="text-xs text-slate-500">無資料</p>';
-                return true;
-            } catch (e) { dbg('AdGuard', '讀取失敗', e); return false; }
+                return { ok: true, data: d };
+            } catch (error) {
+                dbg('AdGuard', '讀取失敗', error);
+                return { ok: false, retryable: true, error };
+            }
         }
         function renderAdgLogRows(entries) {
             return (entries || []).map(e => `
@@ -5073,17 +5512,20 @@
                 ]);
                 if (all.source === 'adguard') document.getElementById('adg-querylog').innerHTML = renderAdgLogRows(all.entries);
                 if (blocked.source === 'adguard') document.getElementById('adg-blockedlog').innerHTML = renderAdgLogRows((blocked.entries || []).map(e => ({ ...e, blocked: true })));
-                return all.source === 'adguard' && blocked.source === 'adguard';
-            } catch { return false; }
+                const valid = [all, blocked].every(result => result.source === 'adguard' || result.source === 'not_configured');
+                return valid ? { ok: true, data: { all, blocked } } : { ok: false, retryable: true, error: new Error('AdGuard query log unavailable') };
+            } catch (error) {
+                return { ok: false, retryable: true, error };
+            }
         }
         const ADG_POLICY_DAY_LABELS = { sun: '週日', mon: '週一', tue: '週二', wed: '週三', thu: '週四', fri: '週五', sat: '週六' };
         const ADG_POLICY_CATEGORY_LABELS = { youtube: 'YouTube', tiktok: 'TikTok', gaming: 'Gaming' };
         async function fetchAdguardServicePolicies() {
             const card = document.getElementById('adg-policy-card');
-            if (!card) return false;
+            if (!card) return { ok: true, data: null };
             if (document.documentElement.dataset.panelRole !== 'admin') {
                 card.classList.add('hidden');
-                return true;
+                return { ok: true, data: null };
             }
             card.classList.remove('hidden');
             const health = document.getElementById('adg-policy-health');
@@ -5113,12 +5555,12 @@
                         </div>
                     </div>`;
                 }).join('') : '<p class="text-xs text-slate-500 text-center py-6">尚未建立裝置服務政策</p>';
-                return true;
+                return { ok: true, data: state };
             } catch (error) {
                 health.textContent = '讀取失敗';
                 health.className = 'px-2.5 py-1 rounded-full text-[9px] font-bold bg-red-500/10 text-red-400';
                 list.innerHTML = `<p class="text-xs text-red-400 text-center py-6">${escapeHtml(error.message)}</p>`;
-                return false;
+                return { ok: false, retryable: true, error };
             }
         }
         async function saveAdguardServicePolicy() {
@@ -5169,7 +5611,8 @@
             icon?.classList.add('animate-spin');
             try {
                 const results = await Promise.all([fetchAdguard(), fetchAdgLog(), fetchAdguardServicePolicies()]);
-                showToast(results.every(Boolean) ? 'AdGuard 資料已立即更新' : 'AdGuard 部分資料更新失敗', !results.every(Boolean));
+                const ok = results.every(result => result?.ok !== false);
+                showToast(ok ? 'AdGuard 資料已立即更新' : 'AdGuard 部分資料更新失敗', !ok);
             } finally {
                 button.disabled = false;
                 button.setAttribute('aria-label', '立即更新 AdGuard 資料');
@@ -5193,10 +5636,11 @@
             try {
                 const d = await (await fetch('/api/linux/stats')).json();
                 const badge = document.getElementById('lnx-status');
+                if (d.source === 'error') throw new Error(d.error || 'Linux status unavailable');
                 if (d.source !== 'ssh') {
                     badge.textContent = d.source === 'not_configured' ? '未設定' : '連線失敗';
                     badge.className = 'px-3 py-1 rounded-full text-[9px] font-bold bg-red-500/10 text-red-400 border border-red-500/25';
-                    return;
+                    return { ok: true, data: d };
                 }
                 badge.textContent = '● 連線正常';
                 badge.className = 'px-3 py-1 rounded-full text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
@@ -5210,7 +5654,11 @@
                 document.getElementById('lnx-disk-str').textContent = d.diskStr || '';
                 document.getElementById('lnx-load').textContent = d.load ? d.load[0].toFixed(2) : '--';
                 document.getElementById('lnx-uptime').textContent = d.uptime || '--';
-            } catch (error) { dbg('Linux', '即時狀態讀取失敗', error); }
+                return { ok: true, data: d };
+            } catch (error) {
+                dbg('Linux', '即時狀態讀取失敗', error);
+                return { ok: false, retryable: true, error };
+            }
         }
         async function fetchLnxChart() {
             try {
@@ -5236,7 +5684,11 @@
                 lnxChart.data.datasets[1].data = plotted.map(p => p.temp);
                 lnxChart.data.datasets[2].data = plotted.map(p => p.mem);
                 updateChartWithEntrance(lnxChart);
-            } catch (error) { dbg('Linux', '歷史圖讀取失敗', error); }
+                return { ok: true, data: pts };
+            } catch (error) {
+                dbg('Linux', '歷史圖讀取失敗', error);
+                return { ok: false, retryable: true, error };
+            }
         }
         function setLnxRange(hours, btn) {
             lnxRangeHours = hours;
