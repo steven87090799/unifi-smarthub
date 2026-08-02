@@ -102,6 +102,67 @@ test('body token rejection followed by HTTP 401 stops after two requests', async
     assert.equal(harness.counters.recordFailureCalls, 1);
 });
 
+test('an API 401 after a leased token refreshes once and succeeds', async () => {
+    const harness = createHarness([
+        { status: 401 },
+        { data: { code: 200, data: { ok: true } } }
+    ]);
+    assert.deepEqual(await harness.runner.run('/nas/read'), { ok: true });
+    assert.equal(harness.counters.httpCalls, 2);
+    assert.equal(harness.refreshes, 1);
+    assert.equal(harness.counters.recordFailureCalls, 0);
+});
+
+for (const [label, makeLoginError] of [
+    ['401', () => {
+        const error = new Error('NAS login unauthorized');
+        error.response = { status: 401 };
+        error.nasFailureRecorded = true;
+        return error;
+    }],
+    ['timeout', () => {
+        const error = new Error('NAS login timeout');
+        error.code = 'ETIMEDOUT';
+        error.nasFailureRecorded = true;
+        return error;
+    }]
+]) {
+    test(`NAS login ${label} is not retried or counted again`, async () => {
+        let loginCalls = 0;
+        let requestCalls = 0;
+        let clearCalls = 0;
+        let recordFailureCalls = 0;
+        let receivedError = null;
+        const loginError = makeLoginError();
+        const runner = createNasRequestRunner({
+            getToken: async () => {
+                loginCalls += 1;
+                throw loginError;
+            },
+            getLease: () => ({ token: 'never', generation: 1 }),
+            request: async () => {
+                requestCalls += 1;
+                throw new Error('request must not run');
+            },
+            validateResponse: value => value,
+            isTokenRejectedError: error => error?.response?.status === 401,
+            clearTokenIfCurrent: () => { clearCalls += 1; },
+            recordSuccess: () => { throw new Error('success must not be recorded'); },
+            recordFailure: () => { recordFailureCalls += 1; }
+        });
+        await assert.rejects(runner.run('/nas/read'), error => {
+            receivedError = error;
+            return true;
+        });
+        assert.equal(loginCalls, 1);
+        assert.equal(requestCalls, 0);
+        assert.equal(clearCalls, 0);
+        assert.equal(recordFailureCalls, 0);
+        assert.equal(receivedError, loginError);
+        assert.equal(receivedError.nasFailureRecorded, true);
+    });
+}
+
 test('a second-request timeout records one failure and never retries a third request', async () => {
     const timeout = new Error('NAS request timeout');
     timeout.code = 'ETIMEDOUT';

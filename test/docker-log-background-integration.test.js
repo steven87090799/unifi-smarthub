@@ -265,7 +265,7 @@ test('server Docker background gate, manual API, and watcher isolation use share
         const manualBody = JSON.parse(manualText);
         assert.deepEqual(Object.keys(manualBody).sort(), ['logs', 'source']);
         assert.equal(manualBody.source, 'nas_monitor');
-        assert.equal(typeof manualBody.logs, 'string');
+        assert.equal(manualBody.logs, 'ERROR integration log');
         assert.equal(counters.logs, beforeDisabled + 1);
 
         // Case E: make the shared inventory malformed.  The Docker scan throws,

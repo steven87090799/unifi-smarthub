@@ -31,8 +31,8 @@ function createNasRequestRunner({
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
             let lease = null;
             try {
-                await getToken();
-                lease = getLease();
+                const token = await getToken();
+                lease = getLease(token);
                 const response = await request(pathName, {
                     params: { ...params, token: lease.token }
                 });
@@ -46,13 +46,14 @@ function createNasRequestRunner({
                     if (attempt + 1 < MAX_ATTEMPTS) continue;
                     break;
                 }
-                const canRetry = attempt + 1 < MAX_ATTEMPTS
+                const canRetry = lease !== null
+                    && attempt + 1 < MAX_ATTEMPTS
                     && isTokenRejectedError(error);
                 if (!canRetry) break;
                 if (lease) await clearTokenIfCurrent(lease);
             }
         }
-        if (!isSupersededError(lastError) && !isFailureRecorded(lastError)) {
+        if (lastError && !isSupersededError(lastError) && !isFailureRecorded(lastError)) {
             recordFailure(lastError);
         }
         throw lastError;

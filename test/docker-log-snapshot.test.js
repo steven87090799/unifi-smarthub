@@ -6,7 +6,8 @@ const { createDeviceCollectorCache } = require('../server/services/device-collec
 const {
     DOCKER_LOG_CANONICAL_LINES,
     createDockerLogSnapshot,
-    dockerLogNotificationsEnabled
+    dockerLogNotificationsEnabled,
+    selectTailText
 } = require('../server/services/docker-log-snapshot');
 
 const deferred = () => {
@@ -14,6 +15,13 @@ const deferred = () => {
     const promise = new Promise(nextResolve => { resolve = nextResolve; });
     return { promise, resolve };
 };
+
+test('text tails remove only the terminal newline delimiter', () => {
+    assert.equal(selectTailText('line-1\nline-2\n', 1), 'line-2');
+    assert.equal(selectTailText('line-1\nline-2', 1), 'line-2');
+    assert.equal(selectTailText('line-1\r\nline-2\r\n', 2), 'line-1\nline-2');
+    assert.equal(selectTailText('line-1\n\nline-3\n', 3), 'line-1\n\nline-3');
+});
 
 test('different requested lines share one canonical upstream and return caller-local tails', async () => {
     const upstreamLines = Array.from({ length: 1_000 }, (_, index) => `line-${index + 1}`);

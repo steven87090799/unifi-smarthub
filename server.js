@@ -2990,6 +2990,16 @@ function isNasTokenRejectedError(error) {
     return nasTokenInvalidError(error);
 }
 
+function normalizeNasRequestError(error) {
+    if (!error || error.nasFailureRecorded === true) return error;
+    if (!nasTokenInvalidError(error)) return error;
+    return createNasTokenRejectedError({
+        message: error.message,
+        responseCode: error.response?.status ?? error.status,
+        cause: error
+    });
+}
+
 const nasRequestRunner = createNasRequestRunner({
     // The runner owns the single bounded superseded-login retry.  Disabling
     // getNasToken's legacy nested retry here prevents a hidden third login.
@@ -3020,12 +3030,7 @@ const nasRequestRunner = createNasRequestRunner({
         }
         return body?.data !== undefined ? body.data : body;
     },
-    normalizeError: error => nasTokenInvalidError(error)
-        ? createNasTokenRejectedError({
-            responseCode: error.response?.status ?? error.status,
-            cause: error
-        })
-        : error,
+    normalizeError: normalizeNasRequestError,
     isTokenRejectedError: isNasTokenRejectedError,
     isSupersededError: isNasLoginSupersededError,
     clearTokenIfCurrent: clearNasTokenIfCurrent,

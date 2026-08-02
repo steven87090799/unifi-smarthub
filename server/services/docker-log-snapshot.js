@@ -10,15 +10,22 @@ function normalizeRequestedLines(value) {
     return Math.min(DOCKER_LOG_CANONICAL_LINES, Math.max(1, parsed));
 }
 
+function selectTailText(value, requestedLines) {
+    const lines = normalizeRequestedLines(requestedLines);
+    const parts = String(value).split(/\r?\n/);
+    if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+    return parts.slice(-lines).join('\n');
+}
+
 function selectTailLines(payload, requestedLines) {
     const lines = normalizeRequestedLines(requestedLines);
     if (Array.isArray(payload)) return payload.slice(-lines);
-    if (typeof payload === 'string') return payload.split(/\r?\n/).slice(-lines).join('\n');
+    if (typeof payload === 'string') return selectTailText(payload, lines);
     if (payload && typeof payload === 'object' && Array.isArray(payload.logs)) {
         return { ...payload, logs: payload.logs.slice(-lines) };
     }
     if (payload && typeof payload === 'object' && typeof payload.logs === 'string') {
-        return { ...payload, logs: selectTailLines(payload.logs, lines) };
+        return { ...payload, logs: selectTailText(payload.logs, lines) };
     }
     return payload;
 }
@@ -109,5 +116,6 @@ module.exports = {
     dockerLogNotificationsEnabled,
     normalizeContainerIds,
     normalizeRequestedLines,
+    selectTailText,
     selectTailLines
 };
