@@ -33,6 +33,8 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /scripts\/production-preflight\.js/u);
     assert.match(workflow, /Generate exact-head release evidence/u);
     assert.match(workflow, /release-evidence\.json/u);
+    assert.match(workflow, /RELEASE_HEAD_SHA="\$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}"/u);
+    assert.match(workflow, /head_sha: process\.env\.RELEASE_HEAD_SHA/u);
     assert.match(workflow, /trivy_blocking_policy: 'HIGH,CRITICAL including unfixed'/u);
     assert.match(workflow, /uses:\s*actions\/upload-artifact@[0-9a-f]{40}\s+# v4\.6\.2/u);
     assert.match(workflow, /name: smarthub-release-evidence-\$\{\{ github\.run_id \}\}/u);

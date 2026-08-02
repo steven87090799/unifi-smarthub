@@ -110,12 +110,13 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/smarthub-sbom"
+          RELEASE_HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
           SMART_HUB_NODE_VERSION="$(node -p 'process.version')" node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
           const evidence = {
             repository: process.env.GITHUB_REPOSITORY,
-            head_sha: process.env.GITHUB_SHA,
+            head_sha: process.env.RELEASE_HEAD_SHA,
             workflow_run_id: process.env.GITHUB_RUN_ID,
             workflow_run_number: process.env.GITHUB_RUN_NUMBER,
             node_version: process.env.SMART_HUB_NODE_VERSION,
