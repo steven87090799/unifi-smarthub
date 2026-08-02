@@ -25,6 +25,10 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /node-version-file:\s*\.nvmrc/u);
     assert.match(workflow, /Generate SBOM and scan built images/u);
     assert.match(workflow, /trivy@sha256:[0-9a-f]{64}/u);
+    assert.match(workflow, /image --format json --output "[^"]+\.trivy\.json" --severity HIGH,CRITICAL/u);
+    assert.match(workflow, /--ignore-unfixed --severity HIGH,CRITICAL/u);
+    assert.match(workflow, /uses:\s*actions\/upload-artifact@[0-9a-f]{40}\s+# v4\.6\.2/u);
+    assert.match(workflow, /Upload SBOM and vulnerability reports/u);
     assert.match(workflow, /SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak/u);
     assert.match(workflow, /git diff --check/u);
 });

@@ -202,6 +202,7 @@ test('connection updates reject .env injection, bad types, oversized values, and
         { key: 'ADGUARD_TLS_VERIFY' },
         { key: 'ADGUARD_CA_FILE' },
         { key: 'UPS_SOURCE' },
+        { key: 'UPS_ALLOW_FALLBACK' },
         { key: 'NUT_HOST' },
         { key: 'NUT_UPS_NAME' },
         { key: 'PWRSTAT_PATH' },
@@ -224,6 +225,7 @@ test('connection updates reject .env injection, bad types, oversized values, and
         ADGUARD_TLS_VERIFY: 'true',
         ADGUARD_CA_FILE: '/app/config/adguard-ca.pem',
         UPS_SOURCE: 'ppb',
+        UPS_ALLOW_FALLBACK: 'false',
         PPB_TLS_VERIFY: 'true',
         PPB_TLS_INSECURE: 'false',
         PPB_CA_FILE: '/app/config/ppb-ca.pem',
@@ -241,6 +243,7 @@ test('connection updates reject .env injection, bad types, oversized values, and
         ADGUARD_TLS_VERIFY: 'true',
         ADGUARD_CA_FILE: '/app/config/adguard-ca.pem',
         UPS_SOURCE: 'ppb',
+        UPS_ALLOW_FALLBACK: 'false',
         PPB_TLS_VERIFY: 'true',
         PPB_TLS_INSECURE: 'false',
         PPB_CA_FILE: '/app/config/ppb-ca.pem',
@@ -266,6 +269,8 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'file:///tmp/api' }, fields), 'UNIFI_NETWORK_API_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://192.168.1.1/proxy/network/integration' }, fields), 'UNIFI_NETWORK_API_URL');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration?key=leak' }, fields), 'UNIFI_NETWORK_API_URL');
+    validationError(() => parseConnectionUpdates({ UPS_SOURCE: 'fallback' }, fields), 'UPS_SOURCE');
+    validationError(() => parseConnectionUpdates({ UPS_ALLOW_FALLBACK: 'TRUE' }, fields), 'UPS_ALLOW_FALLBACK');
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080' }, fields).UNIFI_NETWORK_API_URL, 'http://127.0.0.1:8080');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_VERIFY: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_VERIFY');
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_TLS_INSECURE: 'true' }, fields).UNIFI_NETWORK_TLS_INSECURE, 'true');

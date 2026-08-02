@@ -50,9 +50,11 @@ test('production UPS route retains last-good data across confirmed outage and re
     fs.writeFileSync(path.join(dataDir, '.env'), '# isolated UPS runtime config\n', { mode: 0o600 });
 
     const modeFile = path.join(dataDir, 'ups-mode');
+    const countFile = path.join(dataDir, 'ups-count');
     const pwrstat = path.join(dataDir, 'pwrstat-fixture');
     fs.writeFileSync(modeFile, 'success');
-    fs.writeFileSync(pwrstat, `#!/bin/sh\nIFS= read -r mode < \"$UPS_MODE_FILE\"\n[ \"$mode\" = success ] || exit 1\nprintf '%s\\n' 'Model Name.............. Runtime Test UPS' 'State................... Normal' 'Utility Voltage......... 120.0 V' 'Output Voltage.......... 120.0 V' 'Battery Capacity........ 95 %' 'Remaining Runtime....... 30 min' 'Load.................... 20 %'\n`);
+    fs.writeFileSync(countFile, '0');
+    fs.writeFileSync(pwrstat, `#!/bin/sh\ncount=$(cat \"$UPS_COUNT_FILE\" 2>/dev/null || printf '0')\nprintf '%s\\n' $((count + 1)) > \"$UPS_COUNT_FILE\"\nIFS= read -r mode < \"$UPS_MODE_FILE\"\n[ \"$mode\" = success ] || exit 1\nprintf '%s\\n' 'Model Name.............. Runtime Test UPS' 'State................... Normal' 'Utility Voltage......... 120.0 V' 'Output Voltage.......... 120.0 V' 'Battery Capacity........ 95 %' 'Remaining Runtime....... 30 min' 'Load.................... 20 %'\n`);
     fs.chmodSync(pwrstat, 0o700);
     fs.writeFileSync(path.join(dataDir, 'app-settings.json'), JSON.stringify({
         reportEnabled: false,
@@ -92,8 +94,10 @@ test('production UPS route retains last-good data across confirmed outage and re
             NAS_MONITOR_URL: '',
             WIIM_IP: '127.0.0.1',
             UPS_SOURCE: 'pwrstat',
+            UPS_ALLOW_FALLBACK: 'false',
             PWRSTAT_PATH: pwrstat,
             UPS_MODE_FILE: modeFile,
+            UPS_COUNT_FILE: countFile,
             PPB_USER: '',
             PPB_PASSWORD: '',
             ADGUARD_HOST: '',
@@ -133,8 +137,16 @@ test('production UPS route retains last-good data across confirmed outage and re
         return status?.fetchHealth === 'healthy' ? status : null;
     }, { description: 'initial healthy UPS sample' });
     assert.equal(healthy.source, 'pwrstat');
+    assert.equal(healthy.configuredSource, 'pwrstat');
+    assert.equal(healthy.actualSource, 'pwrstat');
+    assert.equal(healthy.fallbackAllowed, false);
+    assert.equal(healthy.fallbackUsed, false);
     assert.equal(healthy.battery, 95);
     assert.equal(healthy.dataIsStale, false);
+
+    const countBeforeReadOnlyGets = Number(fs.readFileSync(countFile, 'utf8'));
+    for (let index = 0; index < 3; index += 1) assert.equal((await getUps()).source, 'pwrstat');
+    assert.equal(Number(fs.readFileSync(countFile, 'utf8')), countBeforeReadOnlyGets, 'UPS status GET triggered an upstream poll');
 
     fs.writeFileSync(modeFile, 'failure');
     const observedHealth = new Set();
@@ -147,6 +159,10 @@ test('production UPS route retains last-good data across confirmed outage and re
     assert.equal(offline.consecutiveFailures, 3);
     assert.equal(offline.failureThreshold, 3);
     assert.equal(offline.source, 'unreachable');
+    assert.equal(offline.actualSource, null);
+    assert.equal(offline.configuredSource, 'pwrstat');
+    assert.equal(offline.fallbackAllowed, false);
+    assert.equal(offline.fallbackUsed, false);
     assert.equal(offline.dataIsStale, true);
     assert.equal(offline.lastKnown.battery, 95);
     assert.ok(offline.offlineSince > 0);

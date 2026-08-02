@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const https = require('node:https');
+const { createLanAxiosConfig } = require('./http-egress-policy');
 
 const MAX_CA_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 8000;
@@ -120,11 +121,11 @@ function createPpbClient({
 
     async function discoverPort(config) {
         if (httpsPort) return httpsPort;
-        const response = await axios.get(`http://${config.host}:${config.httpPort}/local/`, {
+        const response = await axios.get(`http://${config.host}:${config.httpPort}/local/`, createLanAxiosConfig({
             maxRedirects: 0,
             validateStatus: () => true,
             timeout: DISCOVERY_TIMEOUT_MS
-        });
+        }));
         const location = String(response?.headers?.location || '');
         const match = /^https:\/\/[^/:]+:(\d+)\/?/u.exec(location);
         if (!match) throw new Error(`PowerPanel Business service was not discovered (${config.host}:${config.httpPort})`);
@@ -136,11 +137,11 @@ function createPpbClient({
         const response = await axios.post(
             `https://${config.host}:${port}/local/rest/v1/login/verify`,
             { userName: config.user, password: config.password },
-            {
+            createLanAxiosConfig({
                 httpsAgent,
                 timeout: REQUEST_TIMEOUT_MS,
                 validateStatus: () => true
-            }
+            })
         );
         if (response.status !== 200 || response.data === undefined || response.data === null) {
             throw new Error(`PPB login failed (${response.status})`);
@@ -157,12 +158,12 @@ function createPpbClient({
         const httpsAgent = ensureAgent(config);
         const port = await discoverPort(config);
         if (!token) await login(config, port, httpsAgent);
-        const request = () => axios.get(`https://${config.host}:${port}${pathname}`, {
+        const request = () => axios.get(`https://${config.host}:${port}${pathname}`, createLanAxiosConfig({
             headers: { Authorization: token },
             httpsAgent,
             timeout: REQUEST_TIMEOUT_MS,
             validateStatus: () => true
-        });
+        }));
         let response = await request();
         if (response.status === 401 || response.status === 403) {
             token = null;

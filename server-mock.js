@@ -1260,10 +1260,11 @@ const mockUpsEvents = [
     { start: new Date(Date.now() - 5 * 86400000).toISOString(), end: new Date(Date.now() - 5 * 86400000 + 120000).toISOString(), durationSec: 120, minBattery: 95, startVoltage: 109.4 }
 ];
 app.get('/api/ups/status', (req, res) => res.json({
-    source: 'nut', model: 'CyberPower CP1500PFCLCDa', status: 'OL',
+    source: 'nut', configuredSource: 'nut', actualSource: 'nut', fallbackAllowed: false, fallbackUsed: false,
+    fallbackReason: null, model: 'CyberPower CP1500PFCLCDa', status: 'OL',
     onBattery: false, inputV: +(110 + Math.random() * 2).toFixed(1), outputV: 110.2,
     battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 3,
-    focusedSampling: true, cached: false
+    focusedSampling: true, cached: true
 }));
 app.get('/api/ups/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));
@@ -1274,7 +1275,7 @@ app.get('/api/ups/history', (req, res) => {
 app.get('/api/ups/events', (req, res) => res.json({ events: mockUpsEvents }));
 app.get('/api/ups/ppb-events', (_req, res) => res.json({
     events: [{ id: 'mock-sag-1', ts: new Date(Date.now() - 3600000).toISOString(), desc: '市電輸入瞬間壓降至 102V', level: 'warning' }],
-    source: 'ppb', cached: false, syncedAt: Date.now()
+    source: 'ppb', cached: true, syncInFlight: false, syncedAt: Date.now()
 }));
 app.get('/api/ups/csv', (req, res) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1432,7 +1433,7 @@ const mockConnDefaults = {
     NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_TLS_VERIFY: 'true', NAS_CA_FILE: '',
     NAS_TLS_INSECURE: 'false', NAS_ALLOW_INSECURE_HTTP: 'false', NAS_USER: '',
     NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '',
-    UPS_SOURCE: 'auto', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
+    UPS_SOURCE: 'auto', UPS_ALLOW_FALLBACK: 'false', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
     PPB_TLS_VERIFY: 'true', PPB_TLS_INSECURE: 'false', PPB_CA_FILE: '',
     ADGUARD_URL: '', ADGUARD_HOST: '', ADGUARD_PORT: '80',

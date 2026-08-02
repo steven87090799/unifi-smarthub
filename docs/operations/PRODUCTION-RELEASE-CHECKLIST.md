@@ -10,6 +10,8 @@
 - 已設定 `PANEL_PASSWORD`；唯讀密碼不得等於管理員密碼。
 - 容器內 upstream 位址不是 `localhost`／`127.0.0.1`。
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
+- `UPS_SOURCE` 明確指定時預設 fail-closed；只有明確設定 `UPS_ALLOW_FALLBACK=true` 才可回退到其他來源。
+- Compose host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內 `SMARTHUB_BIND_ADDRESS=0.0.0.0` 只服務 container network。
 - PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false`；私有／自簽 CA 使用容器內絕對路徑 `PPB_CA_FILE`，並確認不是 symlink。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。

@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const https = require('node:https');
+const { createLanAxiosConfig } = require('./http-egress-policy');
 
 const MIN_API_KEY_BYTES = 32;
 const MAX_API_KEY_BYTES = 256;
@@ -112,11 +113,8 @@ function createNasMonitorConnection(options = {}) {
     if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 30_000) {
         throw new TypeError('timeoutMs must be an integer between 1000 and 30000');
     }
-    const client = axios.create({
+    const client = axios.create(createLanAxiosConfig({
         baseURL: url,
-        // A service credential must never be forwarded through ambient
-        // HTTP_PROXY/HTTPS_PROXY/ALL_PROXY settings inherited by the process.
-        proxy: false,
         headers: {
             Accept: 'application/json',
             'X-API-Key': key
@@ -126,7 +124,7 @@ function createNasMonitorConnection(options = {}) {
         maxContentLength: 4 * 1024 * 1024,
         maxBodyLength: 64 * 1024,
         validateStatus: status => status >= 200 && status < 300
-    });
+    }));
     return { url, client, configured: true, tlsVerified: parsed.protocol !== 'https:' || !allowInsecureTls };
 }
 

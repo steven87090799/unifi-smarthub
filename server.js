@@ -1,9 +1,3 @@
-// 清除代理伺服器環境變數以防 Axios 走代理導致無法連線本機設備
-delete process.env.HTTP_PROXY;
-delete process.env.HTTPS_PROXY;
-delete process.env.http_proxy;
-delete process.env.https_proxy;
-
 const express = require('express');
 const axios = require('axios');
 const webPushLibrary = require('web-push');
@@ -79,6 +73,7 @@ const {
 const { deriveDueReportSlot } = require('./server/jobs/report-schedule');
 const { createReportRunner } = require('./server/jobs/report-runner');
 const { createUpsState, FETCH_HEALTH, TRANSITION_TYPES } = require('./server/jobs/ups-state');
+const { resolveUpsSourceConfig, selectUpsSource } = require('./server/services/ups-source-selection');
 const {
     DEFAULT_SAG_THRESHOLD_V,
     createUpsSagDetector,
@@ -144,6 +139,7 @@ const {
 const { normalizeWiimIp } = require('./server/services/wiim-config');
 const { createArtworkCache, createArtworkFetcher, fetchArtwork, isBlockedAddress } = require('./server/services/wiim-art-proxy');
 const { createWiimClient, parseWiimTemperatures } = require('./server/services/wiim-client');
+const { createInternetAxiosConfig, createLanAxiosConfig } = require('./server/integrations/http-egress-policy');
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -360,12 +356,12 @@ function buildUnifiClient() {
     unifiAgent = createHttpsAgent(tls);
     if (tls.warning) sysLog('TLS', `UniFi Controller transport mode: ${tls.mode} (explicit insecure opt-in)`, true);
     else sysLog('TLS', `UniFi Controller transport mode: ${tls.mode}`);
-    const c = axios.create({
+    const c = axios.create(createLanAxiosConfig({
         baseURL: tls.url,
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         ...(unifiAgent ? { httpsAgent: unifiAgent } : {}),
         timeout: 10000
-    });
+    }));
     c.interceptors.request.use(cfg => {
         cfg.headers = cfg.headers || {};
         if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken;
@@ -458,14 +454,14 @@ function refreshLocalSession() {
 
 // 建立 UniFi 官方雲端 Site Manager API 客戶端
 function buildUnifiCloudClient() {
-    return axios.create({
+    return axios.create(createInternetAxiosConfig({
         baseURL: 'https://api.ui.com/v1',
         headers: {
             'Accept': 'application/json',
             'X-API-KEY': process.env.UNIFI_API_KEY || ''
         },
         timeout: 8000
-    });
+    }));
 }
 let unifiCloudClient = buildUnifiCloudClient();
 // transport 使用動態 closure，設定頁熱重建 axios instance 後不會保留舊 API key。
@@ -992,10 +988,10 @@ const scheduledBackupRetentionCount = Math.min(Math.max(Number(process.env.SMART
 const threatTrafficListClient = createUniFiTrafficListClient({
     transport: ({ tls, ...request }) => {
         const agent = createHttpsAgent(tls);
-        return axios({
+        return axios(createLanAxiosConfig({
             ...request,
             ...(agent ? { httpsAgent: agent } : {})
-        }).finally(() => destroyAgent(agent));
+        })).finally(() => destroyAgent(agent));
     },
     getEnvironment: () => process.env
 });
@@ -2815,12 +2811,12 @@ function buildNasClient() {
     return {
         base: tls.url,
         tls,
-        client: base ? axios.create({
+        client: base ? axios.create(createLanAxiosConfig({
             baseURL: tls.url,
             headers: { 'ug-agent': 'PC/WEB', 'Accept': 'application/json' },
             ...(nasAgent ? { httpsAgent: nasAgent } : {}),
             timeout: 10000
-        }) : null
+        })) : null
     };
 }
 let { base: NAS_BASE, client: nasClient, tls: nasTls } = buildNasClient();
@@ -3887,7 +3883,7 @@ const CONN_FIELDS = [
     { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
     { key: 'NAS_MONITOR_MODE', restartRequired: true },
     { key: 'WIIM_IP', clearable: true },
-    { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
+    { key: 'UPS_SOURCE' }, { key: 'UPS_ALLOW_FALLBACK' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
     { key: 'PPB_TLS_VERIFY' }, { key: 'PPB_TLS_INSECURE' }, { key: 'PPB_CA_FILE', clearable: true },
     { key: 'ADGUARD_URL' }, { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' },
@@ -4713,11 +4709,11 @@ const wiimClient = createWiimClient({
     request: async ({ protocol, host, command, insecureTls }) => {
         const agent = protocol === 'https:' ? new https.Agent({ rejectUnauthorized: !insecureTls }) : null;
         try {
-            const res = await axios.get(`${protocol}//${host}/httpapi.asp?command=${encodeURIComponent(command)}`, {
+            const res = await axios.get(`${protocol}//${host}/httpapi.asp?command=${encodeURIComponent(command)}`, createLanAxiosConfig({
                 headers: { 'User-Agent': 'wiim-temp/2.0' },
                 ...(agent ? { httpsAgent: agent } : {}),
                 timeout: 3000
-            });
+            }));
             return res.data;
         } finally {
             destroyAgent(agent);
@@ -4904,12 +4900,20 @@ app.get('/api/wiim/csv', (req, res) => {
 // 電壓歷史與斷電事件持久化於 SQLite (斷電紀錄不可因重啟遺失)。
 // 呼叫時讀取 env，設定頁修改後即時生效
 const UPS_SOURCE = () => process.env.UPS_SOURCE || 'auto';
+const UPS_ALLOW_FALLBACK = () => process.env.UPS_ALLOW_FALLBACK || 'false';
 const NUT_HOST = () => process.env.NUT_HOST || 'localhost';
 const NUT_UPS_NAME = () => process.env.NUT_UPS_NAME || 'cyberpower';
 const PWRSTAT_PATH = () => process.env.PWRSTAT_PATH || 'pwrstat';
 const upsFetchState = createUpsState(); // 預設連續 3 次全來源失敗才確認 offline
 let upsPollInFlight = null;
 let upsLastLive = null;     // 最近一次成功讀取；失敗時保留，避免瞬斷抹除最後有效資料
+let upsLastSelection = {
+    configuredSource: 'auto',
+    actualSource: null,
+    fallbackAllowed: true,
+    fallbackUsed: false,
+    fallbackReason: null
+};
 // 重啟接續：若最新事件尚未結束 (重啟前正在斷電)，視為仍在電池供電，
 // 下次取樣時若市電已恢復會正常補上結束時間，不會再開一筆重複事件
 let upsWasOnBattery = !!historyDb.getOpenUpsEvent();
@@ -5033,10 +5037,10 @@ async function syncPpbEventsIfDue(maxAgeMs) {
 
 app.get('/api/ups/ppb-events', async (req, res) => {
     try {
-        const result = ppbConfigured()
-            ? await syncPpbEventsIfDue(ppbEventSyncMs())
-            : { events: historyDb.listUpsPowerEvents(200), cached: true };
-        const events = result.events.map(event => ({
+        // GET is a read-only snapshot. The backend sampler owns PPB network I/O,
+        // SQLite writes, and notification transitions.
+        const sync = ppbEventSync.snapshot();
+        const events = historyDb.listUpsPowerEvents(200).map(event => ({
             id: event.externalId,
             ts: event.eventTs ? new Date(event.eventTs).toISOString() : new Date(event.observedTs).toISOString(),
             desc: event.description,
@@ -5049,8 +5053,9 @@ app.get('/api/ups/ppb-events', async (req, res) => {
             events,
             source: ppbConfigured() ? 'ppb' : 'local',
             ppbConfigured: ppbConfigured(),
-            cached: result.cached,
-            syncedAt: ppbEventSync.snapshot().lastSuccessAt || null
+            cached: true,
+            syncInFlight: sync.inFlight,
+            syncedAt: sync.lastSuccessAt || null
         });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_UPS_FAILED, module: 'api.ups', function: 'getPpbEvents', logMessage: 'Failed to fetch PowerPanel events' });
@@ -5080,22 +5085,30 @@ async function readPmset() {
 
 let upsLastReason = '';
 async function readUpsLive() {
-    // 指定來源優先嘗試；即使指定的來源失敗，仍回退到其他來源 (避免選錯來源就整個抓不到)
-    const chosen = UPS_SOURCE();
-    const order = chosen === 'auto' ? ['ppb', 'nut', 'pwrstat', 'pmset'] : [chosen, ...['ppb', 'nut', 'pwrstat', 'pmset'].filter(s => s !== chosen)];
-    const tried = [];
-    for (const src of order) {
-        const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset, ppb: readPpb }[src];
-        if (!fn) continue;
-        const r = await fn();
-        if (r) {
-            if (src !== chosen && chosen !== 'auto') sysLog('UPS', `指定來源 ${chosen} 無法使用，已自動改用 ${src}`, true);
-            sysLog('UPS', `讀取成功 via ${src}: ${r.status} 輸入${r.inputV}V 電池${r.battery}%`);
-            upsLastReason = ''; return { ...r, actualSource: src };
+    const config = resolveUpsSourceConfig({ source: UPS_SOURCE(), allowFallback: UPS_ALLOW_FALLBACK() });
+    const selection = await selectUpsSource({
+        configuredSource: config.configuredSource,
+        allowFallback: config.fallbackAllowed,
+        readers: { nut: readNut, pwrstat: readPwrstat, pmset: readPmset, ppb: readPpb }
+    });
+    upsLastSelection = {
+        configuredSource: selection.configuredSource,
+        actualSource: selection.actualSource,
+        fallbackAllowed: selection.fallbackAllowed,
+        fallbackUsed: selection.fallbackUsed,
+        fallbackReason: selection.fallbackReason
+    };
+
+    if (selection.data) {
+        if (selection.fallbackUsed) {
+            sysLog('UPS', `指定來源 ${selection.configuredSource} 無法使用，且 UPS_ALLOW_FALLBACK=true，改用 ${selection.actualSource}`, true);
         }
-        tried.push(src);
+        sysLog('UPS', `讀取成功 via ${selection.actualSource}: ${selection.data.status} 輸入${selection.data.inputV}V 電池${selection.data.battery}%`);
+        upsLastReason = '';
+        return selection.data;
     }
-    upsLastReason = `所有來源皆無法讀取 (已嘗試: ${tried.join(', ')})。pwrstat 需安裝 CyberPower PowerPanel；NUT 需安裝並設定 upsc；pmset 為 macOS 內建`;
+
+    upsLastReason = `UPS 來源 ${selection.configuredSource} 無法讀取 (已嘗試: ${selection.failures.join(', ') || selection.configuredSource})。UPS_ALLOW_FALLBACK=true 才會允許明確來源回退`;
     sysLog('UPS', upsLastReason, true);
     return null;
 }
@@ -5197,10 +5210,32 @@ function lastUpsAttemptAt(snapshot) {
 function upsStatusPayload(snapshot, { cached = false } = {}) {
     const lastGood = snapshot.lastGood ? { ...snapshot.lastGood } : null;
     const payload = lastGood || {};
+    let sourceConfig;
+    try {
+        sourceConfig = resolveUpsSourceConfig({ source: UPS_SOURCE(), allowFallback: UPS_ALLOW_FALLBACK() });
+    } catch (error) {
+        sourceConfig = {
+            configuredSource: String(UPS_SOURCE() || 'auto').trim().toLowerCase(),
+            fallbackAllowed: false,
+            configurationError: publicError(error)
+        };
+    }
+    const fresh = snapshot.fetchHealth === FETCH_HEALTH.HEALTHY && !!lastGood;
+    const actualSource = fresh ? (lastGood.actualSource || lastGood.source || null) : null;
+    const fallbackUsed = fresh && lastGood.fallbackUsed === true;
+    const fallbackReason = fresh
+        ? (lastGood.fallbackReason || null)
+        : (sourceConfig.configurationError || upsLastSelection.fallbackReason || snapshot.failureReason || null);
     return {
         ...payload,
-        // 保留 last-good 數值，但 confirmed offline 時維持既有 source 契約，讓舊 UI 不會誤亮綠燈。
-        source: snapshot.fetchHealth === FETCH_HEALTH.OFFLINE || !lastGood ? 'unreachable' : lastGood.source,
+        // Last-good values remain available as lastKnown, but a degraded/offline
+        // sample must not advertise a currently reachable source.
+        source: fresh ? lastGood.source : 'unreachable',
+        configuredSource: sourceConfig.configuredSource,
+        actualSource,
+        fallbackAllowed: sourceConfig.fallbackAllowed,
+        fallbackUsed,
+        fallbackReason,
         lastKnown: snapshot.dataIsStale ? lastGood : undefined,
         cached,
         sampleSec: isDeviceSamplingActive('ups') ? appSettings.upsActiveBackendSampleSec : appSettings.upsIdleBackendSampleSec,
@@ -5368,9 +5403,10 @@ registerBackendSampler({
     getDelayMs: ppbEventSyncMs
 });
 
-app.get('/api/ups/status', async (req, res) => {
-    const result = await sampleUpsIfDue(upsSampleMs());
-    res.json(upsStatusPayload(result.snapshot, { cached: !result.polled }));
+app.get('/api/ups/status', (req, res) => {
+    // GET is a read-only snapshot. The backend sampler owns source I/O,
+    // SQLite writes, state transitions, and notifications.
+    res.json(upsStatusPayload(upsFetchState.snapshot(), { cached: true }));
 });
 
 app.get('/api/ups/history', (req, res) => {

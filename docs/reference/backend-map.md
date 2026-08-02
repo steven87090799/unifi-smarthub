@@ -15,7 +15,7 @@
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
 | WiiM | `server/policies/wiim-command-policy.js`、`server/routes/wiim-command-routes.js`、`server/services/wiim-art-proxy.js`、`server/services/wiim-client.js`、`server/services/wiim-config.js` |
-| UPS | `readUpsLive`, `createUpsState`, `ups-power-quality.js`, `server/integrations/ppb-client.js`, `server/services/ppb-event-sync.js` |
+| UPS | `readUpsLive`, `ups-source-selection.js`, `createUpsState`, `ups-power-quality.js`, `server/integrations/ppb-client.js`, `server/services/ppb-event-sync.js` |
 | AdGuard | `server/integrations/adguard-client.js`、policy／service |
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
 | Web Push | `server/routes/web-push-routes.js`、`server/services/web-push.js` |
@@ -58,6 +58,8 @@
 - AdGuard 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可使用私有 CA。
 - PPB HTTPS 預設驗證；私有 CA 只接受有界的絕對一般檔案，停用驗證必須明確設定 `PPB_TLS_INSECURE=true`。
 - PPB 首次成功同步只建立 source-specific 初始化狀態，不通知歷史事件；失敗不會誤標初始化。
+- UPS 明確 `UPS_SOURCE` 預設 fail-closed；只有 `UPS_ALLOW_FALLBACK=true` 才回退其他來源。`/api/ups/status` 與 `/api/ups/ppb-events` 只讀 snapshot，背景 sampler 才可做 upstream I/O、SQLite 寫入、狀態轉移與通知。
+- LAN Controller／NAS／PPB／WiiM／AdGuard／NAS Monitor request boundary 明確停用 ambient proxy；public Site Manager／通知 integrations 保留其 Internet proxy policy。
 - 一般整合失敗不會阻止 readiness；SQLite 或 worker 異常才使 `/health/ready` 回 503。
 - 前端可見 endpoint／欄位變更必須同步 `server-mock.js`。
 

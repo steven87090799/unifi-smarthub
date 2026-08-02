@@ -43,6 +43,8 @@ docker compose --env-file config/.env ps
 
 本機隔離演練可開啟 `http://127.0.0.1:3000`。正式環境不可把 `http://<NAS IP>:3000` 當作對外入口；請以前置 Caddy／Nginx 終止 HTTPS，再反向代理至 SmartHub 的內部 port。
 
+Compose 的 host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內服務仍綁定 `0.0.0.0` 以接受同一 network 的 reverse proxy。若要改成 LAN 發布，必須明確設定 host bind address 並同步套用防火牆／HTTPS 邊界。
+
 本機直接執行：
 
 ```bash
@@ -95,6 +97,7 @@ node server-mock.js
 
 ```env
 UPS_SOURCE=ppb
+UPS_ALLOW_FALLBACK=false
 PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...

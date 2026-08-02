@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const https = require('node:https');
 const { isLoopbackHostname } = require('./nas-monitor-client');
+const { createLanAxiosConfig } = require('./http-egress-policy');
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_BASE_URL_LENGTH = 2_048;
@@ -123,9 +124,8 @@ function createAdGuardConnection(options = {}) {
     if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 30_000) {
         throw new TypeError('timeoutMs must be an integer between 1000 and 30000');
     }
-    const transport = axios.create({
+    const transport = axios.create(createLanAxiosConfig({
         baseURL: url,
-        proxy: false,
         auth: { username, password },
         headers: { Accept: 'application/json' },
         ...(agent ? { httpsAgent: agent } : {}),
@@ -134,7 +134,7 @@ function createAdGuardConnection(options = {}) {
         maxContentLength: MAX_RESPONSE_BYTES,
         maxBodyLength: MAX_REQUEST_BYTES,
         validateStatus: status => status >= 200 && status < 300
-    });
+    }));
     const client = Object.freeze({
         async request(path, { method = 'get', data, params } = {}) {
             const normalizedMethod = String(method).toLowerCase();
