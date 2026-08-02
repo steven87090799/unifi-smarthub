@@ -5,7 +5,13 @@
  * owns token storage; this service only decides whether a valid token can be
  * reused and makes one login promise visible to every concurrent waiter.
  */
-function createNasLoginSingleflight({ getCachedToken, isTokenValid, login } = {}) {
+function createNasLoginSingleflight({
+    getCachedToken,
+    isTokenValid,
+    login,
+    isSupersededError = () => false,
+    onFailure = null
+} = {}) {
     if (typeof getCachedToken !== 'function') throw new TypeError('getCachedToken is required');
     if (typeof isTokenValid !== 'function') throw new TypeError('isTokenValid is required');
     if (typeof login !== 'function') throw new TypeError('login is required');
@@ -17,7 +23,12 @@ function createNasLoginSingleflight({ getCachedToken, isTokenValid, login } = {}
         if (isTokenValid(cached)) return cached;
         if (inFlight) return inFlight;
 
-        const pending = Promise.resolve().then(login);
+        const pending = Promise.resolve().then(login).catch(error => {
+            if (!isSupersededError(error) && typeof onFailure === 'function') {
+                try { onFailure(error); } catch { /* preserve the original login error */ }
+            }
+            throw error;
+        });
         const wrapped = pending.finally(() => {
             if (inFlight === wrapped) inFlight = null;
         });

@@ -81,10 +81,12 @@ function createDeviceCollectorCache({
     function entryFor(name) {
         let entry = entries.get(name);
         if (!entry) {
+            const createdAt = now();
             entry = {
                 data: undefined,
                 estimatedBytes: 0,
-                lastAccessAt: now(),
+                createdAt,
+                lastAccessAt: createdAt,
                 lastAttemptAt: null,
                 lastSuccessAt: null,
                 lastErrorAt: null,
@@ -138,17 +140,16 @@ function createDeviceCollectorCache({
         }
     }
 
-    function snapshot(name) {
-        purgeExpired();
-        const entry = entries.get(name);
+    function buildSnapshot(name, entry) {
         if (!entry) return null;
-        touch(entry);
         const timestamp = now();
         const freshnessMs = freshnessFor(name, entry);
         const ageMs = entry.lastSuccessAt == null ? null : Math.max(0, timestamp - entry.lastSuccessAt);
         const fresh = isFresh(name, entry, timestamp, freshnessMs);
         return {
+            name,
             data: entry.data,
+            hasData: entry.data !== undefined,
             lastAttemptAt: entry.lastAttemptAt,
             lastSuccessAt: entry.lastSuccessAt,
             lastErrorAt: entry.lastErrorAt,
@@ -156,6 +157,8 @@ function createDeviceCollectorCache({
             consecutiveFailures: entry.consecutiveFailures,
             inflight: Boolean(entry.inflight),
             sampleId: entry.sampleId,
+            createdAt: entry.createdAt,
+            lastAccessAt: entry.lastAccessAt,
             freshnessMs,
             ageMs,
             estimatedBytes: entry.estimatedBytes,
@@ -168,11 +171,23 @@ function createDeviceCollectorCache({
         };
     }
 
+    function snapshot(name) {
+        purgeExpired();
+        const entry = entries.get(name);
+        if (!entry) return null;
+        touch(entry);
+        return buildSnapshot(name, entry);
+    }
+
+    function peekSnapshot(name) {
+        purgeExpired();
+        return buildSnapshot(name, entries.get(name));
+    }
+
     function peek(name, { allowStale = true } = {}) {
         purgeExpired();
         const current = entries.get(name);
         if (!current || current.data === undefined) return undefined;
-        touch(current);
         if (!allowStale && !isFresh(name, current)) return undefined;
         return current.data;
     }
@@ -274,9 +289,10 @@ function createDeviceCollectorCache({
 
     function invalidateMatching(predicate) {
         if (typeof predicate !== 'function') throw new TypeError('predicate must be a function');
+        purgeExpired();
         let count = 0;
-        for (const name of [...entries.keys()]) {
-            if (predicate(name, snapshot(name)) && forceRemoveEntry(name)) count += 1;
+        for (const [name, entry] of [...entries.entries()]) {
+            if (predicate(name, buildSnapshot(name, entry)) && forceRemoveEntry(name)) count += 1;
         }
         return count;
     }
@@ -298,6 +314,7 @@ function createDeviceCollectorCache({
     return Object.freeze({
         read,
         peek,
+        peekSnapshot,
         snapshot,
         invalidate,
         invalidatePrefix,

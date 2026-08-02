@@ -178,7 +178,7 @@ test('bounded collector cache evicts LRU entries, expires TTL, and invalidates p
     now += 1;
     await read('nas.logs.page.2', 'c');
     assert.equal(cache.diagnostics().entryCount, 3);
-    cache.peek('nas.logs.page.0');
+    cache.snapshot('nas.logs.page.0');
     now += 1;
     await read('nas.logs.page.3', 'd');
     assert.equal(cache.has('nas.logs.page.0'), true);
@@ -194,6 +194,33 @@ test('bounded collector cache evicts LRU entries, expires TTL, and invalidates p
     assert.equal(cache.invalidatePrefix('nas.logs.page.'), 2);
     assert.equal(cache.names().some(name => name.startsWith('nas.logs.page.')), false);
     assert.ok(cache.diagnostics().estimatedBytes <= 100);
+});
+
+test('invalidateMatching does not touch nonmatching LRU entries, and peek is read-only', async () => {
+    let now = 0;
+    const cache = createDeviceCollectorCache({
+        now: () => now,
+        cacheAgeMs: () => 60_000,
+        entryTtlMs: 100
+    });
+    await cache.read('A', async () => 'a');
+    now = 10;
+    await cache.read('B', async () => 'b');
+    const before = cache.peekSnapshot('B').lastAccessAt;
+
+    now = 20;
+    assert.equal(cache.invalidateMatching(name => name === 'A'), 1);
+    assert.equal(cache.has('A'), false);
+    assert.equal(cache.peekSnapshot('B').lastAccessAt, before);
+
+    cache.peek('B');
+    assert.equal(cache.peekSnapshot('B').lastAccessAt, before);
+    now = 30;
+    assert.equal(cache.snapshot('B').lastAccessAt, 30);
+
+    now = 131;
+    assert.equal(cache.peek('B'), undefined);
+    assert.equal(cache.peekSnapshot('B'), null);
 });
 
 test('inflight entries are not evicted until their upstream settles', async () => {

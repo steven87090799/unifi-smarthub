@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createNasLoginSingleflight } = require('../server/services/nas-login-singleflight');
+const { NasLoginSupersededError, isNasLoginSupersededError } = require('../server/services/nas-token-generation');
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -74,4 +75,19 @@ test('expired token enters singleflight again without overwriting a successful t
     const results = await Promise.all([login.getToken(), login.getToken(), login.getToken()]);
     assert.deepEqual(new Set(results), new Set(['token-2']));
     assert.equal(attempts, 2);
+});
+
+test('superseded login errors skip failure recording and remain bounded', async () => {
+    let failures = 0;
+    const login = createNasLoginSingleflight({
+        getCachedToken: () => null,
+        isTokenValid: () => false,
+        isSupersededError: isNasLoginSupersededError,
+        onFailure: () => { failures += 1; },
+        login: async () => { throw new NasLoginSupersededError(); }
+    });
+
+    await assert.rejects(login.getToken(), error => error.code === 'NAS_LOGIN_SUPERSEDED');
+    assert.equal(failures, 0);
+    assert.equal(login.isInFlight(), false);
 });

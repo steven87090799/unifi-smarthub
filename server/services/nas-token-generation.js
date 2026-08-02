@@ -1,5 +1,17 @@
 'use strict';
 
+class NasLoginSupersededError extends Error {
+    constructor() {
+        super('NAS login result was superseded by a newer client generation');
+        this.name = 'NasLoginSupersededError';
+        this.code = 'NAS_LOGIN_SUPERSEDED';
+    }
+}
+
+function isNasLoginSupersededError(error) {
+    return error?.code === 'NAS_LOGIN_SUPERSEDED';
+}
+
 /**
  * Generation-fenced NAS token storage.  A request may clear a token only if
  * the token and generation it used are still current; a delayed 401 from an
@@ -19,7 +31,7 @@ function createNasTokenGeneration({ now = () => Date.now() } = {}) {
         return { token, generation, expiresAt };
     }
 
-    function setIfGeneration(nextToken, nextExpiresAt, expectedGeneration) {
+    function setIfGeneration(expectedGeneration, nextToken, nextExpiresAt) {
         if (generation !== expectedGeneration) return false;
         set(nextToken, nextExpiresAt);
         return true;
@@ -56,4 +68,8 @@ function createNasTokenGeneration({ now = () => Date.now() } = {}) {
     });
 }
 
-module.exports = { createNasTokenGeneration };
+module.exports = {
+    NasLoginSupersededError,
+    createNasTokenGeneration,
+    isNasLoginSupersededError
+};

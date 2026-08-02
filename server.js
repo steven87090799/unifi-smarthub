@@ -118,9 +118,18 @@ const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createBackendSamplerRegistry } = require('./server/services/backend-sampler-registry');
 const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
 const { createDeviceSamplingPolicy } = require('./server/services/device-sampling-policy');
-const { createDockerLogSnapshot, dockerLogCacheKey } = require('./server/services/docker-log-snapshot');
+const {
+    createDockerLogSnapshot,
+    dockerLogCacheKey,
+    dockerLogNotificationsEnabled,
+    selectTailLines
+} = require('./server/services/docker-log-snapshot');
 const { createNasLoginSingleflight } = require('./server/services/nas-login-singleflight');
-const { createNasTokenGeneration } = require('./server/services/nas-token-generation');
+const {
+    NasLoginSupersededError,
+    createNasTokenGeneration,
+    isNasLoginSupersededError
+} = require('./server/services/nas-token-generation');
 const { createSampleDeduper } = require('./server/services/sample-deduper');
 const { createPpbEventSync } = require('./server/services/ppb-event-sync');
 const { createUnifiDeviceThermalSshCollector, normalizeDeviceId } = require('./server/integrations/unifi-device-thermal-ssh');
@@ -1646,10 +1655,7 @@ let dockerLogSnapshot = null;
 function dockerLogFreshnessMs() {
     return Math.max(Number(appSettings.watcherSec) || 20, 30) * 1000;
 }
-function dockerLogNotificationsEnabled(settings = loadNotifSettings()) {
-    return settings.triggerDockerCriticalLog !== false || settings.triggerDockerErrorLog === true;
-}
-function getDockerLogCached(id, { lines = 120, allowStale = false, refresh = false } = {}) {
+function getDockerLogCached(id, { lines = 200, allowStale = true, refresh = false } = {}) {
     return dockerLogSnapshot.read(id, { lines, allowStale, refresh });
 }
 async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
@@ -1657,7 +1663,7 @@ async function readDockerLogFindings(containers, { lines = 120, maxContainers = 
     const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
     const results = await Promise.all(selected.map(async container => {
         try {
-            const data = readCollectorSnapshot(dockerLogCacheKey(container.id));
+            const data = selectTailLines(readCollectorSnapshot(dockerLogCacheKey(container.id)), lines);
             const raw = typeof data === 'string' ? data : (data?.logs || JSON.stringify(data || ''));
             return dockerLogFindings(raw, container, maxPerContainer);
         } catch (error) {
@@ -2787,7 +2793,32 @@ function deepFind(obj, keys, depth = 0) {
 const nasTokenState = createNasTokenGeneration();
 let nasLastSuccessAt = null;
 let nasLastFailureAt = null;
+let nasLastErrorAt = null;
+let nasLastError = null;
 let nasConsecutiveFailures = 0;
+
+function recordNasSuccess() {
+    nasLastSuccessAt = Date.now();
+    nasLastFailureAt = null;
+    nasLastErrorAt = null;
+    nasLastError = null;
+    nasConsecutiveFailures = 0;
+}
+
+function recordNasFailure(error) {
+    const now = Date.now();
+    nasLastFailureAt = now;
+    nasLastErrorAt = now;
+    nasLastError = String(error?.message || error || 'NAS request failed').slice(0, 512);
+    nasConsecutiveFailures += 1;
+}
+
+function recordNasLoginFailure(error) {
+    if (isNasLoginSupersededError(error)) return;
+    recordNasFailure(error);
+    sysLog('NAS Auth', `NAS 登入流程失敗: ${error.message}`, true);
+}
+
 async function performNasLogin() {
     const loginGeneration = nasTokenState.getGeneration();
     try {
@@ -2829,15 +2860,19 @@ async function performNasLogin() {
         const token = deepFind(loginRes.data, ['token', 'access_token']);
         if (!token) throw new Error('NAS login did not return a token');
 
-        nasTokenState.setIfGeneration(token, Date.now() + 12 * 60 * 60 * 1000, loginGeneration); // Token 官方效期 24H，保守 12H 換發
-        nasLastSuccessAt = Date.now();
-        nasConsecutiveFailures = 0;
+        const committed = nasTokenState.setIfGeneration(
+            loginGeneration,
+            token,
+            Date.now() + 12 * 60 * 60 * 1000
+        ); // Token 官方效期 24H，保守 12H 換發
+        if (!committed) throw new NasLoginSupersededError();
+        recordNasSuccess();
         sysLog('NAS Auth', 'NAS 登入成功，快取 JWT Token (12小時)。');
         return token;
-      } catch (error) {
-        nasLastFailureAt = Date.now();
-        nasConsecutiveFailures += 1;
-        sysLog('NAS Auth', `NAS 登入流程失敗: ${error.message}`, true);
+    } catch (error) {
+        if (nasTokenState.getGeneration() !== loginGeneration && !isNasLoginSupersededError(error)) {
+            throw new NasLoginSupersededError();
+        }
         throw error;
     }
 }
@@ -2845,14 +2880,23 @@ async function performNasLogin() {
 const nasLoginSingleflight = createNasLoginSingleflight({
     getCachedToken: () => nasTokenState.getToken(),
     isTokenValid: token => Boolean(token && nasTokenState.isValid()),
-    login: performNasLogin
+    login: performNasLogin,
+    isSupersededError: isNasLoginSupersededError,
+    onFailure: recordNasLoginFailure
 });
 
-async function getNasToken() {
+async function getNasToken({ retryOnSuperseded = true } = {}) {
     if (nasTokenState.isValid()) {
         sysLog('NAS Auth', '使用快取的 UGREEN NAS JWT Token。');
     }
-    return nasLoginSingleflight.getToken();
+    try {
+        return await nasLoginSingleflight.getToken();
+    } catch (error) {
+        if (retryOnSuperseded && isNasLoginSupersededError(error)) {
+            return getNasToken({ retryOnSuperseded: false });
+        }
+        throw error;
+    }
 }
 
 function clearNasTokenIfCurrent(requestToken, requestGeneration) {
@@ -2878,24 +2922,21 @@ async function nasGet(pathName, params = {}, _retryCount = 0) {
                 sysLog('NAS Auth', `${pathName} 回 code ${r.data.code}，可能是 token 失效 (如 NAS 重開機)，清除快取重新登入後重試`, false);
                 clearNasTokenIfCurrent(requestToken, requestGeneration);
                 const retried = await nasGet(pathName, params, _retryCount + 1);
-                nasLastSuccessAt = Date.now();
-                nasConsecutiveFailures = 0;
+                recordNasSuccess();
                 return retried;
             }
             throw new Error(permErr
                 ? `NAS 帳號權限不足 (code ${r.data.code})：此 API 僅限管理員帳號，請在 UGOS 將使用者設為管理員或改用管理員帳密`
                 : `UGOS code ${r.data.code}: ${r.data.msg || r.data.debug || ''}`);
         }
-        nasLastSuccessAt = Date.now();
-        nasConsecutiveFailures = 0;
+        recordNasSuccess();
         return r.data && r.data.data !== undefined ? r.data.data : r.data;
     } catch (error) {
         if (nasTokenInvalidError(error) && _retryCount < 1) {
             clearNasTokenIfCurrent(requestToken, requestGeneration);
             return nasGet(pathName, params, _retryCount + 1);
         }
-        nasLastFailureAt = Date.now();
-        nasConsecutiveFailures += 1;
+        recordNasFailure(error);
         throw error;
     }
 }

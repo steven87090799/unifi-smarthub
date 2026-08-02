@@ -3,7 +3,11 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createDeviceCollectorCache } = require('../server/services/device-collector-cache');
-const { createDockerLogSnapshot } = require('../server/services/docker-log-snapshot');
+const {
+    DOCKER_LOG_CANONICAL_LINES,
+    createDockerLogSnapshot,
+    dockerLogNotificationsEnabled
+} = require('../server/services/docker-log-snapshot');
 
 const deferred = () => {
     let resolve;
@@ -11,7 +15,38 @@ const deferred = () => {
     return { promise, resolve };
 };
 
-test('Docker inventory may refresh at 5s but logs stay at least 30s between upstream calls', async () => {
+test('different requested lines share one canonical upstream and return caller-local tails', async () => {
+    const upstreamLines = Array.from({ length: 1_000 }, (_, index) => `line-${index + 1}`);
+    const gate = deferred();
+    let calls = 0;
+    let requestedLines = null;
+    const cache = createDeviceCollectorCache();
+    const logs = createDockerLogSnapshot({
+        cache,
+        fetch: async (_id, options) => {
+            calls += 1;
+            requestedLines = options.lines;
+            await gate.promise;
+            return upstreamLines.join('\n');
+        }
+    });
+
+    const result120Promise = logs.read('container-a', { lines: 120 });
+    const result1000Promise = logs.read('container-a', { lines: 1000 });
+    await Promise.resolve();
+    assert.equal(calls, 1);
+    assert.equal(requestedLines, DOCKER_LOG_CANONICAL_LINES);
+    gate.resolve();
+    const [result120, result1000] = await Promise.all([result120Promise, result1000Promise]);
+    const lines120 = result120.split('\n');
+    const lines1000 = result1000.split('\n');
+    assert.equal(lines120.length, 120);
+    assert.equal(lines1000.length, 1000);
+    assert.equal(lines120[0], 'line-881');
+    assert.equal(lines1000[0], 'line-1');
+});
+
+test('Docker log snapshots respect the minimum refresh interval', async () => {
     let now = 0;
     let calls = 0;
     const cache = createDeviceCollectorCache({ now: () => now, cacheAgeMs: () => 5_000 });
@@ -29,13 +64,20 @@ test('Docker inventory may refresh at 5s but logs stay at least 30s between upst
     assert.equal(calls, 2);
 });
 
-test('disabled Docker log notifications do not read logs', async () => {
+test('background Docker log collection requires global and trigger notification settings', async () => {
     let calls = 0;
     const cache = createDeviceCollectorCache();
     const logs = createDockerLogSnapshot({ cache, fetch: async () => { calls += 1; return 'error'; } });
-    await logs.readInventory([{ id: 'container-a' }], { enabled: false });
+    const disabled = { enabled: false, triggerDockerCriticalLog: true, triggerDockerErrorLog: true };
+    assert.equal(dockerLogNotificationsEnabled(disabled), false);
+    await logs.readInventory([{ id: 'container-a' }], { enabled: dockerLogNotificationsEnabled(disabled) });
     assert.equal(calls, 0);
     assert.equal(cache.names().length, 0);
+
+    const enabled = { enabled: true, triggerDockerCriticalLog: true, triggerDockerErrorLog: false };
+    assert.equal(dockerLogNotificationsEnabled(enabled), true);
+    await logs.readInventory([{ id: 'container-a' }], { enabled: dockerLogNotificationsEnabled(enabled) });
+    assert.equal(calls, 1);
 });
 
 test('watcher and API log callers share one per-container singleflight', async () => {

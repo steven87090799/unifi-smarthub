@@ -3,7 +3,11 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { createNasLoginSingleflight } = require('../server/services/nas-login-singleflight');
-const { createNasTokenGeneration } = require('../server/services/nas-token-generation');
+const {
+    NasLoginSupersededError,
+    createNasTokenGeneration,
+    isNasLoginSupersededError
+} = require('../server/services/nas-token-generation');
 
 test('delayed old NAS token failure cannot clear a newer token or trigger a third login', async () => {
     let now = 0;
@@ -59,4 +63,15 @@ test('token reset fences an in-flight login and allows one bounded retry', async
     assert.deepEqual(results.sort(), ['T1', 'T2']);
     assert.equal(tokens.getToken(), 'T2');
     assert.equal(login.isInFlight(), false);
+});
+
+test('a superseded login result is rejected before token commit', () => {
+    const tokens = createNasTokenGeneration();
+    const loginGeneration = tokens.getGeneration();
+    tokens.reset();
+
+    assert.equal(tokens.setIfGeneration(loginGeneration, 'old-token', Date.now() + 10_000), false);
+    assert.equal(tokens.getToken(), '');
+    const error = new NasLoginSupersededError();
+    assert.equal(isNasLoginSupersededError(error), true);
 });
