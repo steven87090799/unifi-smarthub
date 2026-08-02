@@ -272,10 +272,13 @@ function createDeviceCollectorCache({
 
     function invalidate(name) {
         if (name === undefined) {
-            for (const key of entries.keys()) forceRemoveEntry(key);
-            return;
+            let count = 0;
+            for (const key of [...entries.keys()]) {
+                if (forceRemoveEntry(key)) count += 1;
+            }
+            return count;
         }
-        forceRemoveEntry(name);
+        return forceRemoveEntry(name);
     }
 
     function invalidatePrefix(prefix) {

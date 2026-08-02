@@ -16,8 +16,11 @@ class DockerActionPolicyError extends Error {
 
 function containersFromPayload(payload) {
     if (Array.isArray(payload)) return payload;
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload.containers) === false) return [];
-    return payload.containers;
+    if (!payload || typeof payload !== 'object') return [];
+    if (Array.isArray(payload.containers)) return payload.containers;
+    if (Array.isArray(payload.data)) return payload.data;
+    if (Array.isArray(payload.data?.containers)) return payload.data.containers;
+    return [];
 }
 
 function normalizedAllowedActions(container, { allowLegacy = false } = {}) {

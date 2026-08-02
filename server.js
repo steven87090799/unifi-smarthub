@@ -125,6 +125,7 @@ const {
     selectTailLines
 } = require('./server/services/docker-log-snapshot');
 const { createNasLoginSingleflight } = require('./server/services/nas-login-singleflight');
+const { createNasRequestRunner } = require('./server/services/nas-request-retry');
 const {
     NasLoginSupersededError,
     createNasTokenGeneration,
@@ -1658,6 +1659,41 @@ function dockerLogFreshnessMs() {
 function getDockerLogCached(id, { lines = 200, allowStale = true, refresh = false } = {}) {
     return dockerLogSnapshot.read(id, { lines, allowStale, refresh });
 }
+async function collectDockerLogSnapshots({ notificationSettings } = {}) {
+    if (!nasMonConfigured() || !dockerLogNotificationsEnabled(notificationSettings)) {
+        dockerLogSnapshot?.clear();
+        return { enabled: false, containers: 0, collected: 0 };
+    }
+
+    // The inventory is owned by the shared collector.  A missing or stale
+    // inventory must not fan out into direct upstream requests here.
+    const inventorySnapshot = latestDeviceCollector('nasMonitor.dockerContainers');
+    const inventoryData = inventorySnapshot?.data ?? inventorySnapshot;
+    const containers = containersFromPayload(inventoryData);
+    const currentIds = new Set(
+        containers
+            .map(container => container?.id)
+            .filter(Boolean)
+            .map(String)
+    );
+    dockerLogSnapshot?.reconcile(currentIds);
+
+    let collected = 0;
+    for (const container of containers.slice(0, 12)) {
+        const containerId = String(container?.id || '');
+        if (!containerId) continue;
+        try {
+            await getDockerLogCached(containerId, { lines: 120, allowStale: true });
+            collected += 1;
+        } catch (error) {
+            logRecoverableFailure(`sampler.collector:${dockerLogCacheKey(containerId)}`, error, {
+                module: 'scheduler.deviceCollectors', function: 'sampleDockerLog', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
+                fields: { container: container.name || containerId }
+            });
+        }
+    }
+    return { enabled: true, containers: currentIds.size, collected };
+}
 async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
     if (!nasMonConfigured()) return [];
     const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
@@ -1713,6 +1749,17 @@ function loadNotifSettings() {
         notifSettingsCache = { ...NOTIF_DEFAULTS };
     }
     return notifSettingsCache;
+}
+function getCurrentNotificationSettings() {
+    const settings = loadNotifSettings();
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        return {
+            enabled: false,
+            triggerDockerCriticalLog: false,
+            triggerDockerErrorLog: false
+        };
+    }
+    return settings;
 }
 function saveNotifSettings(s) {
     try { writeJsonObjectAtomically(NOTIF_FILE, s); }
@@ -2047,7 +2094,13 @@ async function notificationWatcher() {
     const s = loadNotifSettings();
     if (!s.enabled) return;
     await scanSystemIssueNotifications(s);
-    await scanDockerNotifications(s);
+    try {
+        await scanDockerNotifications(s);
+    } catch (error) {
+        logRecoverableFailure('watcher.dockerNotifications', error, {
+            module: 'watcher.notifications', function: 'scanDockerNotifications', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED
+        });
+    }
     // 新威脅
     if (s.triggerThreats) {
         try {
@@ -2816,6 +2869,14 @@ function recordNasFailure(error) {
 function recordNasLoginFailure(error) {
     if (isNasLoginSupersededError(error)) return;
     recordNasFailure(error);
+    if (error && typeof error === 'object') {
+        try {
+            Object.defineProperty(error, 'nasFailureRecorded', {
+                value: true,
+                configurable: true
+            });
+        } catch { /* preserve the original login error */ }
+    }
     sysLog('NAS Auth', `NAS 登入流程失敗: ${error.message}`, true);
 }
 
@@ -2866,7 +2927,6 @@ async function performNasLogin() {
             Date.now() + 12 * 60 * 60 * 1000
         ); // Token 官方效期 24H，保守 12H 換發
         if (!committed) throw new NasLoginSupersededError();
-        recordNasSuccess();
         sysLog('NAS Auth', 'NAS 登入成功，快取 JWT Token (12小時)。');
         return token;
     } catch (error) {
@@ -2899,46 +2959,83 @@ async function getNasToken({ retryOnSuperseded = true } = {}) {
     }
 }
 
-function clearNasTokenIfCurrent(requestToken, requestGeneration) {
-    return nasTokenState.clearIfCurrent(requestToken, requestGeneration);
+function getNasTokenLeaseSnapshot() {
+    return {
+        token: nasTokenState.getToken(),
+        generation: nasTokenState.getGeneration()
+    };
+}
+function clearNasTokenIfCurrent({ token, generation }) {
+    return nasTokenState.clearIfCurrent({ token, generation });
 }
 function nasTokenInvalidError(error) {
     return Number(error?.response?.status || error?.status || error?.statusCode) === 401;
 }
 
-async function nasGet(pathName, params = {}, _retryCount = 0) {
-    const token = await getNasToken();
-    const requestToken = token;
-    const requestGeneration = nasTokenState.getGeneration();
-    try {
-        const r = await nasClient.get(pathName, { params: { ...params, token } });
-        if (nasTokenInvalidError(r)) throw Object.assign(new Error('NAS token rejected'), { status: 401 });
-        // UGOS 一律回 HTTP 200，錯誤放在 body.code (1004/1008 = 權限不足，需管理員帳號)
-        if (r.data && typeof r.data.code === 'number' && r.data.code !== 200) {
-            const permErr = [1004, 1008].includes(r.data.code);
-            // 權限錯誤重試也沒用；其他錯誤(含 token 失效，例如 NAS 重開機後舊 token 被清空)一律
-            // 清掉快取 token 重新登入後重試一次 —— 不用去猜 UGOS 到底吐哪個代碼表示 token 失效
-            if (!permErr && _retryCount < 1) {
-                sysLog('NAS Auth', `${pathName} 回 code ${r.data.code}，可能是 token 失效 (如 NAS 重開機)，清除快取重新登入後重試`, false);
-                clearNasTokenIfCurrent(requestToken, requestGeneration);
-                const retried = await nasGet(pathName, params, _retryCount + 1);
-                recordNasSuccess();
-                return retried;
+function createNasTokenRejectedError({ message, responseCode, cause } = {}) {
+    const error = new Error(message || 'NAS token was rejected');
+    error.name = 'NasTokenRejectedError';
+    error.code = 'NAS_TOKEN_REJECTED';
+    if (responseCode !== undefined) error.responseCode = responseCode;
+    if (cause !== undefined) error.cause = cause;
+    return error;
+}
+
+function isNasTokenRejectedError(error) {
+    if (!error) return false;
+    if (error.code === 'NAS_TOKEN_REJECTED') return true;
+    if (isNasLoginSupersededError(error)) return false;
+    const status = error.response?.status ?? error.status;
+    if (status === 401 || status === 403) return true;
+    return nasTokenInvalidError(error);
+}
+
+const nasRequestRunner = createNasRequestRunner({
+    // The runner owns the single bounded superseded-login retry.  Disabling
+    // getNasToken's legacy nested retry here prevents a hidden third login.
+    getToken: () => getNasToken({ retryOnSuperseded: false }),
+    getLease: getNasTokenLeaseSnapshot,
+    request: (pathName, requestOptions) => nasClient.get(pathName, requestOptions),
+    validateResponse: response => {
+        if (nasTokenInvalidError(response)) {
+            throw createNasTokenRejectedError({
+                responseCode: response.status,
+                cause: response
+            });
+        }
+        const body = response?.data;
+        const bodyCode = typeof body?.code === 'number' ? body.code : null;
+        if (bodyCode !== null && bodyCode !== 200) {
+            if (bodyCode === 1004 || bodyCode === 1008) {
+                const permissionError = new Error(
+                    `NAS account permission denied (code ${bodyCode})`
+                );
+                permissionError.code = 'NAS_PERMISSION_DENIED';
+                throw permissionError;
             }
-            throw new Error(permErr
-                ? `NAS 帳號權限不足 (code ${r.data.code})：此 API 僅限管理員帳號，請在 UGOS 將使用者設為管理員或改用管理員帳密`
-                : `UGOS code ${r.data.code}: ${r.data.msg || r.data.debug || ''}`);
+            throw createNasTokenRejectedError({
+                message: `NAS API rejected token (code ${bodyCode})`,
+                responseCode: bodyCode
+            });
         }
-        recordNasSuccess();
-        return r.data && r.data.data !== undefined ? r.data.data : r.data;
-    } catch (error) {
-        if (nasTokenInvalidError(error) && _retryCount < 1) {
-            clearNasTokenIfCurrent(requestToken, requestGeneration);
-            return nasGet(pathName, params, _retryCount + 1);
-        }
-        recordNasFailure(error);
-        throw error;
-    }
+        return body?.data !== undefined ? body.data : body;
+    },
+    normalizeError: error => nasTokenInvalidError(error)
+        ? createNasTokenRejectedError({
+            responseCode: error.response?.status ?? error.status,
+            cause: error
+        })
+        : error,
+    isTokenRejectedError: isNasTokenRejectedError,
+    isSupersededError: isNasLoginSupersededError,
+    clearTokenIfCurrent: clearNasTokenIfCurrent,
+    recordSuccess: recordNasSuccess,
+    recordFailure: recordNasFailure,
+    isFailureRecorded: error => error?.nasFailureRecorded === true
+});
+
+async function nasGet(pathName, params = {}) {
+    return nasRequestRunner.run(pathName, params);
 }
 
 function getNasCommonCached(options = {}) {
@@ -5593,24 +5690,14 @@ async function sampleReadOnlyDeviceCollectors() {
         }
     }));
 
-    // Docker log inspection uses the same snapshot-only rule as the watcher.
-    // Populate bounded per-container log keys only after the inventory snapshot
-    // is available; a failed inventory never fans out into log requests.
-    if (nasMonConfigured() && dockerLogNotificationsEnabled()) {
-        const inventory = latestDeviceCollector('nasMonitor.dockerContainers');
-        const containers = Array.isArray(inventory) ? inventory : (inventory?.containers || inventory?.data || []);
-        await Promise.allSettled(containers.filter(container => container?.id).slice(0, 12).map(async container => {
-            const name = dockerLogCacheKey(container.id);
-            try {
-                await getDockerLogCached(container.id, { lines: 120, allowStale: true });
-            } catch (error) {
-                logRecoverableFailure(`sampler.collector:${name}`, error, {
-                    module: 'scheduler.deviceCollectors', function: 'sampleDockerLog', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
-                    fields: { container: container.name || container.id }
-                });
-            }
-        }));
-    } else dockerLogSnapshot?.clear();
+    const notificationSettings = getCurrentNotificationSettings();
+    const shouldCollectDockerLogs = nasMonConfigured()
+        && dockerLogNotificationsEnabled(notificationSettings);
+    if (shouldCollectDockerLogs) {
+        await collectDockerLogSnapshots({ notificationSettings });
+    } else {
+        dockerLogSnapshot?.clear();
+    }
     return outcomes;
 }
 registerBackendSampler({

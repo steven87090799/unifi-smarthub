@@ -34,6 +34,14 @@ function dockerLogCacheKey(id) {
     return `${DOCKER_LOG_CACHE_PREFIX}${String(id)}`;
 }
 
+function normalizeContainerIds(containerIds) {
+    if (containerIds == null) return new Set();
+    if (typeof containerIds === 'string' || typeof containerIds[Symbol.iterator] !== 'function') {
+        return new Set();
+    }
+    return new Set(Array.from(containerIds, id => String(id)).filter(id => id.length > 0));
+}
+
 function createDockerLogSnapshot({ cache, fetch, getMinIntervalMs = () => 30_000, maxContainers = 12 } = {}) {
     if (!cache || typeof cache.read !== 'function' || typeof cache.snapshot !== 'function') {
         throw new TypeError('cache must be a collector cache');
@@ -67,12 +75,12 @@ function createDockerLogSnapshot({ cache, fetch, getMinIntervalMs = () => 30_000
     }
 
     function reconcile(containerIds) {
-        const current = new Set((containerIds || []).map(id => String(id)));
+        const current = normalizeContainerIds(containerIds);
         let removed = 0;
         for (const name of cache.names()) {
-            if (!name.startsWith(DOCKER_LOG_CACHE_PREFIX)) continue;
+            if (typeof name !== 'string' || !name.startsWith(DOCKER_LOG_CACHE_PREFIX)) continue;
             const id = name.slice(DOCKER_LOG_CACHE_PREFIX.length);
-            if (!current.has(id)) removed += cache.invalidatePrefix(name);
+            if (!current.has(id) && cache.invalidate(name)) removed += 1;
         }
         return removed;
     }
@@ -99,6 +107,7 @@ module.exports = {
     createDockerLogSnapshot,
     dockerLogCacheKey,
     dockerLogNotificationsEnabled,
+    normalizeContainerIds,
     normalizeRequestedLines,
     selectTailLines
 };

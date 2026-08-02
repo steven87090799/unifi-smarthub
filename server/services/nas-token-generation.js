@@ -37,8 +37,13 @@ function createNasTokenGeneration({ now = () => Date.now() } = {}) {
         return true;
     }
 
-    function clearIfCurrent(requestToken, requestGeneration) {
-        if (token !== requestToken || generation !== requestGeneration) return false;
+    function clearIfCurrent(leaseOrToken, requestGeneration) {
+        const lease = leaseOrToken && typeof leaseOrToken === 'object'
+            ? leaseOrToken
+            : { token: leaseOrToken, generation: requestGeneration };
+        const requestToken = lease.token;
+        const leaseGeneration = lease.generation;
+        if (token !== requestToken || generation !== leaseGeneration) return false;
         token = '';
         expiresAt = 0;
         generation += 1;

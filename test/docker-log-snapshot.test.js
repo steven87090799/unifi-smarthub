@@ -112,3 +112,23 @@ test('removed containers invalidate their Docker log snapshots', async () => {
     assert.equal(cache.has('nasMonitor.dockerLog.container-a'), true);
     assert.equal(cache.has('nasMonitor.dockerLog.container-b'), false);
 });
+
+test('reconcile accepts Set and other iterable-compatible inputs', async () => {
+    const cache = createDeviceCollectorCache();
+    const logs = createDockerLogSnapshot({ cache, fetch: async id => ({ id }) });
+    await logs.read('container-a');
+    await logs.read('container-b');
+
+    assert.doesNotThrow(() => logs.reconcile(new Set(['container-a'])));
+    assert.equal(cache.has('nasMonitor.dockerLog.container-a'), true);
+    assert.equal(cache.has('nasMonitor.dockerLog.container-b'), false);
+
+    function* currentIds() {
+        yield 'container-a';
+        yield '';
+        yield 'container-a';
+    }
+    for (const input of [undefined, null, [], new Set(), currentIds()]) {
+        assert.doesNotThrow(() => logs.reconcile(input));
+    }
+});

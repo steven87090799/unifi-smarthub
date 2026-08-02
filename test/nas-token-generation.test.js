@@ -18,7 +18,7 @@ test('delayed old NAS token failure cannot clear a newer token or trigger a thir
     const requestTokenB = tokens.getToken();
     const requestGenerationB = tokens.getGeneration();
 
-    assert.equal(tokens.clearIfCurrent(requestTokenA, requestGenerationA), true);
+    assert.equal(tokens.clearIfCurrent({ token: requestTokenA, generation: requestGenerationA }), true);
     let loginCalls = 0;
     const login = createNasLoginSingleflight({
         getCachedToken: tokens.getToken,
@@ -35,6 +35,15 @@ test('delayed old NAS token failure cannot clear a newer token or trigger a thir
     assert.equal(tokens.getToken(), 'T2');
     assert.equal(loginCalls, 1);
     assert.equal(tokens.snapshot().generation > requestGenerationB, true);
+});
+
+test('token lease compare-and-clear accepts an object snapshot and fences newer generations', () => {
+    const tokens = createNasTokenGeneration();
+    tokens.set('T1', Date.now() + 10_000);
+    const lease = { token: tokens.getToken(), generation: tokens.getGeneration() };
+    tokens.set('T2', Date.now() + 10_000);
+    assert.equal(tokens.clearIfCurrent(lease), false);
+    assert.equal(tokens.getToken(), 'T2');
 });
 
 test('token reset fences an in-flight login and allows one bounded retry', async () => {
