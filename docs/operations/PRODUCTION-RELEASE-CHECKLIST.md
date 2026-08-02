@@ -20,6 +20,7 @@
 - UniFi／NAS HTTPS 預設驗證憑證；私有 CA 使用 `*_CA_FILE`，insecure 只能由明確 opt-in 開啟。
 - 已設定所有啟用 SSH integration 的 host fingerprint；未 pin 的 production SSH 連線不得放行。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
+- `.github/dependabot.yml` 只管理版本更新排程、分組與自動 PR 上限；Dependabot Alerts／security updates 仍由 GitHub repository 的 `Settings → Code security and analysis` 設定管理，不能由此檔案宣稱已啟用。
 
 ## 2. 程式庫檢查
 

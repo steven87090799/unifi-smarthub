@@ -5,10 +5,15 @@ Repository：`steven87090799/unifi-smarthub`
 START_BRANCH：`main`
 START_MAIN_SHA：`3e2cd8b968c1f28eb0bcf5cccffbc60a27d10968`
 WORK_BRANCH：`fix/production-finalization-and-legacy-salvage`
-FINAL_HEAD：以本次分支最後 exact HEAD 為準，並在交付訊息與 Draft PR 中再次核對
+FINAL_HEAD：`7a1d87bd0b6c7bb0519733b369bc174422433b14`
 PR：Draft PR #15，target `main`；不得自行 merge
 PR_STATE：`OPEN`／`DRAFT`／`CLEAN`（以 GitHub live state 為準）
 MERGED：`false`
+HOSTED_CI_RUN：`30743798307`
+HOSTED_CI_RESULT：`PASS`
+EXACT_HEAD：`7a1d87bd0b6c7bb0519733b369bc174422433b14`
+TRIVY_RESULT：`PASS`
+TRIVY_FINDINGS：`0`
 
 ## Final decision boundary
 
@@ -21,7 +26,7 @@ MERGED：`false`
 | Global proxy environment deletion | process startup deleted `HTTP(S)_PROXY` globally, changing public and LAN integrations unpredictably | removed global mutation; LAN requests use explicit `proxy:false`, public clients retain ambient proxy resolution | `test/http-egress-policy.test.js`; LAN/public request split |
 | UPS explicit-source fallback | explicit `UPS_SOURCE=ppb` silently tried NUT/pwrstat/pmset | `UPS_ALLOW_FALLBACK=false` default; explicit fallback is opt-in; status exposes configured/actual/fallback fields and fail-closed unreachable state | `test/ups-source-selection.test.js`, `test/ups-runtime.test.js` |
 | UPS GET side effects | `/api/ups/status` and `/api/ups/ppb-events` could poll upstream, write SQLite, transition state, and notify | GET routes read snapshots only; backend samplers own I/O, persistence, transitions and notification | runtime counter proof plus `test/ups-readonly-contract.test.js` |
-| Dependency update visibility | all Dependabot ecosystems had `open-pull-requests-limit: 0` | weekly bounded updates, minor/patch groups, major updates held for explicit review | `test/dependabot-contract.test.js` |
+| Dependency update visibility | all Dependabot ecosystems had `open-pull-requests-limit: 0` | weekly bounded updates, minor/patch groups, major updates held for explicit review; Dependabot Alerts/security updates remain owned by GitHub Code Security settings | `test/dependabot-contract.test.js`; `docs/operations/PRODUCTION-RELEASE-CHECKLIST.md` |
 | Trivy unfixed visibility | blocking `--ignore-unfixed` output hid unfixed findings from reviewers | fixed+unfixed HIGH/CRITICAL JSON report is uploaded; separate fixed-only scan remains blocking | `test/ci-contract.test.js`; hosted artifact is required |
 | Host exposure | Compose host port default used `0.0.0.0` | host-side bind defaults to `127.0.0.1`; container process remains `0.0.0.0` for reverse-proxy network access | `test/deployment-contract.test.js` |
 | Docker package reproducibility | direct Alpine packages were floating despite immutable Node base digest | direct runtime/build packages pinned to versions resolved from the pinned Alpine v3.24 base | Docker build and deployment contract |
