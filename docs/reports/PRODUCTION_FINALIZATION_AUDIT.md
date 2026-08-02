@@ -6,8 +6,8 @@ START_BRANCH：`main`
 START_MAIN_SHA：`3e2cd8b968c1f28eb0bcf5cccffbc60a27d10968`
 WORK_BRANCH：`fix/production-finalization-and-legacy-salvage`
 FINAL_HEAD：以本次分支最後 exact HEAD 為準，並在交付訊息與 Draft PR 中再次核對
-PR：Draft PR，target `main`；不得自行 merge
-PR_STATE：建立後以 GitHub live state 為準
+PR：Draft PR #15，target `main`；不得自行 merge
+PR_STATE：`OPEN`／`DRAFT`／`CLEAN`（以 GitHub live state 為準）
 MERGED：`false`
 
 ## Final decision boundary
@@ -46,9 +46,9 @@ Results below must be refreshed on the exact final branch HEAD; `NOT RUN` is not
 | Compose | default and `nas-monitor` `config --quiet` | `PASS` | configuration parse only |
 | Compose | SmartHub and NAS Monitor image builds | `PASS` | build proof; no production deployment |
 | Release | immutable paired-image/release identity check | `PASS` | clean release workflow verified paired main/monitor image labels and immutable revision identity |
-| Security | Trivy fixed blocking scan | `PENDING HOSTED FINAL-HEAD` | hosted scan must match exact final SHA |
-| Security | Trivy full fixed+unfixed artifact | `PENDING HOSTED FINAL-HEAD` | inspect uploaded JSON before acceptance |
-| Hosted | `SmartHub CI / Repository gate` | `PENDING HOSTED FINAL-HEAD` | live GitHub check, not an older green run |
+| Security | Trivy fixed blocking scan | `PASS` | hosted exact-head run passed; both built images reported zero HIGH/CRITICAL vulnerabilities |
+| Security | Trivy full fixed+unfixed artifact | `PASS` | hosted artifact contains both Trivy JSON reports and both CycloneDX SBOMs; both Trivy reports contain zero vulnerabilities |
+| Hosted | `SmartHub CI / Repository gate` | `PASS` | exact-head GitHub check passed in 3m44s; no merge or ready action taken |
 | Hardware | real UniFi Controller/device/NAS/UPS/WiiM/AdGuard/Linux | `NOT RUN` | requires authorized live environment |
 | Staging | 24-hour minimum / 72-hour preferred soak | `NOT RUN` | requires production-like staging and monitoring |
 
