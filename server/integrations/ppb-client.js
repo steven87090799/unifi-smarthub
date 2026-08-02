@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const https = require('node:https');
 const { createLanAxiosConfig } = require('./http-egress-policy');
+const { readCaFile } = require('./tls-policy');
 
 const MAX_CA_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 8000;
@@ -18,20 +19,16 @@ function strictBoolean(value, fallback = false) {
 
 function readPrivateCa(fsModule, caFile) {
     if (!caFile) return null;
-    if (!fsModule.realpathSync || !fsModule.lstatSync || !fsModule.readFileSync) {
-        throw new TypeError('PPB CA file access is unavailable');
-    }
     if (!require('node:path').isAbsolute(caFile)) {
         throw new Error('PPB_CA_FILE must be an absolute path');
     }
-    let stat;
-    try { stat = fsModule.lstatSync(caFile); }
-    catch (error) { throw new Error(`PPB CA file cannot be read: ${error.message}`); }
-    if (stat.isSymbolicLink()) throw new Error('PPB CA file must not be a symlink');
-    if (!stat.isFile()) throw new Error('PPB CA path must be a regular file');
-    if (stat.size <= 0 || stat.size > MAX_CA_BYTES) throw new Error('PPB CA file size is invalid');
-    try { return fsModule.readFileSync(caFile); }
-    catch (error) { throw new Error(`PPB CA file cannot be read: ${error.message}`); }
+    try { return readCaFile(caFile, { fileSystem: fsModule, field: 'PPB_CA_FILE' }); }
+    catch (error) {
+        if (error?.message?.includes('must not be a symlink')) throw new Error('PPB CA file must not be a symlink');
+        if (error?.message?.includes('regular file')) throw new Error('PPB CA path must be a regular file');
+        if (error?.message?.includes('no larger')) throw new Error('PPB CA file size is invalid');
+        throw new Error('PPB CA file cannot be read');
+    }
 }
 
 function normalizeConfig(raw, fsModule) {

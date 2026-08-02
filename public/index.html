@@ -1056,7 +1056,7 @@
                         class="text-slate-400">WiiM Amp</span><span class="text-slate-500 mono ml-auto"
                         id="side-wiim-state">--</span></div>
                 <div class="flex items-center gap-2 text-[10px]"
-                    title="綠=UPS 讀取成功，右側顯示目前使用的資料來源 (pmset/NUT/pwrstat)；紅=所有來源皆不可用"><span
+                    title="綠=UPS 讀取成功，右側顯示目前使用的資料來源 (PPB/NUT/pwrstat/pmset)；紅=所有來源皆不可用"><span
                         class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-ups-dot"></span><span
                         class="text-slate-400">UPS</span><span class="text-slate-500 mono ml-auto"
                         id="side-ups-state">--</span></div>
@@ -3494,6 +3494,16 @@
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
+                            <!-- Internet egress policy -->
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                                <p class="text-[11px] font-bold text-cyan-400">🌐 Internet 對外 Proxy Policy <span id="connset-SMARTHUB_INTERNET_PROXY_MODE" class="normal-case"></span></p>
+                                <select id="conn-SMARTHUB_INTERNET_PROXY_MODE"
+                                    class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                    <option value="disabled">disabled（預設；忽略 ambient proxy）</option>
+                                    <option value="environment">environment（明確使用 HTTP(S)_PROXY）</option>
+                                </select>
+                                <p class="text-[9px] text-slate-500 leading-relaxed">只影響 Site Manager、通知與 Telegram 等 public integrations；LAN integrations 永遠不使用 ambient proxy。變更需重啟服務後生效。</p>
+                            </div>
                             <!-- 狀態一覽 -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2">
                                 <p class="text-[11px] font-bold text-slate-300">📡 目前連線狀態</p>
@@ -4504,7 +4514,7 @@
                                 </div>
                                 <div>
                                     <h3 class="text-lg font-black text-white tracking-wider">CyberPower 不斷電系統</h3>
-                                    <p class="text-xs text-slate-400" id="ups-model-line">NUT / pwrstat / pmset 多來源自動偵測
+                                    <p class="text-xs text-slate-400" id="ups-model-line">PPB → NUT → pwrstat → pmset 多來源自動偵測
                                     </p>
                                 </div>
                             </div>

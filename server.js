@@ -45,7 +45,11 @@ const { registerHealthRoutes } = require('./observability/health-routes');
 const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
 const { TelegramCommandBot } = require('./telegram-command-bot');
-const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
+const {
+    createPanelSecurity,
+    describeTrustedProxyConfiguration,
+    parseTrustedProxies
+} = require('./server/middleware/panel-security');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerPanelAuthRoutes } = require('./server/routes/panel-auth-routes');
 const { createPublicSystemHealthService } = require('./server/services/public-system-health');
@@ -139,7 +143,15 @@ const {
 const { normalizeWiimIp } = require('./server/services/wiim-config');
 const { createArtworkCache, createArtworkFetcher, fetchArtwork, isBlockedAddress } = require('./server/services/wiim-art-proxy');
 const { createWiimClient, parseWiimTemperatures } = require('./server/services/wiim-client');
-const { createInternetAxiosConfig, createLanAxiosConfig } = require('./server/integrations/http-egress-policy');
+const {
+    createInternetAxiosClient,
+    createInternetAxiosConfig,
+    createLanAxiosConfig,
+    describeInternetProxyPolicy,
+    resolveInternetProxyMode
+} = require('./server/integrations/http-egress-policy');
+
+const INTERNET_PROXY_MODE = resolveInternetProxyMode(process.env.SMARTHUB_INTERNET_PROXY_MODE);
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -274,7 +286,8 @@ logger.info({
         node: process.version,
         hostname: os.hostname(),
         log_level: logger.level,
-        log_format: logger.format
+        log_format: logger.format,
+        internet_proxy_mode: INTERNET_PROXY_MODE
     }
 });
 
@@ -282,6 +295,31 @@ const app = express();
 // 前端與後端同源 (由本伺服器託管)，不需要 CORS；移除全開 cors() 以避免跨站請求濫用
 const trustedProxies = parseTrustedProxies(process.env.PANEL_TRUSTED_PROXIES);
 if (trustedProxies) app.set('trust proxy', trustedProxies);
+const panelRequireHttps = strictTlsBoolean(
+    process.env.PANEL_REQUIRE_HTTPS, 'PANEL_REQUIRE_HTTPS', process.env.NODE_ENV === 'production'
+);
+const panelAllowInsecureHttp = strictTlsBoolean(
+    process.env.PANEL_ALLOW_INSECURE_HTTP, 'PANEL_ALLOW_INSECURE_HTTP', false
+);
+const trustedProxyDiagnostic = describeTrustedProxyConfiguration({
+    nodeEnv: process.env.NODE_ENV,
+    requireHttps: panelRequireHttps,
+    allowInsecureHttp: panelAllowInsecureHttp,
+    trustedProxies
+});
+if (trustedProxyDiagnostic) logger.warning({
+    module: 'api.security', function: 'trustedProxyStartupDiagnostic', code: trustedProxyDiagnostic.code,
+    message: trustedProxyDiagnostic.message,
+    fields: { production: true, proxy_trust_configured: false }
+});
+const internetProxyPolicy = describeInternetProxyPolicy({ proxyMode: INTERNET_PROXY_MODE });
+if (INTERNET_PROXY_MODE === 'environment' && internetProxyPolicy.ambientProxyConfigured) {
+    logger.info({
+        module: 'integration.egress', function: 'internetProxyStartupDiagnostic', code: ERROR_CODES.SYS_CONFIG_INVALID,
+        message: 'Internet proxy environment is configured for public integrations',
+        fields: { mode: INTERNET_PROXY_MODE, proxy_configured: true }
+    });
+}
 app.use(logger.requestMiddleware());
 const panelSecurity = createPanelSecurity({
     adminPassword: process.env.PANEL_PASSWORD,
@@ -303,8 +341,8 @@ const panelSecurity = createPanelSecurity({
     authorizationCode: ERROR_CODES.API_AUTHORIZATION_FAILED,
     csrfCode: ERROR_CODES.API_CSRF_FAILED,
     originCode: ERROR_CODES.API_ORIGIN_FAILED,
-    requireHttps: strictTlsBoolean(process.env.PANEL_REQUIRE_HTTPS, 'PANEL_REQUIRE_HTTPS', process.env.NODE_ENV === 'production'),
-    allowInsecureHttp: strictTlsBoolean(process.env.PANEL_ALLOW_INSECURE_HTTP, 'PANEL_ALLOW_INSECURE_HTTP', false),
+    requireHttps: panelRequireHttps,
+    allowInsecureHttp: panelAllowInsecureHttp,
     onEvent: ({ type, ...fields }) => logger.warning({
         module: 'api.security', function: type,
         code: type.startsWith('auth_') ? ERROR_CODES.API_AUTH_FAILED
@@ -336,6 +374,9 @@ app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()))
 
 // 建立忽略內網自簽 HTTPS 憑證錯誤的 Axios 實例
 // 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
+// Internet integrations use a separate policy-bound client. LAN clients below
+// continue to set proxy:false at each request boundary.
+const internetAxiosClient = createInternetAxiosClient(axios, { proxyMode: INTERNET_PROXY_MODE });
 let unifiCsrfToken = '';
 let unifiAgent = null;
 function buildUnifiClient() {
@@ -461,7 +502,7 @@ function buildUnifiCloudClient() {
             'X-API-KEY': process.env.UNIFI_API_KEY || ''
         },
         timeout: 8000
-    }));
+    }, { proxyMode: INTERNET_PROXY_MODE }));
 }
 let unifiCloudClient = buildUnifiCloudClient();
 // transport 使用動態 closure，設定頁熱重建 axios instance 後不會保留舊 API key。
@@ -1770,7 +1811,7 @@ let notifLog = [];
 function pushNotifLog(e) { notifLog.unshift(e); notifLog = notifLog.slice(0, 50); }
 
 // 實際送出與分段/partial 語意集中在可注入、可故障測試的 integration module。
-const dispatchNotification = createNotificationDispatcher({ httpClient: axios });
+const dispatchNotification = createNotificationDispatcher({ httpClient: internetAxiosClient });
 
 // Telegram Chat ID 偵測：讀 bot 的 getUpdates，列出最近跟它說過話的聊天室
 app.get('/api/notifications/telegram-chatid', async (req, res) => {
@@ -1780,7 +1821,7 @@ app.get('/api/notifications/telegram-chatid', async (req, res) => {
         module: 'api.notifications', function: 'detectTelegramChatId'
     });
     try {
-        const r = await axios.get(`https://api.telegram.org/bot${s.botToken}/getUpdates`, { timeout: 8000 });
+        const r = await internetAxiosClient.get(`https://api.telegram.org/bot${s.botToken}/getUpdates`, { timeout: 8000 });
         const chats = {};
         (r.data.result || []).forEach(u => {
             const c = (u.message || u.channel_post || u.my_chat_member || {}).chat;
@@ -3882,6 +3923,7 @@ const CONN_FIELDS = [
     { key: 'NAS_MONITOR_URL', restartRequired: true },
     { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
     { key: 'NAS_MONITOR_MODE', restartRequired: true },
+    { key: 'SMARTHUB_INTERNET_PROXY_MODE', restartRequired: true },
     { key: 'WIIM_IP', clearable: true },
     { key: 'UPS_SOURCE' }, { key: 'UPS_ALLOW_FALLBACK' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
@@ -4016,6 +4058,7 @@ app.post('/api/connections', (req, res) => {
     try {
         const desired = parseDesiredEnvFile(ENV_FILE);
         const effective = { ...process.env, ...desired, ...updates };
+        resolveInternetProxyMode(effective.SMARTHUB_INTERNET_PROXY_MODE);
         if (effective.UNIFI_CONTROLLER_URL) resolveTlsPolicy({
             url: effective.UNIFI_CONTROLLER_URL,
             verify: effective.UNIFI_CONTROLLER_TLS_VERIFY,
@@ -4679,7 +4722,7 @@ const telegramCommands = {
         return { confirmation: `即將把 WiiM 音量設為 ${volume}%${volume >= 80 ? '（高音量）' : ''}。`, execute: async () => { const result = await wiimGet(`setPlayerCmd:vol:${volume}`, { allowStale: false }); if (result.source !== 'live') throw new Error('WiiM 無回應'); return `WiiM 音量已設為 ${volume}%。`; } };
     } }
 };
-const telegramCommandBot = new TelegramCommandBot({ axios, getSettings: loadNotifSettings, commands: telegramCommands, logger, formatError: publicError });
+const telegramCommandBot = new TelegramCommandBot({ axios: internetAxiosClient, getSettings: loadNotifSettings, commands: telegramCommands, logger, formatError: publicError });
 
 /* ===================== PWA (manifest + service worker) ===================== */
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');
@@ -4842,7 +4885,7 @@ registerWiimCommandRoutes(app, {
 // 後端預設驗證 HTTPS；自簽／HTTP 只在明確且只對設定 WiiM literal 的 opt-in 下允許。
 const wiimArtFetcher = createArtworkFetcher({
     cache: createArtworkCache(),
-    fetch: (url, options) => fetchArtwork(url, { axiosInstance: axios, ...options }),
+    fetch: (url, options) => fetchArtwork(url, { axiosInstance: internetAxiosClient, ...options }),
     maxConcurrent: 4,
     maxQueue: 16,
     deadlineMs: 7000
@@ -4892,11 +4935,12 @@ app.get('/api/wiim/csv', (req, res) => {
     res.send(csv);
 });
 
-/* ===================== CyberPower UPS 電源監控 (NUT 優先，多來源回退) ===================== */
-// 架構（詳見 docs/integrations/cyberpower-ups-api.md）：UPS_SOURCE=auto|nut|pwrstat|pmset|ppb
-//   1) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 建議方案 (brew install nut)
-//   2) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
-//   3) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
+/* ===================== CyberPower UPS 電源監控 (PPB 優先，多來源回退) ===================== */
+// 架構（詳見 docs/integrations/cyberpower-ups-api.md）：UPS_SOURCE=auto|ppb|nut|pwrstat|pmset
+//   1) PPB:     PowerPanel Business REST             ← Docker 已驗證路徑
+//   2) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 容器可達的 NUT server
+//   3) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
+//   4) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
 // 電壓歷史與斷電事件持久化於 SQLite (斷電紀錄不可因重啟遺失)。
 // 呼叫時讀取 env，設定頁修改後即時生效
 const UPS_SOURCE = () => process.env.UPS_SOURCE || 'auto';
@@ -4925,7 +4969,7 @@ function execProgram(file, args, timeoutMs = 5000) {
 // parseFloat(x) || null 會把合法的 0 (電池 0%、負載 0%) 誤判為 null，改用 finite 檢查
 function numOrNull(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
-// --- 來源 1: NUT (upsc key: value 格式) ---
+// --- 來源 2: NUT (upsc key: value 格式) ---
 async function readNut() {
     const out = await execProgram('upsc', [`${NUT_UPS_NAME()}@${NUT_HOST()}`]);
     if (!out || !out.includes(':')) return null;
@@ -4945,7 +4989,7 @@ async function readNut() {
     };
 }
 
-// --- 來源 2: pwrstat (CyberPower 官方 CLI，"Key.... Value" 格式) ---
+// --- 來源 3: pwrstat (CyberPower 官方 CLI，"Key.... Value" 格式) ---
 async function readPwrstat() {
     const out = await execProgram(PWRSTAT_PATH(), ['-status']);
     if (!out || !out.includes('Utility Voltage')) return null;
@@ -4963,7 +5007,7 @@ async function readPwrstat() {
     };
 }
 
-// --- 來源 4: CyberPower PowerPanel Business REST API (無 pwrstat CLI 時用這個) ---
+// --- 來源 1: CyberPower PowerPanel Business REST API (無 pwrstat CLI 時用這個) ---
 // PPB 主機/埠可用環境變數指定：部署到 Docker/NAS 後 127.0.0.1 是容器自己，
 // 必須以 PPB_HOST 指向實際跑 PowerPanel Business 的機器 IP
 const PPB_HOST = () => process.env.PPB_HOST || '127.0.0.1';
@@ -5062,7 +5106,7 @@ app.get('/api/ups/ppb-events', async (req, res) => {
     }
 });
 
-// --- 來源 3: pmset (macOS 原生，資訊有限) ---
+// --- 來源 4: pmset (macOS 原生，資訊有限) ---
 async function readPmset() {
     const out = await execProgram('pmset', ['-g', 'ps']);
     // UPS 會以電源裝置行出現，例如「 -CP1000AVRLCDa (id=xxx) 100%; AC attached; ...」
@@ -5084,6 +5128,29 @@ async function readPmset() {
 }
 
 let upsLastReason = '';
+let lastUpsFallbackLog = null;
+
+function logUpsFallbackSelection(selection) {
+    if (!selection?.fallbackUsed) return;
+    const key = [selection.configuredSource, selection.actualSource, selection.fallbackReason].join('|');
+    const now = Date.now();
+    if (lastUpsFallbackLog?.key === key && now - lastUpsFallbackLog.at < RECOVERABLE_LOG_COOLDOWN_MS) return;
+    lastUpsFallbackLog = { key, at: now };
+    const autoMode = selection.configuredSource === 'auto';
+    logger.warning({
+        module: 'ups.selector', function: 'selectSource', code: ERROR_CODES.EXT_UPS_FAILED,
+        message: autoMode
+            ? `UPS auto 前一來源不可用，改用 ${selection.actualSource}`
+            : `指定來源 ${selection.configuredSource} 無法使用，且 UPS_ALLOW_FALLBACK=true，改用 ${selection.actualSource}`,
+        fields: {
+            configured_source: selection.configuredSource,
+            actual_source: selection.actualSource,
+            fallback_reason: selection.fallbackReason,
+            fallback_allowed: selection.fallbackAllowed
+        }
+    });
+}
+
 async function readUpsLive() {
     const config = resolveUpsSourceConfig({ source: UPS_SOURCE(), allowFallback: UPS_ALLOW_FALLBACK() });
     const selection = await selectUpsSource({
@@ -5098,11 +5165,9 @@ async function readUpsLive() {
         fallbackUsed: selection.fallbackUsed,
         fallbackReason: selection.fallbackReason
     };
+    logUpsFallbackSelection(selection);
 
     if (selection.data) {
-        if (selection.fallbackUsed) {
-            sysLog('UPS', `指定來源 ${selection.configuredSource} 無法使用，且 UPS_ALLOW_FALLBACK=true，改用 ${selection.actualSource}`, true);
-        }
         sysLog('UPS', `讀取成功 via ${selection.actualSource}: ${selection.data.status} 輸入${selection.data.inputV}V 電池${selection.data.battery}%`);
         upsLastReason = '';
         return selection.data;

@@ -50,6 +50,9 @@ jobs:
           if ! grep -q '^PANEL_PASSWORD=' config/.env; then
             printf '\nPANEL_PASSWORD=ci-only-strong-test-password\n' >> config/.env
           fi
+          chmod 700 config
+          chmod 600 config/.env
+          sudo chown 1000:1000 config config/.env
 
       - name: Validate Compose profiles
         run: |
@@ -60,6 +63,11 @@ jobs:
         run: |
           docker compose --env-file config/.env build unifi-smarthub
           docker compose --env-file config/.env --profile nas-monitor build
+
+      - name: Run isolated production preflight
+        run: |
+          docker compose --env-file config/.env run --rm --no-deps \
+            unifi-smarthub node scripts/production-preflight.js
 
       - name: Run isolated production runtime smoke test
         run: npm run test:smoke
@@ -82,8 +90,7 @@ jobs:
               image --format cyclonedx --output "/out/${safe_name}.cdx.json" "$image"
             # Keep fixed and unfixed HIGH/CRITICAL findings visible in the
             # downloadable machine-readable report. The blocking scan below
-            # intentionally ignores unfixed findings so release policy remains
-            # actionable without hiding the risk from reviewers.
+            # applies the same strict policy to both states.
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock:ro \
               -v "$RUNNER_TEMP/smarthub-sbom:/out" \
@@ -96,14 +103,39 @@ jobs:
               -v /var/run/docker.sock:/var/run/docker.sock:ro \
               -v "$RUNNER_TEMP/trivy-cache:/root/.cache" \
               aquasec/trivy@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e \
-              image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL "$image"
+              image --exit-code 1 --severity HIGH,CRITICAL "$image"
           done
+
+      - name: Generate exact-head release evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/smarthub-sbom"
+          SMART_HUB_NODE_VERSION="$(node -p 'process.version')" node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const evidence = {
+            repository: process.env.GITHUB_REPOSITORY,
+            head_sha: process.env.GITHUB_SHA,
+            workflow_run_id: process.env.GITHUB_RUN_ID,
+            workflow_run_number: process.env.GITHUB_RUN_NUMBER,
+            node_version: process.env.SMART_HUB_NODE_VERSION,
+            smartHub_image: 'unifi-smarthub:dev',
+            nas_monitor_image: 'unifi-smarthub-nas-monitor:dev',
+            trivy_blocking_policy: 'HIGH,CRITICAL including unfixed',
+            created_at: new Date().toISOString()
+          };
+          fs.writeFileSync(
+              path.join(process.env.RUNNER_TEMP, 'smarthub-sbom', 'release-evidence.json'),
+              `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 }
+          );
+          NODE
 
       - name: Upload SBOM and vulnerability reports
         if: always()
+        id: upload-artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: smarthub-sbom-and-trivy-${{ github.run_id }}
+          name: smarthub-release-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/smarthub-sbom
           if-no-files-found: error
           retention-days: 14

@@ -9,6 +9,7 @@ const ROOT = path.join(__dirname, '..');
 
 test('GitHub Actions CI is a bounded required-check candidate with all repository gates', () => {
     const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const audit = fs.readFileSync(path.join(ROOT, 'docs', 'reports', 'PRODUCTION_FINALIZATION_AUDIT.md'), 'utf8');
     assert.match(workflow, /pull_request:/u);
     assert.match(workflow, /push:\s*\n\s*branches:\s*\n\s*-\s*main/u);
     assert.match(workflow, /contents:\s*read/u);
@@ -26,9 +27,19 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /Generate SBOM and scan built images/u);
     assert.match(workflow, /trivy@sha256:[0-9a-f]{64}/u);
     assert.match(workflow, /image --format json --output "[^"]+\.trivy\.json" --severity HIGH,CRITICAL/u);
-    assert.match(workflow, /--ignore-unfixed --severity HIGH,CRITICAL/u);
+    assert.match(workflow, /image --exit-code 1 --severity HIGH,CRITICAL/u);
+    assert.doesNotMatch(workflow, /--ignore-unfixed/u);
+    assert.match(workflow, /Run isolated production preflight/u);
+    assert.match(workflow, /scripts\/production-preflight\.js/u);
+    assert.match(workflow, /Generate exact-head release evidence/u);
+    assert.match(workflow, /release-evidence\.json/u);
+    assert.match(workflow, /trivy_blocking_policy: 'HIGH,CRITICAL including unfixed'/u);
     assert.match(workflow, /uses:\s*actions\/upload-artifact@[0-9a-f]{40}\s+# v4\.6\.2/u);
+    assert.match(workflow, /name: smarthub-release-evidence-\$\{\{ github\.run_id \}\}/u);
     assert.match(workflow, /Upload SBOM and vulnerability reports/u);
+    assert.doesNotMatch(audit, /^FINAL_HEAD=/mu);
+    assert.doesNotMatch(audit, /^EXACT_HEAD=/mu);
+    assert.doesNotMatch(audit, /^HOSTED_CI_RUN=/mu);
     assert.match(workflow, /SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak/u);
     assert.match(workflow, /git diff --check/u);
 });

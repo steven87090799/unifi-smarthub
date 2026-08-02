@@ -1433,6 +1433,7 @@ const mockConnDefaults = {
     NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_TLS_VERIFY: 'true', NAS_CA_FILE: '',
     NAS_TLS_INSECURE: 'false', NAS_ALLOW_INSECURE_HTTP: 'false', NAS_USER: '',
     NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '',
+    SMARTHUB_INTERNET_PROXY_MODE: 'disabled',
     UPS_SOURCE: 'auto', UPS_ALLOW_FALLBACK: 'false', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
     PPB_TLS_VERIFY: 'true', PPB_TLS_INSECURE: 'false', PPB_CA_FILE: '',
@@ -1452,7 +1453,8 @@ const mockSecretDefaults = {
 const MOCK_RESTART_REQUIRED_FIELDS = Object.freeze([
     'NAS_MONITOR_URL',
     'NAS_MONITOR_API_KEY',
-    'NAS_MONITOR_MODE'
+    'NAS_MONITOR_MODE',
+    'SMARTHUB_INTERNET_PROXY_MODE'
 ]);
 const MOCK_CLEARABLE_FIELDS = new Set([
     'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
@@ -1529,7 +1531,7 @@ app.get('/api/connections/status', (_req, res) => res.json({
         { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
         { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, detail: mockConn.NAS_MONITOR_URL || '' },
         { name: 'WiiM Amp', configured: Boolean(mockConn.WIIM_IP), ok: mockConn.WIIM_IP ? true : null, detail: mockConn.WIIM_IP || '' },
-        { name: 'UPS', configured: true, ok: true, detail: 'NUT mock' },
+        { name: 'UPS', configured: true, ok: true, detail: 'PPB/NUT mock' },
         { name: 'AdGuard 裝置政策', configured: mockAdguardServicePolicies.length > 0, ok: true, detail: `${mockAdguardServicePolicies.length} 筆 · healthy` }
     ]
 }));

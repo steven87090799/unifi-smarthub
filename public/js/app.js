@@ -826,7 +826,7 @@
             ucg: ['UCG 閘道器', 'UCG-Ultra 處理器溫度、核心負載與硬體資源 (SSH 真實數據)'],
             nas: ['NAS 儲存', 'UGREEN UGOS Pro 儲存與硬體監控'],
             wiim: ['WiiM 音響', 'WiiM Amp 音訊串流與硬體監控'],
-            ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (NUT)'],
+            ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (PPB/NUT/pwrstat/pmset)'],
             adguard: ['AdGuard DNS', 'AdGuard Home 全網 DNS 廣告與追蹤攔截統計'],
             linuxhost: ['Linux 小主機', 'Home Assistant 主機 SSH 硬體監控 (真實數據)'],
             tools: ['工具 Tools', '網速測試與 PoE 管理'],

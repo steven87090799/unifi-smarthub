@@ -106,6 +106,7 @@ test('validates redirects, MIME, content length, actual bytes, and explicit HTTP
     assert.equal(result.buffer.toString(), 'hello');
     assert.equal(requests.length, 2);
     assert.equal(requests[0].options.maxRedirects, 0);
+    assert.equal(Object.hasOwn(requests[0].options, 'proxy'), false, 'public artwork must use the Internet client policy');
     assert.equal(requests[0].options.httpsAgent.options.rejectUnauthorized, true);
     await assert.rejects(fetchArtwork('http://cdn.example.test/art.png', { axiosInstance, lookup: async () => [{ address: '8.8.8.8', family: 4 }] }), /HTTP/u);
     await assert.rejects(fetchArtwork('http://cdn.example.test/art.png', {
@@ -132,6 +133,19 @@ test('validates redirects, MIME, content length, actual bytes, and explicit HTTP
         lookup: async () => [{ address: '192.168.0.170', family: 4 }]
     });
     assert.equal(localRedirect.buffer.toString(), 'local');
+});
+
+test('configured private artwork requests retain the LAN no-proxy boundary', async () => {
+    let requestOptions;
+    await fetchArtwork('https://192.168.0.170/art.png', {
+        axiosInstance: { get: async (_url, options) => {
+            requestOptions = options;
+            return { status: 200, headers: { 'content-type': 'image/png' }, data: image('local') };
+        } },
+        allowedPrivateAddresses: ['192.168.0.170'],
+        lookup: async () => [{ address: '192.168.0.170', family: 4 }]
+    });
+    assert.equal(requestOptions.proxy, false);
 });
 
 test('rejects oversized content and keeps a deterministic bounded LRU cache', async () => {

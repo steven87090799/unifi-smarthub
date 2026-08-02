@@ -435,22 +435,23 @@ async function assertSafeLocalWrites(runtime, client) {
     response = await client.write('POST', '/api/connections', {
         NAS_MONITOR_URL: 'http://nas-monitor:8000',
         NAS_MONITOR_API_KEY: '0123456789abcdef0123456789abcdef',
-        NAS_MONITOR_MODE: 'full'
+        NAS_MONITOR_MODE: 'full',
+        SMARTHUB_INTERNET_PROXY_MODE: 'environment'
     });
     text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} restart-required connection: ${text}`);
     body = JSON.parse(text);
     assert.deepEqual(body.restartRequired, [
-        'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE'
+        'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'SMARTHUB_INTERNET_PROXY_MODE'
     ]);
 
     response = await client.read('/api/connections');
     body = await response.json();
     assert.deepEqual(body.restartRequiredFields, [
-        'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE'
+        'NAS_MONITOR_URL', 'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'SMARTHUB_INTERNET_PROXY_MODE'
     ]);
     assert.deepEqual([...body.pendingRestartFields].sort(), [
-        'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'NAS_MONITOR_URL'
+        'NAS_MONITOR_API_KEY', 'NAS_MONITOR_MODE', 'NAS_MONITOR_URL', 'SMARTHUB_INTERNET_PROXY_MODE'
     ]);
 
     if (runtime.label === 'production') {
@@ -460,6 +461,7 @@ async function assertSafeLocalWrites(runtime, client) {
         assert.equal(parsed.PPB_HOST, '127.0.0.1');
         assert.equal(parsed.PPB_PORT, '3052');
         assert.equal(parsed.PPB_PASSWORD, secret);
+        assert.equal(parsed.SMARTHUB_INTERNET_PROXY_MODE, 'environment');
         assert.equal(parsed.UNIFI_DEVICE_SSH_PORT, '2222');
         assert.equal(parsed.UNIFI_DEVICE_SSH_USER, 'monitor');
         assert.equal(parsed.UNIFI_DEVICE_SSH_PASSWORD, deviceSecret);

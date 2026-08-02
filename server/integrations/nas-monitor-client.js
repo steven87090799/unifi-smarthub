@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const https = require('node:https');
 const { createLanAxiosConfig } = require('./http-egress-policy');
+const { readCaFile } = require('./tls-policy');
 
 const MIN_API_KEY_BYTES = 32;
 const MAX_API_KEY_BYTES = 256;
@@ -80,17 +81,16 @@ function normalizeBaseUrl(value, { allowInsecureHttp = false } = {}) {
 
 function loadCertificateAuthority(file, fileSystem = fs) {
     if (!file) return undefined;
-    if (typeof file !== 'string' || file.length > 4096 || /[\u0000-\u001f\u007f]/.test(file)) {
-        configurationError('NAS_MONITOR_CA_FILE is invalid');
+    try {
+        return readCaFile(file, { fileSystem, field: 'NAS_MONITOR_CA_FILE' });
+    } catch (error) {
+        if (error?.message?.includes('must not be a symlink')) configurationError('NAS_MONITOR_CA_FILE must not be a symlink');
+        if (error?.message?.includes('invalid')) configurationError('NAS_MONITOR_CA_FILE is invalid');
+        if (error?.message?.includes('regular file')) {
+            configurationError(`NAS_MONITOR_CA_FILE must be a non-empty file at most ${MAX_CA_BYTES} bytes`);
+        }
+        configurationError('NAS_MONITOR_CA_FILE cannot be read');
     }
-    let stat;
-    try { stat = fileSystem.statSync(file); }
-    catch { configurationError('NAS_MONITOR_CA_FILE cannot be read'); }
-    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CA_BYTES) {
-        configurationError(`NAS_MONITOR_CA_FILE must be a non-empty file at most ${MAX_CA_BYTES} bytes`);
-    }
-    try { return fileSystem.readFileSync(file); }
-    catch { return configurationError('NAS_MONITOR_CA_FILE cannot be read'); }
 }
 
 function createNasMonitorConnection(options = {}) {

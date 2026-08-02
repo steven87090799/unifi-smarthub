@@ -1,19 +1,12 @@
 # SmartHub Production Finalization Audit
 
-日期：2026-08-02
+日期：2026-08-03
 Repository：`steven87090799/unifi-smarthub`
-START_BRANCH：`main`
-START_MAIN_SHA：`3e2cd8b968c1f28eb0bcf5cccffbc60a27d10968`
-WORK_BRANCH：`fix/production-finalization-and-legacy-salvage`
-FINAL_HEAD：`7a1d87bd0b6c7bb0519733b369bc174422433b14`
+AUDIT_BASELINE_MAIN_SHA：`3e2cd8b968c1f28eb0bcf5cccffbc60a27d10968`
+AUDIT_BRANCH：`fix/production-finalization-and-legacy-salvage`
 PR：Draft PR #15，target `main`；不得自行 merge
-PR_STATE：`OPEN`／`DRAFT`／`CLEAN`（以 GitHub live state 為準）
-MERGED：`false`
-HOSTED_CI_RUN：`30743798307`
-HOSTED_CI_RESULT：`PASS`
-EXACT_HEAD：`7a1d87bd0b6c7bb0519733b369bc174422433b14`
-TRIVY_RESULT：`PASS`
-TRIVY_FINDINGS：`0`
+
+本文件是 checked-in 的 audit scope、契約與證據邊界說明，不記錄「包含本文件的 commit」作為自身的最終 SHA。每次交付的 exact branch SHA、GitHub run、artifact name/digest 與 release-evidence 對照，應放在 exact-head CI artifact 與 PR body；這樣更新 PR 狀態不會再造成文件自我指涉。
 
 ## Final decision boundary
 
@@ -23,11 +16,14 @@ TRIVY_FINDINGS：`0`
 
 | Finding | Root cause / risk | Current change or disposition | Evidence |
 |---|---|---|---|
-| Global proxy environment deletion | process startup deleted `HTTP(S)_PROXY` globally, changing public and LAN integrations unpredictably | removed global mutation; LAN requests use explicit `proxy:false`, public clients retain ambient proxy resolution | `test/http-egress-policy.test.js`; LAN/public request split |
-| UPS explicit-source fallback | explicit `UPS_SOURCE=ppb` silently tried NUT/pwrstat/pmset | `UPS_ALLOW_FALLBACK=false` default; explicit fallback is opt-in; status exposes configured/actual/fallback fields and fail-closed unreachable state | `test/ups-source-selection.test.js`, `test/ups-runtime.test.js` |
+| Internet ambient proxy ambiguity | public Axios integrations implicitly inherited `HTTP(S)_PROXY`/`ALL_PROXY` while LAN behavior needed a hard boundary | `SMARTHUB_INTERNET_PROXY_MODE=disabled` is the default; `environment` is explicit; LAN requests use `proxy:false` | `test/http-egress-policy.test.js`; startup policy diagnostic |
+| UPS explicit-source fallback | explicit `UPS_SOURCE=ppb` silently tried NUT/pwrstat/pmset | `UPS_ALLOW_FALLBACK=false` default; explicit fallback is opt-in; status exposes configured/actual/fallback fields and fail-closed unreachable state; auto order is PPB → NUT → pwrstat → pmset | `test/ups-source-selection.test.js`, `test/ups-runtime.test.js` |
 | UPS GET side effects | `/api/ups/status` and `/api/ups/ppb-events` could poll upstream, write SQLite, transition state, and notify | GET routes read snapshots only; backend samplers own I/O, persistence, transitions and notification | runtime counter proof plus `test/ups-readonly-contract.test.js` |
 | Dependency update visibility | all Dependabot ecosystems had `open-pull-requests-limit: 0` | weekly bounded updates, minor/patch groups, major updates held for explicit review; Dependabot Alerts/security updates remain owned by GitHub Code Security settings | `test/dependabot-contract.test.js`; `docs/operations/PRODUCTION-RELEASE-CHECKLIST.md` |
-| Trivy unfixed visibility | blocking `--ignore-unfixed` output hid unfixed findings from reviewers | fixed+unfixed HIGH/CRITICAL JSON report is uploaded; separate fixed-only scan remains blocking | `test/ci-contract.test.js`; hosted artifact is required |
+| Trivy unfixed visibility | blocking `--ignore-unfixed` output hid unfixed findings from reviewers | uploaded JSON remains complete and the blocking scan fails on any fixed or unfixed HIGH/CRITICAL finding | `test/ci-contract.test.js`; exact-head artifact is required |
+| Production UID/write readiness | a host-created `config/.env` could be readable but fail temp fsync/atomic rename under container UID 1000 | `scripts/production-preflight.js` runs inside the image and probes config/data using the actual process UID without printing secrets | `test/production-preflight.test.js`; container preflight gate |
+| Reverse-proxy transport diagnosis | missing trusted proxy configuration made TLS termination fail as an opaque HTTPS rejection | explicit proxy IP/CIDR remains required; production startup emits a diagnostic warning without trusting all forwarded headers | `test/panel-security.test.js`; release checklist topology split |
+| CA file trust | `stat()` followed symlinks even though deployment documentation prohibited them | CA loaders use `lstat`, bounded regular-file checks, and no-follow descriptor validation where available | `test/tls-policy.test.js` and integration CA contracts |
 | Host exposure | Compose host port default used `0.0.0.0` | host-side bind defaults to `127.0.0.1`; container process remains `0.0.0.0` for reverse-proxy network access | `test/deployment-contract.test.js` |
 | Docker package reproducibility | direct Alpine packages were floating despite immutable Node base digest | direct runtime/build packages pinned to versions resolved from the pinned Alpine v3.24 base | Docker build and deployment contract |
 | NAS Monitor socket | Docker socket grants host-root-equivalent authority even with `:ro` bind | accepted explicit risk; profile remains disabled by default, with non-root/read-only/cap-drop/no-new-privileges/resource limits, protected-container policy and allowlists | existing NAS monitor tests/docs; real socket mutation is `NOT RUN` |
@@ -41,19 +37,11 @@ Results below must be refreshed on the exact final branch HEAD; `NOT RUN` is not
 
 | Layer | Check | Result | Boundary |
 |---|---|---|---|
-| Local | `npm ci` | `PASS` | locked dependency install; Node engine warning only because host Node is v26.4.0 while package requires v24.18.x |
-| Local | `npm run check:js` | `PASS` (185 files) | syntax discovery only |
-| Local | `npm test` | `PASS` (683/683) | unit/integration/contract/security; no real devices |
-| Local | `npm run check:css` | `PASS` | checked-in CSS only |
-| Local | `npm audit --audit-level=low` | `PASS` (0 vulnerabilities) | dependency advisory state at run time |
-| Runtime | `npm run test:smoke` | `PASS` | loopback fake integrations only; restart persistence and CSRF/read-only assertions included |
-| Runtime | `npm run test:soak` | `PASS` (90,000 ms) | short simulated soak only; zero active handles/requests and zero unhandled errors |
-| Compose | default and `nas-monitor` `config --quiet` | `PASS` | configuration parse only |
-| Compose | SmartHub and NAS Monitor image builds | `PASS` | build proof; no production deployment |
-| Release | immutable paired-image/release identity check | `PASS` | clean release workflow verified paired main/monitor image labels and immutable revision identity |
-| Security | Trivy fixed blocking scan | `PASS` | hosted exact-head run passed; both built images reported zero HIGH/CRITICAL vulnerabilities |
-| Security | Trivy full fixed+unfixed artifact | `PASS` | hosted artifact contains both Trivy JSON reports and both CycloneDX SBOMs; both Trivy reports contain zero vulnerabilities |
-| Hosted | `SmartHub CI / Repository gate` | `PASS` | exact-head GitHub check passed in 3m44s; no merge or ready action taken |
+| Local | `npm ci`, syntax, tests, CSS, audit, diff | `REFRESH PER DELIVERY` | exact command output belongs to the handoff for the current branch; no real devices |
+| Runtime | smoke and soak | `REFRESH PER DELIVERY` | isolated fake integrations and bounded short soak only |
+| Compose | default and `nas-monitor` config/build/preflight | `REFRESH PER DELIVERY` | configuration/build proof; no production deployment |
+| Security | SBOM and strict fixed+unfixed Trivy scan | `REFRESH PER DELIVERY` | exact-head artifact must contain both reports and both SBOMs |
+| Hosted | `SmartHub CI / Repository gate` | `REFRESH PER DELIVERY` | PR body and artifact record the exact branch SHA and run; no merge or ready action is implied |
 | Hardware | real UniFi Controller/device/NAS/UPS/WiiM/AdGuard/Linux | `NOT RUN` | requires authorized live environment |
 | Staging | 24-hour minimum / 72-hour preferred soak | `NOT RUN` | requires production-like staging and monitoring |
 

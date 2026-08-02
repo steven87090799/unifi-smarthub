@@ -54,7 +54,12 @@ async function selectUpsSource({ configuredSource = 'auto', allowFallback = fals
         try {
             const data = await reader();
             if (data) {
-                const fallbackUsed = source !== config.configuredSource;
+                // A fallback is only used after an earlier candidate failed.
+                // Comparing the actual source with `configuredSource` marks
+                // the normal `auto -> ppb` case as a fallback even though no
+                // alternate candidate was needed.
+                const fallbackUsed = failures.length > 0;
+                const fallbackReason = fallbackUsed ? failures[0] : null;
                 const selection = {
                     data: {
                         ...data,
@@ -62,13 +67,13 @@ async function selectUpsSource({ configuredSource = 'auto', allowFallback = fals
                         actualSource: source,
                         fallbackAllowed: config.fallbackAllowed,
                         fallbackUsed,
-                        fallbackReason: failures[0] || null
+                        fallbackReason
                     },
                     configuredSource: config.configuredSource,
                     actualSource: source,
                     fallbackAllowed: config.fallbackAllowed,
                     fallbackUsed,
-                    fallbackReason: failures[0] || null,
+                    fallbackReason,
                     failureReason: null,
                     failures
                 };

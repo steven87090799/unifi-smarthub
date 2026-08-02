@@ -416,8 +416,9 @@ const ENUM_FIELDS = Object.freeze({
     PPB_TLS_INSECURE: ['true', 'false'],
     ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
     ADGUARD_TLS_VERIFY: ['true', 'false'],
-    UPS_SOURCE: ['auto', 'nut', 'pwrstat', 'pmset', 'ppb'],
-    UPS_ALLOW_FALLBACK: ['true', 'false']
+    UPS_SOURCE: ['auto', 'ppb', 'nut', 'pwrstat', 'pmset'],
+    UPS_ALLOW_FALLBACK: ['true', 'false'],
+    SMARTHUB_INTERNET_PROXY_MODE: ['disabled', 'environment']
 });
 
 function canonicalPort(value, field) {

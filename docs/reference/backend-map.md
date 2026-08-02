@@ -59,7 +59,8 @@
 - PPB HTTPS 預設驗證；私有 CA 只接受有界的絕對一般檔案，停用驗證必須明確設定 `PPB_TLS_INSECURE=true`。
 - PPB 首次成功同步只建立 source-specific 初始化狀態，不通知歷史事件；失敗不會誤標初始化。
 - UPS 明確 `UPS_SOURCE` 預設 fail-closed；只有 `UPS_ALLOW_FALLBACK=true` 才回退其他來源。`/api/ups/status` 與 `/api/ups/ppb-events` 只讀 snapshot，背景 sampler 才可做 upstream I/O、SQLite 寫入、狀態轉移與通知。
-- LAN Controller／NAS／PPB／WiiM／AdGuard／NAS Monitor request boundary 明確停用 ambient proxy；public Site Manager／通知 integrations 保留其 Internet proxy policy。
+- LAN Controller／NAS／PPB／WiiM／AdGuard／NAS Monitor request boundary 明確停用 ambient proxy；public Site Manager／通知／Telegram integrations 由 `SMARTHUB_INTERNET_PROXY_MODE` 明確選擇 `disabled`（預設）或 `environment`。
+- `scripts/production-preflight.js` 在實際 container UID 下驗證 `config/.env`、config/data temp fsync+atomic rename、SQLite quick check、trusted proxy／origin／Internet proxy mode、CA file 與 build identity；不輸出 secret。
 - 一般整合失敗不會阻止 readiness；SQLite 或 worker 異常才使 `/health/ready` 回 503。
 - 前端可見 endpoint／欄位變更必須同步 `server-mock.js`。
 

@@ -33,6 +33,18 @@ test('main runtime mounts one dedicated config directory and snapshots the broke
     }
     assert.match(mainService, /\$\{SMARTHUB_HOST_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{SMARTHUB_HOST_PORT:-3000\}:3000/u);
     assert.match(mainService, /SMARTHUB_BIND_ADDRESS=0\.0\.0\.0/u);
+    assert.match(mainService, /user: "1000:1000"/u);
+    assert.match(mainService, /read_only: true/u);
+    assert.match(mainService, /SMARTHUB_ENV_FILE=\/app\/config\/\.env/u);
+});
+
+test('production preflight is part of the fixed UID deployment contract', () => {
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    const packageJson = require('../package.json');
+    assert.equal(packageJson.scripts['preflight:production'], 'node scripts/production-preflight.js');
+    assert.match(readme, /UID\/GID `?1000:1000/u);
+    assert.match(readme, /production preflight/u);
+    assert.match(readme, /chmod `?777.*`?666/u);
 });
 
 test('container health is readiness-based with bounded shutdown', () => {

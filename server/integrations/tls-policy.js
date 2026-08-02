@@ -31,14 +31,39 @@ function readCaFile(file, { fileSystem = fs, field = 'CA_FILE' } = {}) {
     if (typeof file !== 'string' || file.length > 4096 || /[\u0000-\u001f\u007f]/u.test(file)) {
         throw new TlsConfigurationError(`${field} is invalid`, { field });
     }
-    let stat;
-    try { stat = fileSystem.statSync(file); }
+    let linkStat;
+    try { linkStat = fileSystem.lstatSync(file); }
     catch { throw new TlsConfigurationError(`${field} cannot be read`, { field }); }
-    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CA_BYTES) {
+    if (linkStat.isSymbolicLink?.()) {
+        throw new TlsConfigurationError(`${field} must not be a symlink`, { field });
+    }
+    if (!linkStat.isFile() || linkStat.size <= 0 || linkStat.size > MAX_CA_BYTES) {
         throw new TlsConfigurationError(`${field} must be a non-empty regular file no larger than ${MAX_CA_BYTES} bytes`, { field });
     }
-    try { return fileSystem.readFileSync(file); }
-    catch { throw new TlsConfigurationError(`${field} cannot be read`, { field }); }
+
+    let descriptor;
+    try {
+        // On Linux, O_NOFOLLOW plus fstat closes the lstat/open replacement
+        // race. The fallback keeps the injected filesystem contract usable on
+        // platforms that do not expose descriptor operations.
+        if (typeof fileSystem.openSync === 'function' && typeof fileSystem.fstatSync === 'function') {
+            const noFollow = fs.constants.O_NOFOLLOW || 0;
+            descriptor = fileSystem.openSync(file, fs.constants.O_RDONLY | noFollow);
+            const opened = fileSystem.fstatSync(descriptor);
+            if (!opened.isFile() || opened.size <= 0 || opened.size > MAX_CA_BYTES) {
+                throw new TlsConfigurationError(`${field} must be a non-empty regular file no larger than ${MAX_CA_BYTES} bytes`, { field });
+            }
+            return fileSystem.readFileSync(descriptor);
+        }
+        return fileSystem.readFileSync(file);
+    } catch (error) {
+        if (error instanceof TlsConfigurationError) throw error;
+        throw new TlsConfigurationError(`${field} cannot be read`, { field });
+    } finally {
+        if (descriptor !== undefined && typeof fileSystem.closeSync === 'function') {
+            try { fileSystem.closeSync(descriptor); } catch { }
+        }
+    }
 }
 
 function resolveTlsPolicy({

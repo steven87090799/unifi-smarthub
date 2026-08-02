@@ -4,6 +4,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resolveUpsSourceConfig, selectUpsSource } = require('../server/services/ups-source-selection');
 
+test('auto mode does not mark a successful first candidate as fallback', async () => {
+    const result = await selectUpsSource({
+        configuredSource: 'auto',
+        readers: {
+            ppb: async () => ({ source: 'ppb', status: 'Normal' })
+        }
+    });
+
+    assert.equal(result.data.actualSource, 'ppb');
+    assert.equal(result.data.configuredSource, 'auto');
+    assert.equal(result.data.fallbackUsed, false);
+    assert.equal(result.data.fallbackReason, null);
+});
+
 test('auto mode records the first failed source before selecting a healthy fallback', async () => {
     const attempts = [];
     const result = await selectUpsSource({
@@ -43,6 +57,7 @@ test('an explicit source is fail-closed unless fallback is explicitly enabled', 
     assert.equal(allowed.data.actualSource, 'nut');
     assert.equal(allowed.fallbackAllowed, true);
     assert.equal(allowed.fallbackUsed, true);
+    assert.equal(allowed.fallbackReason, 'ppb_unreachable');
 });
 
 test('source configuration validates the explicit boolean contract', () => {

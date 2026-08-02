@@ -22,6 +22,12 @@ test('production documentation points operators to the immutable paired-image re
     assert.match(checklist, /--profile nas-monitor config --quiet/);
     assert.match(envExample, /SMARTHUB_IMAGE=unifi-smarthub:0123456789ab/);
     assert.match(envExample, /NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:0123456789ab/);
+    assert.match(readme, /SMARTHUB_INTERNET_PROXY_MODE/u);
+    assert.match(readme, /sudo install -d -o 1000 -g 1000 -m 700 config/u);
+    assert.match(readme, /production-preflight/u);
+    assert.match(checklist, /Host-native Caddy\/Nginx/u);
+    assert.match(checklist, /Dockerized Caddy\/Nginx/u);
+    assert.match(checklist, /PANEL_TRUSTED_PROXIES/u);
 });
 
 test('operator documentation does not restore superseded deployment authorities', () => {
@@ -81,6 +87,8 @@ test('the operation manual matches the enforced production gates', () => {
     assert.match(manual, /npm audit --audit-level=low/u);
     assert.match(manual, /docker compose --env-file config\/\.env build unifi-smarthub/u);
     assert.match(manual, /--profile nas-monitor build/u);
+    assert.match(manual, /production-preflight/u);
+    assert.match(manual, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.doesNotMatch(manual, /npm audit --audit-level=high/u);
 });
 
