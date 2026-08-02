@@ -45,7 +45,7 @@ Results below must be refreshed on the exact final branch HEAD; `NOT RUN` is not
 | Runtime | `npm run test:soak` | `PASS` (90,000 ms) | short simulated soak only; zero active handles/requests and zero unhandled errors |
 | Compose | default and `nas-monitor` `config --quiet` | `PASS` | configuration parse only |
 | Compose | SmartHub and NAS Monitor image builds | `PASS` | build proof; no production deployment |
-| Release | immutable paired-image/release identity check | `PENDING FINAL RERUN` | clean release workflow only |
+| Release | immutable paired-image/release identity check | `PASS` | clean release workflow verified paired main/monitor image labels and immutable revision identity |
 | Security | Trivy fixed blocking scan | `PENDING HOSTED FINAL-HEAD` | hosted scan must match exact final SHA |
 | Security | Trivy full fixed+unfixed artifact | `PENDING HOSTED FINAL-HEAD` | inspect uploaded JSON before acceptance |
 | Hosted | `SmartHub CI / Repository gate` | `PENDING HOSTED FINAL-HEAD` | live GitHub check, not an older green run |
