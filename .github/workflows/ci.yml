@@ -56,17 +56,17 @@ jobs:
 
       - name: Validate Compose profiles
         run: |
-          docker compose --env-file config/.env config --quiet
-          docker compose --env-file config/.env --profile nas-monitor config --quiet
+          sudo docker compose --env-file config/.env config --quiet
+          sudo docker compose --env-file config/.env --profile nas-monitor config --quiet
 
       - name: Build production images without starting containers
         run: |
-          docker compose --env-file config/.env build unifi-smarthub
-          docker compose --env-file config/.env --profile nas-monitor build
+          sudo docker compose --env-file config/.env build unifi-smarthub
+          sudo docker compose --env-file config/.env --profile nas-monitor build
 
       - name: Run isolated production preflight
         run: |
-          docker compose --env-file config/.env run --rm --no-deps \
+          sudo docker compose --env-file config/.env run --rm --no-deps \
             unifi-smarthub node scripts/production-preflight.js
 
       - name: Run isolated production runtime smoke test
