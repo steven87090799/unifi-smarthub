@@ -42,6 +42,38 @@ test('parallel WiiM status requests share one per-command in-flight request', as
     assert.equal(client.inflightCount(), 0);
 });
 
+test('reset fences an old IP in-flight response from the new cache and health state', async () => {
+    const oldGate = deferred();
+    let ip = '192.168.1.20';
+    const hosts = [];
+    const client = createWiimClient({
+        getIp: () => ip,
+        request: async request => {
+            hosts.push(request.host);
+            if (request.host === '192.168.1.20') {
+                await oldGate.promise;
+                return { ip: 'old', state: 'play' };
+            }
+            return { ip: 'new', state: 'play' };
+        }
+    });
+
+    const oldRequest = client.get('getStatusEx');
+    await Promise.resolve();
+    ip = '192.168.1.21';
+    client.reset();
+    const newResult = await client.get('getStatusEx');
+    oldGate.resolve();
+    const oldResult = await oldRequest;
+
+    assert.equal(oldResult.data, '{"ip":"old","state":"play"}');
+    assert.equal(newResult.data, '{"ip":"new","state":"play"}');
+    assert.deepEqual(hosts, ['192.168.1.20', '192.168.1.21']);
+    assert.equal(client.peek('getStatusEx').data, newResult.data);
+    assert.equal(client.health('getStatusEx').lastErrorAt, null);
+    assert.equal(client.generation(), 1);
+});
+
 test('offline status keeps the old sample but never reports the device online', async () => {
     let now = 0;
     let offline = false;

@@ -1,20 +1,63 @@
 'use strict';
 
 /**
- * A small process-local cache for read-only device collectors.
+ * A bounded process-local cache for read-only device collectors.
  *
- * The cache deliberately keeps payload freshness and upstream health as two
- * different pieces of state.  A caller may choose to display the last
- * successful payload after a failed refresh, but that payload never makes the
- * collector healthy again.  `inflight` is also kept per key so API requests,
- * workers and notification scans share one upstream request.
+ * Payload freshness and upstream health are deliberately separate.  The
+ * upstream promise is shared, while each caller decides whether a rejection
+ * may fall back to the retained payload.  This prevents an allowStale caller
+ * from changing the contract seen by a strict caller.
  */
-function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date.now(), sampleId = null } = {}) {
+const DEFAULT_MAX_ENTRIES = 500;
+const DEFAULT_ENTRY_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_ESTIMATED_BYTES = 8 * 1024 * 1024;
+const MAX_ERROR_MESSAGE_LENGTH = 512;
+
+function boundedText(value, max = MAX_ERROR_MESSAGE_LENGTH) {
+    return String(value || '')
+        .replace(/Bearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted]')
+        .replace(/(token|password|passwd|secret|api[-_]?key|authorization|cookie)(\s*[:=]\s*)[^\s,;]+/gi, '$1$2[redacted]')
+        .slice(0, max);
+}
+
+function safeError(error) {
+    const source = error && typeof error === 'object' ? error : { message: error };
+    const message = boundedText(source.message || source.code || 'upstream failure');
+    const result = { name: boundedText(source.name || 'Error', 64), message };
+    if (source.code !== undefined) result.code = boundedText(source.code, 64);
+    if (source.status !== undefined && Number.isFinite(Number(source.status))) result.status = Number(source.status);
+    return Object.freeze(result);
+}
+
+function defaultEstimateBytes(value) {
+    if (value === undefined) return 0;
+    if (typeof value === 'string') return Buffer.byteLength(value, 'utf8');
+    if (Buffer.isBuffer(value)) return value.byteLength;
+    try { return Buffer.byteLength(JSON.stringify(value), 'utf8'); }
+    catch { return Number.MAX_SAFE_INTEGER; }
+}
+
+function createDeviceCollectorCache({
+    cacheAgeMs = () => 1_000,
+    now = () => Date.now(),
+    sampleId = null,
+    maxEntries = DEFAULT_MAX_ENTRIES,
+    entryTtlMs = DEFAULT_ENTRY_TTL_MS,
+    maxEstimatedBytes = DEFAULT_MAX_ESTIMATED_BYTES,
+    estimateBytes = defaultEstimateBytes
+} = {}) {
     if (typeof cacheAgeMs !== 'function') throw new TypeError('cacheAgeMs must be a function');
     if (typeof now !== 'function') throw new TypeError('now must be a function');
+    if (!Number.isInteger(maxEntries) || maxEntries < 1) throw new TypeError('maxEntries must be a positive integer');
+    if (!Number.isFinite(entryTtlMs) || entryTtlMs < 0) throw new TypeError('entryTtlMs must be a non-negative number');
+    if (!Number.isFinite(maxEstimatedBytes) || maxEstimatedBytes < 1) throw new TypeError('maxEstimatedBytes must be positive');
+    if (typeof estimateBytes !== 'function') throw new TypeError('estimateBytes must be a function');
 
     const entries = new Map();
     let sequence = 0;
+    let estimatedBytes = 0;
+    let evictionCount = 0;
+    let expiredCount = 0;
 
     function newSampleId(name, timestamp) {
         if (typeof sampleId === 'function') return String(sampleId(name, timestamp, sequence += 1));
@@ -23,8 +66,16 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date
     }
 
     function freshnessFor(name, entry, override) {
-        const value = override === undefined ? cacheAgeMs(name, entry) : override;
+        if (override !== undefined) {
+            return Number.isFinite(Number(override)) ? Math.max(0, Number(override)) : 0;
+        }
+        if (entry?.dynamicFreshness === false && entry.freshnessMs != null) return entry.freshnessMs;
+        const value = cacheAgeMs(name, entry);
         return Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+    }
+
+    function touch(entry, timestamp = now()) {
+        entry.lastAccessAt = timestamp;
     }
 
     function entryFor(name) {
@@ -32,6 +83,8 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date
         if (!entry) {
             entry = {
                 data: undefined,
+                estimatedBytes: 0,
+                lastAccessAt: now(),
                 lastAttemptAt: null,
                 lastSuccessAt: null,
                 lastErrorAt: null,
@@ -39,10 +92,14 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date
                 consecutiveFailures: 0,
                 inflight: null,
                 sampleId: null,
-                freshnessMs: null
+                freshnessMs: null,
+                dynamicFreshness: true,
+                scope: undefined,
+                detached: false
             };
             entries.set(name, entry);
         }
+        touch(entry);
         return entry;
     }
 
@@ -52,15 +109,44 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date
         return age <= freshnessFor(name, entry, override);
     }
 
+    function removeEntry(name, reason = null) {
+        const entry = entries.get(name);
+        if (!entry || entry.inflight) return false;
+        entries.delete(name);
+        estimatedBytes = Math.max(0, estimatedBytes - entry.estimatedBytes);
+        if (reason === 'eviction') evictionCount += 1;
+        if (reason === 'expired') expiredCount += 1;
+        return true;
+    }
+
+    function purgeExpired(timestamp = now()) {
+        if (entryTtlMs === Infinity) return;
+        for (const [name, entry] of entries) {
+            if (entry.inflight || entry.lastAccessAt == null) continue;
+            if (timestamp - entry.lastAccessAt > entryTtlMs) removeEntry(name, 'expired');
+        }
+    }
+
+    function evictToBounds(timestamp = now()) {
+        purgeExpired(timestamp);
+        while (entries.size > maxEntries || estimatedBytes > maxEstimatedBytes) {
+            const candidate = [...entries.entries()]
+                .filter(([, entry]) => !entry.inflight)
+                .sort(([, left], [, right]) => (left.lastAccessAt || 0) - (right.lastAccessAt || 0))[0];
+            if (!candidate) break;
+            removeEntry(candidate[0], 'eviction');
+        }
+    }
+
     function snapshot(name) {
+        purgeExpired();
         const entry = entries.get(name);
         if (!entry) return null;
+        touch(entry);
         const timestamp = now();
-        // Re-evaluate the policy for diagnostics as activity can change from
-        // active to idle without another upstream read.  A later read still
-        // stores the effective value used for that request in the entry.
         const freshnessMs = freshnessFor(name, entry);
         const ageMs = entry.lastSuccessAt == null ? null : Math.max(0, timestamp - entry.lastSuccessAt);
+        const fresh = isFresh(name, entry, timestamp, freshnessMs);
         return {
             data: entry.data,
             lastAttemptAt: entry.lastAttemptAt,
@@ -72,63 +158,141 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date
             sampleId: entry.sampleId,
             freshnessMs,
             ageMs,
-            fresh: isFresh(name, entry, timestamp, freshnessMs),
-            stale: entry.data !== undefined && !isFresh(name, entry, timestamp, freshnessMs),
+            estimatedBytes: entry.estimatedBytes,
+            fresh,
+            stale: entry.data !== undefined && !fresh,
             healthy: entry.data !== undefined
                 && entry.lastErrorAt == null
                 && entry.consecutiveFailures === 0
-                && isFresh(name, entry, timestamp, freshnessMs)
+                && fresh
         };
     }
 
     function peek(name, { allowStale = true } = {}) {
+        purgeExpired();
         const current = entries.get(name);
         if (!current || current.data === undefined) return undefined;
+        touch(current);
         if (!allowStale && !isFresh(name, current)) return undefined;
         return current.data;
+    }
+
+    function storeSuccess(name, entry, data, successAt) {
+        const bytes = Math.max(0, Number(estimateBytes(data)) || 0);
+        estimatedBytes = Math.max(0, estimatedBytes - entry.estimatedBytes);
+        entry.estimatedBytes = bytes <= maxEstimatedBytes ? bytes : 0;
+        entry.data = bytes <= maxEstimatedBytes ? data : undefined;
+        estimatedBytes += entry.estimatedBytes;
+        entry.lastSuccessAt = successAt;
+        entry.lastErrorAt = null;
+        entry.lastError = null;
+        entry.consecutiveFailures = 0;
+        entry.sampleId = newSampleId(name, successAt);
+        touch(entry, successAt);
+        evictToBounds(successAt);
+    }
+
+    function startUpstream(name, entry, collect) {
+        entry.lastAttemptAt = now();
+        const upstreamPromise = Promise.resolve().then(collect).then(data => {
+            if (data === undefined) throw new Error(`collector ${name} returned undefined`);
+            if (entries.get(name) === entry && !entry.detached) storeSuccess(name, entry, data, now());
+            return data;
+        }).catch(error => {
+            if (entries.get(name) === entry && !entry.detached) {
+                entry.lastErrorAt = now();
+                entry.lastError = safeError(error);
+                entry.consecutiveFailures += 1;
+                touch(entry);
+            }
+            throw error;
+        }).finally(() => {
+            if (entries.get(name) === entry) {
+                if (entry.inflight === upstreamPromise) entry.inflight = null;
+                evictToBounds();
+            }
+        });
+        entry.inflight = upstreamPromise;
+        return upstreamPromise;
     }
 
     async function read(name, collect, {
         refresh = false,
         allowStale = false,
-        freshnessMs
+        freshnessMs,
+        scope,
+        dynamicFreshness = freshnessMs === undefined
     } = {}) {
         if (typeof collect !== 'function') throw new TypeError('collect must be a function');
+        purgeExpired();
         const entry = entryFor(name);
-        const timestamp = now();
+        if (scope !== undefined) entry.scope = scope;
+        entry.dynamicFreshness = dynamicFreshness !== false;
         entry.freshnessMs = freshnessFor(name, entry, freshnessMs);
+        const timestamp = now();
+        const freshnessOverride = entry.dynamicFreshness ? undefined : freshnessMs;
 
-        // An existing request always wins, including for force refreshes.
-        if (entry.inflight) return entry.inflight;
-        if (!refresh && isFresh(name, entry, timestamp, entry.freshnessMs)) return entry.data;
-
-        entry.lastAttemptAt = timestamp;
-        const pending = Promise.resolve().then(collect).then(data => {
-            if (data === undefined) throw new Error(`collector ${name} returned undefined`);
-            const successAt = now();
-            entry.data = data;
-            entry.lastSuccessAt = successAt;
-            entry.lastErrorAt = null;
-            entry.lastError = null;
-            entry.consecutiveFailures = 0;
-            entry.sampleId = newSampleId(name, successAt);
-            return data;
-        }).catch(error => {
-            entry.lastErrorAt = now();
-            entry.lastError = error;
-            entry.consecutiveFailures += 1;
+        // The raw upstream promise is shared; stale policy is caller-local.
+        const upstream = entry.inflight || (
+            !refresh && isFresh(name, entry, timestamp, freshnessOverride)
+                ? Promise.resolve(entry.data)
+                : startUpstream(name, entry, collect)
+        );
+        try {
+            return await upstream;
+        } catch (error) {
             if (allowStale && entry.data !== undefined) return entry.data;
             throw error;
-        }).finally(() => {
-            if (entry.inflight === pending) entry.inflight = null;
-        });
-        entry.inflight = pending;
-        return pending;
+        }
+    }
+
+    function forceRemoveEntry(name) {
+        const entry = entries.get(name);
+        if (!entry) return false;
+        entries.delete(name);
+        estimatedBytes = Math.max(0, estimatedBytes - entry.estimatedBytes);
+        entry.detached = true;
+        return true;
     }
 
     function invalidate(name) {
-        if (name === undefined) entries.clear();
-        else entries.delete(name);
+        if (name === undefined) {
+            for (const key of entries.keys()) forceRemoveEntry(key);
+            return;
+        }
+        forceRemoveEntry(name);
+    }
+
+    function invalidatePrefix(prefix) {
+        const value = String(prefix);
+        let count = 0;
+        for (const name of [...entries.keys()]) {
+            if (name.startsWith(value) && forceRemoveEntry(name)) count += 1;
+        }
+        return count;
+    }
+
+    function invalidateMatching(predicate) {
+        if (typeof predicate !== 'function') throw new TypeError('predicate must be a function');
+        let count = 0;
+        for (const name of [...entries.keys()]) {
+            if (predicate(name, snapshot(name)) && forceRemoveEntry(name)) count += 1;
+        }
+        return count;
+    }
+
+    function diagnostics() {
+        purgeExpired();
+        return {
+            entryCount: entries.size,
+            estimatedBytes,
+            evictionCount,
+            expiredCount,
+            maxEntries,
+            entryTtlMs,
+            maxEstimatedBytes,
+            inflightCount: [...entries.values()].filter(entry => Boolean(entry.inflight)).length
+        };
     }
 
     return Object.freeze({
@@ -136,9 +300,18 @@ function createDeviceCollectorCache({ cacheAgeMs = () => 1_000, now = () => Date
         peek,
         snapshot,
         invalidate,
-        has: name => entries.has(name),
-        names: () => [...entries.keys()]
+        invalidatePrefix,
+        invalidateMatching,
+        diagnostics,
+        has: name => { purgeExpired(); return entries.has(name); },
+        names: () => { purgeExpired(); return [...entries.keys()]; },
+        size: () => { purgeExpired(); return entries.size; }
     });
 }
 
-module.exports = { createDeviceCollectorCache };
+module.exports = {
+    DEFAULT_ENTRY_TTL_MS,
+    DEFAULT_MAX_ENTRIES,
+    DEFAULT_MAX_ESTIMATED_BYTES,
+    createDeviceCollectorCache
+};

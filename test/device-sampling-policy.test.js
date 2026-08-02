@@ -35,3 +35,18 @@ test('PPB event sampling stays on its independent UPS Active/Idle settings', () 
     assert.equal(policy.upsMs(), 10_000);
     assert.equal(policy.deviceMs('nas'), 600_000);
 });
+
+test('history metadata exposes the effective Active/Idle interval and mode', () => {
+    let active = true;
+    const policy = createDeviceSamplingPolicy({
+        getSettings: () => ({ deviceActiveBackendSampleSec: 5, deviceIdleBackendSampleSec: 600 }),
+        isActive: scope => scope === 'wiim' && active
+    });
+    assert.deepEqual(policy.deviceIntervals('wiim'), {
+        activeMs: 5_000, idleMs: 600_000, currentMs: 5_000, currentMode: 'active'
+    });
+    active = false;
+    assert.deepEqual(policy.deviceIntervals('wiim'), {
+        activeMs: 5_000, idleMs: 600_000, currentMs: 600_000, currentMode: 'idle'
+    });
+});

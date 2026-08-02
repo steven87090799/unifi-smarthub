@@ -54,6 +54,7 @@ function createWiimClient({
     const inflight = new Map();
     const healthState = new Map();
     let sampleSequence = 0;
+    let generation = 0;
 
     function healthFor(command) {
         let state = healthState.get(command);
@@ -70,8 +71,12 @@ function createWiimClient({
     }
 
     function reset() {
+        generation += 1;
         cache.clear();
         healthState.clear();
+        // Fence old requests. Their callers may still settle, but their
+        // completion handlers can no longer remove or populate new state.
+        inflight.clear();
     }
 
     function peek(command) {
@@ -109,6 +114,8 @@ function createWiimClient({
         const ip = getIp();
         const timestamp = now();
         if (!ip) return resultShape({ source: 'not_configured', now: timestamp });
+        const requestGeneration = generation;
+        const requestIp = ip;
         const cacheable = CACHEABLE_COMMANDS.has(command);
         const cached = cacheable ? cache.get(command) : null;
         if (inflight.has(command)) return inflight.get(command);
@@ -124,7 +131,7 @@ function createWiimClient({
             try {
                 data = await request({
                     protocol: 'https:',
-                    host: formatWiimHost(ip),
+                    host: formatWiimHost(requestIp),
                     command,
                     insecureTls: getAllowInsecureTls()
                 });
@@ -135,7 +142,7 @@ function createWiimClient({
                     try {
                         data = await request({
                             protocol: 'http:',
-                            host: formatWiimHost(ip),
+                            host: formatWiimHost(requestIp),
                             command,
                             insecureTls: true
                         });
@@ -150,15 +157,24 @@ function createWiimClient({
                 const serialized = typeof data === 'string' ? data : JSON.stringify(data);
                 const fetchedAt = now();
                 const id = newSampleId(command, fetchedAt);
-                if (cacheable) cache.set(command, { data: serialized, fetchedAt, sampleId: id });
-                state.lastSuccessAt = fetchedAt;
-                state.lastErrorAt = null;
-                state.lastError = null;
-                state.consecutiveFailures = 0;
+                if (generation === requestGeneration) {
+                    if (cacheable) cache.set(command, { data: serialized, fetchedAt, sampleId: id });
+                    state.lastSuccessAt = fetchedAt;
+                    state.lastErrorAt = null;
+                    state.lastError = null;
+                    state.consecutiveFailures = 0;
+                }
                 return resultShape({ data: serialized, source: 'live', fetchedAt, now: fetchedAt, sampleId: id });
             }
 
             const failedAt = now();
+            if (generation !== requestGeneration) {
+                const staleAge = cached ? Math.max(0, failedAt - cached.fetchedAt) : Infinity;
+                if (allowStale && cached && staleAge <= maxStaleMs) {
+                    return resultShape({ data: cached.data, source: 'stale_cache', fetchedAt: cached.fetchedAt, now: failedAt, sampleId: cached.sampleId, error: lastError?.code || lastError?.message });
+                }
+                return resultShape({ source: 'unreachable', now: failedAt, error: lastError?.code || lastError?.message });
+            }
             state.lastErrorAt = failedAt;
             state.lastError = lastError;
             state.consecutiveFailures += 1;
@@ -183,6 +199,7 @@ function createWiimClient({
         snapshot: health,
         inflightCount: () => inflight.size,
         cacheSize: () => cache.size,
+        generation: () => generation,
         commands: CACHEABLE_COMMANDS
     };
 }

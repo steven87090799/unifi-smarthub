@@ -118,7 +118,9 @@ const { createAdaptiveSampler } = require('./server/services/adaptive-sampler');
 const { createBackendSamplerRegistry } = require('./server/services/backend-sampler-registry');
 const { createDeviceCollectorCache } = require('./server/services/device-collector-cache');
 const { createDeviceSamplingPolicy } = require('./server/services/device-sampling-policy');
+const { createDockerLogSnapshot, dockerLogCacheKey } = require('./server/services/docker-log-snapshot');
 const { createNasLoginSingleflight } = require('./server/services/nas-login-singleflight');
+const { createNasTokenGeneration } = require('./server/services/nas-token-generation');
 const { createSampleDeduper } = require('./server/services/sample-deduper');
 const { createPpbEventSync } = require('./server/services/ppb-event-sync');
 const { createUnifiDeviceThermalSshCollector, normalizeDeviceId } = require('./server/integrations/unifi-device-thermal-ssh');
@@ -1198,12 +1200,18 @@ function collectorFreshnessMs(name, explicitScope) {
     return Math.max(1_000, Number(seconds) * 1_000);
 }
 const deviceCollectorCache = createDeviceCollectorCache({
-    cacheAgeMs: name => collectorFreshnessMs(name)
+    cacheAgeMs: (name, entry) => collectorFreshnessMs(name, entry?.scope),
+    maxEntries: 500,
+    entryTtlMs: 30 * 60 * 1000,
+    maxEstimatedBytes: 8 * 1024 * 1024
 });
 async function readDeviceCollector(name, collect, { refresh = false, allowStale = false, scope, freshnessMs } = {}) {
+    const effectiveFreshnessMs = freshnessMs ?? collectorFreshnessMs(name, scope);
     return deviceCollectorCache.read(name, collect, {
         refresh, allowStale,
-        ...(freshnessMs === undefined ? {} : { freshnessMs })
+        freshnessMs: effectiveFreshnessMs,
+        dynamicFreshness: freshnessMs === undefined,
+        scope
     });
 }
 function latestDeviceCollector(name, { allowStale = true } = {}) {
@@ -1634,12 +1642,22 @@ function dockerLogFindings(raw, container, max = 8) {
         return excerpt ? { id, name: container.name || id, severity, excerpt, fingerprint: `${id}:${severity}:${excerpt}` } : null;
     }).filter(Boolean).slice(-max);
 }
+let dockerLogSnapshot = null;
+function dockerLogFreshnessMs() {
+    return Math.max(Number(appSettings.watcherSec) || 20, 30) * 1000;
+}
+function dockerLogNotificationsEnabled(settings = loadNotifSettings()) {
+    return settings.triggerDockerCriticalLog !== false || settings.triggerDockerErrorLog === true;
+}
+function getDockerLogCached(id, { lines = 120, allowStale = false, refresh = false } = {}) {
+    return dockerLogSnapshot.read(id, { lines, allowStale, refresh });
+}
 async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
     if (!nasMonConfigured()) return [];
     const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
     const results = await Promise.all(selected.map(async container => {
         try {
-            const data = readCollectorSnapshot(`nasMonitor.dockerLog.${container.id}.${lines}`);
+            const data = readCollectorSnapshot(dockerLogCacheKey(container.id));
             const raw = typeof data === 'string' ? data : (data?.logs || JSON.stringify(data || ''));
             return dockerLogFindings(raw, container, maxPerContainer);
         } catch (error) {
@@ -1927,7 +1945,10 @@ async function scanSystemIssueNotifications(s) {
 
 async function scanDockerNotifications(s) {
     const usesDockerMonitor = s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog || s.triggerDockerState !== false || s.triggerDockerHealth !== false || s.triggerDockerRestart !== false || s.triggerDockerInventory || s.triggerDockerOom !== false || s.triggerDockerHighCpu || s.triggerDockerHighMemory;
-    if (!usesDockerMonitor || !nasMonConfigured()) return;
+    if (!usesDockerMonitor || !nasMonConfigured()) {
+        dockerLogSnapshot?.clear();
+        return;
+    }
     let containers;
     try {
         const data = readCollectorSnapshot('nasMonitor.dockerContainers');
@@ -1992,8 +2013,13 @@ async function scanDockerNotifications(s) {
         }
     }
 
-    const dockerLogScanGap = Math.max(Number(appSettings.watcherSec) || 20, 30) * 1000;
-    if ((s.triggerDockerCriticalLog !== false || s.triggerDockerErrorLog) && Date.now() - lastDockerLogScanTs >= dockerLogScanGap) {
+    // Inventory changes are authoritative for dynamic log keys.  Removal is
+    // safe even while a request is in flight: invalidation fences its result
+    // from the shared map and the old caller may still settle normally.
+    dockerLogSnapshot?.reconcile(currentIds);
+
+    const dockerLogScanGap = dockerLogFreshnessMs();
+    if (dockerLogNotificationsEnabled(s) && Date.now() - lastDockerLogScanTs >= dockerLogScanGap) {
         lastDockerLogScanTs = Date.now();
         const findings = await readDockerLogFindings(containers);
         for (const finding of findings) {
@@ -2758,11 +2784,12 @@ function deepFind(obj, keys, depth = 0) {
     return undefined;
 }
 
-let nasToken = '', nasTokenExpiry = 0;
+const nasTokenState = createNasTokenGeneration();
 let nasLastSuccessAt = null;
 let nasLastFailureAt = null;
 let nasConsecutiveFailures = 0;
 async function performNasLogin() {
+    const loginGeneration = nasTokenState.getGeneration();
     try {
         sysLog('NAS Auth', '開始進行 UGREEN NAS RSA 登入認證流程 (UGOS Pro)...');
         // UGOS Pro (>=1.1x)：POST /verify/check，RSA 公鑰放在回應標頭 x-rsa-token (base64 DER)
@@ -2802,12 +2829,11 @@ async function performNasLogin() {
         const token = deepFind(loginRes.data, ['token', 'access_token']);
         if (!token) throw new Error('NAS login did not return a token');
 
-        nasToken = token;
-        nasTokenExpiry = Date.now() + 12 * 60 * 60 * 1000; // Token 官方效期 24H，保守 12H 換發
+        nasTokenState.setIfGeneration(token, Date.now() + 12 * 60 * 60 * 1000, loginGeneration); // Token 官方效期 24H，保守 12H 換發
         nasLastSuccessAt = Date.now();
         nasConsecutiveFailures = 0;
         sysLog('NAS Auth', 'NAS 登入成功，快取 JWT Token (12小時)。');
-        return nasToken;
+        return token;
       } catch (error) {
         nasLastFailureAt = Date.now();
         nasConsecutiveFailures += 1;
@@ -2817,31 +2843,41 @@ async function performNasLogin() {
 }
 
 const nasLoginSingleflight = createNasLoginSingleflight({
-    getCachedToken: () => nasToken,
-    isTokenValid: token => Boolean(token && Date.now() < nasTokenExpiry),
+    getCachedToken: () => nasTokenState.getToken(),
+    isTokenValid: token => Boolean(token && nasTokenState.isValid()),
     login: performNasLogin
 });
 
 async function getNasToken() {
-    if (nasToken && Date.now() < nasTokenExpiry) {
+    if (nasTokenState.isValid()) {
         sysLog('NAS Auth', '使用快取的 UGREEN NAS JWT Token。');
     }
     return nasLoginSingleflight.getToken();
 }
 
-async function nasGet(pathName, params = {}, _retried = false) {
+function clearNasTokenIfCurrent(requestToken, requestGeneration) {
+    return nasTokenState.clearIfCurrent(requestToken, requestGeneration);
+}
+function nasTokenInvalidError(error) {
+    return Number(error?.response?.status || error?.status || error?.statusCode) === 401;
+}
+
+async function nasGet(pathName, params = {}, _retryCount = 0) {
+    const token = await getNasToken();
+    const requestToken = token;
+    const requestGeneration = nasTokenState.getGeneration();
     try {
-        const token = await getNasToken();
         const r = await nasClient.get(pathName, { params: { ...params, token } });
+        if (nasTokenInvalidError(r)) throw Object.assign(new Error('NAS token rejected'), { status: 401 });
         // UGOS 一律回 HTTP 200，錯誤放在 body.code (1004/1008 = 權限不足，需管理員帳號)
         if (r.data && typeof r.data.code === 'number' && r.data.code !== 200) {
             const permErr = [1004, 1008].includes(r.data.code);
             // 權限錯誤重試也沒用；其他錯誤(含 token 失效，例如 NAS 重開機後舊 token 被清空)一律
             // 清掉快取 token 重新登入後重試一次 —— 不用去猜 UGOS 到底吐哪個代碼表示 token 失效
-            if (!permErr && !_retried) {
+            if (!permErr && _retryCount < 1) {
                 sysLog('NAS Auth', `${pathName} 回 code ${r.data.code}，可能是 token 失效 (如 NAS 重開機)，清除快取重新登入後重試`, false);
-                nasToken = ''; nasTokenExpiry = 0;
-                const retried = await nasGet(pathName, params, true);
+                clearNasTokenIfCurrent(requestToken, requestGeneration);
+                const retried = await nasGet(pathName, params, _retryCount + 1);
                 nasLastSuccessAt = Date.now();
                 nasConsecutiveFailures = 0;
                 return retried;
@@ -2854,6 +2890,10 @@ async function nasGet(pathName, params = {}, _retried = false) {
         nasConsecutiveFailures = 0;
         return r.data && r.data.data !== undefined ? r.data.data : r.data;
     } catch (error) {
+        if (nasTokenInvalidError(error) && _retryCount < 1) {
+            clearNasTokenIfCurrent(requestToken, requestGeneration);
+            return nasGet(pathName, params, _retryCount + 1);
+        }
         nasLastFailureAt = Date.now();
         nasConsecutiveFailures += 1;
         throw error;
@@ -3284,6 +3324,13 @@ async function nasMonGet(p, params) {
         throw error;
     }
 }
+dockerLogSnapshot = createDockerLogSnapshot({
+    cache: deviceCollectorCache,
+    getMinIntervalMs: dockerLogFreshnessMs,
+    fetch: (id, { lines }) => nasMonGet(
+        `/api/docker/containers/${encodeURIComponent(id)}/logs`, { lines }
+    )
+});
 function getNasMonitorCached(name, pathName, params, options = {}) {
     return readDeviceCollector(`nasMonitor.${name}`, () => nasMonGet(pathName, params), { ...options, scope: 'nas' });
 }
@@ -3377,7 +3424,7 @@ app.get('/api/nas/docker/:id/logs', panelSecurity.requireAdmin, async (req, res)
         return res.json({ logs: '', source: 'not_configured' });
     }
     try {
-        const data = await getNasMonitorCached(`dockerLog.${input.id}.${input.lines}`, `/api/docker/containers/${encodeURIComponent(input.id)}/logs`, { lines: input.lines });
+        const data = await getDockerLogCached(input.id, { lines: input.lines });
         res.json({ logs: typeof data === 'string' ? data : (data.logs || JSON.stringify(data)), source: 'nas_monitor' });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_NAS_MONITOR_FAILED, module: 'api.nasMonitor', function: 'dockerLogs', logMessage: 'Failed to fetch Docker logs' });
@@ -3743,6 +3790,8 @@ function persistEnvVars(updates) {
 
 // 熱重建所有依賴 env 的客戶端與快取 (免重啟)
 function rebuildClients() {
+    ['unifi.', 'cloud.', 'nas.', 'nasMonitor.', 'adguard.', 'linux.']
+        .forEach(prefix => deviceCollectorCache.invalidatePrefix(prefix));
     unifiClient = buildUnifiClient();
     unifiCloudClient = buildUnifiCloudClient();
     ({ base: NAS_BASE, client: nasClient, tls: nasTls } = buildNasClient());
@@ -3751,7 +3800,8 @@ function rebuildClients() {
     resetSseUpstream({ reconnect: true });
     wiimIP = normalizeWiimIp(process.env.WIIM_IP);
     invalidateLocalSession();             // 重置 UniFi session + CSRF token
-    nasToken = ''; nasTokenExpiry = 0;    // 重置 NAS token
+    nasTokenState.reset();                 // 重置 NAS token 並 fence 舊 request
+    nasLoginSingleflight.reset();        // 重建後不得沿用舊登入 Promise
     ppbClient.reset();                    // 重置 PPB session/Agent (host/TLS/CA 可能已變更)
     wiimClient.reset();
     sysLog('Connections', '連線設定已更新，所有客戶端已熱重建');
@@ -4573,9 +4623,21 @@ registerBackendSampler({
 });
 
 app.get('/api/wiim/history', (req, res) => {
-    if (!wiimIP) return res.json({ interval: 10, cpu_alert: appSettings.wiimCpuAlert ?? 70, board_alert: appSettings.wiimBoardAlert ?? 60, data: [], source: 'not_configured' });
+    const intervals = samplingPolicy.deviceIntervals('wiim');
+    const activeInterval = Math.max(1, Math.round(intervals.activeMs / 1000));
+    const idleInterval = Math.max(1, Math.round(intervals.idleMs / 1000));
+    const currentMode = intervals.currentMode;
+    const currentInterval = Math.max(1, Math.round(intervals.currentMs / 1000));
+    const metadata = {
+        interval: currentInterval,
+        active_interval: activeInterval,
+        idle_interval: idleInterval,
+        current_interval: currentInterval,
+        current_mode: currentMode
+    };
+    if (!wiimIP) return res.json({ ...metadata, cpu_alert: appSettings.wiimCpuAlert ?? 70, board_alert: appSettings.wiimBoardAlert ?? 60, data: [], source: 'not_configured' });
     res.json({
-        interval: 10,
+        ...metadata,
         cpu_alert: appSettings.wiimCpuAlert ?? 70,
         board_alert: appSettings.wiimBoardAlert ?? 60,
         data: historyDb.getSince('wiim', 0)
@@ -5493,13 +5555,13 @@ async function sampleReadOnlyDeviceCollectors() {
     // Docker log inspection uses the same snapshot-only rule as the watcher.
     // Populate bounded per-container log keys only after the inventory snapshot
     // is available; a failed inventory never fans out into log requests.
-    if (nasMonConfigured()) {
+    if (nasMonConfigured() && dockerLogNotificationsEnabled()) {
         const inventory = latestDeviceCollector('nasMonitor.dockerContainers');
         const containers = Array.isArray(inventory) ? inventory : (inventory?.containers || inventory?.data || []);
         await Promise.allSettled(containers.filter(container => container?.id).slice(0, 12).map(async container => {
-            const name = `nasMonitor.dockerLog.${container.id}.120`;
+            const name = dockerLogCacheKey(container.id);
             try {
-                await getNasMonitorCached(`dockerLog.${container.id}.120`, `/api/docker/containers/${encodeURIComponent(container.id)}/logs`, { lines: 120 });
+                await getDockerLogCached(container.id, { lines: 120, allowStale: true });
             } catch (error) {
                 logRecoverableFailure(`sampler.collector:${name}`, error, {
                     module: 'scheduler.deviceCollectors', function: 'sampleDockerLog', code: ERROR_CODES.EXT_NAS_MONITOR_FAILED,
@@ -5507,7 +5569,7 @@ async function sampleReadOnlyDeviceCollectors() {
                 });
             }
         }));
-    }
+    } else dockerLogSnapshot?.clear();
     return outcomes;
 }
 registerBackendSampler({
@@ -5565,7 +5627,7 @@ app.get('/api/connections/status', async (req, res) => {
             { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
-            { name: 'UGREEN NAS', configured: nasConfigured(), ok: !!nasToken && Date.now() < nasTokenExpiry, detail: nasToken ? 'Token 有效' : '未登入' },
+            { name: 'UGREEN NAS', configured: nasConfigured(), ok: nasTokenState.isValid(), detail: nasTokenState.getToken() ? 'Token 有效' : '未登入' },
             { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
             { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? (wiimFresh && fresh(wiimHit.fetchedAt, 120)) : null, detail: wiimIP ? (wiimFresh ? '有回應' : wiimHit ? '最後資料已過期' : '無快取') : '未設定' },
             { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), detail: upsDetail },
@@ -5606,7 +5668,7 @@ function refreshPublicSystemHealthSnapshot() {
         },
         {
             included: nasConfigured(),
-            online: Boolean(nasToken) && now < nasTokenExpiry
+            online: nasTokenState.isValid()
         },
         {
             included: Boolean(wiimIP),
@@ -5769,7 +5831,7 @@ registerHealthRoutes(app, {
             ucg_ssh: operationalDependency({ configured: dependencyConfigured.ucg_ssh, lastSuccessAt: ucgCollector?.lastSuccessAt || null, lastFailureAt: ucgCollector?.lastErrorAt || hwLastFailureAt, consecutiveFailures: ucgCollector?.consecutiveFailures ?? hwConsecutiveFailures, detail: ucgCollector?.healthy === false ? 'stale or offline snapshot' : 'read-only SSH sampler' }),
             unifi_controller: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: localSessionLastSuccessAt, lastFailureAt: localSessionLastFailureAt, consecutiveFailures: localSessionConsecutiveFailures, detail: localCookie ? 'session active' : 'session unavailable' }),
             unifi_telemetry: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: telemetry.lastSuccessfulAt, lastFailureAt: telemetry.lastFailureAt || telemetry.lastErrorAt, consecutiveFailures: telemetry.consecutiveFailures, detail: telemetry.lastErrorReason || 'snapshot' }),
-            nas: operationalDependency({ configured: dependencyConfigured.nas, lastSuccessAt: nasLastSuccessAt, lastFailureAt: nasLastFailureAt, consecutiveFailures: nasConsecutiveFailures, detail: nasToken ? 'JWT active' : 'token unavailable' }),
+            nas: operationalDependency({ configured: dependencyConfigured.nas, lastSuccessAt: nasLastSuccessAt, lastFailureAt: nasLastFailureAt, consecutiveFailures: nasConsecutiveFailures, detail: nasTokenState.isValid() ? 'JWT active' : 'token unavailable' }),
             nas_monitor: operationalDependency({ configured: dependencyConfigured.nas_monitor, lastSuccessAt: nasMonLastSuccessAt, lastFailureAt: nasMonLastFailureAt, consecutiveFailures: nasMonConsecutiveFailures, detail: nasMonConfigurationError ? 'configuration rejected' : 'last monitor response' }),
             ups: operationalDependency({ configured: dependencyConfigured.ups, lastSuccessAt: ups.lastSuccessAt, consecutiveFailures: ups.consecutiveFailures, staleAfterMs: 180_000, detail: ups.failureReason || ups.fetchHealth }),
             adguard: operationalDependency({ configured: dependencyConfigured.adguard, lastSuccessAt: adgLastOkTs || null, lastFailureAt: adgLastFailureAt, consecutiveFailures: adgConsecutiveFailures, detail: adgConfigured() ? 'last sampler result' : null }),
@@ -5799,6 +5861,7 @@ registerHealthRoutes(app, {
             ...backendSamplers.snapshot(),
             activeScopes: deviceActivity.activeScopes()
         },
+        collectorCache: deviceCollectorCache.diagnostics(),
         sshPools: {
             ucg: ucgSshPool.snapshot(),
             linux: linuxSshPool.snapshot(),

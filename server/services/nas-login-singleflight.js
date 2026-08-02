@@ -25,8 +25,15 @@ function createNasLoginSingleflight({ getCachedToken, isTokenValid, login } = {}
         return inFlight;
     }
 
+    function reset() {
+        // Do not cancel the old Promise.  Fence it by dropping ownership so a
+        // rebuilt client can start a new login while old waiters still settle.
+        inFlight = null;
+    }
+
     return Object.freeze({
         getToken,
+        reset,
         isInFlight: () => Boolean(inFlight)
     });
 }

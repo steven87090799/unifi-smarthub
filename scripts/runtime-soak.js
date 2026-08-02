@@ -10,8 +10,11 @@ const path = require('node:path');
 const { createActivityLease } = require('../activity-lease');
 const { createAdaptiveSampler } = require('../server/services/adaptive-sampler');
 const { createDeviceCollectorCache } = require('../server/services/device-collector-cache');
+const { createNasLoginSingleflight } = require('../server/services/nas-login-singleflight');
+const { createNasTokenGeneration } = require('../server/services/nas-token-generation');
 const { createSseBackpressureManager } = require('../server/services/sse-backpressure');
 const { createArtworkCache } = require('../server/services/wiim-art-proxy');
+const { createWiimClient } = require('../server/services/wiim-client');
 const { createHistoryDb } = require('../db');
 
 const testDurationMs = Number(process.env.SOAK_TEST_DURATION_MS);
@@ -81,6 +84,115 @@ function activeDiagnostics(baselineHandles, baselineRequests) {
     };
 }
 
+function deferred() {
+    let resolve;
+    const promise = new Promise(nextResolve => { resolve = nextResolve; });
+    return { promise, resolve };
+}
+
+async function runCachePressureChecks() {
+    let now = 0;
+    const cache = createDeviceCollectorCache({
+        now: () => now,
+        cacheAgeMs: () => 1_000,
+        maxEntries: 64,
+        entryTtlMs: 60_000,
+        maxEstimatedBytes: 64 * 1024
+    });
+    let peakEntries = 0;
+    let peakBytes = 0;
+    const observe = () => {
+        const diagnostics = cache.diagnostics();
+        peakEntries = Math.max(peakEntries, diagnostics.entryCount);
+        peakBytes = Math.max(peakBytes, diagnostics.estimatedBytes);
+        assert.ok(diagnostics.entryCount <= 64, 'collector cache exceeded entry bound');
+        assert.ok(diagnostics.estimatedBytes <= 64 * 1024, 'collector cache exceeded byte bound');
+    };
+
+    // Dynamic NAS page and Docker container keys must remain bounded.
+    for (let i = 0; i < 500; i += 1) {
+        await cache.read(`nas.logs.page.${i}.120`, async () => ({ page: i, message: 'bounded' }));
+        await cache.read(`nasMonitor.dockerLog.container-${i}`, async () => ({ id: i, logs: 'bounded' }));
+        observe();
+    }
+    assert.ok(cache.invalidatePrefix('nas.logs.page.') > 0, 'NAS page prefix invalidation did not remove entries');
+    assert.ok(cache.invalidatePrefix('nasMonitor.dockerLog.') > 0, 'Docker log prefix invalidation did not remove entries');
+    for (let i = 0; i < 20; i += 1) {
+        ['unifi.', 'cloud.', 'nas.', 'nasMonitor.', 'adguard.', 'linux.']
+            .forEach(prefix => cache.invalidatePrefix(prefix));
+    }
+
+    // Both stale and strict callers share one failed upstream, but only the
+    // stale caller receives the retained payload.
+    await cache.read('mixed.stale.strict', async () => ({ value: 'old' }), { freshnessMs: 1 });
+    now = 10;
+    const failureGate = deferred();
+    let failureCalls = 0;
+    const failing = async () => {
+        failureCalls += 1;
+        await failureGate.promise;
+        throw new Error('injected mixed caller failure');
+    };
+    const stale = cache.read('mixed.stale.strict', failing, { freshnessMs: 1, allowStale: true });
+    const strict = cache.read('mixed.stale.strict', failing, { freshnessMs: 1, allowStale: false });
+    await Promise.resolve();
+    assert.equal(failureCalls, 1, 'mixed callers did not singleflight');
+    failureGate.resolve();
+    assert.deepEqual(await stale, { value: 'old' });
+    await assert.rejects(strict, /injected mixed caller failure/u);
+    assert.equal(cache.snapshot('mixed.stale.strict').healthy, false);
+
+    // A delayed old NAS token failure must not erase a newer login.
+    const tokenState = createNasTokenGeneration();
+    tokenState.set('T1', Date.now() + 60_000);
+    const oldToken = tokenState.getToken();
+    const oldGeneration = tokenState.getGeneration();
+    assert.equal(tokenState.clearIfCurrent(oldToken, oldGeneration), true);
+    let loginCalls = 0;
+    const login = createNasLoginSingleflight({
+        getCachedToken: tokenState.getToken,
+        isTokenValid: token => token === tokenState.getToken() && tokenState.isValid(),
+        login: async () => {
+            loginCalls += 1;
+            tokenState.set('T2', Date.now() + 60_000);
+            return 'T2';
+        }
+    });
+    assert.equal(await login.getToken(), 'T2');
+    assert.equal(tokenState.clearIfCurrent(oldToken, oldGeneration), false);
+    assert.equal(tokenState.getToken(), 'T2');
+    assert.equal(loginCalls, 1);
+
+    // A reset fences a late WiiM response from the new IP cache.
+    const oldWiim = deferred();
+    let ip = '192.0.2.10';
+    const wiim = createWiimClient({
+        getIp: () => ip,
+        request: async request => {
+            if (request.host === '192.0.2.10') {
+                await oldWiim.promise;
+                return { ip: 'old' };
+            }
+            return { ip: 'new' };
+        }
+    });
+    const oldRequest = wiim.get('getStatusEx');
+    await Promise.resolve();
+    ip = '192.0.2.11';
+    wiim.reset();
+    const newResult = await wiim.get('getStatusEx');
+    oldWiim.resolve();
+    await oldRequest;
+    assert.equal(wiim.peek('getStatusEx').data, newResult.data);
+
+    const final = cache.diagnostics();
+    cache.invalidate();
+    const cleared = cache.diagnostics();
+    assert.equal(cleared.entryCount, 0, 'pressure cache did not clear');
+    assert.equal(cleared.inflightCount, 0, 'pressure cache retained an in-flight request');
+    return { peakEntries, peakBytes, final, cleared };
+}
+
 async function openSoakServer(sseClients, sse) {
     const server = http.createServer((req, res) => {
         if (req.url === '/events') {
@@ -123,6 +235,10 @@ function printSummary(summary) {
     console.log(`SSE clients final: ${summary.sseClientsFinal}`);
     console.log(`Browser sessions final: ${summary.sessionsFinal}`);
     console.log(`Collectors running final: ${summary.collectorsFinal}`);
+    console.log(`Collector cache peak entries: ${summary.cachePressure.peakEntries}`);
+    console.log(`Collector cache peak bytes: ${summary.cachePressure.peakBytes}`);
+    console.log(`Collector cache final entries: ${summary.cachePressure.cleared.entryCount}`);
+    console.log(`Collector cache final bytes: ${summary.cachePressure.cleared.estimatedBytes}`);
     console.log(`Unexpected active handles final: ${summary.unexpectedHandles.length}`);
     console.log(`Unexpected active requests final: ${summary.unexpectedRequests.length}`);
     console.log(`Unhandled rejections: ${summary.unhandled}`);
@@ -180,8 +296,10 @@ async function main() {
     let schedulerTimer = null;
     let server, sseRequest, sseResponse;
     let cleanupRuns = 0;
+    let cachePressure = { peakEntries: 0, peakBytes: 0, final: { entryCount: 0, estimatedBytes: 0 }, cleared: { entryCount: 0, estimatedBytes: 0, inflightCount: 0 } };
 
     try {
+        cachePressure = await runCachePressureChecks();
         const old = Date.now() - 26 * 60 * 60 * 1000;
         for (let i = 0; i < 2_000; i += 1) history.insertPoint('trend', { t: new Date(old + i * 5000).toISOString(), clients: i % 100 });
         const cleanup = history.cleanup(30, 100_000, { batchSize: 100 });
@@ -231,6 +349,9 @@ async function main() {
         assert.ok(sseRemoved > 0, 'slow SSE clients were not removed');
         assert.ok(artwork.size() <= 20 && artwork.totalBytes() <= 8 * 1024, 'artwork cache exceeded bounds');
         assert.equal(cleanupRuns, 1, 'cleanup ran more than once');
+        assert.ok(cachePressure.peakEntries <= 64, 'cache pressure entry bound failed');
+        assert.ok(cachePressure.peakBytes <= 64 * 1024, 'cache pressure byte bound failed');
+        assert.equal(cachePressure.cleared.entryCount, 0, 'cache pressure entries remained');
     } catch (error) {
         failures.push(error);
     } finally {
@@ -290,6 +411,7 @@ async function main() {
         heapStart: initialMemory.heapUsed, heapPeak: Math.max(...heapSamples), heapEnd: finalMemory.heapUsed,
         timerFinal: timers.count(), sseClientsFinal: sseClients.size,
         sessionsFinal: lease.sessionCount(), collectorsFinal: inFlight,
+        cachePressure,
         unhandled: unhandled.length, uncaught: uncaught.length,
         unexpectedHandles: diagnostics.unexpectedHandles,
         unexpectedRequests: diagnostics.unexpectedRequests,

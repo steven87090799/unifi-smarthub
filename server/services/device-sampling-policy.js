@@ -21,9 +21,19 @@ function createDeviceSamplingPolicy({ getSettings = () => DEFAULTS, isActive = (
     }
 
     function deviceMs(scope) {
+        return deviceIntervals(scope).currentMs;
+    }
+
+    function deviceIntervals(scope) {
         const active = Boolean(isActive(scope));
-        return seconds(active ? 'deviceActiveBackendSampleSec' : 'deviceIdleBackendSampleSec',
-            active ? DEFAULTS.deviceActiveBackendSampleSec : DEFAULTS.deviceIdleBackendSampleSec) * 1000;
+        const activeMs = seconds('deviceActiveBackendSampleSec', DEFAULTS.deviceActiveBackendSampleSec) * 1000;
+        const idleMs = seconds('deviceIdleBackendSampleSec', DEFAULTS.deviceIdleBackendSampleSec) * 1000;
+        return {
+            activeMs,
+            idleMs,
+            currentMs: active ? activeMs : idleMs,
+            currentMode: active ? 'active' : 'idle'
+        };
     }
 
     function upsMs() {
@@ -44,7 +54,7 @@ function createDeviceSamplingPolicy({ getSettings = () => DEFAULTS, isActive = (
             active ? DEFAULTS.unifiTelemetryActiveSec : DEFAULTS.unifiTelemetryIdleSec) * 1000;
     }
 
-    return Object.freeze({ deviceMs, upsMs, ppbEventMs, telemetryMs });
+    return Object.freeze({ deviceMs, deviceIntervals, upsMs, ppbEventMs, telemetryMs });
 }
 
 module.exports = { createDeviceSamplingPolicy };
