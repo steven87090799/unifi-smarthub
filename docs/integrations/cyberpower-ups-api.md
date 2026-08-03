@@ -24,6 +24,10 @@ UPS_ALLOW_FALLBACK=true
 
 未啟用回退時，失敗狀態會回報 `source=unreachable`、`actualSource=null`，最後一次成功資料只會放在 `lastKnown`。
 
+UPS 狀態另外提供 `fetchHealth`：`healthy` 代表目前取樣成功，`degraded` 代表短暫失敗但仍保留最後成功數值，`offline` 代表連續 3 次全來源失敗，`unknown` 代表尚未取得任何成功資料。`degraded`／`offline` 的數值都是 stale；前端會以黃色／紅色顯示，且不把 `lastKnownSource` 當成目前可達來源。
+
+UPS 連線設定熱更新時會遞增 `configGeneration` 並短暫標示 `reconfiguring`。切換期間，舊設定的延遲結果會被丟棄；只有新 generation 成功取樣後才恢復綠色 healthy 與 `actualSource`。
+
 ## Docker 建議：PPB REST
 
 ```env
@@ -68,6 +72,7 @@ SmartHub 執行 `upsc <name>@<host>`，讀取 `ups.status`、輸入／輸出電�
 - 連續 3 次全來源失敗才確認 offline，短暫錯誤不立即清空狀態。
 - 保留最後成功資料並標示 stale。
 - 來源切換、離線／恢復與斷電事件去重。
+- UPS 失敗日誌以狀態轉移、fallback 邊界、恢復與 cooldown 摘要為界，重複輪詢錯誤不逐筆刷屏；全來源失敗會列出實際嘗試來源。
 - 電壓歷史、斷電與電力品質事件存入 SQLite；重啟時可接續未結束的斷電事件。
 - 總覽或 UPS 頁面可見時，每 3 秒真正讀取一次來源；無人觀看時預設每 10 秒讀取。
 - `/api/ups/status` 與 `/api/ups/ppb-events` 是只讀快照；外部讀取、SQLite 寫入、狀態轉移與通知只由背景 sampler 執行。

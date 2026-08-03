@@ -64,10 +64,15 @@ jobs:
           sudo docker compose --env-file config/.env build unifi-smarthub
           sudo docker compose --env-file config/.env --profile nas-monitor build
 
+      - name: Initialize isolated SQLite volume for preflight
+        run: |
+          sudo docker compose --env-file config/.env run --rm --no-deps \
+            unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
+
       - name: Run isolated production preflight
         run: |
           sudo docker compose --env-file config/.env run --rm --no-deps \
-            unifi-smarthub node scripts/production-preflight.js
+            unifi-smarthub node scripts/production-preflight.js --offline
 
       - name: Run isolated production runtime smoke test
         run: npm run test:smoke
@@ -106,12 +111,19 @@ jobs:
               image --exit-code 1 --severity HIGH,CRITICAL "$image"
           done
 
+      - name: Verify repository hygiene
+        run: |
+          git diff --check
+          test -z "$(git status --short --untracked-files=no)"
+
       - name: Generate exact-head release evidence
-        if: always()
+        if: success()
         run: |
           mkdir -p "$RUNNER_TEMP/smarthub-sbom"
           RELEASE_HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
-          SMART_HUB_NODE_VERSION="$(node -p 'process.version')" node <<'NODE'
+          SMART_HUB_NODE_VERSION="$(node -p 'process.version')" \
+          SMART_HUB_IMAGE_ID="$(docker image inspect unifi-smarthub:dev --format '{{.Id}}')" \
+          NAS_MONITOR_IMAGE_ID="$(docker image inspect unifi-smarthub-nas-monitor:dev --format '{{.Id}}')" node <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
           const evidence = {
@@ -122,6 +134,10 @@ jobs:
             node_version: process.env.SMART_HUB_NODE_VERSION,
             smartHub_image: 'unifi-smarthub:dev',
             nas_monitor_image: 'unifi-smarthub-nas-monitor:dev',
+            smartHub_image_id: process.env.SMART_HUB_IMAGE_ID,
+            nas_monitor_image_id: process.env.NAS_MONITOR_IMAGE_ID,
+            sbom_files: ['unifi-smarthub.cdx.json', 'unifi-smarthub-nas-monitor.cdx.json'],
+            trivy_files: ['unifi-smarthub.trivy.json', 'unifi-smarthub-nas-monitor.trivy.json'],
             trivy_blocking_policy: 'HIGH,CRITICAL including unfixed',
             created_at: new Date().toISOString()
           };
@@ -131,8 +147,33 @@ jobs:
           );
           NODE
 
+      - name: Validate release evidence
+        if: success()
+        run: |
+          RELEASE_HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
+          SMART_HUB_IMAGE_ID="$(docker image inspect unifi-smarthub:dev --format '{{.Id}}')" \
+          NAS_MONITOR_IMAGE_ID="$(docker image inspect unifi-smarthub-nas-monitor:dev --format '{{.Id}}')" node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = path.join(process.env.RUNNER_TEMP, 'smarthub-sbom');
+          const evidence = JSON.parse(fs.readFileSync(path.join(root, 'release-evidence.json'), 'utf8'));
+          if (evidence.head_sha !== process.env.RELEASE_HEAD_SHA) throw new Error('release evidence head_sha is not the exact PR head');
+          if (evidence.smartHub_image_id !== process.env.SMART_HUB_IMAGE_ID
+              || evidence.nas_monitor_image_id !== process.env.NAS_MONITOR_IMAGE_ID) {
+            throw new Error('release evidence image IDs do not match the inspected images');
+          }
+          if (!/^sha256:[0-9a-f]{64}$/.test(evidence.smartHub_image_id)
+              || !/^sha256:[0-9a-f]{64}$/.test(evidence.nas_monitor_image_id)) {
+            throw new Error('release evidence image IDs are invalid');
+          }
+          for (const file of [...evidence.sbom_files, ...evidence.trivy_files]) {
+            const target = path.join(root, file);
+            if (!fs.statSync(target).isFile() || fs.statSync(target).size === 0) throw new Error(`release evidence report is missing or empty: ${file}`);
+          }
+          NODE
+
       - name: Upload SBOM and vulnerability reports
-        if: always()
+        if: success()
         id: upload-artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -141,7 +182,21 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Verify repository hygiene
+      - name: Capture CI diagnostics on failure
+        if: failure()
         run: |
-          git diff --check
-          test -z "$(git status --short --untracked-files=no)"
+          mkdir -p "$RUNNER_TEMP/smarthub-ci-diagnostics"
+          {
+            echo "workflow=${GITHUB_WORKFLOW} run_id=${GITHUB_RUN_ID} sha=${GITHUB_SHA}"
+            git status --short --untracked-files=all || true
+            docker image ls --no-trunc || true
+          } > "$RUNNER_TEMP/smarthub-ci-diagnostics/ci-diagnostics.txt"
+
+      - name: Upload CI diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smarthub-ci-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/smarthub-ci-diagnostics
+          if-no-files-found: error
+          retention-days: 14

@@ -31,7 +31,12 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.doesNotMatch(workflow, /--ignore-unfixed/u);
     assert.match(workflow, /Run isolated production preflight/u);
     assert.match(workflow, /scripts\/production-preflight\.js/u);
+    assert.match(workflow, /scripts\/production-preflight\.js --offline/u);
+    assert.match(workflow, /Initialize isolated SQLite volume for preflight/u);
     assert.match(workflow, /Generate exact-head release evidence/u);
+    assert.match(workflow, /smartHub_image_id: process\.env\.SMART_HUB_IMAGE_ID/u);
+    assert.match(workflow, /nas_monitor_image_id: process\.env\.NAS_MONITOR_IMAGE_ID/u);
+    assert.match(workflow, /Validate release evidence/u);
     assert.match(workflow, /release-evidence\.json/u);
     assert.match(workflow, /RELEASE_HEAD_SHA="\$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}"/u);
     assert.match(workflow, /head_sha: process\.env\.RELEASE_HEAD_SHA/u);
@@ -44,6 +49,19 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.doesNotMatch(audit, /^HOSTED_CI_RUN=/mu);
     assert.match(workflow, /SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak/u);
     assert.match(workflow, /git diff --check/u);
+    assert.match(workflow, /name: smarthub-ci-diagnostics-\$\{\{ github\.run_id \}\}/u);
+    const evidence = workflow.slice(workflow.indexOf('- name: Generate exact-head release evidence'), workflow.indexOf('- name: Validate release evidence'));
+    const validation = workflow.slice(workflow.indexOf('- name: Validate release evidence'), workflow.indexOf('- name: Upload SBOM and vulnerability reports'));
+    const upload = workflow.slice(workflow.indexOf('- name: Upload SBOM and vulnerability reports'), workflow.indexOf('- name: Capture CI diagnostics on failure'));
+    assert.match(evidence, /if: success\(\)/u);
+    assert.match(validation, /if: success\(\)/u);
+    assert.match(upload, /if: success\(\)/u);
+    assert.doesNotMatch(evidence, /if: always\(\)/u);
+    assert.ok(workflow.indexOf('Verify repository hygiene') < workflow.indexOf('Generate exact-head release evidence'));
+    assert.ok(workflow.indexOf('Initialize isolated SQLite volume for preflight')
+        < workflow.indexOf('Run isolated production preflight'));
+    assert.ok(workflow.indexOf('Generate exact-head release evidence') < workflow.indexOf('Validate release evidence'));
+    assert.ok(workflow.indexOf('Validate release evidence') < workflow.indexOf('Upload SBOM and vulnerability reports'));
 });
 
 test('isolated runtime smoke is a bounded blocking gate after tests and image builds', () => {

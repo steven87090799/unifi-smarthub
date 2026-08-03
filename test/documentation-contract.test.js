@@ -25,6 +25,14 @@ test('production documentation points operators to the immutable paired-image re
     assert.match(readme, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.match(readme, /sudo install -d -o 1000 -g 1000 -m 700 config/u);
     assert.match(readme, /production-preflight/u);
+    assert.ok(readme.indexOf('docker compose --env-file config/.env build unifi-smarthub')
+        < readme.indexOf('production-preflight.js --offline'));
+    assert.ok(readme.indexOf('production-preflight.js --offline')
+        < readme.indexOf('docker compose --env-file config/.env up -d --no-build'));
+    assert.ok(checklist.indexOf('docker compose --env-file config/.env build unifi-smarthub')
+        < checklist.indexOf('production-preflight.js --offline'));
+    assert.ok(checklist.indexOf('production-preflight.js --offline')
+        < checklist.indexOf('up -d --no-build --pull never'));
     assert.match(checklist, /Host-native Caddy\/Nginx/u);
     assert.match(checklist, /Dockerized Caddy\/Nginx/u);
     assert.match(checklist, /PANEL_TRUSTED_PROXIES/u);
@@ -88,6 +96,12 @@ test('the operation manual matches the enforced production gates', () => {
     assert.match(manual, /docker compose --env-file config\/\.env build unifi-smarthub/u);
     assert.match(manual, /--profile nas-monitor build/u);
     assert.match(manual, /production-preflight/u);
+    assert.match(manual, /fetchHealth/u);
+    assert.match(manual, /configGeneration/u);
+    assert.ok(manual.indexOf('docker compose --env-file config/.env build unifi-smarthub')
+        < manual.indexOf('production-preflight.js --offline'));
+    assert.ok(manual.indexOf('production-preflight.js --offline')
+        < manual.indexOf('docker compose --env-file config/.env up -d --no-build'));
     assert.match(manual, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.doesNotMatch(manual, /npm audit --audit-level=high/u);
 });

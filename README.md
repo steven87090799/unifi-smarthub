@@ -45,9 +45,15 @@ fi
 # 編輯 config/.env，正式環境至少設定 PANEL_PASSWORD
 
 npm ci
+# 固定順序：先建立映像，再以同一映像做離線 writer/preflight gate，最後只啟動已建立的映像。
+docker compose --env-file config/.env build unifi-smarthub
+docker compose --env-file config/.env --profile nas-monitor build
+# 僅第一次使用全新的 smarthub-data volume 時執行一次；既有資料庫不要覆蓋。
 docker compose --env-file config/.env run --rm --no-deps \
-  unifi-smarthub node scripts/production-preflight.js
-docker compose --env-file config/.env up -d --build
+  unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
+docker compose --env-file config/.env up -d --no-build
 docker compose --env-file config/.env ps
 ```
 
@@ -103,6 +109,8 @@ node server-mock.js
 - 只部署在可信任內網；遠端存取使用 VPN 或受信任反向代理。
 - `config/.env` 是唯一部署設定來源，權限應為 `0600`；不要在根目錄保留第二份 `.env`。
 - SmartHub container 預設 UID/GID 為 `1000:1000`；啟動前必須以 [production preflight](scripts/production-preflight.js) 驗證 config/data 寫入與 atomic rename。
+- `production-preflight` 不會替空資料 volume 偷建資料庫；第一次使用新的 `smarthub-data` volume 時，先以同一個 image 執行一次 `createHistoryDb` 初始化 schema，既有資料庫不可覆蓋。
+- 正式部署順序固定為 `build` → `production-preflight.js --offline` → `up -d --no-build`；preflight 不得在 build 前執行，也不得以 `up --build` 繞過同一映像驗證。
 - 所有 Compose 指令都使用同一個 `--env-file config/.env`。
 - 正式映像使用不可變的 commit tag 或 registry digest，不使用 `latest`；主服務預設 256 MiB，只有在 soak／backup 證據支持時才調整。
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
@@ -173,10 +181,17 @@ Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI /
 
 ```bash
 npm run release:build
+# 將 release:build 輸出的成對不可變 revision tag 寫入 config/.env：
+# SMARTHUB_IMAGE=unifi-smarthub:<12-char-revision>
+# NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
 docker compose --env-file config/.env up -d --no-build --pull never
 ```
 
-`release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision 與映像身分。若使用 registry，仍需另外記錄不可變 digest。
+`release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision、image ID 與映像身分。若使用 registry，仍需成對記錄不可變 digest；部署時保留 release JSON 的 `image_ids` 與 registry digest，不能只記錄可重指向的 tag。
+
+Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.5-r0`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
 
 ## 開發原則
 

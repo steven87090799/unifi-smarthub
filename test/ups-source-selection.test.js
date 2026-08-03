@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveUpsSourceConfig, selectUpsSource } = require('../server/services/ups-source-selection');
+const { formatUpsFailureMessage, resolveUpsSourceConfig, selectUpsSource } = require('../server/services/ups-source-selection');
 
 test('auto mode does not mark a successful first candidate as fallback', async () => {
     const result = await selectUpsSource({
@@ -69,4 +69,16 @@ test('source configuration validates the explicit boolean contract', () => {
     });
     assert.throws(() => resolveUpsSourceConfig({ source: 'ppb', allowFallback: 'yes' }), /UPS_ALLOW_FALLBACK/u);
     assert.throws(() => resolveUpsSourceConfig({ source: 'unknown' }), /UPS_SOURCE/u);
+});
+
+test('all-source failure messages distinguish auto and explicit fallback policy', async () => {
+    const readers = { ppb: async () => null, nut: async () => null, pwrstat: async () => null, pmset: async () => null };
+    const auto = await selectUpsSource({ configuredSource: 'auto', readers });
+    assert.match(auto.failureMessage, /^UPS auto 所有來源皆無法讀取；已嘗試: ppb, nut, pwrstat, pmset/u);
+
+    const strict = await selectUpsSource({ configuredSource: 'ppb', allowFallback: false, readers });
+    assert.equal(strict.failureMessage, '指定 UPS 來源 ppb 無法讀取。UPS_ALLOW_FALLBACK=false，因此未嘗試其他來源。');
+
+    const fallback = await selectUpsSource({ configuredSource: 'ppb', allowFallback: true, readers });
+    assert.equal(fallback.failureMessage, '指定來源 ppb 失敗，已允許 fallback，但所有候選皆不可用。');
 });

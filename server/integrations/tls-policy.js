@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
 const https = require('node:https');
 
 const MAX_CA_BYTES = 1024 * 1024;
@@ -30,6 +31,9 @@ function readCaFile(file, { fileSystem = fs, field = 'CA_FILE' } = {}) {
     if (!file) return undefined;
     if (typeof file !== 'string' || file.length > 4096 || /[\u0000-\u001f\u007f]/u.test(file)) {
         throw new TlsConfigurationError(`${field} is invalid`, { field });
+    }
+    if (!path.isAbsolute(file)) {
+        throw new TlsConfigurationError(`${field} must be an absolute path`, { field });
     }
     let linkStat;
     try { linkStat = fileSystem.lstatSync(file); }
@@ -95,9 +99,10 @@ function resolveTlsPolicy({
     if (parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname) && !allowHttp) {
         throw new TlsConfigurationError(`non-loopback HTTP requires explicit ${fields.allowHttp || 'ALLOW_INSECURE_HTTP'}=true`, { field: fields.allowHttp });
     }
-    const ca = parsed.protocol === 'https:' && tlsInsecure === false
+    const loadedCa = caFile
         ? readCaFile(caFile, { fileSystem, field: fields.ca || 'CA_FILE' })
         : undefined;
+    const ca = parsed.protocol === 'https:' && tlsInsecure === false ? loadedCa : undefined;
     const mode = parsed.protocol === 'http:'
         ? (isLoopbackHostname(parsed.hostname) ? 'loopback-http' : 'explicit-insecure-http')
         : tlsInsecure ? 'explicitly-insecure' : ca ? 'private-ca' : 'verified';

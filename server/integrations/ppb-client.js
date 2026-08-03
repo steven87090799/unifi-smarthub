@@ -34,15 +34,21 @@ function readPrivateCa(fsModule, caFile) {
 function normalizeConfig(raw, fsModule) {
     const config = raw && typeof raw === 'object' ? raw : {};
     const tlsInsecure = strictBoolean(config.tlsInsecure, false);
-    if (config.tlsVerify !== undefined && !strictBoolean(config.tlsVerify, true) && !tlsInsecure) {
+    const tlsVerify = strictBoolean(config.tlsVerify, true);
+    if (!tlsVerify && !tlsInsecure) {
         throw new Error('Use PPB_TLS_INSECURE=true to explicitly disable certificate verification');
     }
     const caFile = String(config.caFile || '');
     const ca = readPrivateCa(fsModule, caFile);
+    const user = String(config.user || '');
+    const password = String(config.password || '');
     const key = crypto.createHash('sha256')
         .update(JSON.stringify([
             String(config.host || ''),
             String(config.httpPort || '3052'),
+            user,
+            crypto.createHash('sha256').update(password).digest('hex'),
+            tlsVerify,
             tlsInsecure,
             caFile
         ]))
@@ -51,8 +57,9 @@ function normalizeConfig(raw, fsModule) {
     return {
         host: String(config.host || '127.0.0.1'),
         httpPort: String(config.httpPort || '3052'),
-        user: String(config.user || ''),
-        password: String(config.password || ''),
+        user,
+        password,
+        tlsVerify,
         tlsInsecure,
         ca,
         key
@@ -174,6 +181,10 @@ function createPpbClient({
     function reset() {
         token = null;
         httpsPort = null;
+        // A reset is an explicit lifecycle fence. Even when the normalized
+        // key happens to be unchanged, do not let an old agent or discovered
+        // port survive a hot configuration write.
+        destroyAgent();
         ensureAgent(normalizeConfig(getConfig(), fsModule));
     }
 

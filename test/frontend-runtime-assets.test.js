@@ -34,8 +34,10 @@ test('production frontend has no third-party executable/data dependency or QR cr
     assert.match(serverSource, /renderPwaServiceWorker\(PWA_CACHE_NAME\)/u);
     assert.match(mockServerSource, /renderPwaServiceWorker/u);
     assert.match(html, /<script src="\/js\/web-push\.js"><\/script>/u);
+    assert.match(html, /<script src="\/js\/ups-presenter\.js"><\/script>/u);
     assert.match(html, /<script src="\/js\/app\.js"><\/script>/u);
     assert.match(serviceWorkerSource, /'\/js\/web-push\.js'/u);
+    assert.match(serviceWorkerSource, /'\/js\/ups-presenter\.js'/u);
     assert.match(serviceWorkerSource, /'\/js\/app\.js'/u);
 });
 

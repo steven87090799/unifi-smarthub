@@ -21,6 +21,11 @@ function validateFailureThreshold(value) {
     return value;
 }
 
+function validateGeneration(value) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new TypeError('configGeneration must be a positive integer');
+    return value;
+}
+
 function clonePayload(value) {
     if (value === null) return null;
     if (Array.isArray(value)) return value.map(clonePayload);
@@ -40,8 +45,9 @@ function normalizeFailureReason(reason) {
  * In-memory UPS fetch-health state machine. It intentionally performs no I/O;
  * callers own persistence, logging, and notification delivery for transitions.
  */
-function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Date.now } = {}) {
+function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Date.now, configGeneration = 1 } = {}) {
     const threshold = validateFailureThreshold(failureThreshold);
+    const initialGeneration = validateGeneration(configGeneration);
     if (typeof now !== 'function') throw new TypeError('now must be a function');
 
     let state = {
@@ -51,7 +57,9 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
         lastSuccessAt: null,
         lastFailureAt: null,
         failureReason: null,
-        offlineSince: null
+        offlineSince: null,
+        configGeneration: initialGeneration,
+        reconfiguring: false
     };
 
     function readNow() {
@@ -74,8 +82,11 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
             lastFailureAt: state.lastFailureAt,
             failureReason: state.failureReason,
             offlineSince: state.offlineSince,
+            configGeneration: state.configGeneration,
+            reconfiguring: state.reconfiguring,
             staleAgeMs,
-            dataIsStale: state.lastGood !== null && state.fetchHealth !== FETCH_HEALTH.HEALTHY
+            dataIsStale: state.lastGood !== null
+                && (state.fetchHealth !== FETCH_HEALTH.HEALTHY || state.reconfiguring)
         };
     }
 
@@ -86,6 +97,9 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
     function recordSuccess(data) {
         if (data === null || typeof data !== 'object' || Array.isArray(data)) {
             throw new TypeError('successful UPS data must be an object');
+        }
+        if (data.configGeneration !== undefined && data.configGeneration !== state.configGeneration) {
+            throw new TypeError('successful UPS data belongs to a stale configGeneration');
         }
 
         const timestamp = readNow();
@@ -99,7 +113,9 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
             lastSuccessAt: timestamp,
             lastFailureAt: state.lastFailureAt,
             failureReason: null,
-            offlineSince: null
+            offlineSince: null,
+            configGeneration: state.configGeneration,
+            reconfiguring: false
         };
 
         const transitions = wasOffline ? [{
@@ -124,7 +140,8 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
             consecutiveFailures: failures,
             lastFailureAt: timestamp,
             failureReason: normalizeFailureReason(reason),
-            offlineSince: wasOffline ? state.offlineSince : (confirmedOffline ? timestamp : null)
+            offlineSince: wasOffline ? state.offlineSince : (confirmedOffline ? timestamp : null),
+            reconfiguring: false
         };
 
         if (!wasOffline && confirmedOffline) {
@@ -139,6 +156,22 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
         return result(timestamp, transitions);
     }
 
+    function reconfigure(configGeneration) {
+        const nextGeneration = validateGeneration(configGeneration);
+        const timestamp = readNow();
+        state = {
+            ...state,
+            configGeneration: nextGeneration,
+            reconfiguring: true,
+            fetchHealth: state.lastGood ? FETCH_HEALTH.DEGRADED : FETCH_HEALTH.UNKNOWN,
+            consecutiveFailures: 0,
+            failureReason: 'configuration_changed',
+            offlineSince: null,
+            lastFailureAt: state.lastFailureAt
+        };
+        return result(timestamp);
+    }
+
     function recordPoll(data, { reason = null } = {}) {
         return data === null || data === undefined
             ? recordFailure(reason)
@@ -149,6 +182,7 @@ function createUpsState({ failureThreshold = DEFAULT_FAILURE_THRESHOLD, now = Da
         recordSuccess,
         recordFailure,
         recordPoll,
+        reconfigure,
         snapshot: () => snapshotAt(readNow())
     });
 }

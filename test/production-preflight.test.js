@@ -6,7 +6,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { runPreflight } = require('../scripts/production-preflight');
+const Database = require('better-sqlite3');
+const { runPreflight, validateSqlite } = require('../scripts/production-preflight');
 
 function fixture() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-production-preflight-'));
@@ -14,6 +15,9 @@ function fixture() {
     const data = path.join(root, 'data');
     fs.mkdirSync(config, { mode: 0o700 });
     fs.mkdirSync(data, { mode: 0o700 });
+    const database = new Database(path.join(data, 'smarthub.db'));
+    database.exec('CREATE TABLE fixture (id INTEGER PRIMARY KEY, value TEXT)');
+    database.close();
     const secret = 'preflight-secret-do-not-print';
     const envFile = path.join(config, '.env');
     fs.writeFileSync(envFile, [
@@ -44,11 +48,85 @@ test('production preflight validates config/data write probes and leaves no prob
         const before = crypto.createHash('sha256').update(fs.readFileSync(f.envFile)).digest('hex');
         const result = runPreflight({ env: environment(f), nodeVersion: '24.18.0' });
         assert.equal(result.ok, true);
-        assert.equal(result.sqlite, 'skipped-no-database');
+        assert.equal(result.sqlite, 'passed');
         assert.equal(fs.readdirSync(f.config).some(name => name.startsWith('.smarthub-production-preflight-')), false);
         assert.equal(fs.readdirSync(f.data).some(name => name.startsWith('.smarthub-production-preflight-')), false);
         const after = crypto.createHash('sha256').update(fs.readFileSync(f.envFile)).digest('hex');
         assert.equal(after, before);
+    } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test('production preflight rejects an env file that the process cannot read and write', () => {
+    const f = fixture();
+    try {
+        const guardedFs = {
+            ...fs,
+            accessSync(file, mode) {
+                if (file === f.envFile && mode === (fs.constants.R_OK | fs.constants.W_OK)) {
+                    const error = new Error('read-only fixture');
+                    error.code = 'EACCES';
+                    throw error;
+                }
+                return fs.accessSync(file, mode);
+            }
+        };
+        assert.throws(
+            () => runPreflight({ env: environment(f), nodeVersion: '24.18.0', fs: guardedFs }),
+            error => error.check === 'config-env-file'
+        );
+    } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test('production preflight never skips a missing SQLite database', () => {
+    const f = fixture();
+    try {
+        fs.unlinkSync(path.join(f.data, 'smarthub.db'));
+        assert.throws(
+            () => runPreflight({ env: environment(f), nodeVersion: '24.18.0' }),
+            error => error.check === 'sqlite-quick-check'
+        );
+    } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test('SQLite preflight rejects unreadable or corrupt databases and offline writer locks', () => {
+    const f = fixture();
+    const dbFile = path.join(f.data, 'smarthub.db');
+    try {
+        const guardedFs = {
+            ...fs,
+            accessSync(file, mode) {
+                if (file === dbFile && mode === (fs.constants.R_OK | fs.constants.W_OK)) {
+                    const error = new Error('read-only database fixture');
+                    error.code = 'EACCES';
+                    throw error;
+                }
+                return fs.accessSync(file, mode);
+            }
+        };
+        assert.throws(() => validateSqlite(f.data, { fs: guardedFs }), error => error.check === 'sqlite-quick-check');
+
+        fs.writeFileSync(dbFile, 'not sqlite', { mode: 0o600 });
+        assert.throws(() => validateSqlite(f.data), error => error.check === 'sqlite-quick-check');
+
+        fs.unlinkSync(dbFile);
+        const replacement = new Database(dbFile);
+        replacement.exec('CREATE TABLE fixture (id INTEGER PRIMARY KEY)');
+        replacement.exec('BEGIN IMMEDIATE');
+        try {
+            assert.throws(
+                () => validateSqlite(f.data, { offline: true, databaseFactory: (file, options) => new Database(file, { ...options, timeout: 50 }) }),
+                error => error.check === 'sqlite-quick-check'
+            );
+        } finally {
+            replacement.exec('ROLLBACK');
+            replacement.close();
+        }
     } finally {
         fs.rmSync(f.root, { recursive: true, force: true });
     }
@@ -60,7 +138,7 @@ test('production preflight fails when config cannot perform the atomic write pro
         fs.chmodSync(f.config, 0o500);
         assert.throws(
             () => runPreflight({ env: environment(f), nodeVersion: '24.18.0' }),
-            error => error.check === 'config-directory-write'
+            error => error.check === 'config-env-file'
         );
     } finally {
         fs.chmodSync(f.config, 0o700);

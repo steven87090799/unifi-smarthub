@@ -1264,7 +1264,9 @@ app.get('/api/ups/status', (req, res) => res.json({
     fallbackReason: null, model: 'CyberPower CP1500PFCLCDa', status: 'OL',
     onBattery: false, inputV: +(110 + Math.random() * 2).toFixed(1), outputV: 110.2,
     battery: 100, runtimeSec: 2520, loadPct: Math.round(18 + Math.random() * 6), sampleSec: 3,
-    focusedSampling: true, cached: true
+    focusedSampling: true, cached: true, fetchHealth: 'healthy', consecutiveFailures: 0,
+    failureThreshold: 3, staleAgeMs: 0, dataIsStale: false, lastKnownSource: 'nut',
+    reconfiguring: false, configGeneration: 1
 }));
 app.get('/api/ups/history', (req, res) => {
     const query = validatedInput(res, () => queryInput.parseHistoryHoursQuery(req.query));

@@ -177,7 +177,7 @@ test('Network TLS transport receives one resolved CA byte buffer and never rerea
     assert.equal(Object.hasOwn(seen[0], 'caFile'), false);
 });
 
-test('Network TLS policy ignores stale CA paths in explicit insecure HTTPS and HTTP modes', () => {
+test('Network TLS policy rejects stale CA paths in explicit insecure HTTPS and HTTP modes', () => {
     const missingCa = '/definitely/missing/smarthub-network-ca.pem';
     const insecure = readConfiguration({
         ...ENV,
@@ -185,9 +185,9 @@ test('Network TLS policy ignores stale CA paths in explicit insecure HTTPS and H
         UNIFI_NETWORK_TLS_INSECURE: 'true',
         UNIFI_NETWORK_CA_FILE: missingCa
     });
-    assert.equal(insecure.configured, true);
-    assert.equal(insecure.tlsPolicy.ca, undefined);
-    assert.equal(insecure.tlsPolicy.insecure, true);
+    assert.equal(insecure.configured, false);
+    assert.ok(insecure.missing.includes('UNIFI_NETWORK_CA_FILE'));
+    assert.equal(insecure.tlsPolicy, null);
 
     const http = readConfiguration({
         ...ENV,
@@ -195,9 +195,9 @@ test('Network TLS policy ignores stale CA paths in explicit insecure HTTPS and H
         UNIFI_NETWORK_ALLOW_INSECURE_HTTP: 'true',
         UNIFI_NETWORK_CA_FILE: missingCa
     });
-    assert.equal(http.configured, true);
-    assert.equal(http.tlsPolicy.protocol, 'http:');
-    assert.equal(http.tlsPolicy.ca, undefined);
+    assert.equal(http.configured, false);
+    assert.ok(http.missing.includes('UNIFI_NETWORK_CA_FILE'));
+    assert.equal(http.tlsPolicy, null);
 
     const missing = readConfiguration({ ...ENV, UNIFI_NETWORK_CA_FILE: missingCa });
     assert.equal(missing.configured, false);

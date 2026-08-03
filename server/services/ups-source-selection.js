@@ -34,6 +34,22 @@ function failureReason(source, error) {
     return `${source}_unreachable`;
 }
 
+function attemptedSourcesFromFailures(failures) {
+    return [...new Set((failures || []).map(reason => String(reason).split('_', 1)[0]).filter(Boolean))];
+}
+
+function formatUpsFailureMessage({ configuredSource = 'auto', fallbackAllowed = false, failures = [] } = {}) {
+    const source = normalizeSource(configuredSource);
+    const attempted = attemptedSourcesFromFailures(failures);
+    if (source === 'auto') {
+        return `UPS auto 所有來源皆無法讀取；已嘗試: ${attempted.join(', ') || 'ppb, nut, pwrstat, pmset'}`;
+    }
+    if (!fallbackAllowed) {
+        return `指定 UPS 來源 ${source} 無法讀取。UPS_ALLOW_FALLBACK=false，因此未嘗試其他來源。`;
+    }
+    return `指定來源 ${source} 失敗，已允許 fallback，但所有候選皆不可用。`;
+}
+
 async function selectUpsSource({ configuredSource = 'auto', allowFallback = false, readers = {}, onAttempt } = {}) {
     const config = resolveUpsSourceConfig({ source: configuredSource, allowFallback });
     const candidates = config.configuredSource === 'auto'
@@ -98,13 +114,20 @@ async function selectUpsSource({ configuredSource = 'auto', allowFallback = fals
         fallbackUsed: false,
         fallbackReason: failures[0] || `${config.configuredSource}_unreachable`,
         failureReason: failures.join(',') || `${config.configuredSource}_unreachable`,
-        failures
+        failures,
+        attemptedSources: attemptedSourcesFromFailures(failures),
+        failureMessage: formatUpsFailureMessage({
+            configuredSource: config.configuredSource,
+            fallbackAllowed: config.fallbackAllowed,
+            failures
+        })
     };
 }
 
 module.exports = {
     UPS_SOURCES,
     failureReason,
+    formatUpsFailureMessage,
     normalizeSource,
     resolveUpsSourceConfig,
     selectUpsSource

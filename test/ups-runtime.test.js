@@ -14,6 +14,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const ADMIN_PASSWORD = 'ups-runtime-admin-secret';
 const AUTHORIZATION = `Basic ${Buffer.from(`admin:${ADMIN_PASSWORD}`).toString('base64')}`;
+const SERVER_SOURCE = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
 const BOOTSTRAP = String.raw`
 const Module = require('node:module');
 const realDotenv = require('dotenv');
@@ -60,6 +61,17 @@ async function waitFor(predicate, { timeoutMs = 20_000, intervalMs = 100, descri
     }
     throw new Error(`timed out waiting for ${description}; last=${JSON.stringify(last)}`);
 }
+
+test('UPS in-flight reads return generation-scoped metadata before the poll commits it', () => {
+    const readStart = SERVER_SOURCE.indexOf('async function readUpsLive()');
+    const pollStart = SERVER_SOURCE.indexOf('async function pollUpsFetchState()');
+    assert.ok(readStart >= 0 && pollStart > readStart);
+    const readSource = SERVER_SOURCE.slice(readStart, pollStart);
+    assert.match(readSource, /const selectionSnapshot =/u);
+    assert.match(readSource, /selection: selectionSnapshot/u);
+    assert.doesNotMatch(readSource, /upsLastSelection\s*=/u);
+    assert.match(SERVER_SOURCE, /generation !== upsConfigGeneration[\s\S]+readResult\.configGeneration/u);
+});
 
 test('production UPS route retains last-good data across confirmed outage and recovery', { timeout: 45_000 }, async t => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-ups-runtime-'));
@@ -167,12 +179,20 @@ test('production UPS route retains last-good data across confirmed outage and re
 
     fs.writeFileSync(modeFile, 'failure');
     const observedHealth = new Set();
+    let degradedStatus = null;
     const offline = await waitFor(async () => {
         const status = await getUps();
-        if (status) observedHealth.add(status.fetchHealth);
+        if (status) {
+            observedHealth.add(status.fetchHealth);
+            if (status.fetchHealth === 'degraded') degradedStatus = status;
+        }
         return status?.fetchHealth === 'offline' ? status : null;
     }, { timeoutMs: 22_000, description: 'three-failure confirmed outage' });
     assert.ok(observedHealth.has('degraded'), `degraded state was not observed: ${[...observedHealth]}`);
+    assert.equal(degradedStatus.source, 'pwrstat');
+    assert.equal(degradedStatus.actualSource, null);
+    assert.equal(degradedStatus.lastKnownSource, 'pwrstat');
+    assert.equal(degradedStatus.dataIsStale, true);
     assert.equal(offline.consecutiveFailures, 3);
     assert.equal(offline.failureThreshold, 3);
     assert.equal(offline.source, 'unreachable');

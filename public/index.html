@@ -1056,7 +1056,7 @@
                         class="text-slate-400">WiiM Amp</span><span class="text-slate-500 mono ml-auto"
                         id="side-wiim-state">--</span></div>
                 <div class="flex items-center gap-2 text-[10px]"
-                    title="綠=UPS 讀取成功，右側顯示目前使用的資料來源 (PPB/NUT/pwrstat/pmset)；紅=所有來源皆不可用"><span
+                        title="綠=UPS 讀取成功、黃=暫時延遲但保留最後有效資料、紅=所有來源皆不可用、灰=尚未取樣"><span
                         class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-ups-dot"></span><span
                         class="text-slate-400">UPS</span><span class="text-slate-500 mono ml-auto"
                         id="side-ups-state">--</span></div>
@@ -4807,6 +4807,7 @@
     </div>
 
     <script src="/js/frontend-lifecycle.js"></script>
+    <script src="/js/ups-presenter.js"></script>
     <script src="/js/app.js"></script>
 </body>
 

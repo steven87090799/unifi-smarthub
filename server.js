@@ -77,7 +77,12 @@ const {
 const { deriveDueReportSlot } = require('./server/jobs/report-schedule');
 const { createReportRunner } = require('./server/jobs/report-runner');
 const { createUpsState, FETCH_HEALTH, TRANSITION_TYPES } = require('./server/jobs/ups-state');
-const { resolveUpsSourceConfig, selectUpsSource } = require('./server/services/ups-source-selection');
+const {
+    formatUpsFailureMessage,
+    resolveUpsSourceConfig,
+    selectUpsSource
+} = require('./server/services/ups-source-selection');
+const { createUpsObservability } = require('./server/services/ups-observability');
 const {
     DEFAULT_SAG_THRESHOLD_V,
     createUpsSagDetector,
@@ -377,6 +382,7 @@ app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()))
 // Internet integrations use a separate policy-bound client. LAN clients below
 // continue to set proxy:false at each request boundary.
 const internetAxiosClient = createInternetAxiosClient(axios, { proxyMode: INTERNET_PROXY_MODE });
+const wiimArtAxiosClient = axios.create({ proxy: false });
 let unifiCsrfToken = '';
 let unifiAgent = null;
 function buildUnifiClient() {
@@ -4130,6 +4136,16 @@ app.post('/api/connections', (req, res) => {
     }
     reconcilePendingRestartFields(desiredAfterWrite);
     const updatedKeys = Object.keys(updates);
+    const upsConfigurationUpdated = updatedKeys.some(key => UPS_CONFIG_FIELDS.has(key));
+    if (upsConfigurationUpdated) {
+        upsConfigGeneration += 1;
+        upsFetchState.reconfigure(upsConfigGeneration);
+        // Keep the previous last-good payload in the state machine, but make
+        // the source selection visibly stale until a sample from this exact
+        // generation succeeds.
+        upsLastLive = upsFetchState.snapshot().lastGood;
+        requestPromptSampling(['ups']);
+    }
     const telemetryUpdated = updatedKeys.some(key => key.startsWith('UNIFI_DEVICE_SSH_'));
     if (telemetryUpdated) {
         unifiDeviceThermalCollector.reset();
@@ -4885,7 +4901,10 @@ registerWiimCommandRoutes(app, {
 // 後端預設驗證 HTTPS；自簽／HTTP 只在明確且只對設定 WiiM literal 的 opt-in 下允許。
 const wiimArtFetcher = createArtworkFetcher({
     cache: createArtworkCache(),
-    fetch: (url, options) => fetchArtwork(url, { axiosInstance: internetAxiosClient, ...options }),
+    // Artwork is validated and pinned by wiim-art-proxy. Keep its transport
+    // independent from the Internet integration client so ambient proxy
+    // settings can never alter a public/private redirect decision.
+    fetch: (url, options) => fetchArtwork(url, { axiosInstance: wiimArtAxiosClient, ...options }),
     maxConcurrent: 4,
     maxQueue: 16,
     deadlineMs: 7000
@@ -4948,15 +4967,24 @@ const UPS_ALLOW_FALLBACK = () => process.env.UPS_ALLOW_FALLBACK || 'false';
 const NUT_HOST = () => process.env.NUT_HOST || 'localhost';
 const NUT_UPS_NAME = () => process.env.NUT_UPS_NAME || 'cyberpower';
 const PWRSTAT_PATH = () => process.env.PWRSTAT_PATH || 'pwrstat';
-const upsFetchState = createUpsState(); // 預設連續 3 次全來源失敗才確認 offline
+const UPS_CONFIG_FIELDS = Object.freeze(new Set([
+    'UPS_SOURCE', 'UPS_ALLOW_FALLBACK', 'PPB_HOST', 'PPB_PORT', 'PPB_USER', 'PPB_PASSWORD',
+    'PPB_TLS_VERIFY', 'PPB_TLS_INSECURE', 'PPB_CA_FILE', 'NUT_HOST', 'NUT_UPS_NAME', 'PWRSTAT_PATH'
+]));
+let upsConfigGeneration = 1;
+const upsFetchState = createUpsState({ configGeneration: upsConfigGeneration }); // 預設連續 3 次全來源失敗才確認 offline
+const upsObservability = createUpsObservability({ cooldownMs: RECOVERABLE_LOG_COOLDOWN_MS });
 let upsPollInFlight = null;
 let upsLastLive = null;     // 最近一次成功讀取；失敗時保留，避免瞬斷抹除最後有效資料
 let upsLastSelection = {
+    configGeneration: 1,
     configuredSource: 'auto',
     actualSource: null,
     fallbackAllowed: true,
     fallbackUsed: false,
-    fallbackReason: null
+    fallbackReason: null,
+    failureMessage: null,
+    failures: []
 };
 // 重啟接續：若最新事件尚未結束 (重啟前正在斷電)，視為仍在電池供電，
 // 下次取樣時若市電已恢復會正常補上結束時間，不會再開一筆重複事件
@@ -5128,54 +5156,56 @@ async function readPmset() {
 }
 
 let upsLastReason = '';
-let lastUpsFallbackLog = null;
 
-function logUpsFallbackSelection(selection) {
-    if (!selection?.fallbackUsed) return;
-    const key = [selection.configuredSource, selection.actualSource, selection.fallbackReason].join('|');
-    const now = Date.now();
-    if (lastUpsFallbackLog?.key === key && now - lastUpsFallbackLog.at < RECOVERABLE_LOG_COOLDOWN_MS) return;
-    lastUpsFallbackLog = { key, at: now };
-    const autoMode = selection.configuredSource === 'auto';
-    logger.warning({
-        module: 'ups.selector', function: 'selectSource', code: ERROR_CODES.EXT_UPS_FAILED,
-        message: autoMode
-            ? `UPS auto 前一來源不可用，改用 ${selection.actualSource}`
-            : `指定來源 ${selection.configuredSource} 無法使用，且 UPS_ALLOW_FALLBACK=true，改用 ${selection.actualSource}`,
-        fields: {
-            configured_source: selection.configuredSource,
-            actual_source: selection.actualSource,
-            fallback_reason: selection.fallbackReason,
-            fallback_allowed: selection.fallbackAllowed
-        }
-    });
+function logUpsObservabilityEvents(events) {
+    for (const event of events) {
+        const method = event.level === 'error' ? 'error' : event.level === 'info' ? 'info' : 'warning';
+        logger[method]({
+            module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED,
+            message: event.message,
+            fields: event.fields
+        });
+    }
 }
 
 async function readUpsLive() {
+    const generation = upsConfigGeneration;
     const config = resolveUpsSourceConfig({ source: UPS_SOURCE(), allowFallback: UPS_ALLOW_FALLBACK() });
     const selection = await selectUpsSource({
         configuredSource: config.configuredSource,
         allowFallback: config.fallbackAllowed,
         readers: { nut: readNut, pwrstat: readPwrstat, pmset: readPmset, ppb: readPpb }
     });
-    upsLastSelection = {
+    const selectionSnapshot = {
         configuredSource: selection.configuredSource,
+        configGeneration: generation,
         actualSource: selection.actualSource,
         fallbackAllowed: selection.fallbackAllowed,
         fallbackUsed: selection.fallbackUsed,
-        fallbackReason: selection.fallbackReason
+        fallbackReason: selection.fallbackReason,
+        failureMessage: selection.failureMessage || null,
+        failures: selection.failures || []
     };
-    logUpsFallbackSelection(selection);
 
     if (selection.data) {
-        sysLog('UPS', `讀取成功 via ${selection.actualSource}: ${selection.data.status} 輸入${selection.data.inputV}V 電池${selection.data.battery}%`);
-        upsLastReason = '';
-        return selection.data;
+        return {
+            configGeneration: generation,
+            data: { ...selection.data, configGeneration: generation },
+            selection: selectionSnapshot,
+            failureMessage: null
+        };
     }
 
-    upsLastReason = `UPS 來源 ${selection.configuredSource} 無法讀取 (已嘗試: ${selection.failures.join(', ') || selection.configuredSource})。UPS_ALLOW_FALLBACK=true 才會允許明確來源回退`;
-    sysLog('UPS', upsLastReason, true);
-    return null;
+    return {
+        configGeneration: generation,
+        data: null,
+        selection: selectionSnapshot,
+        failureMessage: selection.failureMessage || formatUpsFailureMessage({
+            configuredSource: selection.configuredSource,
+            fallbackAllowed: selection.fallbackAllowed,
+            failures: selection.failures
+        })
+    };
 }
 
 const UPS_OFFLINE_ISSUE_ID = 'ups-fetch-offline';
@@ -5183,7 +5213,7 @@ const UPS_OFFLINE_ISSUE_ID = 'ups-fetch-offline';
 function observeUpsFetchHealth(outcome) {
     const { snapshot } = outcome;
     if (snapshot.fetchHealth === FETCH_HEALTH.OFFLINE) {
-        const tracked = issueTracker.report({
+        issueTracker.report({
             id: UPS_OFFLINE_ISSUE_ID,
             severity: 'warning',
             code: ERROR_CODES.EXT_UPS_FAILED,
@@ -5195,27 +5225,19 @@ function observeUpsFetchHealth(outcome) {
                 stale_age_ms: snapshot.staleAgeMs
             }
         });
-        if (tracked.shouldLog) logger.warning({
-            module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED,
-            message: 'UPS monitoring sources are confirmed offline',
-            fields: {
-                consecutive_failures: snapshot.consecutiveFailures,
-                failure_threshold: snapshot.failureThreshold,
-                stale_age_ms: snapshot.staleAgeMs,
-                occurrences: tracked.issue.occurrences
-            }
-        });
-        return;
     }
 
     if (snapshot.fetchHealth === FETCH_HEALTH.HEALTHY) {
         const resolved = issueTracker.resolve(UPS_OFFLINE_ISSUE_ID);
-        if (resolved) logger.info({
-            module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED,
-            message: 'UPS monitoring source recovered',
-            fields: { duration_seconds: resolved.duration_seconds, source: snapshot.lastGood?.actualSource || null }
-        });
+        void resolved;
     }
+    logUpsObservabilityEvents(upsObservability.observe({
+        ok: snapshot.fetchHealth === FETCH_HEALTH.HEALTHY,
+        fetchHealth: snapshot.fetchHealth,
+        failureMessage: upsLastReason || snapshot.failureReason || 'UPS monitoring sources are unavailable',
+        failureReason: snapshot.failureReason,
+        selection: upsLastSelection
+    }));
 }
 
 async function notifyUpsFetchTransitions(outcome) {
@@ -5238,14 +5260,37 @@ async function pollUpsFetchState() {
     if (upsPollInFlight) return upsPollInFlight;
 
     const poll = (async () => {
-        let live = null;
+        const generation = upsConfigGeneration;
+        let readResult = null;
+        let pollError = null;
         try {
-            live = await readUpsLive();
+            readResult = await readUpsLive();
         } catch (error) {
-            upsLastReason = `UPS 輪詢失敗：${publicError(error)}`;
-            logRecoverableFailure('ups.poll', error, {
+            pollError = error;
+        }
+
+        // A configuration write fences the result of every in-flight read.
+        // Do not let a response from the old host/source become last-good.
+        if (generation !== upsConfigGeneration
+            || (readResult?.configGeneration !== undefined && readResult.configGeneration !== upsConfigGeneration)) {
+            const reconfigured = upsFetchState.reconfigure(upsConfigGeneration);
+            return { live: null, snapshot: reconfigured.snapshot, transitions: [] };
+        }
+
+        let live = readResult?.data || null;
+        if (pollError) {
+            upsLastReason = `UPS 輪詢失敗：${publicError(pollError)}`;
+            logRecoverableFailure('ups.poll', pollError, {
                 module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED
             });
+        } else {
+            upsLastSelection = readResult.selection;
+            if (live) {
+                sysLog('UPS', `讀取成功 via ${live.actualSource}: ${live.status} 輸入${live.inputV}V 電池${live.battery}%`);
+                upsLastReason = '';
+            } else {
+                upsLastReason = readResult.failureMessage || 'all UPS sources failed';
+            }
         }
 
         let outcome;
@@ -5285,31 +5330,44 @@ function upsStatusPayload(snapshot, { cached = false } = {}) {
             configurationError: publicError(error)
         };
     }
-    const fresh = snapshot.fetchHealth === FETCH_HEALTH.HEALTHY && !!lastGood;
+    const reconfiguring = snapshot.reconfiguring === true
+        || (lastGood && lastGood.configGeneration !== undefined && lastGood.configGeneration !== upsConfigGeneration);
+    const effectiveHealth = reconfiguring
+        ? (lastGood ? FETCH_HEALTH.DEGRADED : FETCH_HEALTH.UNKNOWN)
+        : snapshot.fetchHealth;
+    const fresh = effectiveHealth === FETCH_HEALTH.HEALTHY
+        && !!lastGood
+        && (lastGood.configGeneration === undefined || lastGood.configGeneration === upsConfigGeneration);
+    const lastKnownSource = lastGood?.actualSource || lastGood?.source || null;
     const actualSource = fresh ? (lastGood.actualSource || lastGood.source || null) : null;
     const fallbackUsed = fresh && lastGood.fallbackUsed === true;
+    const currentSelection = upsLastSelection.configGeneration === upsConfigGeneration ? upsLastSelection : null;
     const fallbackReason = fresh
         ? (lastGood.fallbackReason || null)
-        : (sourceConfig.configurationError || upsLastSelection.fallbackReason || snapshot.failureReason || null);
+        : (sourceConfig.configurationError || currentSelection?.fallbackReason || snapshot.failureReason || null);
+    const dataIsStale = Boolean(lastGood) && (!fresh || snapshot.dataIsStale || reconfiguring);
     return {
         ...payload,
         // Last-good values remain available as lastKnown, but a degraded/offline
         // sample must not advertise a currently reachable source.
-        source: fresh ? lastGood.source : 'unreachable',
+        source: fresh ? (lastGood.source || actualSource) : effectiveHealth === FETCH_HEALTH.DEGRADED ? (lastKnownSource || 'unreachable') : 'unreachable',
         configuredSource: sourceConfig.configuredSource,
         actualSource,
         fallbackAllowed: sourceConfig.fallbackAllowed,
         fallbackUsed,
         fallbackReason,
-        lastKnown: snapshot.dataIsStale ? lastGood : undefined,
+        lastKnown: dataIsStale ? lastGood : undefined,
+        lastKnownSource,
+        reconfiguring,
+        configGeneration: upsConfigGeneration,
         cached,
         sampleSec: isDeviceSamplingActive('ups') ? appSettings.upsActiveBackendSampleSec : appSettings.upsIdleBackendSampleSec,
         focusedSampling: isDeviceSamplingActive('ups'),
-        fetchHealth: snapshot.fetchHealth,
+        fetchHealth: effectiveHealth,
         consecutiveFailures: snapshot.consecutiveFailures,
         failureThreshold: snapshot.failureThreshold,
         staleAgeMs: snapshot.staleAgeMs,
-        dataIsStale: snapshot.dataIsStale,
+        dataIsStale,
         lastSuccessAt: snapshot.lastSuccessAt,
         lastFailureAt: snapshot.lastFailureAt,
         offlineSince: snapshot.offlineSince,
@@ -5352,7 +5410,6 @@ function persistLocalUpsPowerEvent(event, live) {
 async function performUpsSample() {
     const { live, snapshot } = await pollUpsFetchState();
     if (!live) {
-        sysLog('UPS', `本次取樣失敗 (${snapshot.fetchHealth} ${snapshot.consecutiveFailures}/${snapshot.failureThreshold})，保留最後有效資料`, true);
         return snapshot;
     }
 

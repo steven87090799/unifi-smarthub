@@ -91,6 +91,7 @@
       <p>WiiM 頁同時有監看與遙控。所有命令由伺服器政策檢查；高風險命令需要精確確認。未接真機時，不可把畫面回應視為實體音響已變更。</p>
       <table><thead><tr><th>群組</th><th>每個按鈕／欄位的作用</th></tr></thead><tbody><tr><td>播放列</td><td><span class="tag write">會寫入</span> 上一首、播放／暫停、下一首、停止、靜音、音量 −／＋與音量滑桿會送 WiiM 播放命令。進度條拖曳是 seek；先預覽位置，放開才提交。</td></tr><tr><td>播放模式</td><td><span class="tag write">會寫入</span> 依序為一般、全部循環、單曲循環、隨機；直接改音響 loop mode。</td></tr><tr><td>來源</td><td><span class="tag write">會寫入</span> Wi‑Fi、Bluetooth、Line‑in、Optical、Coaxial、USB Disk 切換輸入來源，可能中斷目前播放。</td></tr><tr><td>圖表</td><td><span class="tag read">唯讀</span> 顯示點、平滑曲線、live scroll 只改圖表呈現；10 分、30 分、2 時、12 時、全部改查詢窗口；CSV 下載；「清除歷史」<span class="tag write">會寫入</span> 會刪除 WiiM 歷史，請先匯出。</td></tr><tr><td>警報門檻</td><td><span class="tag write">會寫入</span> CPU／board 溫度門檻保存後影響警報判斷與通知。</td></tr><tr><td>Audio tab</td><td><span class="tag write">會寫入</span> 聲道平衡滑桿、SPDIF 延遲、播放模式 gain JSON 都會對設備送命令；讀取 gain config 為唯讀。JSON 格式錯誤不應提交。</td></tr><tr><td>EQ tab</td><td><span class="tag write">會寫入</span> EQ On／Off、載入 preset、設定 band 會改 DSP；載入 preset、查詢 EQ 狀態／band 為唯讀。先記錄原 preset 以便復原。</td></tr><tr><td>Source tab</td><td><span class="tag write">會寫入</span> 以底層 switchmode 直接切來源；與上方來源按鈕目標相同。</td></tr><tr><td>Bluetooth tab</td><td><span class="tag write">會寫入</span> 掃描秒數後開始探索、清除探索結果、連線／斷線指定 MAC；取得結果、歷史、配對狀態為唯讀。</td></tr><tr><td>Stream tab</td><td><span class="tag write">會寫入</span> URL 播放、加入／建立群組、啟用／停用 Cast 都會改音響狀態；Squeezelite／wlan 狀態查詢為唯讀。</td></tr><tr><td>System tab</td><td><span class="tag write">會寫入</span> reboot、同步時間、排程關機（0 取消）、LED／實體按鍵開關、LCD JSON 都直接改裝置。查詢關機倒數為唯讀。</td></tr><tr><td>配件與資訊</td><td><span class="tag read">唯讀</span> 重新整理遙控器／配件與取得設備資訊，只讀回目前狀態。</td></tr></tbody></table>
       <h3>5.9 UPS</h3>
+      <p class="note"><strong>UPS 健康語意：</strong><code>fetchHealth</code> 為 <code>healthy</code> 時以綠色顯示目前 <code>actualSource</code>；<code>degraded</code> 以黃色保留最後有效數值與 <code>lastKnownSource</code>，但 <code>actualSource</code> 為 null；<code>offline</code> 才顯示紅色未連接；<code>unknown</code> 以灰色表示尚未取樣或設定更新中。設定頁修改 UPS／PPB／NUT／pwrstat 欄位會遞增 <code>configGeneration</code>，舊取樣不可覆蓋新設定。</p>
       <table><thead><tr><th>控制項</th><th>用途與影響</th></tr></thead><tbody><tr><td>即時輸入／輸出、電池、負載、剩餘時間、狀態</td><td><span class="tag read">唯讀</span> 讀取選定來源（PPB、NUT、pwrstat、pmset 或 auto）；斷電時輸入電壓為零是正常事件訊號。</td></tr><tr><td>電壓範圍：10 分、30 分、1 時、6 時、24 時、7 天；下載 CSV</td><td><span class="tag read">唯讀</span> 改變 UPS 歷史圖窗口或匯出資料。</td></tr><tr><td>負載範圍：10 分、30 分、1 時、6 時、24 時、7 天</td><td><span class="tag read">唯讀</span> 僅切換負載圖窗口。</td></tr><tr><td>電力品質與 PPB 原生事件</td><td><span class="tag read">唯讀</span> 顯示 SmartHub 偵測事件與 PPB 同步資料；第一次成功同步只建立初始化狀態，不應將所有歷史事件當成新通知。</td></tr></tbody></table>
       <h3>5.10 完整互動控制索引（含細部按鍵）</h3>
       <p class="small">本索引補足前述頁面說明。斜線分隔的按鈕表示同一功能、不同明確選項；除明確標為「寫入」者外，皆為唯讀或只改本機畫面。</p>
@@ -139,7 +140,12 @@ install -d -m 700 config
 install -m 600 .env.example config/.env
 # 編輯 config/.env：至少設定 PANEL_PASSWORD，再填需要的整合
 npm ci
-docker compose --env-file config/.env up -d --build
+docker compose --env-file config/.env build unifi-smarthub
+docker compose --env-file config/.env --profile nas-monitor build
+# 只有全新的 smarthub-data volume 第一次需要；既有資料庫不要覆蓋
+docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
+docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline
+docker compose --env-file config/.env up -d --no-build
 docker compose --env-file config/.env ps
 curl -fsS http://127.0.0.1:3000/health
 curl -fsS http://127.0.0.1:3000/health/ready</pre><p>本機隔離演練可使用 <code>http://127.0.0.1:3000</code>；正式對外必須以前置 Caddy／Nginx 終止 HTTPS，再反向代理至內部 port，不可把 <code>http://&lt;NAS IP&gt;:3000</code> 當作 production 入口。<code>config/</code> 建議 0700、<code>config/.env</code> 必須 0600，且根目錄不要留下第二份 <code>.env</code>。Docker 容器內上游不能填 <code>localhost</code>／<code>127.0.0.1</code>。</p><h3>開發與假資料</h3><pre>SMARTHUB_ENV_FILE=config/.env npm start
@@ -247,10 +253,11 @@ curl --user admin http://127.0.0.1:3000/api/system/status</pre><table><thead><tr
         <article class="doc-card"><h4><a data-doc-path="docs/reports/SECRET_AUDIT.md" href="docs/reports/SECRET_AUDIT.md">SECRET_AUDIT.md</a></h4><p>ignored env、secret-like paths、token/private-key patterns 與 full-history scanner 邊界。</p><p class="small">完整歷史掃描未執行時明確保留 NOT RUN。</p></article>
         <article class="doc-card"><h4><a data-doc-path="docs/reports/RELEASE-NOTES-v3.0.md" href="docs/reports/RELEASE-NOTES-v3.0.md">RELEASE-NOTES-v3.0.md</a></h4><p>v3.0 發布內容、升級提醒與當時的相容性說明。</p><p class="small">歷史發布記錄；現行部署流程仍以 operations 文件為準。</p></article>
       </div>
-      <p class="deployment-note"><strong>Production preflight：</strong>SmartHub container 固定以 UID/GID <code>1000:1000</code> 執行；config 目錄與 <code>.env</code> 必須由該 UID 實際可讀寫。啟動前執行 <code>docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js</code>，確認 config/data 的 temp fsync、atomic rename、unlink 與 SQLite quick check；不要使用 <code>chmod 777</code>／<code>666</code>。</p>
+      <p class="deployment-note"><strong>Production preflight：</strong>SmartHub container 固定以 UID/GID <code>1000:1000</code> 執行；config 目錄與 <code>.env</code> 必須由該 UID 實際可讀寫。啟動前執行 <code>docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline</code>，確認 config/data 的 temp fsync、atomic rename、unlink、SQLite quick check 與 writer probe；不要使用 <code>chmod 777</code>／<code>666</code>。</p>
       <p class="back"><a href="#top">回到頁首 ↑</a></p>
     </section>
   </main>
 </div>
+  <p class="deployment-note"><strong>Release 順序：</strong>不可變成對 image 建立後，先以同一組 image 執行 <code>production-preflight.js --offline</code>，確認 SQLite writer probe、quick check 與檔案原子替換，再以 <code>up -d --no-build --pull never</code> 啟動；release JSON 的成對 image ID 必須保留並核對。</p>
 </body>
 </html>

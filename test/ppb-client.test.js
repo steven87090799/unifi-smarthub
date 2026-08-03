@@ -96,9 +96,14 @@ test('PPB TLS is secure by default, reuses an agent, and rotates it on configura
     assert.equal(FakeAgent.instances.length, 2);
     assert.equal(FakeAgent.instances[0].destroyCalls, 1);
     assert.equal(FakeAgent.instances[1].options.rejectUnauthorized, false);
-    client.close();
-    client.close();
+    config = baseConfig({ tlsInsecure: true, password: 'rotated-password' });
+    client.reset();
+    assert.equal(FakeAgent.instances.length, 3);
     assert.equal(FakeAgent.instances[1].destroyCalls, 1);
+    assert.equal(FakeAgent.instances[2].options.rejectUnauthorized, false);
+    client.close();
+    client.close();
+    assert.equal(FakeAgent.instances[2].destroyCalls, 1);
 });
 
 test('PPB custom CA must be an absolute regular non-symlink file and read failures fail closed', async t => {

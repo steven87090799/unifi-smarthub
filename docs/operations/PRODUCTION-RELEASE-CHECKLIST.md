@@ -6,6 +6,8 @@
 
 - 預定發布 commit 的 `git status --short` 無輸出。
 - SmartHub container 預設以 UID/GID `1000:1000` 執行；`config/` 權限 `0700`、`config/.env` 權限 `0600`，且該 UID 可在目錄內建立、fsync、rename。
+- Preflight 會要求 `config/.env` 及 SQLite `smarthub.db` 可讀寫；既有 `-wal`／`-shm` 也必須是可讀寫 regular file，並以 `PRAGMA quick_check=ok` 驗證。`--offline` 才會額外執行 `BEGIN IMMEDIATE; ROLLBACK;` writer probe。
+- 新的 `smarthub-data` volume 必須先以同一個已建立 image 執行一次 `createHistoryDb` 初始化 schema；preflight 不會自動略過或建立遺失的資料庫，既有 volume 不可重建覆蓋。
 - 根目錄沒有第二份 `.env`；所有 Compose 指令使用同一個 `--env-file config/.env`。
 - 已設定 `PANEL_PASSWORD`；唯讀密碼不得等於管理員密碼。
 - 容器內 upstream 位址不是 `localhost`／`127.0.0.1`。
@@ -25,7 +27,7 @@
 
 ## 2. 程式庫檢查
 
-正式 release 執行完整 gate：
+正式 release 執行完整 gate；部署相關命令必須保持 Build → Preflight → Start：
 
 ```bash
 npm ci
@@ -36,12 +38,12 @@ npm run test:smoke
 npm run test:soak
 npm audit --audit-level=low
 git diff --check
-docker compose --env-file config/.env run --rm --no-deps \
-  unifi-smarthub node scripts/production-preflight.js
 docker compose --env-file config/.env config --quiet
 docker compose --env-file config/.env --profile nas-monitor config --quiet
 docker compose --env-file config/.env build unifi-smarthub
 docker compose --env-file config/.env --profile nas-monitor build
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
 ```
 
 若只需快速定位安全／Docker／restart／release 契約：
@@ -125,6 +127,13 @@ NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
 本機 tag／image ID 不等於 registry digest。若使用 registry，必須成對 push、記錄兩個 immutable digest，並以 digest 或不可變 tag 部署。
 
 ## 4. 隔離演練與啟動
+
+Preflight 必須針對已建立的同一組 release image 執行；通過後才可啟動：
+
+```bash
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
+```
 
 ```bash
 docker compose --env-file config/.env -p smarthub-prod up -d --no-build --pull never

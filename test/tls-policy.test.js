@@ -109,6 +109,12 @@ test('CA loading is fail-closed for every unsafe filesystem shape', () => {
         assert.throws(() => readCaFile('/unreadable/ca.pem', {
             fileSystem: { lstatSync() { throw new Error('permission denied'); } }
         }), /cannot be read/u);
+        assert.throws(() => readCaFile('relative-ca.pem'), /absolute path/u);
+        assert.throws(() => resolveTlsPolicy({
+            url: 'https://localhost:8443',
+            caFile: 'relative-ca.pem',
+            fields: { ca: 'ADGUARD_CA_FILE' }
+        }), /absolute path/u);
     } finally {
         fs.rmSync(directory, { recursive: true, force: true });
     }
