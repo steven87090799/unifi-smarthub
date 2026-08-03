@@ -25,12 +25,20 @@ test('production documentation points operators to the immutable paired-image re
     assert.match(readme, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.match(readme, /sudo install -d -o 1000 -g 1000 -m 700 config/u);
     assert.match(readme, /production-preflight/u);
-    assert.ok(readme.indexOf('docker compose --env-file config/.env build unifi-smarthub')
-        < readme.indexOf('production-preflight.js --offline'));
-    assert.ok(readme.indexOf('production-preflight.js --offline')
-        < readme.indexOf('docker compose --env-file config/.env up -d --no-build'));
-    assert.ok(checklist.indexOf('docker compose --env-file config/.env build unifi-smarthub')
-        < checklist.indexOf('production-preflight.js --offline'));
+    const historyDbInitializer = /node -e "const \{ createHistoryDb \} = require\('\.\/db'\); const db = createHistoryDb\(process\.env\.DATA_DIR\); db\.close\(\);"/u;
+    assert.match(readme, historyDbInitializer);
+    assert.match(checklist, historyDbInitializer);
+    assert.match(checklist, /既有資料庫跳過且不可覆蓋/u);
+    const readmeBuild = readme.indexOf('docker compose --env-file config/.env build unifi-smarthub');
+    const readmeInitialize = readme.indexOf('createHistoryDb');
+    const readmePreflight = readme.indexOf('production-preflight.js --offline');
+    const readmeStart = readme.indexOf('docker compose --env-file config/.env up -d --no-build');
+    assert.ok(readmeBuild < readmeInitialize && readmeInitialize < readmePreflight && readmePreflight < readmeStart);
+    const checklistBuild = checklist.indexOf('docker compose --env-file config/.env build unifi-smarthub');
+    const checklistInitialize = checklist.indexOf('node -e "const { createHistoryDb }');
+    const checklistPreflight = checklist.indexOf('production-preflight.js --offline');
+    const checklistStart = checklist.indexOf('docker compose --env-file config/.env up -d --no-build\n');
+    assert.ok(checklistBuild < checklistInitialize && checklistInitialize < checklistPreflight && checklistPreflight < checklistStart);
     assert.ok(checklist.indexOf('production-preflight.js --offline')
         < checklist.indexOf('up -d --no-build --pull never'));
     assert.match(checklist, /Host-native Caddy\/Nginx/u);

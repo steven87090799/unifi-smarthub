@@ -58,7 +58,11 @@ const { createSiteManagerClient } = require('./server/integrations/site-manager-
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
 const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
-const { createPpbClient, normalizeConfig: normalizePpbClientConfig } = require('./server/integrations/ppb-client');
+const {
+    createPpbClient,
+    isPpbRequestSupersededError,
+    normalizeConfig: normalizePpbClientConfig
+} = require('./server/integrations/ppb-client');
 const {
     PartialNotificationDeliveryError,
     createNotificationDispatcher,
@@ -5068,7 +5072,8 @@ async function readPpb() {
             runtimeSec: d.battery?.remainingRunTimeInSecs ?? null,
             loadPct: numV(d.output?.loads?.[0])
         };
-    } catch {
+    } catch (error) {
+        if (isPpbRequestSupersededError(error)) throw error;
         // PPB 服務重啟後 HTTPS 埠可能改變，清掉 session 讓下次重新探索。
         ppbClient.reset();
         return null;
@@ -5275,6 +5280,14 @@ async function pollUpsFetchState() {
             || (readResult?.configGeneration !== undefined && readResult.configGeneration !== upsConfigGeneration)) {
             const reconfigured = upsFetchState.reconfigure(upsConfigGeneration);
             return { live: null, snapshot: reconfigured.snapshot, transitions: [] };
+        }
+
+        if (isPpbRequestSupersededError(pollError)) {
+            // PPB hot-reload cancellation is expected lifecycle churn. Keep
+            // the current state untouched so it cannot create an outage,
+            // fallback warning, or offline notification transition.
+            const snapshot = upsFetchState.snapshot();
+            return { live: snapshot.lastGood, snapshot, transitions: [] };
         }
 
         let live = readResult?.data || null;
@@ -5520,7 +5533,15 @@ registerBackendSampler({
     name: 'ppbEventSync',
     scopes: ['ups'],
     collect: async () => {
-        if (ppbConfigured()) await syncPpbEventsIfDue(ppbEventSyncMs());
+        if (!ppbConfigured()) return;
+        try {
+            await syncPpbEventsIfDue(ppbEventSyncMs());
+        } catch (error) {
+            // A hot connection update fences the old PPB event request. It is
+            // expected lifecycle cancellation, not an UPS outage or worker
+            // failure to report.
+            if (!isPpbRequestSupersededError(error)) throw error;
+        }
     },
     getDelayMs: ppbEventSyncMs
 });

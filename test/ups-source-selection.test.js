@@ -82,3 +82,16 @@ test('all-source failure messages distinguish auto and explicit fallback policy'
     const fallback = await selectUpsSource({ configuredSource: 'ppb', allowFallback: true, readers });
     assert.equal(fallback.failureMessage, '指定來源 ppb 失敗，已允許 fallback，但所有候選皆不可用。');
 });
+
+test('PPB superseded cancellation bypasses source failure and fallback accounting', async () => {
+    const attempts = [];
+    const error = Object.assign(new Error('PPB request was superseded by a configuration change'), {
+        code: 'PPB_REQUEST_SUPERSEDED'
+    });
+    await assert.rejects(selectUpsSource({
+        configuredSource: 'auto',
+        readers: { ppb: async () => { throw error; }, nut: async () => ({ source: 'nut' }) },
+        onAttempt: attempt => attempts.push(attempt)
+    }), caught => caught === error);
+    assert.deepEqual(attempts, []);
+});

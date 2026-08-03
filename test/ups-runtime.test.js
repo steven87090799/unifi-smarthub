@@ -71,6 +71,7 @@ test('UPS in-flight reads return generation-scoped metadata before the poll comm
     assert.match(readSource, /selection: selectionSnapshot/u);
     assert.doesNotMatch(readSource, /upsLastSelection\s*=/u);
     assert.match(SERVER_SOURCE, /generation !== upsConfigGeneration[\s\S]+readResult\.configGeneration/u);
+    assert.match(SERVER_SOURCE, /isPpbRequestSupersededError\(pollError\)[\s\S]+transitions: \[\]/u);
 });
 
 test('production UPS route retains last-good data across confirmed outage and recovery', { timeout: 45_000 }, async t => {

@@ -42,8 +42,12 @@ docker compose --env-file config/.env config --quiet
 docker compose --env-file config/.env --profile nas-monitor config --quiet
 docker compose --env-file config/.env build unifi-smarthub
 docker compose --env-file config/.env --profile nas-monitor build
+# 僅第一次使用全新的 smarthub-data volume 時執行一次；既有資料庫跳過且不可覆蓋。
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
 docker compose --env-file config/.env run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
+docker compose --env-file config/.env up -d --no-build
 ```
 
 若只需快速定位安全／Docker／restart／release 契約：
@@ -131,6 +135,9 @@ NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
 Preflight 必須針對已建立的同一組 release image 執行；通過後才可啟動：
 
 ```bash
+# 僅全新的 smarthub-data volume 執行一次；既有資料庫跳過且不可覆蓋。
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
 docker compose --env-file config/.env run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
 ```

@@ -100,6 +100,10 @@ async function selectUpsSource({ configuredSource = 'auto', allowFallback = fals
             failures.push(reason);
             onAttempt?.({ source, ok: false, reason });
         } catch (error) {
+            // PPB hot-reload cancellation is a lifecycle fence, not a source
+            // failure. Let the UPS poller preserve its current state without
+            // recording fallback, outage, or notification transitions.
+            if (error?.code === 'PPB_REQUEST_SUPERSEDED') throw error;
             const reason = failureReason(source, error);
             failures.push(reason);
             onAttempt?.({ source, ok: false, reason, error });
