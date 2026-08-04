@@ -63,7 +63,7 @@ This branch contains the first three commits above and no additional unique comm
 
 `SALVAGE_REQUIRED`: **none**. All 11 unique branch appearances were inspected; the three shared hardening commits are represented by stronger current-main modules/tests, and the five telemetry/thermal commits are represented by the merged PR #6 behavior plus later hardening. No legacy commit is classified `UNSAFE_TO_PORT`, but none is safe to wholesale cherry-pick because the current composition root, route contracts, UI asset layout, and SQLite lifecycle have moved on.
 
-The production fixes in this task are new, narrow changes against `origin/main`: LAN egress policy, strict UPS source selection and snapshot-only UPS GET routes, visible dependency updates, complete Trivy reporting, loopback host publishing, and explicitly versioned Alpine packages.
+The production fixes in this task are new, narrow changes against `origin/main`: LAN egress policy, strict UPS source selection and snapshot-only UPS GET routes, ordinary Dependabot version-update PRs disabled while security remediation remains Code Security-managed, complete Trivy reporting, loopback host publishing, and explicitly versioned Alpine packages.
 
 ## Main integration proof
 

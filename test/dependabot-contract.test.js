@@ -7,12 +7,14 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '..');
 
-test('Dependabot keeps all update ecosystems visible and bounded', () => {
+test('Dependabot disables ordinary version-update PRs while retaining security policy ownership', () => {
     const config = fs.readFileSync(path.join(ROOT, '.github', 'dependabot.yml'), 'utf8');
-    assert.doesNotMatch(config, /open-pull-requests-limit:\s*0/u);
+    assert.match(config, /Disable Dependabot version-update PRs/u);
+    assert.match(config, /Dependabot alerts and security updates remain controlled separately/u);
     assert.equal((config.match(/package-ecosystem:/gu) || []).length, 4);
-    assert.equal((config.match(/open-pull-requests-limit:\s*[1-9]\d*/gu) || []).length, 4);
+    assert.equal((config.match(/open-pull-requests-limit:\s*0/gu) || []).length, 4);
+    assert.doesNotMatch(config, /open-pull-requests-limit:\s*[1-9]\d*/u);
     assert.equal((config.match(/interval:\s*weekly/gu) || []).length, 4);
-    assert.equal((config.match(/groups:/gu) || []).length, 4);
-    assert.equal((config.match(/version-update:semver-major/gu) || []).length, 4);
+    assert.doesNotMatch(config, /groups:/u);
+    assert.doesNotMatch(config, /version-update:semver-major/u);
 });
