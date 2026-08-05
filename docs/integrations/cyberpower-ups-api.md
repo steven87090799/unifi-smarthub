@@ -36,8 +36,9 @@ PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...
 PPB_PASSWORD=...
-PPB_TLS_VERIFY=true
-PPB_TLS_INSECURE=false
+TRUSTED_LAN_MODE=true
+PPB_TLS_VERIFY=false
+PPB_TLS_INSECURE=true
 # 私有／自簽 CA：PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
 
@@ -48,7 +49,7 @@ PPB_TLS_INSECURE=false
 3. 讀取 `/local/rest/v1/ups/status` 與事件 API。
 4. 401／403 時重新登入一次；服務重啟後重新探索 port。
 
-PPB HTTPS 預設驗證憑證；私有／自簽 CA 應以容器內可讀、絕對路徑且非 symlink 的 `PPB_CA_FILE` 提供。只有明確設定 `PPB_TLS_INSECURE=true` 才會停用驗證並記錄警告；`PPB_TLS_VERIFY=false` 本身不會關閉驗證。容器內不要改用宿主機的 `pwrstat`。
+在 Trusted LAN mode 下，只有經私有 endpoint classification 的 PPB 才使用 scoped `rejectUnauthorized=false`；discovery 後的 login、status 與 event sync 共用同一份 effective policy。公網 endpoint 仍維持 verified TLS。若不使用受控內網相容模式，請使用 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false` 或容器內絕對且非 symlink 的 `PPB_CA_FILE`。容器內不要改用宿主機的 `pwrstat`。
 
 ## NUT
 
@@ -78,6 +79,7 @@ SmartHub 執行 `upsc <name>@<host>`，讀取 `ups.status`、輸入／輸出電�
 - `/api/ups/status` 與 `/api/ups/ppb-events` 是只讀快照；外部讀取、SQLite 寫入、狀態轉移與通知只由背景 sampler 執行。
 - 輸入電壓低於 105V（220V 系統自動換算為 210V）會記錄一次壓降，恢復門檻帶有遲滯，避免在臨界值反覆通知。
 - PPB 原廠事件每 60 秒背景同步；觀看 UPS 頁時為 10 秒。事件以原廠 ID 或穩定雜湊去重，第一次同步不推播舊事件。
+- `UPS_SOURCE=ppb` 且 `UPS_ALLOW_FALLBACK=false` 時只嘗試 PPB；短暫失敗保留 last-good，連續失敗門檻前不確認 offline，PPB event sync 的重複錯誤使用 cooldown/backoff。
 - 單次輪詢只能捕捉落在取樣點上的壓降；短於 3 秒的閃爍仍需 UPS 韌體實際產生 Power Sag／Utility Voltage Abnormal 事件，SmartHub 才能從 PPB 補捉。
 
 ## 路由

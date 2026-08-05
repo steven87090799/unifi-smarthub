@@ -60,6 +60,11 @@ test('configuration derives the official local Integration API base and fails cl
     assert.deepEqual(missing.missing.sort(), [
         'UNIFI_NETWORK_API_KEY', 'UNIFI_NETWORK_SITE_ID', 'UNIFI_THREAT_BLOCK_LIST_ID'
     ].sort());
+    const trusted = readConfiguration({ ...ENV, TRUSTED_LAN_MODE: 'true' });
+    assert.equal(trusted.configured, true);
+    assert.equal(trusted.tlsVerify, false);
+    assert.equal(trusted.tlsInsecure, true);
+    assert.equal(trusted.tlsPolicy.mode, 'trusted-lan-insecure');
 });
 
 test('configuration rejects credential-bearing remote plaintext and ambiguous URLs while TLS verification is explicit', () => {

@@ -10,6 +10,10 @@ NAS_PORT=9443
 NAS_SCHEME=https
 NAS_USER=monitor
 NAS_PASSWORD=...
+TRUSTED_LAN_MODE=true
+NAS_TLS_VERIFY=false
+NAS_TLS_INSECURE=true
+NAS_ALLOW_INSECURE_HTTP=true
 ```
 
 目前登入流程：
@@ -26,7 +30,7 @@ NAS_PASSWORD=...
 - `/ugreen/v1/storage/volume/list`
 - UGOS logs 與 UPS 狀態相關路徑
 
-UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。直接連線目前接受設備自簽憑證，因此只應用於可信內網；若要強化 TLS，需同步補設定、錯誤契約與測試。
+UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。Trusted LAN mode 只對分類為私有 endpoint 的直接連線接受自簽憑證與私有 HTTP；NAS login singleflight、token cache、retry 與 failure accounting 不因此改變。公開 endpoint 仍必須使用 verified TLS 或私有 CA。
 
 ## 歷史
 

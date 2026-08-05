@@ -414,7 +414,7 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_TARGET_IDS, true);
     assert.equal(body.secretsSet.UNIFI_DEVICE_SSH_HOST_KEYS, true);
     assert.deepEqual(body.clearableFields, [
-        'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+        'TRUSTED_LAN_HOSTS', 'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
         'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
     ]);
     assert.equal(text.includes(secret), false, `${runtime.label} secret leaked in readback`);

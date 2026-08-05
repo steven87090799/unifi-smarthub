@@ -4,6 +4,10 @@ const { createHash, timingSafeEqual } = require('node:crypto');
 const net = require('node:net');
 const { createSshConnectionPool } = require('./ssh-connection-pool');
 const { parseThermalZones } = require('../services/unifi-device-thermal');
+const {
+    isTrustedLanEndpoint,
+    strictBoolean: trustedLanBoolean
+} = require('./trusted-lan-policy');
 
 const THERMAL_READ_COMMAND = 'for z in /sys/class/thermal/thermal_zone*; do\n'
     + '  [ -r "$z/temp" ] || continue\n'
@@ -164,6 +168,8 @@ function createUnifiDeviceThermalSshCollector({
         const password = typeof env.UNIFI_DEVICE_SSH_PASSWORD === 'string' ? env.UNIFI_DEVICE_SSH_PASSWORD : '';
         const hostKeysRaw = typeof env.UNIFI_DEVICE_SSH_HOST_KEYS === 'string' ? env.UNIFI_DEVICE_SSH_HOST_KEYS : '';
         const hostKeys = parseHostKeys(hostKeysRaw);
+        const trustedLanMode = trustedLanBoolean(env.TRUSTED_LAN_MODE, 'TRUSTED_LAN_MODE', false);
+        const trustedLanHosts = typeof env.TRUSTED_LAN_HOSTS === 'string' ? env.TRUSTED_LAN_HOSTS : '';
         // Development/unit-test environments retain the legacy optional
         // behavior; production requires an explicit pin or an explicit true.
         const allowUnpinned = env.UNIFI_DEVICE_SSH_ALLOW_UNPINNED === true
@@ -171,11 +177,19 @@ function createUnifiDeviceThermalSshCollector({
             || (!env.NODE_ENV || env.NODE_ENV !== 'production');
         const candidatePort = Number(env.UNIFI_DEVICE_SSH_PORT || 22);
         const port = Number.isSafeInteger(candidatePort) && candidatePort > 0 && candidatePort <= 65535 ? candidatePort : 22;
-        return { targetIds, username, password, port, hostKeys, allowUnpinned, hostKeysValid: hostKeysConfigurationValid(hostKeysRaw) };
+        return {
+            targetIds, username, password, port, hostKeys, allowUnpinned,
+            trustedLanMode, trustedLanHosts,
+            hostKeysValid: hostKeysConfigurationValid(hostKeysRaw)
+        };
     }
 
     function key(config) {
-        return JSON.stringify([config.targetIds, config.username, config.password, config.port, [...config.hostKeys.entries()], config.hostKeysValid, config.allowUnpinned]);
+        return JSON.stringify([
+            config.targetIds, config.username, config.password, config.port,
+            [...config.hostKeys.entries()], config.hostKeysValid, config.allowUnpinned,
+            config.trustedLanMode, config.trustedLanHosts
+        ]);
     }
 
     function closePool(entry) {
@@ -204,7 +218,8 @@ function createUnifiDeviceThermalSshCollector({
 
     function configured(config = currentConfiguration()) {
         return !closed && config.targetIds.length > 0 && config.username && config.password
-            && config.hostKeysValid && (config.allowUnpinned || config.targetIds.every(id => config.hostKeys.has(id)))
+            && config.hostKeysValid
+            && (config.allowUnpinned || config.trustedLanMode || config.targetIds.every(id => config.hostKeys.has(id)))
             && !/your_/iu.test(config.password);
     }
 
@@ -272,6 +287,17 @@ function createUnifiDeviceThermalSshCollector({
         const host = managementIp(device);
         if (!host) return Promise.resolve(result(id, { status: 'unavailable', sampledAt, errorReason: 'management_ip_missing' }));
         const hostKeyFingerprint = config.hostKeys.get(id) || '';
+        const targetAllowsUnpinned = hostKeyFingerprint !== '' || (
+            config.trustedLanMode
+                ? isTrustedLanEndpoint(host, { enabled: true, trustedHosts: config.trustedLanHosts })
+                : config.allowUnpinned
+        );
+        if (!targetAllowsUnpinned) {
+            return Promise.resolve(result(id, {
+                status: 'not_configured', sampledAt,
+                errorReason: config.trustedLanMode ? 'trusted_lan_target_required' : 'host_key_not_configured'
+            }));
+        }
         const identity = JSON.stringify([host, config.port, config.username, hostKeyFingerprint, config.generation]);
         const existing = inflight.get(id);
         if (existing?.identity === identity) return existing.promise;
@@ -329,6 +355,7 @@ function createUnifiDeviceThermalSshCollector({
             hostKeyConfiguredDeviceCount: config.hostKeys.size,
             hostKeyMissingDeviceIds: config.allowUnpinned ? [] : config.targetIds.filter(id => !config.hostKeys.has(id)),
             allowUnpinned: config.allowUnpinned,
+            trustedLanMode: config.trustedLanMode,
             cachedDeviceCount: cache.size,
             running: inflight.size,
             activeConnections: active,

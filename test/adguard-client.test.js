@@ -107,6 +107,43 @@ test('HTTPS verifies by default, proxying is disabled, and only exact false opts
     }), AdGuardConfigurationError);
 });
 
+test('Trusted LAN mode accepts private self-signed HTTPS and private HTTP but never public HTTPS', () => {
+    const privateHttps = fakeAxios();
+    const privateConnection = createAdGuardConnection({
+        env: {
+            TRUSTED_LAN_MODE: 'true', ADGUARD_URL: 'https://192.168.1.20',
+            ADGUARD_USER: 'admin', ADGUARD_PASSWORD: PASSWORD
+        },
+        axios: privateHttps.axios
+    });
+    assert.equal(privateConnection.transportMode, 'trusted-lan-insecure');
+    assert.equal(privateConnection.tlsVerified, false);
+    assert.equal(privateHttps.calls.create[0].httpsAgent.options.rejectUnauthorized, false);
+
+    const privateHttp = fakeAxios();
+    const httpConnection = createAdGuardConnection({
+        env: {
+            TRUSTED_LAN_MODE: 'true', ADGUARD_URL: 'http://192.168.1.20',
+            ADGUARD_USER: 'admin', ADGUARD_PASSWORD: PASSWORD
+        },
+        axios: privateHttp.axios
+    });
+    assert.equal(httpConnection.transportMode, 'http');
+    assert.equal(httpConnection.tlsVerified, false);
+
+    const publicHttps = fakeAxios();
+    const publicConnection = createAdGuardConnection({
+        env: {
+            TRUSTED_LAN_MODE: 'true', ADGUARD_URL: 'https://adguard.example.test',
+            ADGUARD_USER: 'admin', ADGUARD_PASSWORD: PASSWORD
+        },
+        axios: publicHttps.axios
+    });
+    assert.equal(publicConnection.transportMode, 'verified');
+    assert.equal(publicConnection.tlsVerified, true);
+    assert.equal(publicHttps.calls.create[0].httpsAgent.options.rejectUnauthorized, true);
+});
+
 test('custom certificate authority loading is bounded and never reads unsafe paths', () => {
     const certificate = Buffer.from('test-ca');
     const fileSystem = {

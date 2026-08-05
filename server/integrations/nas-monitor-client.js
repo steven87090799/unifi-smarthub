@@ -1,9 +1,13 @@
 'use strict';
 
 const fs = require('node:fs');
-const https = require('node:https');
 const { createLanAxiosConfig } = require('./http-egress-policy');
-const { readCaFile } = require('./tls-policy');
+const { createHttpsAgent, readCaFile } = require('./tls-policy');
+const {
+    resolveIntegrationTlsPolicy,
+    resolveTrustedLanTransportInputs,
+    strictBoolean: trustedLanBoolean
+} = require('./trusted-lan-policy');
 
 const MIN_API_KEY_BYTES = 32;
 const MAX_API_KEY_BYTES = 256;
@@ -100,15 +104,54 @@ function createNasMonitorConnection(options = {}) {
     const rawUrl = env.NAS_MONITOR_URL;
     if (!rawUrl) return { url: null, client: null, configured: false };
 
-    const allowInsecureHttp = strictBoolean(env.NAS_MONITOR_ALLOW_INSECURE_HTTP, 'NAS_MONITOR_ALLOW_INSECURE_HTTP');
-    const allowInsecureTls = strictBoolean(env.NAS_MONITOR_TLS_INSECURE, 'NAS_MONITOR_TLS_INSECURE');
+    // Keep the existing exact Docker service name working without turning
+    // arbitrary hostnames into LAN exceptions. The service is only reachable
+    // on the compose network; an explicit false still remains a hard deny.
+    let policyEnv = env;
+    try {
+        const rawParsed = new URL(rawUrl);
+        if (rawParsed.protocol === 'http:'
+            && rawParsed.hostname.toLowerCase() === 'nas-monitor'
+            && (env.NAS_MONITOR_ALLOW_INSECURE_HTTP === undefined
+                || env.NAS_MONITOR_ALLOW_INSECURE_HTTP === '')) {
+            policyEnv = { ...env, NAS_MONITOR_ALLOW_INSECURE_HTTP: 'true' };
+        }
+    } catch { /* normalizeBaseUrl reports the bounded URL error below. */ }
+
+    const inputs = resolveTrustedLanTransportInputs({
+        url: rawUrl,
+        integration: 'nas_monitor',
+        env: policyEnv,
+        fields: {
+            insecure: 'NAS_MONITOR_TLS_INSECURE', ca: 'NAS_MONITOR_CA_FILE',
+            allowHttp: 'NAS_MONITOR_ALLOW_INSECURE_HTTP'
+        }
+    });
+    const allowInsecureHttp = trustedLanBoolean(inputs.allowInsecureHttp, 'NAS_MONITOR_ALLOW_INSECURE_HTTP', false);
+    let rawHost;
+    try { rawHost = new URL(rawUrl).hostname.toLowerCase(); } catch { rawHost = ''; }
+    if (rawHost === 'nas-monitor'
+        && env.NAS_MONITOR_ALLOW_INSECURE_HTTP !== undefined
+        && env.NAS_MONITOR_ALLOW_INSECURE_HTTP !== ''
+        && allowInsecureHttp === false) {
+        configurationError('NAS_MONITOR_ALLOW_INSECURE_HTTP must be true for the Docker monitor HTTP endpoint');
+    }
     const url = normalizeBaseUrl(rawUrl, { allowInsecureHttp });
     const key = normalizeApiKey(env.NAS_MONITOR_API_KEY || '');
     const parsed = new URL(url);
-    const agent = parsed.protocol === 'https:' ? new https.Agent({
-        rejectUnauthorized: !allowInsecureTls,
-        ca: loadCertificateAuthority(env.NAS_MONITOR_CA_FILE, options.fs || fs)
-    }) : undefined;
+    const tls = parsed.protocol === 'https:'
+        ? resolveIntegrationTlsPolicy({
+            url,
+            integration: 'nas_monitor',
+            env: policyEnv,
+            fields: {
+                verify: 'NAS_MONITOR_TLS_VERIFY', insecure: 'NAS_MONITOR_TLS_INSECURE',
+                ca: 'NAS_MONITOR_CA_FILE', allowHttp: 'NAS_MONITOR_ALLOW_INSECURE_HTTP'
+            },
+            fileSystem: options.fs || fs
+        })
+        : null;
+    const agent = tls ? createHttpsAgent(tls) : undefined;
     const timeout = Number(options.timeoutMs || DEFAULT_TIMEOUT_MS);
     if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 30_000) {
         throw new TypeError('timeoutMs must be an integer between 1000 and 30000');
@@ -125,7 +168,14 @@ function createNasMonitorConnection(options = {}) {
         maxBodyLength: 64 * 1024,
         validateStatus: status => status >= 200 && status < 300
     }));
-    return { url, client, configured: true, tlsVerified: parsed.protocol !== 'https:' || !allowInsecureTls };
+    return {
+        url,
+        client,
+        configured: true,
+        tlsVerified: parsed.protocol !== 'https:' || tls.verify === true,
+        transportMode: parsed.protocol === 'http:' ? 'http' : tls.mode,
+        trustedLan: tls?.trustedLan === true
+    };
 }
 
 module.exports = {

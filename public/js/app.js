@@ -1092,7 +1092,7 @@
             element.className = `px-2 py-1 rounded-full text-[9px] font-bold ${meta[1]}`;
         }
         const DEFAULT_CONNECTION_CLEARABLE_FIELDS = new Set([
-            'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+            'TRUSTED_LAN_HOSTS', 'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
             'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
         ]);
         let connectionClearableFields = new Set(DEFAULT_CONNECTION_CLEARABLE_FIELDS);
@@ -4056,15 +4056,20 @@
                 for (const [k, v] of Object.entries(d.fields || {})) {
                     const el = document.getElementById('conn-' + k);
                     if (el) {
-                        el.value = v || '';
-                        el.dataset.connectionInitialValue = el.value;
+                        if (el.type === 'checkbox') {
+                            el.checked = v === 'true';
+                            el.dataset.connectionInitialValue = el.checked ? 'true' : 'false';
+                        } else {
+                            el.value = v || '';
+                            el.dataset.connectionInitialValue = el.value;
+                        }
                     }
                 }
                 document.querySelectorAll('.conn-input').forEach(el => {
                     const key = el.id.replace('conn-', '');
                     const clearable = connectionClearableFields.has(key);
                     el.dataset.clearable = clearable ? 'true' : 'false';
-                    if (!Object.hasOwn(d.fields || {}, key)) el.dataset.connectionInitialValue = '';
+                    if (!Object.hasOwn(d.fields || {}, key)) el.dataset.connectionInitialValue = el.type === 'checkbox' ? 'false' : '';
                     if (clearable && !el.placeholder) el.placeholder = '留空=清除';
                 });
                 for (const key of d.restartRequiredFields || []) {
@@ -4097,6 +4102,12 @@
             if (!list) return;
             try {
                 const d = await (await fetch('/api/connections/status')).json();
+                const trustedStatus = document.getElementById('conn-trusted-lan-status');
+                if (trustedStatus) {
+                    const mode = d.trustedLanMode === true ? '已啟用' : '未啟用';
+                    trustedStatus.textContent = `後端狀態：${mode} · 公網整合仍使用 verified TLS`;
+                    trustedStatus.className = d.trustedLanMode === true ? 'text-[9px] text-blue-300' : 'text-[9px] text-slate-500';
+                }
                 const dot = ok => `<span class="w-2 h-2 rounded-full inline-block shrink-0 ${ok === true ? 'bg-emerald-500' : ok === false ? 'bg-red-500' : 'bg-slate-600'}"></span>`;
                 list.innerHTML = (d.devices || []).map(v => {
                     const ok = v.configured ? v.ok : undefined;
@@ -4111,9 +4122,9 @@
             const body = {};
             document.querySelectorAll('.conn-input').forEach(el => {
                 const key = el.id.replace('conn-', '');
-                const value = el.value.trim();
+                const value = el.type === 'checkbox' ? (el.checked ? 'true' : 'false') : el.value.trim();
                 const initial = el.dataset.connectionInitialValue ?? '';
-                if (value || (connectionClearableFields.has(key) && initial !== value)) body[key] = value;
+                if (el.type === 'checkbox' ? initial !== value : (value || (connectionClearableFields.has(key) && initial !== value))) body[key] = value;
             });
             dbg('Conn', '儲存欄位:', Object.keys(body));
             try {

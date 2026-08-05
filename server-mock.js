@@ -1423,6 +1423,7 @@ app.delete('/api/adguard/service-policies/:id', mockSecurity.requireAdmin, (req,
 /* ===== 連線設定 (模擬) ===== */
 const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'mock-connections.json');
 const mockConnDefaults = {
+    TRUSTED_LAN_MODE: 'true', TRUSTED_LAN_HOSTS: '',
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
     UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_CONTROLLER_TLS_VERIFY: 'true', UNIFI_CONTROLLER_CA_FILE: '',
     UNIFI_CONTROLLER_TLS_INSECURE: 'false', UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP: 'false', UNIFI_USERNAME: 'demo',
@@ -1434,7 +1435,7 @@ const mockConnDefaults = {
     UNIFI_THREAT_BLOCK_LIST_NAME: 'SmartHub Threat Blocks',
     NAS_HOST: '', NAS_PORT: '9443', NAS_SCHEME: 'https', NAS_TLS_VERIFY: 'true', NAS_CA_FILE: '',
     NAS_TLS_INSECURE: 'false', NAS_ALLOW_INSECURE_HTTP: 'false', NAS_USER: '',
-    NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', WIIM_IP: '',
+    NAS_MONITOR_URL: '', NAS_MONITOR_MODE: 'docker_only', NAS_MONITOR_TLS_VERIFY: 'true', NAS_MONITOR_TLS_INSECURE: 'false', NAS_MONITOR_ALLOW_INSECURE_HTTP: 'false', WIIM_IP: '', WIIM_TLS_INSECURE: 'false', WIIM_ALLOW_INSECURE_HTTP: 'false',
     SMARTHUB_INTERNET_PROXY_MODE: 'disabled',
     UPS_SOURCE: 'auto', UPS_ALLOW_FALLBACK: 'false', NUT_HOST: 'localhost', NUT_UPS_NAME: 'cyberpower', PWRSTAT_PATH: '',
     PPB_HOST: '', PPB_PORT: '3052', PPB_USER: '',
@@ -1459,7 +1460,7 @@ const MOCK_RESTART_REQUIRED_FIELDS = Object.freeze([
     'SMARTHUB_INTERNET_PROXY_MODE'
 ]);
 const MOCK_CLEARABLE_FIELDS = new Set([
-    'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
+    'TRUSTED_LAN_HOSTS', 'UNIFI_CONTROLLER_CA_FILE', 'UNIFI_NETWORK_API_URL', 'UNIFI_NETWORK_CA_FILE',
     'NAS_CA_FILE', 'WIIM_IP', 'PPB_CA_FILE', 'ADGUARD_CA_FILE'
 ]);
 const MOCK_CONN_FIELDS = [
@@ -1524,6 +1525,12 @@ app.get('/api/connections', (req, res) => res.json({
 }));
 app.get('/api/connections/status', (_req, res) => res.json({
     source: 'mock',
+    trustedLanMode: mockConn.TRUSTED_LAN_MODE === 'true',
+    transports: {
+        unifiController: 'verified', unifiNetwork: 'verified', nas: 'verified', ppb: 'verified',
+        adguard: 'verified', wiim: 'verified', nasMonitor: 'verified', ucgSsh: 'verified',
+        linuxSsh: 'verified', unifiDeviceSsh: 'verified', siteManager: 'verified'
+    },
     devices: [
         { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
         { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },

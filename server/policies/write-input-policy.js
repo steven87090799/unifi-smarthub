@@ -1,6 +1,7 @@
 'use strict';
 
 const net = require('node:net');
+const { parseTrustedLanHosts } = require('../integrations/trusted-lan-policy');
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAC_ADDRESS = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/iu;
@@ -398,6 +399,7 @@ const HOST_FIELDS = new Set([
     'ADGUARD_HOST', 'LINUX_HOST'
 ]);
 const ENUM_FIELDS = Object.freeze({
+    TRUSTED_LAN_MODE: ['true', 'false'],
     NAS_SCHEME: ['http', 'https'],
     NAS_MONITOR_MODE: ['docker_only', 'full'],
     UNIFI_NETWORK_TLS_VERIFY: ['true', 'false'],
@@ -409,6 +411,9 @@ const ENUM_FIELDS = Object.freeze({
     NAS_TLS_VERIFY: ['true', 'false'],
     NAS_TLS_INSECURE: ['true', 'false'],
     NAS_ALLOW_INSECURE_HTTP: ['true', 'false'],
+    NAS_MONITOR_TLS_VERIFY: ['true', 'false'],
+    NAS_MONITOR_TLS_INSECURE: ['true', 'false'],
+    NAS_MONITOR_ALLOW_INSECURE_HTTP: ['true', 'false'],
     UCG_SSH_ALLOW_UNPINNED: ['true', 'false'],
     LINUX_SSH_ALLOW_UNPINNED: ['true', 'false'],
     UNIFI_DEVICE_SSH_ALLOW_UNPINNED: ['true', 'false'],
@@ -416,6 +421,8 @@ const ENUM_FIELDS = Object.freeze({
     PPB_TLS_INSECURE: ['true', 'false'],
     ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
     ADGUARD_TLS_VERIFY: ['true', 'false'],
+    WIIM_TLS_INSECURE: ['true', 'false'],
+    WIIM_ALLOW_INSECURE_HTTP: ['true', 'false'],
     UPS_SOURCE: ['auto', 'ppb', 'nut', 'pwrstat', 'pmset'],
     UPS_ALLOW_FALLBACK: ['true', 'false'],
     SMARTHUB_INTERNET_PROXY_MODE: ['disabled', 'environment']
@@ -456,6 +463,15 @@ function unifiDeviceSshHostKeysValue(value, field = 'UNIFI_DEVICE_SSH_HOST_KEYS'
     }).join(',');
 }
 
+function trustedLanHostsValue(value, field = 'TRUSTED_LAN_HOSTS') {
+    const raw = stringValue(value, { field, min: 1, max: 2048 });
+    try {
+        return parseTrustedLanHosts(raw).join(',');
+    } catch (error) {
+        reject(error.message, field);
+    }
+}
+
 function parseConnectionUpdates(body, fields) {
     const definitions = new Map(fields.map(field => [field.key, field]));
     exactObject(body, { allowed: [...definitions.keys()] });
@@ -478,6 +494,7 @@ function parseConnectionUpdates(body, fields) {
         }
         else if (key === 'UNIFI_DEVICE_SSH_TARGET_IDS') value = unifiDeviceSshTargetIdsValue(value, key);
         else if (key === 'UNIFI_DEVICE_SSH_HOST_KEYS') value = unifiDeviceSshHostKeysValue(value, key);
+        else if (key === 'TRUSTED_LAN_HOSTS') value = trustedLanHostsValue(value, key);
         else if (['UCG_SSH_HOST_KEY', 'LINUX_SSH_HOST_KEY'].includes(key)) {
             if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/u.test(value)) reject(`${key} must be a SHA256 SSH host key fingerprint`, key);
             value = value.replace(/=+$/u, '');
@@ -582,6 +599,7 @@ module.exports = {
     parseUiPreferences,
     quoteEnvValue,
     stringValue,
+    trustedLanHostsValue,
     unifiDeviceSshHostKeysValue,
     unifiDeviceSshTargetIdsValue,
     validatePpbTlsSettings
