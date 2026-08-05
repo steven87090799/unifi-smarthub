@@ -416,7 +416,9 @@ const ENUM_FIELDS = Object.freeze({
     PPB_TLS_INSECURE: ['true', 'false'],
     ADGUARD_ALLOW_INSECURE_HTTP: ['true', 'false'],
     ADGUARD_TLS_VERIFY: ['true', 'false'],
-    UPS_SOURCE: ['auto', 'nut', 'pwrstat', 'pmset', 'ppb']
+    UPS_SOURCE: ['auto', 'ppb', 'nut', 'pwrstat', 'pmset'],
+    UPS_ALLOW_FALLBACK: ['true', 'false'],
+    SMARTHUB_INTERNET_PROXY_MODE: ['disabled', 'environment']
 });
 
 function canonicalPort(value, field) {
@@ -504,14 +506,14 @@ function parseConnectionUpdates(body, fields) {
             value = stringValue(value, { field: key, min: 1, max: 32, pattern: /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u });
         } else if (key === 'NUT_UPS_NAME') {
             value = stringValue(value, { field: key, min: 1, max: 64, pattern: /^[A-Za-z0-9][A-Za-z0-9_.-]*$/u });
-        } else if (['PPB_CA_FILE', 'UNIFI_CONTROLLER_CA_FILE', 'NAS_CA_FILE', 'UNIFI_NETWORK_CA_FILE'].includes(key)) {
+        } else if (['PPB_CA_FILE', 'UNIFI_CONTROLLER_CA_FILE', 'NAS_CA_FILE', 'UNIFI_NETWORK_CA_FILE', 'NAS_MONITOR_CA_FILE', 'ADGUARD_CA_FILE'].includes(key)) {
             value = stringValue(value, {
                 field: key,
                 min: 2,
                 max: 1024,
                 pattern: /^\/(?:[A-Za-z0-9._+-]+\/)*[A-Za-z0-9._+-]+$/u
             });
-        } else if (key === 'PWRSTAT_PATH' || key === 'ADGUARD_CA_FILE') {
+        } else if (key === 'PWRSTAT_PATH') {
             value = stringValue(value, {
                 field: key,
                 min: 1,

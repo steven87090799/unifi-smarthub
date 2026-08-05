@@ -3,7 +3,13 @@ FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a
 # tini 作為 PID 1，正確處理訊號與殭屍程序 (SSH 子連線清理)
 # nut：提供 upsc 客戶端，容器內才能讀取 NAS/主機上 NUT server 的 UPS 數據 (UPS_SOURCE=nut)
 # tzdata：時區資料，配合 TZ 環境變數讓報表排程/日誌時間正確 (預設 UTC 會差 8 小時)
-RUN apk add --no-cache tini nut tzdata
+# Keep the Alpine package inputs explicit alongside the immutable base image.
+# These versions were resolved from Alpine v3.24 on 2026-08-02; refresh them
+# deliberately with the base digest and the resulting SBOM when upgrading.
+RUN apk add --no-cache \
+    tini=0.19.0-r3 \
+    nut=2.8.3-r4 \
+    tzdata=2026c-r0
 
 WORKDIR /app
 
@@ -12,7 +18,10 @@ COPY package*.json ./
 # better-sqlite3 is a native addon. Prebuilt binaries are used when available;
 # these toolchain packages keep builds working on Alpine/architecture combinations
 # without a prebuild.
-RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+RUN apk add --no-cache --virtual .build-deps \
+    python3=3.14.5-r0 \
+    make=4.4.1-r4 \
+    g++=15.2.0-r5 \
     && npm ci --omit=dev \
     && apk del .build-deps \
     && npm cache clean --force \

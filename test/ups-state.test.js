@@ -34,6 +34,8 @@ test('starts unknown and a successful poll records fresh last-good data', () => 
         lastFailureAt: null,
         failureReason: null,
         offlineSince: null,
+        configGeneration: 1,
+        reconfiguring: false,
         staleAgeMs: null,
         dataIsStale: false
     });
@@ -178,4 +180,23 @@ test('recordPoll treats a missing live result as failure and rejects invalid suc
     assert.equal(ups.recordPoll(undefined).snapshot.consecutiveFailures, 2);
     assert.throws(() => ups.recordSuccess(null), /must be an object/);
     assert.throws(() => createUpsState({ now: () => Number.NaN }).snapshot(), /finite timestamp/);
+});
+
+test('configuration changes preserve last-good data but fence old generations until a fresh sample', () => {
+    const clock = createClock();
+    const ups = createUpsState({ now: clock.now, configGeneration: 1 });
+    ups.recordSuccess({ ...live(88), configGeneration: 1 });
+
+    clock.advance(100);
+    const changed = ups.reconfigure(2);
+    assert.equal(changed.snapshot.fetchHealth, FETCH_HEALTH.DEGRADED);
+    assert.equal(changed.snapshot.reconfiguring, true);
+    assert.equal(changed.snapshot.dataIsStale, true);
+    assert.equal(changed.snapshot.lastGood.configGeneration, 1);
+    assert.throws(() => ups.recordSuccess({ ...live(87), configGeneration: 1 }), /stale configGeneration/u);
+
+    const recovered = ups.recordSuccess({ ...live(87), configGeneration: 2 });
+    assert.equal(recovered.snapshot.fetchHealth, FETCH_HEALTH.HEALTHY);
+    assert.equal(recovered.snapshot.configGeneration, 2);
+    assert.equal(recovered.snapshot.reconfiguring, false);
 });

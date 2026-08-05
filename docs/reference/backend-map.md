@@ -15,7 +15,7 @@
 | 報表與排程 | `server/jobs/report-*`, `runSerialJob()` |
 | NAS Monitor | `server/integrations/nas-monitor-client.js` |
 | WiiM | `server/policies/wiim-command-policy.js`、`server/routes/wiim-command-routes.js`、`server/services/wiim-art-proxy.js`、`server/services/wiim-client.js`、`server/services/wiim-config.js` |
-| UPS | `readUpsLive`, `createUpsState`, `ups-power-quality.js`, `server/integrations/ppb-client.js`, `server/services/ppb-event-sync.js` |
+| UPS | `readUpsLive`, `ups-source-selection.js`, `createUpsState`, `ups-power-quality.js`, `server/integrations/ppb-client.js`, `server/services/ppb-event-sync.js` |
 | AdGuard | `server/integrations/adguard-client.js`、policy／service |
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
 | Web Push | `server/routes/web-push-routes.js`、`server/services/web-push.js` |
@@ -58,6 +58,12 @@
 - AdGuard 遠端 HTTP 必須明確 opt-in；HTTPS 預設驗證，可使用私有 CA。
 - PPB HTTPS 預設驗證；私有 CA 只接受有界的絕對一般檔案，停用驗證必須明確設定 `PPB_TLS_INSECURE=true`。
 - PPB 首次成功同步只建立 source-specific 初始化狀態，不通知歷史事件；失敗不會誤標初始化。
+- UPS 明確 `UPS_SOURCE` 預設 fail-closed；只有 `UPS_ALLOW_FALLBACK=true` 才回退其他來源。`/api/ups/status` 與 `/api/ups/ppb-events` 只讀 snapshot，背景 sampler 才可做 upstream I/O、SQLite 寫入、狀態轉移與通知。
+- UPS 狀態以 `healthy`／`degraded`／`offline`／`unknown` 分層；`degraded`／`offline` 保留 `lastKnown` 數值但將 `actualSource` 設為 `null`，且 `lastKnownSource` 與 `dataIsStale` 明確標示資料不是當前讀取結果。
+- UPS 連線設定變更會遞增 `configGeneration`、標示 `reconfiguring` 並使舊的 in-flight sample 失效；新設定尚未成功取樣前不會把舊來源冒充為目前來源。
+- UPS 連續錯誤只在狀態轉移、fallback 邊界、恢復與 cooldown 摘要時記錄，避免每次輪詢重複刷屏；全來源失敗訊息包含實際嘗試過的來源。
+- LAN Controller／NAS／PPB／WiiM／AdGuard／NAS Monitor request boundary 明確停用 ambient proxy；public Site Manager／通知／Telegram integrations 由 `SMARTHUB_INTERNET_PROXY_MODE` 明確選擇 `disabled`（預設）或 `environment`。
+- `scripts/production-preflight.js` 在實際 container UID 下驗證 `config/.env`、config/data temp fsync+atomic rename、SQLite quick check、trusted proxy／origin／Internet proxy mode、CA file 與 build identity；不輸出 secret。
 - 一般整合失敗不會阻止 readiness；SQLite 或 worker 異常才使 `/health/ready` 回 503。
 - 前端可見 endpoint／欄位變更必須同步 `server-mock.js`。
 

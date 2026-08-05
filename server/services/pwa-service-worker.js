@@ -7,6 +7,7 @@ const PWA_SHELL = Object.freeze([
     '/assets/tailwind.css',
     '/js/bootstrap.js',
     '/js/action-dispatcher.js',
+    '/js/ups-presenter.js',
     '/js/app.js',
     '/js/web-push.js',
     '/vendor/chart.js/4.5.1/chart.umd.js',

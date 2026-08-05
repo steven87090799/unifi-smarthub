@@ -32,16 +32,43 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 git clone <repository-url>
 cd unifi-smarthub
 
-install -d -m 700 config
-install -m 600 .env.example config/.env
+# SmartHub container 預設以 UID/GID 1000:1000 執行；config 與 .env 必須由該 UID 實際可讀寫。
+sudo install -d -o 1000 -g 1000 -m 700 config
+if [ ! -e config/.env ]; then
+  sudo install -o 1000 -g 1000 -m 600 .env.example config/.env
+else
+  # 已存在的 config/.env 不要覆寫，只調整必要 owner/mode。
+  sudo chown 1000:1000 config config/.env
+  sudo chmod 700 config
+  sudo chmod 600 config/.env
+fi
 # 編輯 config/.env，正式環境至少設定 PANEL_PASSWORD
 
 npm ci
-docker compose --env-file config/.env up -d --build
+# 固定順序：先建立映像，再以同一映像做離線 writer/preflight gate，最後只啟動已建立的映像。
+docker compose --env-file config/.env build unifi-smarthub
+docker compose --env-file config/.env --profile nas-monitor build
+# 僅第一次使用全新的 smarthub-data volume 時執行一次；既有資料庫不要覆蓋。
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
+docker compose --env-file config/.env up -d --no-build
 docker compose --env-file config/.env ps
 ```
 
 本機隔離演練可開啟 `http://127.0.0.1:3000`。正式環境不可把 `http://<NAS IP>:3000` 當作對外入口；請以前置 Caddy／Nginx 終止 HTTPS，再反向代理至 SmartHub 的內部 port。
+
+Compose 的 host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內服務仍綁定 `0.0.0.0` 以接受同一 network 的 reverse proxy。若要改成 LAN 發布，必須明確設定 host bind address 並同步套用防火牆／HTTPS 邊界。
+
+若 NAS 使用者不是 UID/GID 1000，請在部署主機以 `chown 1000:1000` 或等效 ACL 讓 container process 讀取 `config/.env`，並能在 `config/` 與 `/app/data` 建立、fsync、atomic rename、刪除暫存檔。不要以 `chmod 777`／`666` 掩蓋權限問題；`production-preflight` 必須在實際 container UID 下通過。
+
+正式入口分兩種架構：
+
+- Host-native Caddy/Nginx：proxy 與 SmartHub 在同一台主機，proxy 導向 `127.0.0.1:3000`，並在 `PANEL_TRUSTED_PROXIES` 填實際 loopback／proxy CIDR；傳遞正確的 `Host` 與 `X-Forwarded-Proto=https`。
+- Dockerized Caddy/Nginx：proxy container 與 `unifi-smarthub` 接在同一個 Docker network，導向 `unifi-smarthub:3000`，不可在 proxy container 內使用 `127.0.0.1:3000`。`PANEL_TRUSTED_PROXIES` 必須填 proxy container 的實際 IP／受控 CIDR，不能填 `true`、`*` 或 hop count。
+
+若 production 啟用 HTTPS enforcement 卻未設定 trusted proxy，SmartHub 會記錄診斷 warning，但不會自動信任所有 forwarded headers；直接 TLS 可繼續使用，TLS termination reverse proxy 則必須補上實際 proxy IP/CIDR。
 
 本機直接執行：
 
@@ -68,7 +95,7 @@ node server-mock.js
 | UGREEN NAS | `NAS_HOST`, `NAS_USER`, `NAS_PASSWORD` |
 | NAS Monitor | `NAS_MONITOR_URL`, `NAS_MONITOR_API_KEY`, `NAS_MONITOR_MODE` |
 | WiiM | `WIIM_IP` |
-| UPS | `UPS_SOURCE` 與對應的 `PPB_*`／`NUT_*`；PPB TLS 見下節 |
+| UPS | `UPS_SOURCE`、`UPS_ALLOW_FALLBACK`、`PPB_*`、`NUT_*`；PPB TLS 見下節 |
 | AdGuard | `ADGUARD_URL`, `ADGUARD_USER`, `ADGUARD_PASSWORD` |
 | Linux SSH | `LINUX_HOST`, `LINUX_SSH_USER`, `LINUX_SSH_PASSWORD` |
 | 面板登入 | `PANEL_PASSWORD`；唯讀帳號另設 `PANEL_READONLY_*` |
@@ -81,6 +108,9 @@ node server-mock.js
 
 - 只部署在可信任內網；遠端存取使用 VPN 或受信任反向代理。
 - `config/.env` 是唯一部署設定來源，權限應為 `0600`；不要在根目錄保留第二份 `.env`。
+- SmartHub container 預設 UID/GID 為 `1000:1000`；啟動前必須以 [production preflight](scripts/production-preflight.js) 驗證 config/data 寫入與 atomic rename。
+- `production-preflight` 不會替空資料 volume 偷建資料庫；第一次使用新的 `smarthub-data` volume 時，先以同一個 image 執行一次 `createHistoryDb` 初始化 schema，既有資料庫不可覆蓋。
+- 正式部署順序固定為 `build` → `production-preflight.js --offline` → `up -d --no-build`；preflight 不得在 build 前執行，也不得以 `up --build` 繞過同一映像驗證。
 - 所有 Compose 指令都使用同一個 `--env-file config/.env`。
 - 正式映像使用不可變的 commit tag 或 registry digest，不使用 `latest`；主服務預設 256 MiB，只有在 soak／backup 證據支持時才調整。
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
@@ -88,6 +118,7 @@ node server-mock.js
 - Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
 - Device SSH 只接受 Controller 已知設備、最多 32 個明確 MAC、Literal IP 與固定唯讀 thermal command；最多兩條並行連線，可用每台設備的 SHA256 Host Key pinning。密碼、MAC 清單與 fingerprint 不由 GET、診斷、log 或安全備份回傳。
 - 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
+- Internet/public Axios integrations 的 `SMARTHUB_INTERNET_PROXY_MODE` 預設為 `disabled`；只有明確設為 `environment` 才使用 `HTTP_PROXY`／`HTTPS_PROXY`／`ALL_PROXY`。LAN integrations 永遠不使用 ambient proxy。
 
 ## Docker UPS
 
@@ -95,6 +126,7 @@ node server-mock.js
 
 ```env
 UPS_SOURCE=ppb
+UPS_ALLOW_FALLBACK=false
 PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...
@@ -149,10 +181,17 @@ Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI /
 
 ```bash
 npm run release:build
+# 將 release:build 輸出的成對不可變 revision tag 寫入 config/.env：
+# SMARTHUB_IMAGE=unifi-smarthub:<12-char-revision>
+# NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
 docker compose --env-file config/.env up -d --no-build --pull never
 ```
 
-`release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision 與映像身分。若使用 registry，仍需另外記錄不可變 digest。
+`release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision、image ID 與映像身分。若使用 registry，仍需成對記錄不可變 digest；部署時保留 release JSON 的 `image_ids` 與 registry digest，不能只記錄可重指向的 tag。
+
+Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.5-r0`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
 
 ## 開發原則
 

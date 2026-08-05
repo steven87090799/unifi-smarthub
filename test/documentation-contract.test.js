@@ -22,6 +22,28 @@ test('production documentation points operators to the immutable paired-image re
     assert.match(checklist, /--profile nas-monitor config --quiet/);
     assert.match(envExample, /SMARTHUB_IMAGE=unifi-smarthub:0123456789ab/);
     assert.match(envExample, /NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:0123456789ab/);
+    assert.match(readme, /SMARTHUB_INTERNET_PROXY_MODE/u);
+    assert.match(readme, /sudo install -d -o 1000 -g 1000 -m 700 config/u);
+    assert.match(readme, /production-preflight/u);
+    const historyDbInitializer = /node -e "const \{ createHistoryDb \} = require\('\.\/db'\); const db = createHistoryDb\(process\.env\.DATA_DIR\); db\.close\(\);"/u;
+    assert.match(readme, historyDbInitializer);
+    assert.match(checklist, historyDbInitializer);
+    assert.match(checklist, /既有資料庫跳過且不可覆蓋/u);
+    const readmeBuild = readme.indexOf('docker compose --env-file config/.env build unifi-smarthub');
+    const readmeInitialize = readme.indexOf('createHistoryDb');
+    const readmePreflight = readme.indexOf('production-preflight.js --offline');
+    const readmeStart = readme.indexOf('docker compose --env-file config/.env up -d --no-build');
+    assert.ok(readmeBuild < readmeInitialize && readmeInitialize < readmePreflight && readmePreflight < readmeStart);
+    const checklistBuild = checklist.indexOf('docker compose --env-file config/.env build unifi-smarthub');
+    const checklistInitialize = checklist.indexOf('node -e "const { createHistoryDb }');
+    const checklistPreflight = checklist.indexOf('production-preflight.js --offline');
+    const checklistStart = checklist.indexOf('docker compose --env-file config/.env up -d --no-build\n');
+    assert.ok(checklistBuild < checklistInitialize && checklistInitialize < checklistPreflight && checklistPreflight < checklistStart);
+    assert.ok(checklist.indexOf('production-preflight.js --offline')
+        < checklist.indexOf('up -d --no-build --pull never'));
+    assert.match(checklist, /Host-native Caddy\/Nginx/u);
+    assert.match(checklist, /Dockerized Caddy\/Nginx/u);
+    assert.match(checklist, /PANEL_TRUSTED_PROXIES/u);
 });
 
 test('operator documentation does not restore superseded deployment authorities', () => {
@@ -81,6 +103,14 @@ test('the operation manual matches the enforced production gates', () => {
     assert.match(manual, /npm audit --audit-level=low/u);
     assert.match(manual, /docker compose --env-file config\/\.env build unifi-smarthub/u);
     assert.match(manual, /--profile nas-monitor build/u);
+    assert.match(manual, /production-preflight/u);
+    assert.match(manual, /fetchHealth/u);
+    assert.match(manual, /configGeneration/u);
+    assert.ok(manual.indexOf('docker compose --env-file config/.env build unifi-smarthub')
+        < manual.indexOf('production-preflight.js --offline'));
+    assert.ok(manual.indexOf('production-preflight.js --offline')
+        < manual.indexOf('docker compose --env-file config/.env up -d --no-build'));
+    assert.match(manual, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.doesNotMatch(manual, /npm audit --audit-level=high/u);
 });
 

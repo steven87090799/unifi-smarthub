@@ -5,23 +5,29 @@
 ## 1. 前置條件
 
 - 預定發布 commit 的 `git status --short` 無輸出。
-- `config/` 權限 `0700`、`config/.env` 權限 `0600`，container UID 1000 可在目錄內建立、fsync、rename。
+- SmartHub container 預設以 UID/GID `1000:1000` 執行；`config/` 權限 `0700`、`config/.env` 權限 `0600`，且該 UID 可在目錄內建立、fsync、rename。
+- Preflight 會要求 `config/.env` 及 SQLite `smarthub.db` 可讀寫；既有 `-wal`／`-shm` 也必須是可讀寫 regular file，並以 `PRAGMA quick_check=ok` 驗證。`--offline` 才會額外執行 `BEGIN IMMEDIATE; ROLLBACK;` writer probe。
+- 新的 `smarthub-data` volume 必須先以同一個已建立 image 執行一次 `createHistoryDb` 初始化 schema；preflight 不會自動略過或建立遺失的資料庫，既有 volume 不可重建覆蓋。
 - 根目錄沒有第二份 `.env`；所有 Compose 指令使用同一個 `--env-file config/.env`。
 - 已設定 `PANEL_PASSWORD`；唯讀密碼不得等於管理員密碼。
 - 容器內 upstream 位址不是 `localhost`／`127.0.0.1`。
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
+- `UPS_SOURCE` 明確指定時預設 fail-closed；只有明確設定 `UPS_ALLOW_FALLBACK=true` 才可回退到其他來源。
+- Compose host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內 `SMARTHUB_BIND_ADDRESS=0.0.0.0` 只服務 container network。
 - PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false`；私有／自簽 CA 使用容器內絕對路徑 `PPB_CA_FILE`，並確認不是 symlink。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。
 - 正式 Web 入口是 Caddy／Nginx 等 HTTPS reverse proxy；`http://<NAS IP>:3000` 只可作為隔離的 local probe，不是 production 使用路徑。
 - `PANEL_REQUIRE_HTTPS=true`、`PANEL_ALLOW_INSECURE_HTTP=false`，並只對實際 reverse proxy 設定 `PANEL_TRUSTED_PROXIES`。
+- `SMARTHUB_INTERNET_PROXY_MODE=disabled`；只有明確選擇 `environment` 才讓 public integrations 使用 ambient `HTTP_PROXY`／`HTTPS_PROXY`／`ALL_PROXY`，LAN integrations 永遠 `proxy:false`。
 - UniFi／NAS HTTPS 預設驗證憑證；私有 CA 使用 `*_CA_FILE`，insecure 只能由明確 opt-in 開啟。
 - 已設定所有啟用 SSH integration 的 host fingerprint；未 pin 的 production SSH 連線不得放行。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
+- `.github/dependabot.yml` 只管理版本更新排程、分組與自動 PR 上限；Dependabot Alerts／security updates 仍由 GitHub repository 的 `Settings → Code security and analysis` 設定管理，不能由此檔案宣稱已啟用。
 
 ## 2. 程式庫檢查
 
-正式 release 執行完整 gate：
+正式 release 執行完整 gate；部署相關命令必須保持 Build → Preflight → Start：
 
 ```bash
 npm ci
@@ -36,6 +42,12 @@ docker compose --env-file config/.env config --quiet
 docker compose --env-file config/.env --profile nas-monitor config --quiet
 docker compose --env-file config/.env build unifi-smarthub
 docker compose --env-file config/.env --profile nas-monitor build
+# 僅第一次使用全新的 smarthub-data volume 時執行一次；既有資料庫跳過且不可覆蓋。
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
+docker compose --env-file config/.env up -d --no-build
 ```
 
 若只需快速定位安全／Docker／restart／release 契約：
@@ -60,7 +72,11 @@ Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Re
 
 ### HTTPS reverse proxy 範例
 
-正式對外只發布 proxy 的 HTTPS port，SmartHub 直接綁定的 `3000` 保持在 loopback 或受限的 container network。Caddy：
+正式對外只發布 proxy 的 HTTPS port，SmartHub 直接綁定的 `3000` 保持在 loopback 或受限的 container network。兩種拓撲必須分開設定 trusted proxy。
+
+#### Host-native Caddy/Nginx
+
+Host 上的 proxy 導向 SmartHub 的 host port。Caddy：
 
 ```caddyfile
 smarthub.example.internal {
@@ -68,7 +84,7 @@ smarthub.example.internal {
 }
 ```
 
-Nginx 至少要傳遞可信 protocol header，並讓 SmartHub 只信任 proxy 的來源位址：
+若 proxy 與 SmartHub 都在 host，`PANEL_TRUSTED_PROXIES` 可使用實際 loopback（例如 `loopback`）；Nginx 至少要傳遞可信 protocol header：
 
 ```nginx
 location / {
@@ -79,7 +95,19 @@ location / {
 }
 ```
 
-只有當 proxy 與 SmartHub 位於同一台主機或明確 CIDR allowlist 時，才設定 `PANEL_TRUSTED_PROXIES`。不可信來源的 `X-Forwarded-Proto: https` 不得繞過 HTTPS policy。
+#### Dockerized Caddy/Nginx
+
+Proxy container 與 `unifi-smarthub` 必須接在同一個 Docker network，導向 service DNS，而不是 proxy container 自己的 loopback：
+
+```caddyfile
+smarthub.example.internal {
+    reverse_proxy unifi-smarthub:3000
+}
+```
+
+在這種拓撲，`PANEL_TRUSTED_PROXIES` 必須填 proxy container 的實際 IP／受控 CIDR（例如由固定 network/容器部署檢查得到的 `172.30.0.2/32`），不可填 `127.0.0.1` 來代表另一個 container，也不可使用 `true`、`*` 或 hop count。Caddy／Nginx 必須傳遞正確的 `Host` 與 `X-Forwarded-Proto=https`。
+
+不可信來源的 `X-Forwarded-Proto: https` 不得繞過 HTTPS policy。production 啟用 HTTPS enforcement 但缺少 trusted proxy 時，SmartHub 只記錄診斷 warning，不會自動 trust all；若是 TLS termination，應先修正 proxy IP/CIDR 再放行。
 
 ### Docker socket accepted risk
 
@@ -103,6 +131,16 @@ NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
 本機 tag／image ID 不等於 registry digest。若使用 registry，必須成對 push、記錄兩個 immutable digest，並以 digest 或不可變 tag 部署。
 
 ## 4. 隔離演練與啟動
+
+Preflight 必須針對已建立的同一組 release image 執行；通過後才可啟動：
+
+```bash
+# 僅全新的 smarthub-data volume 執行一次；既有資料庫跳過且不可覆蓋。
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
+docker compose --env-file config/.env run --rm --no-deps \
+  unifi-smarthub node scripts/production-preflight.js --offline
+```
 
 ```bash
 docker compose --env-file config/.env -p smarthub-prod up -d --no-build --pull never

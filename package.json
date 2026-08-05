@@ -10,6 +10,7 @@
     "build:css": "node scripts/build-frontend-css.js",
     "check:css": "node scripts/build-frontend-css.js --check",
     "check:js": "node scripts/check-js-syntax.js",
+    "preflight:production": "node scripts/production-preflight.js",
     "start": "node server.js",
     "test": "node --test --test-concurrency=4 test/*.test.js",
     "test:smoke": "node scripts/runtime-smoke.js",
@@ -31,5 +32,8 @@
   },
   "devDependencies": {
     "tailwindcss": "3.4.19"
+  },
+  "overrides": {
+    "postcss": "8.5.23"
   }
 }

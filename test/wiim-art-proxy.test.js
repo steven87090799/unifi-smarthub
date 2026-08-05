@@ -91,9 +91,11 @@ test('pinned HTTP agent completes a real local socket request at the validated a
 
 test('validates redirects, MIME, content length, actual bytes, and explicit HTTP opt-in', async () => {
     const requests = [];
+    let ambientProxyRequests = 0;
     const axiosInstance = {
         get: async (url, options) => {
             requests.push({ url, options });
+            if (options.proxy !== false) ambientProxyRequests += 1;
             if (requests.length === 1) return { status: 302, headers: { location: 'https://cdn.example.test/final.png' }, data: image() };
             return { status: 200, headers: { 'content-type': 'image/png', 'content-length': '5' }, data: image('hello') };
         }
@@ -106,6 +108,10 @@ test('validates redirects, MIME, content length, actual bytes, and explicit HTTP
     assert.equal(result.buffer.toString(), 'hello');
     assert.equal(requests.length, 2);
     assert.equal(requests[0].options.maxRedirects, 0);
+    assert.equal(requests[0].options.proxy, false, 'public artwork must bypass ambient proxies');
+    assert.equal(requests[1].options.proxy, false, 'redirected artwork must bypass ambient proxies');
+    assert.equal(ambientProxyRequests, 0);
+    assert.equal(requests.length, 2, 'validated public artwork reached the target twice through its redirect chain');
     assert.equal(requests[0].options.httpsAgent.options.rejectUnauthorized, true);
     await assert.rejects(fetchArtwork('http://cdn.example.test/art.png', { axiosInstance, lookup: async () => [{ address: '8.8.8.8', family: 4 }] }), /HTTP/u);
     await assert.rejects(fetchArtwork('http://cdn.example.test/art.png', {
@@ -132,6 +138,40 @@ test('validates redirects, MIME, content length, actual bytes, and explicit HTTP
         lookup: async () => [{ address: '192.168.0.170', family: 4 }]
     });
     assert.equal(localRedirect.buffer.toString(), 'local');
+});
+
+test('redirects are independently re-resolved and private redirect targets are rejected', async () => {
+    const requests = [];
+    await assert.rejects(fetchArtwork('https://cdn.example.test/start.png', {
+        axiosInstance: { get: async (url, options) => {
+            requests.push({ url, options });
+            return { status: 302, headers: { location: 'https://192.168.0.170/private.png' }, data: image() };
+        } },
+        lookup: async host => [{ address: host === 'cdn.example.test' ? '8.8.8.8' : '192.168.0.170', family: 4 }]
+    }), /blocked/u);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].options.proxy, false);
+});
+
+test('artwork credentials never enter validation errors', async () => {
+    const secret = 'artwork-url-secret';
+    await assert.rejects(
+        fetchArtwork(`https://artist:${secret}@cdn.example.test/art.png`, { axiosInstance: { get: async () => ({}) } }),
+        error => /credentials are not allowed/u.test(error.message) && !error.message.includes(secret)
+    );
+});
+
+test('configured private artwork requests retain the LAN no-proxy boundary', async () => {
+    let requestOptions;
+    await fetchArtwork('https://192.168.0.170/art.png', {
+        axiosInstance: { get: async (_url, options) => {
+            requestOptions = options;
+            return { status: 200, headers: { 'content-type': 'image/png' }, data: image('local') };
+        } },
+        allowedPrivateAddresses: ['192.168.0.170'],
+        lookup: async () => [{ address: '192.168.0.170', family: 4 }]
+    });
+    assert.equal(requestOptions.proxy, false);
 });
 
 test('rejects oversized content and keeps a deterministic bounded LRU cache', async () => {

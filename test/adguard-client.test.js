@@ -110,7 +110,7 @@ test('HTTPS verifies by default, proxying is disabled, and only exact false opts
 test('custom certificate authority loading is bounded and never reads unsafe paths', () => {
     const certificate = Buffer.from('test-ca');
     const fileSystem = {
-        statSync(file) {
+        lstatSync(file) {
             assert.equal(file, '/safe/adguard-ca.pem');
             return { isFile: () => true, size: certificate.length };
         },
@@ -139,7 +139,7 @@ test('custom certificate authority loading is bounded and never reads unsafe pat
             ADGUARD_PASSWORD: PASSWORD
         },
         axios: fakeAxios().axios,
-        fs: { statSync() { throw new Error('missing'); } }
+                fs: { lstatSync() { throw new Error('missing'); } }
     }), error => error instanceof AdGuardConfigurationError
         && error.message === 'ADGUARD_CA_FILE cannot be read'
         && !error.message.includes(PASSWORD));

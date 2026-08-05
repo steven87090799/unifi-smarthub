@@ -1,9 +1,3 @@
-// 清除代理伺服器環境變數以防 Axios 走代理導致無法連線本機設備
-delete process.env.HTTP_PROXY;
-delete process.env.HTTPS_PROXY;
-delete process.env.http_proxy;
-delete process.env.https_proxy;
-
 const express = require('express');
 const axios = require('axios');
 const webPushLibrary = require('web-push');
@@ -51,7 +45,11 @@ const { registerHealthRoutes } = require('./observability/health-routes');
 const { forwardNasLogs, forwardNasAlerts } = require('./nas-log-forwarder');
 const { createActivityLease } = require('./activity-lease');
 const { TelegramCommandBot } = require('./telegram-command-bot');
-const { createPanelSecurity, parseTrustedProxies } = require('./server/middleware/panel-security');
+const {
+    createPanelSecurity,
+    describeTrustedProxyConfiguration,
+    parseTrustedProxies
+} = require('./server/middleware/panel-security');
 const { frontendStaticOptions, registerFrontendAssetRoutes } = require('./server/routes/frontend-asset-routes');
 const { registerPanelAuthRoutes } = require('./server/routes/panel-auth-routes');
 const { createPublicSystemHealthService } = require('./server/services/public-system-health');
@@ -60,7 +58,11 @@ const { createSiteManagerClient } = require('./server/integrations/site-manager-
 const { createUniFiTrafficListClient } = require('./server/integrations/unifi-traffic-list-client');
 const { createAdGuardConnection } = require('./server/integrations/adguard-client');
 const { createNasMonitorConnection } = require('./server/integrations/nas-monitor-client');
-const { createPpbClient, normalizeConfig: normalizePpbClientConfig } = require('./server/integrations/ppb-client');
+const {
+    createPpbClient,
+    isPpbRequestSupersededError,
+    normalizeConfig: normalizePpbClientConfig
+} = require('./server/integrations/ppb-client');
 const {
     PartialNotificationDeliveryError,
     createNotificationDispatcher,
@@ -79,6 +81,12 @@ const {
 const { deriveDueReportSlot } = require('./server/jobs/report-schedule');
 const { createReportRunner } = require('./server/jobs/report-runner');
 const { createUpsState, FETCH_HEALTH, TRANSITION_TYPES } = require('./server/jobs/ups-state');
+const {
+    formatUpsFailureMessage,
+    resolveUpsSourceConfig,
+    selectUpsSource
+} = require('./server/services/ups-source-selection');
+const { createUpsObservability } = require('./server/services/ups-observability');
 const {
     DEFAULT_SAG_THRESHOLD_V,
     createUpsSagDetector,
@@ -144,6 +152,15 @@ const {
 const { normalizeWiimIp } = require('./server/services/wiim-config');
 const { createArtworkCache, createArtworkFetcher, fetchArtwork, isBlockedAddress } = require('./server/services/wiim-art-proxy');
 const { createWiimClient, parseWiimTemperatures } = require('./server/services/wiim-client');
+const {
+    createInternetAxiosClient,
+    createInternetAxiosConfig,
+    createLanAxiosConfig,
+    describeInternetProxyPolicy,
+    resolveInternetProxyMode
+} = require('./server/integrations/http-egress-policy');
+
+const INTERNET_PROXY_MODE = resolveInternetProxyMode(process.env.SMARTHUB_INTERNET_PROXY_MODE);
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -278,7 +295,8 @@ logger.info({
         node: process.version,
         hostname: os.hostname(),
         log_level: logger.level,
-        log_format: logger.format
+        log_format: logger.format,
+        internet_proxy_mode: INTERNET_PROXY_MODE
     }
 });
 
@@ -286,6 +304,31 @@ const app = express();
 // 前端與後端同源 (由本伺服器託管)，不需要 CORS；移除全開 cors() 以避免跨站請求濫用
 const trustedProxies = parseTrustedProxies(process.env.PANEL_TRUSTED_PROXIES);
 if (trustedProxies) app.set('trust proxy', trustedProxies);
+const panelRequireHttps = strictTlsBoolean(
+    process.env.PANEL_REQUIRE_HTTPS, 'PANEL_REQUIRE_HTTPS', process.env.NODE_ENV === 'production'
+);
+const panelAllowInsecureHttp = strictTlsBoolean(
+    process.env.PANEL_ALLOW_INSECURE_HTTP, 'PANEL_ALLOW_INSECURE_HTTP', false
+);
+const trustedProxyDiagnostic = describeTrustedProxyConfiguration({
+    nodeEnv: process.env.NODE_ENV,
+    requireHttps: panelRequireHttps,
+    allowInsecureHttp: panelAllowInsecureHttp,
+    trustedProxies
+});
+if (trustedProxyDiagnostic) logger.warning({
+    module: 'api.security', function: 'trustedProxyStartupDiagnostic', code: trustedProxyDiagnostic.code,
+    message: trustedProxyDiagnostic.message,
+    fields: { production: true, proxy_trust_configured: false }
+});
+const internetProxyPolicy = describeInternetProxyPolicy({ proxyMode: INTERNET_PROXY_MODE });
+if (INTERNET_PROXY_MODE === 'environment' && internetProxyPolicy.ambientProxyConfigured) {
+    logger.info({
+        module: 'integration.egress', function: 'internetProxyStartupDiagnostic', code: ERROR_CODES.SYS_CONFIG_INVALID,
+        message: 'Internet proxy environment is configured for public integrations',
+        fields: { mode: INTERNET_PROXY_MODE, proxy_configured: true }
+    });
+}
 app.use(logger.requestMiddleware());
 const panelSecurity = createPanelSecurity({
     adminPassword: process.env.PANEL_PASSWORD,
@@ -307,8 +350,8 @@ const panelSecurity = createPanelSecurity({
     authorizationCode: ERROR_CODES.API_AUTHORIZATION_FAILED,
     csrfCode: ERROR_CODES.API_CSRF_FAILED,
     originCode: ERROR_CODES.API_ORIGIN_FAILED,
-    requireHttps: strictTlsBoolean(process.env.PANEL_REQUIRE_HTTPS, 'PANEL_REQUIRE_HTTPS', process.env.NODE_ENV === 'production'),
-    allowInsecureHttp: strictTlsBoolean(process.env.PANEL_ALLOW_INSECURE_HTTP, 'PANEL_ALLOW_INSECURE_HTTP', false),
+    requireHttps: panelRequireHttps,
+    allowInsecureHttp: panelAllowInsecureHttp,
     onEvent: ({ type, ...fields }) => logger.warning({
         module: 'api.security', function: type,
         code: type.startsWith('auth_') ? ERROR_CODES.API_AUTH_FAILED
@@ -340,6 +383,10 @@ app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()))
 
 // 建立忽略內網自簽 HTTPS 憑證錯誤的 Axios 實例
 // 以 let + 工廠函式宣告，讓「設定頁」修改連線資訊後可熱重建、免重啟 (見 /api/connections)
+// Internet integrations use a separate policy-bound client. LAN clients below
+// continue to set proxy:false at each request boundary.
+const internetAxiosClient = createInternetAxiosClient(axios, { proxyMode: INTERNET_PROXY_MODE });
+const wiimArtAxiosClient = axios.create({ proxy: false });
 let unifiCsrfToken = '';
 let unifiAgent = null;
 function buildUnifiClient() {
@@ -360,12 +407,12 @@ function buildUnifiClient() {
     unifiAgent = createHttpsAgent(tls);
     if (tls.warning) sysLog('TLS', `UniFi Controller transport mode: ${tls.mode} (explicit insecure opt-in)`, true);
     else sysLog('TLS', `UniFi Controller transport mode: ${tls.mode}`);
-    const c = axios.create({
+    const c = axios.create(createLanAxiosConfig({
         baseURL: tls.url,
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         ...(unifiAgent ? { httpsAgent: unifiAgent } : {}),
         timeout: 10000
-    });
+    }));
     c.interceptors.request.use(cfg => {
         cfg.headers = cfg.headers || {};
         if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken;
@@ -458,14 +505,14 @@ function refreshLocalSession() {
 
 // 建立 UniFi 官方雲端 Site Manager API 客戶端
 function buildUnifiCloudClient() {
-    return axios.create({
+    return axios.create(createInternetAxiosConfig({
         baseURL: 'https://api.ui.com/v1',
         headers: {
             'Accept': 'application/json',
             'X-API-KEY': process.env.UNIFI_API_KEY || ''
         },
         timeout: 8000
-    });
+    }, { proxyMode: INTERNET_PROXY_MODE }));
 }
 let unifiCloudClient = buildUnifiCloudClient();
 // transport 使用動態 closure，設定頁熱重建 axios instance 後不會保留舊 API key。
@@ -992,10 +1039,10 @@ const scheduledBackupRetentionCount = Math.min(Math.max(Number(process.env.SMART
 const threatTrafficListClient = createUniFiTrafficListClient({
     transport: ({ tls, ...request }) => {
         const agent = createHttpsAgent(tls);
-        return axios({
+        return axios(createLanAxiosConfig({
             ...request,
             ...(agent ? { httpsAgent: agent } : {})
-        }).finally(() => destroyAgent(agent));
+        })).finally(() => destroyAgent(agent));
     },
     getEnvironment: () => process.env
 });
@@ -1774,7 +1821,7 @@ let notifLog = [];
 function pushNotifLog(e) { notifLog.unshift(e); notifLog = notifLog.slice(0, 50); }
 
 // 實際送出與分段/partial 語意集中在可注入、可故障測試的 integration module。
-const dispatchNotification = createNotificationDispatcher({ httpClient: axios });
+const dispatchNotification = createNotificationDispatcher({ httpClient: internetAxiosClient });
 
 // Telegram Chat ID 偵測：讀 bot 的 getUpdates，列出最近跟它說過話的聊天室
 app.get('/api/notifications/telegram-chatid', async (req, res) => {
@@ -1784,7 +1831,7 @@ app.get('/api/notifications/telegram-chatid', async (req, res) => {
         module: 'api.notifications', function: 'detectTelegramChatId'
     });
     try {
-        const r = await axios.get(`https://api.telegram.org/bot${s.botToken}/getUpdates`, { timeout: 8000 });
+        const r = await internetAxiosClient.get(`https://api.telegram.org/bot${s.botToken}/getUpdates`, { timeout: 8000 });
         const chats = {};
         (r.data.result || []).forEach(u => {
             const c = (u.message || u.channel_post || u.my_chat_member || {}).chat;
@@ -2815,12 +2862,12 @@ function buildNasClient() {
     return {
         base: tls.url,
         tls,
-        client: base ? axios.create({
+        client: base ? axios.create(createLanAxiosConfig({
             baseURL: tls.url,
             headers: { 'ug-agent': 'PC/WEB', 'Accept': 'application/json' },
             ...(nasAgent ? { httpsAgent: nasAgent } : {}),
             timeout: 10000
-        }) : null
+        })) : null
     };
 }
 let { base: NAS_BASE, client: nasClient, tls: nasTls } = buildNasClient();
@@ -3886,8 +3933,9 @@ const CONN_FIELDS = [
     { key: 'NAS_MONITOR_URL', restartRequired: true },
     { key: 'NAS_MONITOR_API_KEY', secret: true, restartRequired: true },
     { key: 'NAS_MONITOR_MODE', restartRequired: true },
+    { key: 'SMARTHUB_INTERNET_PROXY_MODE', restartRequired: true },
     { key: 'WIIM_IP', clearable: true },
-    { key: 'UPS_SOURCE' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
+    { key: 'UPS_SOURCE' }, { key: 'UPS_ALLOW_FALLBACK' }, { key: 'NUT_HOST' }, { key: 'NUT_UPS_NAME' }, { key: 'PWRSTAT_PATH' },
     { key: 'PPB_HOST' }, { key: 'PPB_PORT' }, { key: 'PPB_USER' }, { key: 'PPB_PASSWORD', secret: true },
     { key: 'PPB_TLS_VERIFY' }, { key: 'PPB_TLS_INSECURE' }, { key: 'PPB_CA_FILE', clearable: true },
     { key: 'ADGUARD_URL' }, { key: 'ADGUARD_HOST' }, { key: 'ADGUARD_PORT' },
@@ -4020,6 +4068,7 @@ app.post('/api/connections', (req, res) => {
     try {
         const desired = parseDesiredEnvFile(ENV_FILE);
         const effective = { ...process.env, ...desired, ...updates };
+        resolveInternetProxyMode(effective.SMARTHUB_INTERNET_PROXY_MODE);
         if (effective.UNIFI_CONTROLLER_URL) resolveTlsPolicy({
             url: effective.UNIFI_CONTROLLER_URL,
             verify: effective.UNIFI_CONTROLLER_TLS_VERIFY,
@@ -4091,6 +4140,16 @@ app.post('/api/connections', (req, res) => {
     }
     reconcilePendingRestartFields(desiredAfterWrite);
     const updatedKeys = Object.keys(updates);
+    const upsConfigurationUpdated = updatedKeys.some(key => UPS_CONFIG_FIELDS.has(key));
+    if (upsConfigurationUpdated) {
+        upsConfigGeneration += 1;
+        upsFetchState.reconfigure(upsConfigGeneration);
+        // Keep the previous last-good payload in the state machine, but make
+        // the source selection visibly stale until a sample from this exact
+        // generation succeeds.
+        upsLastLive = upsFetchState.snapshot().lastGood;
+        requestPromptSampling(['ups']);
+    }
     const telemetryUpdated = updatedKeys.some(key => key.startsWith('UNIFI_DEVICE_SSH_'));
     if (telemetryUpdated) {
         unifiDeviceThermalCollector.reset();
@@ -4683,7 +4742,7 @@ const telegramCommands = {
         return { confirmation: `即將把 WiiM 音量設為 ${volume}%${volume >= 80 ? '（高音量）' : ''}。`, execute: async () => { const result = await wiimGet(`setPlayerCmd:vol:${volume}`, { allowStale: false }); if (result.source !== 'live') throw new Error('WiiM 無回應'); return `WiiM 音量已設為 ${volume}%。`; } };
     } }
 };
-const telegramCommandBot = new TelegramCommandBot({ axios, getSettings: loadNotifSettings, commands: telegramCommands, logger, formatError: publicError });
+const telegramCommandBot = new TelegramCommandBot({ axios: internetAxiosClient, getSettings: loadNotifSettings, commands: telegramCommands, logger, formatError: publicError });
 
 /* ===================== PWA (manifest + service worker) ===================== */
 const PWA_ICON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="36" fill="#0b1220"/><g fill="none" stroke="#3b82f6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"><path d="M96 40L44 66l52 26 52-26-52-26z"/><path d="M44 126l52 26 52-26M44 96l52 26 52-26"/></g></svg>');
@@ -4713,11 +4772,11 @@ const wiimClient = createWiimClient({
     request: async ({ protocol, host, command, insecureTls }) => {
         const agent = protocol === 'https:' ? new https.Agent({ rejectUnauthorized: !insecureTls }) : null;
         try {
-            const res = await axios.get(`${protocol}//${host}/httpapi.asp?command=${encodeURIComponent(command)}`, {
+            const res = await axios.get(`${protocol}//${host}/httpapi.asp?command=${encodeURIComponent(command)}`, createLanAxiosConfig({
                 headers: { 'User-Agent': 'wiim-temp/2.0' },
                 ...(agent ? { httpsAgent: agent } : {}),
                 timeout: 3000
-            });
+            }));
             return res.data;
         } finally {
             destroyAgent(agent);
@@ -4846,7 +4905,10 @@ registerWiimCommandRoutes(app, {
 // 後端預設驗證 HTTPS；自簽／HTTP 只在明確且只對設定 WiiM literal 的 opt-in 下允許。
 const wiimArtFetcher = createArtworkFetcher({
     cache: createArtworkCache(),
-    fetch: (url, options) => fetchArtwork(url, { axiosInstance: axios, ...options }),
+    // Artwork is validated and pinned by wiim-art-proxy. Keep its transport
+    // independent from the Internet integration client so ambient proxy
+    // settings can never alter a public/private redirect decision.
+    fetch: (url, options) => fetchArtwork(url, { axiosInstance: wiimArtAxiosClient, ...options }),
     maxConcurrent: 4,
     maxQueue: 16,
     deadlineMs: 7000
@@ -4896,20 +4958,38 @@ app.get('/api/wiim/csv', (req, res) => {
     res.send(csv);
 });
 
-/* ===================== CyberPower UPS 電源監控 (NUT 優先，多來源回退) ===================== */
-// 架構（詳見 docs/integrations/cyberpower-ups-api.md）：UPS_SOURCE=auto|nut|pwrstat|pmset|ppb
-//   1) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 建議方案 (brew install nut)
-//   2) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
-//   3) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
+/* ===================== CyberPower UPS 電源監控 (PPB 優先，多來源回退) ===================== */
+// 架構（詳見 docs/integrations/cyberpower-ups-api.md）：UPS_SOURCE=auto|ppb|nut|pwrstat|pmset
+//   1) PPB:     PowerPanel Business REST             ← Docker 已驗證路徑
+//   2) NUT:     upsc <NUT_UPS_NAME>@<NUT_HOST>       ← 容器可達的 NUT server
+//   3) pwrstat: /bin/pwrstat -status                  ← 官方 PowerPanel CLI
+//   4) pmset:   pmset -g ps                           ← macOS 原生 (僅容量/充電狀態，無電壓)
 // 電壓歷史與斷電事件持久化於 SQLite (斷電紀錄不可因重啟遺失)。
 // 呼叫時讀取 env，設定頁修改後即時生效
 const UPS_SOURCE = () => process.env.UPS_SOURCE || 'auto';
+const UPS_ALLOW_FALLBACK = () => process.env.UPS_ALLOW_FALLBACK || 'false';
 const NUT_HOST = () => process.env.NUT_HOST || 'localhost';
 const NUT_UPS_NAME = () => process.env.NUT_UPS_NAME || 'cyberpower';
 const PWRSTAT_PATH = () => process.env.PWRSTAT_PATH || 'pwrstat';
-const upsFetchState = createUpsState(); // 預設連續 3 次全來源失敗才確認 offline
+const UPS_CONFIG_FIELDS = Object.freeze(new Set([
+    'UPS_SOURCE', 'UPS_ALLOW_FALLBACK', 'PPB_HOST', 'PPB_PORT', 'PPB_USER', 'PPB_PASSWORD',
+    'PPB_TLS_VERIFY', 'PPB_TLS_INSECURE', 'PPB_CA_FILE', 'NUT_HOST', 'NUT_UPS_NAME', 'PWRSTAT_PATH'
+]));
+let upsConfigGeneration = 1;
+const upsFetchState = createUpsState({ configGeneration: upsConfigGeneration }); // 預設連續 3 次全來源失敗才確認 offline
+const upsObservability = createUpsObservability({ cooldownMs: RECOVERABLE_LOG_COOLDOWN_MS });
 let upsPollInFlight = null;
 let upsLastLive = null;     // 最近一次成功讀取；失敗時保留，避免瞬斷抹除最後有效資料
+let upsLastSelection = {
+    configGeneration: 1,
+    configuredSource: 'auto',
+    actualSource: null,
+    fallbackAllowed: true,
+    fallbackUsed: false,
+    fallbackReason: null,
+    failureMessage: null,
+    failures: []
+};
 // 重啟接續：若最新事件尚未結束 (重啟前正在斷電)，視為仍在電池供電，
 // 下次取樣時若市電已恢復會正常補上結束時間，不會再開一筆重複事件
 let upsWasOnBattery = !!historyDb.getOpenUpsEvent();
@@ -4921,7 +5001,7 @@ function execProgram(file, args, timeoutMs = 5000) {
 // parseFloat(x) || null 會把合法的 0 (電池 0%、負載 0%) 誤判為 null，改用 finite 檢查
 function numOrNull(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : null; }
 
-// --- 來源 1: NUT (upsc key: value 格式) ---
+// --- 來源 2: NUT (upsc key: value 格式) ---
 async function readNut() {
     const out = await execProgram('upsc', [`${NUT_UPS_NAME()}@${NUT_HOST()}`]);
     if (!out || !out.includes(':')) return null;
@@ -4941,7 +5021,7 @@ async function readNut() {
     };
 }
 
-// --- 來源 2: pwrstat (CyberPower 官方 CLI，"Key.... Value" 格式) ---
+// --- 來源 3: pwrstat (CyberPower 官方 CLI，"Key.... Value" 格式) ---
 async function readPwrstat() {
     const out = await execProgram(PWRSTAT_PATH(), ['-status']);
     if (!out || !out.includes('Utility Voltage')) return null;
@@ -4959,7 +5039,7 @@ async function readPwrstat() {
     };
 }
 
-// --- 來源 4: CyberPower PowerPanel Business REST API (無 pwrstat CLI 時用這個) ---
+// --- 來源 1: CyberPower PowerPanel Business REST API (無 pwrstat CLI 時用這個) ---
 // PPB 主機/埠可用環境變數指定：部署到 Docker/NAS 後 127.0.0.1 是容器自己，
 // 必須以 PPB_HOST 指向實際跑 PowerPanel Business 的機器 IP
 const PPB_HOST = () => process.env.PPB_HOST || '127.0.0.1';
@@ -4992,7 +5072,8 @@ async function readPpb() {
             runtimeSec: d.battery?.remainingRunTimeInSecs ?? null,
             loadPct: numV(d.output?.loads?.[0])
         };
-    } catch {
+    } catch (error) {
+        if (isPpbRequestSupersededError(error)) throw error;
         // PPB 服務重啟後 HTTPS 埠可能改變，清掉 session 讓下次重新探索。
         ppbClient.reset();
         return null;
@@ -5033,10 +5114,10 @@ async function syncPpbEventsIfDue(maxAgeMs) {
 
 app.get('/api/ups/ppb-events', async (req, res) => {
     try {
-        const result = ppbConfigured()
-            ? await syncPpbEventsIfDue(ppbEventSyncMs())
-            : { events: historyDb.listUpsPowerEvents(200), cached: true };
-        const events = result.events.map(event => ({
+        // GET is a read-only snapshot. The backend sampler owns PPB network I/O,
+        // SQLite writes, and notification transitions.
+        const sync = ppbEventSync.snapshot();
+        const events = historyDb.listUpsPowerEvents(200).map(event => ({
             id: event.externalId,
             ts: event.eventTs ? new Date(event.eventTs).toISOString() : new Date(event.observedTs).toISOString(),
             desc: event.description,
@@ -5049,15 +5130,16 @@ app.get('/api/ups/ppb-events', async (req, res) => {
             events,
             source: ppbConfigured() ? 'ppb' : 'local',
             ppbConfigured: ppbConfigured(),
-            cached: result.cached,
-            syncedAt: ppbEventSync.snapshot().lastSuccessAt || null
+            cached: true,
+            syncInFlight: sync.inFlight,
+            syncedAt: sync.lastSuccessAt || null
         });
     } catch (error) {
         apiError(res, error, { code: ERROR_CODES.EXT_UPS_FAILED, module: 'api.ups', function: 'getPpbEvents', logMessage: 'Failed to fetch PowerPanel events' });
     }
 });
 
-// --- 來源 3: pmset (macOS 原生，資訊有限) ---
+// --- 來源 4: pmset (macOS 原生，資訊有限) ---
 async function readPmset() {
     const out = await execProgram('pmset', ['-g', 'ps']);
     // UPS 會以電源裝置行出現，例如「 -CP1000AVRLCDa (id=xxx) 100%; AC attached; ...」
@@ -5079,25 +5161,56 @@ async function readPmset() {
 }
 
 let upsLastReason = '';
-async function readUpsLive() {
-    // 指定來源優先嘗試；即使指定的來源失敗，仍回退到其他來源 (避免選錯來源就整個抓不到)
-    const chosen = UPS_SOURCE();
-    const order = chosen === 'auto' ? ['ppb', 'nut', 'pwrstat', 'pmset'] : [chosen, ...['ppb', 'nut', 'pwrstat', 'pmset'].filter(s => s !== chosen)];
-    const tried = [];
-    for (const src of order) {
-        const fn = { nut: readNut, pwrstat: readPwrstat, pmset: readPmset, ppb: readPpb }[src];
-        if (!fn) continue;
-        const r = await fn();
-        if (r) {
-            if (src !== chosen && chosen !== 'auto') sysLog('UPS', `指定來源 ${chosen} 無法使用，已自動改用 ${src}`, true);
-            sysLog('UPS', `讀取成功 via ${src}: ${r.status} 輸入${r.inputV}V 電池${r.battery}%`);
-            upsLastReason = ''; return { ...r, actualSource: src };
-        }
-        tried.push(src);
+
+function logUpsObservabilityEvents(events) {
+    for (const event of events) {
+        const method = event.level === 'error' ? 'error' : event.level === 'info' ? 'info' : 'warning';
+        logger[method]({
+            module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED,
+            message: event.message,
+            fields: event.fields
+        });
     }
-    upsLastReason = `所有來源皆無法讀取 (已嘗試: ${tried.join(', ')})。pwrstat 需安裝 CyberPower PowerPanel；NUT 需安裝並設定 upsc；pmset 為 macOS 內建`;
-    sysLog('UPS', upsLastReason, true);
-    return null;
+}
+
+async function readUpsLive() {
+    const generation = upsConfigGeneration;
+    const config = resolveUpsSourceConfig({ source: UPS_SOURCE(), allowFallback: UPS_ALLOW_FALLBACK() });
+    const selection = await selectUpsSource({
+        configuredSource: config.configuredSource,
+        allowFallback: config.fallbackAllowed,
+        readers: { nut: readNut, pwrstat: readPwrstat, pmset: readPmset, ppb: readPpb }
+    });
+    const selectionSnapshot = {
+        configuredSource: selection.configuredSource,
+        configGeneration: generation,
+        actualSource: selection.actualSource,
+        fallbackAllowed: selection.fallbackAllowed,
+        fallbackUsed: selection.fallbackUsed,
+        fallbackReason: selection.fallbackReason,
+        failureMessage: selection.failureMessage || null,
+        failures: selection.failures || []
+    };
+
+    if (selection.data) {
+        return {
+            configGeneration: generation,
+            data: { ...selection.data, configGeneration: generation },
+            selection: selectionSnapshot,
+            failureMessage: null
+        };
+    }
+
+    return {
+        configGeneration: generation,
+        data: null,
+        selection: selectionSnapshot,
+        failureMessage: selection.failureMessage || formatUpsFailureMessage({
+            configuredSource: selection.configuredSource,
+            fallbackAllowed: selection.fallbackAllowed,
+            failures: selection.failures
+        })
+    };
 }
 
 const UPS_OFFLINE_ISSUE_ID = 'ups-fetch-offline';
@@ -5105,7 +5218,7 @@ const UPS_OFFLINE_ISSUE_ID = 'ups-fetch-offline';
 function observeUpsFetchHealth(outcome) {
     const { snapshot } = outcome;
     if (snapshot.fetchHealth === FETCH_HEALTH.OFFLINE) {
-        const tracked = issueTracker.report({
+        issueTracker.report({
             id: UPS_OFFLINE_ISSUE_ID,
             severity: 'warning',
             code: ERROR_CODES.EXT_UPS_FAILED,
@@ -5117,27 +5230,19 @@ function observeUpsFetchHealth(outcome) {
                 stale_age_ms: snapshot.staleAgeMs
             }
         });
-        if (tracked.shouldLog) logger.warning({
-            module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED,
-            message: 'UPS monitoring sources are confirmed offline',
-            fields: {
-                consecutive_failures: snapshot.consecutiveFailures,
-                failure_threshold: snapshot.failureThreshold,
-                stale_age_ms: snapshot.staleAgeMs,
-                occurrences: tracked.issue.occurrences
-            }
-        });
-        return;
     }
 
     if (snapshot.fetchHealth === FETCH_HEALTH.HEALTHY) {
         const resolved = issueTracker.resolve(UPS_OFFLINE_ISSUE_ID);
-        if (resolved) logger.info({
-            module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED,
-            message: 'UPS monitoring source recovered',
-            fields: { duration_seconds: resolved.duration_seconds, source: snapshot.lastGood?.actualSource || null }
-        });
+        void resolved;
     }
+    logUpsObservabilityEvents(upsObservability.observe({
+        ok: snapshot.fetchHealth === FETCH_HEALTH.HEALTHY,
+        fetchHealth: snapshot.fetchHealth,
+        failureMessage: upsLastReason || snapshot.failureReason || 'UPS monitoring sources are unavailable',
+        failureReason: snapshot.failureReason,
+        selection: upsLastSelection
+    }));
 }
 
 async function notifyUpsFetchTransitions(outcome) {
@@ -5160,14 +5265,45 @@ async function pollUpsFetchState() {
     if (upsPollInFlight) return upsPollInFlight;
 
     const poll = (async () => {
-        let live = null;
+        const generation = upsConfigGeneration;
+        let readResult = null;
+        let pollError = null;
         try {
-            live = await readUpsLive();
+            readResult = await readUpsLive();
         } catch (error) {
-            upsLastReason = `UPS 輪詢失敗：${publicError(error)}`;
-            logRecoverableFailure('ups.poll', error, {
+            pollError = error;
+        }
+
+        // A configuration write fences the result of every in-flight read.
+        // Do not let a response from the old host/source become last-good.
+        if (generation !== upsConfigGeneration
+            || (readResult?.configGeneration !== undefined && readResult.configGeneration !== upsConfigGeneration)) {
+            const reconfigured = upsFetchState.reconfigure(upsConfigGeneration);
+            return { live: null, snapshot: reconfigured.snapshot, transitions: [] };
+        }
+
+        if (isPpbRequestSupersededError(pollError)) {
+            // PPB hot-reload cancellation is expected lifecycle churn. Keep
+            // the current state untouched so it cannot create an outage,
+            // fallback warning, or offline notification transition.
+            const snapshot = upsFetchState.snapshot();
+            return { live: snapshot.lastGood, snapshot, transitions: [] };
+        }
+
+        let live = readResult?.data || null;
+        if (pollError) {
+            upsLastReason = `UPS 輪詢失敗：${publicError(pollError)}`;
+            logRecoverableFailure('ups.poll', pollError, {
                 module: 'ups.poller', function: 'pollUpsFetchState', code: ERROR_CODES.EXT_UPS_FAILED
             });
+        } else {
+            upsLastSelection = readResult.selection;
+            if (live) {
+                sysLog('UPS', `讀取成功 via ${live.actualSource}: ${live.status} 輸入${live.inputV}V 電池${live.battery}%`);
+                upsLastReason = '';
+            } else {
+                upsLastReason = readResult.failureMessage || 'all UPS sources failed';
+            }
         }
 
         let outcome;
@@ -5197,19 +5333,54 @@ function lastUpsAttemptAt(snapshot) {
 function upsStatusPayload(snapshot, { cached = false } = {}) {
     const lastGood = snapshot.lastGood ? { ...snapshot.lastGood } : null;
     const payload = lastGood || {};
+    let sourceConfig;
+    try {
+        sourceConfig = resolveUpsSourceConfig({ source: UPS_SOURCE(), allowFallback: UPS_ALLOW_FALLBACK() });
+    } catch (error) {
+        sourceConfig = {
+            configuredSource: String(UPS_SOURCE() || 'auto').trim().toLowerCase(),
+            fallbackAllowed: false,
+            configurationError: publicError(error)
+        };
+    }
+    const reconfiguring = snapshot.reconfiguring === true
+        || (lastGood && lastGood.configGeneration !== undefined && lastGood.configGeneration !== upsConfigGeneration);
+    const effectiveHealth = reconfiguring
+        ? (lastGood ? FETCH_HEALTH.DEGRADED : FETCH_HEALTH.UNKNOWN)
+        : snapshot.fetchHealth;
+    const fresh = effectiveHealth === FETCH_HEALTH.HEALTHY
+        && !!lastGood
+        && (lastGood.configGeneration === undefined || lastGood.configGeneration === upsConfigGeneration);
+    const lastKnownSource = lastGood?.actualSource || lastGood?.source || null;
+    const actualSource = fresh ? (lastGood.actualSource || lastGood.source || null) : null;
+    const fallbackUsed = fresh && lastGood.fallbackUsed === true;
+    const currentSelection = upsLastSelection.configGeneration === upsConfigGeneration ? upsLastSelection : null;
+    const fallbackReason = fresh
+        ? (lastGood.fallbackReason || null)
+        : (sourceConfig.configurationError || currentSelection?.fallbackReason || snapshot.failureReason || null);
+    const dataIsStale = Boolean(lastGood) && (!fresh || snapshot.dataIsStale || reconfiguring);
     return {
         ...payload,
-        // 保留 last-good 數值，但 confirmed offline 時維持既有 source 契約，讓舊 UI 不會誤亮綠燈。
-        source: snapshot.fetchHealth === FETCH_HEALTH.OFFLINE || !lastGood ? 'unreachable' : lastGood.source,
-        lastKnown: snapshot.dataIsStale ? lastGood : undefined,
+        // Last-good values remain available as lastKnown, but a degraded/offline
+        // sample must not advertise a currently reachable source.
+        source: fresh ? (lastGood.source || actualSource) : effectiveHealth === FETCH_HEALTH.DEGRADED ? (lastKnownSource || 'unreachable') : 'unreachable',
+        configuredSource: sourceConfig.configuredSource,
+        actualSource,
+        fallbackAllowed: sourceConfig.fallbackAllowed,
+        fallbackUsed,
+        fallbackReason,
+        lastKnown: dataIsStale ? lastGood : undefined,
+        lastKnownSource,
+        reconfiguring,
+        configGeneration: upsConfigGeneration,
         cached,
         sampleSec: isDeviceSamplingActive('ups') ? appSettings.upsActiveBackendSampleSec : appSettings.upsIdleBackendSampleSec,
         focusedSampling: isDeviceSamplingActive('ups'),
-        fetchHealth: snapshot.fetchHealth,
+        fetchHealth: effectiveHealth,
         consecutiveFailures: snapshot.consecutiveFailures,
         failureThreshold: snapshot.failureThreshold,
         staleAgeMs: snapshot.staleAgeMs,
-        dataIsStale: snapshot.dataIsStale,
+        dataIsStale,
         lastSuccessAt: snapshot.lastSuccessAt,
         lastFailureAt: snapshot.lastFailureAt,
         offlineSince: snapshot.offlineSince,
@@ -5252,7 +5423,6 @@ function persistLocalUpsPowerEvent(event, live) {
 async function performUpsSample() {
     const { live, snapshot } = await pollUpsFetchState();
     if (!live) {
-        sysLog('UPS', `本次取樣失敗 (${snapshot.fetchHealth} ${snapshot.consecutiveFailures}/${snapshot.failureThreshold})，保留最後有效資料`, true);
         return snapshot;
     }
 
@@ -5363,14 +5533,23 @@ registerBackendSampler({
     name: 'ppbEventSync',
     scopes: ['ups'],
     collect: async () => {
-        if (ppbConfigured()) await syncPpbEventsIfDue(ppbEventSyncMs());
+        if (!ppbConfigured()) return;
+        try {
+            await syncPpbEventsIfDue(ppbEventSyncMs());
+        } catch (error) {
+            // A hot connection update fences the old PPB event request. It is
+            // expected lifecycle cancellation, not an UPS outage or worker
+            // failure to report.
+            if (!isPpbRequestSupersededError(error)) throw error;
+        }
     },
     getDelayMs: ppbEventSyncMs
 });
 
-app.get('/api/ups/status', async (req, res) => {
-    const result = await sampleUpsIfDue(upsSampleMs());
-    res.json(upsStatusPayload(result.snapshot, { cached: !result.polled }));
+app.get('/api/ups/status', (req, res) => {
+    // GET is a read-only snapshot. The backend sampler owns source I/O,
+    // SQLite writes, state transitions, and notifications.
+    res.json(upsStatusPayload(upsFetchState.snapshot(), { cached: true }));
 });
 
 app.get('/api/ups/history', (req, res) => {

@@ -1056,7 +1056,7 @@
                         class="text-slate-400">WiiM Amp</span><span class="text-slate-500 mono ml-auto"
                         id="side-wiim-state">--</span></div>
                 <div class="flex items-center gap-2 text-[10px]"
-                    title="綠=UPS 讀取成功，右側顯示目前使用的資料來源 (pmset/NUT/pwrstat)；紅=所有來源皆不可用"><span
+                        title="綠=UPS 讀取成功、黃=暫時延遲但保留最後有效資料、紅=所有來源皆不可用、灰=尚未取樣"><span
                         class="w-1.5 h-1.5 rounded-full bg-slate-600" id="side-ups-dot"></span><span
                         class="text-slate-400">UPS</span><span class="text-slate-500 mono ml-auto"
                         id="side-ups-state">--</span></div>
@@ -3339,6 +3339,14 @@
                                         <option value="pmset">pmset (macOS 原生，僅電量)</option>
                                     </select>
                                 </div>
+                                <div><label class="text-[9px] text-slate-500 uppercase font-bold">明確來源失敗時的回退</label>
+                                    <select id="conn-UPS_ALLOW_FALLBACK"
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        <option value="false">關閉（fail-closed，建議）</option>
+                                        <option value="true">開啟（允許改用其他來源）</option>
+                                    </select>
+                                    <p class="text-[9px] text-slate-500 mt-1">`auto` 本身會依序嘗試；明確指定 PPB／NUT 等來源時，只有開啟此項才會回退。</p>
+                                </div>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">NUT
                                             主機</label><input id="conn-NUT_HOST" placeholder="localhost"
@@ -3485,6 +3493,16 @@
                                         id="conn-ADGUARD_CA_FILE" placeholder="/app/config/adguard-ca.pem"
                                         class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
                                 </div>
+                            </div>
+                            <!-- Internet egress policy -->
+                            <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
+                                <p class="text-[11px] font-bold text-cyan-400">🌐 Internet 對外 Proxy Policy <span id="connset-SMARTHUB_INTERNET_PROXY_MODE" class="normal-case"></span></p>
+                                <select id="conn-SMARTHUB_INTERNET_PROXY_MODE"
+                                    class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                    <option value="disabled">disabled（預設；忽略 ambient proxy）</option>
+                                    <option value="environment">environment（明確使用 HTTP(S)_PROXY）</option>
+                                </select>
+                                <p class="text-[9px] text-slate-500 leading-relaxed">只影響 Site Manager、通知與 Telegram 等 public integrations；LAN integrations 永遠不使用 ambient proxy。變更需重啟服務後生效。</p>
                             </div>
                             <!-- 狀態一覽 -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2">
@@ -4496,7 +4514,7 @@
                                 </div>
                                 <div>
                                     <h3 class="text-lg font-black text-white tracking-wider">CyberPower 不斷電系統</h3>
-                                    <p class="text-xs text-slate-400" id="ups-model-line">NUT / pwrstat / pmset 多來源自動偵測
+                                    <p class="text-xs text-slate-400" id="ups-model-line">PPB → NUT → pwrstat → pmset 多來源自動偵測
                                     </p>
                                 </div>
                             </div>
@@ -4712,7 +4730,7 @@
                     <div class="bg-blue-500/5 border border-blue-500/20 rounded-2xl p-6" id="ups-setup-guide">
                         <h3 class="text-sm font-bold text-blue-300 tracking-wider mb-3">🔌 如何接上真實 CyberPower UPS？</h3>
                         <div class="text-xs text-slate-400 leading-relaxed space-y-2">
-                            <p>後端會依 <span class="mono text-slate-200">UPS_SOURCE</span> 依序嘗試四種來源（詳見 <span
+                            <p>後端在 <span class="mono text-slate-200">UPS_SOURCE=auto</span> 時依序嘗試四種來源；明確來源預設 fail-closed（詳見 <span
                                     class="mono">docs/integrations/cyberpower-ups-api.md</span>）：</p>
                             <p>1. <span class="text-slate-200 font-bold">PPB（Docker 已驗證）</span>：宿主機執行 PowerPanel Business，
                                 設定 <span class="mono">UPS_SOURCE=ppb</span>、<span class="mono">PPB_HOST=host.docker.internal</span>、
@@ -4725,7 +4743,7 @@
                             <p>4. <span class="text-slate-200 font-bold">pmset</span>：macOS 原生 HID（僅電池容量／供電狀態，無完整電壓與負載）。
                             </p>
                             <p class="text-[10px] text-slate-500 pt-1 border-t border-slate-800/40">環境變數：<span
-                                    class="mono">UPS_SOURCE</span>、<span class="mono">PPB_*</span>、<span
+                                    class="mono">UPS_SOURCE</span>、<span class="mono">UPS_ALLOW_FALLBACK</span>、<span class="mono">PPB_*</span>、<span
                                     class="mono">NUT_*</span>、<span class="mono">PWRSTAT_PATH</span>。Docker 優先使用 PPB REST，
                                 NUT 則必須填容器可達位址。</p>
                         </div>
@@ -4789,6 +4807,7 @@
     </div>
 
     <script src="/js/frontend-lifecycle.js"></script>
+    <script src="/js/ups-presenter.js"></script>
     <script src="/js/app.js"></script>
 </body>
 

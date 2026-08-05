@@ -1,3 +1,28 @@
+        const presentUpsHealth = status => window.SmartHubUps.presentUpsHealth(status);
+
+        function upsHealthPalette(presentation) {
+            return {
+                healthy: { dot: 'bg-emerald-500', badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
+                degraded: { dot: 'bg-amber-500', badge: 'bg-amber-500/10 text-amber-300 border-amber-500/20' },
+                offline: { dot: 'bg-red-500', badge: 'bg-red-500/10 text-red-400 border-red-500/20' },
+                unknown: { dot: 'bg-slate-600', badge: 'bg-slate-500/10 text-slate-400 border-slate-500/20' }
+            }[presentation.tone] || { dot: 'bg-slate-600', badge: 'bg-slate-500/10 text-slate-400 border-slate-500/20' };
+        }
+
+        function renderUpsSidebar(status) {
+            const presentation = presentUpsHealth(status);
+            const palette = upsHealthPalette(presentation);
+            const dot = document.getElementById('side-ups-dot');
+            const state = document.getElementById('side-ups-state');
+            if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${palette.dot}`;
+            if (state) state.textContent = presentation.state === 'healthy'
+                ? presentation.sourceLabel
+                : presentation.state === 'degraded'
+                    ? `${presentation.sourceLabel} · 延遲`
+                    : presentation.label;
+            return presentation;
+        }
+
         /* ==================== API security boundary ==================== */
         const nativeFetch = window.fetch.bind(window);
         let panelSecurityContextPromise = null;
@@ -826,7 +851,7 @@
             ucg: ['UCG 閘道器', 'UCG-Ultra 處理器溫度、核心負載與硬體資源 (SSH 真實數據)'],
             nas: ['NAS 儲存', 'UGREEN UGOS Pro 儲存與硬體監控'],
             wiim: ['WiiM 音響', 'WiiM Amp 音訊串流與硬體監控'],
-            ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (NUT)'],
+            ups: ['UPS 電源', 'CyberPower 不斷電系統 — 電壓紀錄與斷電事件 (PPB/NUT/pwrstat/pmset)'],
             adguard: ['AdGuard DNS', 'AdGuard Home 全網 DNS 廣告與追蹤攔截統計'],
             linuxhost: ['Linux 小主機', 'Home Assistant 主機 SSH 硬體監控 (真實數據)'],
             tools: ['工具 Tools', '網速測試與 PoE 管理'],
@@ -1191,11 +1216,7 @@
         async function refreshSideUps() {
             try {
                 const s = await (await fetch('/api/ups/status')).json();
-                const ok = s.source && s.source !== 'unreachable';
-                const dot = document.getElementById('side-ups-dot');
-                const st = document.getElementById('side-ups-state');
-                if (dot) dot.className = `w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-500' : 'bg-red-500'}`;
-                if (st) st.textContent = ok ? s.source : '未連接';
+                renderUpsSidebar(s);
             } catch (error) { console.debug('Sidebar UPS refresh failed', error); }
         }
 
@@ -5296,23 +5317,24 @@
             try {
                 const s = await (await fetch('/api/ups/status')).json();
                 dbg('UPS', '即時狀態', s.source, s.status, `in=${s.inputV}V bat=${s.battery}%`);
-                const sideOk = s.source && s.source !== 'unreachable';
-                const sideDot = document.getElementById('side-ups-dot');
-                const sideState = document.getElementById('side-ups-state');
-                if (sideDot) sideDot.className = `w-1.5 h-1.5 rounded-full ${sideOk ? 'bg-emerald-500' : 'bg-red-500'}`;
-                if (sideState) sideState.textContent = sideOk ? s.source : '未連接';
+                const presentation = renderUpsSidebar(s);
+                const palette = upsHealthPalette(presentation);
                 const badge = document.getElementById('ups-source-badge');
                 const setT = (id, v) => { const e = document.getElementById(id); if (e) e.innerHTML = v; };
                 const safeNum = value => Number.isFinite(Number(value)) ? Number(value) : null;
-                if (s.source === 'unreachable') {
-                    badge.textContent = '未連接 (檢視下方接入指南)';
-                    badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-red-500/10 text-red-400 border-red-500/20 self-start md:self-auto';
-                    document.getElementById('ups-setup-guide').classList.remove('hidden');
-                } else {
-                    badge.textContent = `來源: ${s.source.toUpperCase()}`;
-                    badge.className = 'px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 self-start md:self-auto';
-                    if (s.source !== 'nut' || true) document.getElementById('ups-setup-guide').classList.toggle('hidden', s.source === 'nut');
-                    document.getElementById('ups-model-line').textContent = `${s.model || 'UPS'} · 資料來源 ${s.source} · 後端每 ${safeNum(s.sampleSec) ?? '--'}s 取樣`;
+                if (badge) {
+                    badge.textContent = presentation.state === 'healthy'
+                        ? `來源: ${presentation.sourceLabel}`
+                        : presentation.state === 'degraded'
+                            ? `${presentation.sourceLabel} · 最後已知資料`
+                            : `${presentation.label} (檢視下方接入指南)`;
+                    badge.className = `px-3 py-1 rounded-full text-[10px] font-bold mono uppercase tracking-wider border ${palette.badge} self-start md:self-auto`;
+                }
+                const guide = document.getElementById('ups-setup-guide');
+                if (guide) guide.classList.toggle('hidden', !['offline', 'unknown'].includes(presentation.state));
+                const hasData = presentation.state !== 'unknown' && (s.model || s.lastKnown || s.lastSuccessAt);
+                if (hasData) {
+                    document.getElementById('ups-model-line').textContent = `${s.model || 'UPS'} · 資料來源 ${presentation.sourceLabel} · 後端每 ${safeNum(s.sampleSec) ?? '--'}s 取樣`;
                     setT('ups-kpi-inv', (safeNum(s.inputV) ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
                     setT('ups-kpi-outv', (safeNum(s.outputV) ?? '--') + '<span class="text-xs text-slate-500"> V</span>');
                     setT('ups-kpi-batt', (safeNum(s.battery) ?? '--') + '<span class="text-xs text-slate-500"> %</span>');
@@ -5335,7 +5357,7 @@
                         document.getElementById('ups-hero-load-bar').style.width = (s.loadPct || 0) + '%';
                         document.getElementById('ups-hero-inv').textContent = (s.inputV ?? '--') + 'V';
                         document.getElementById('ups-hero-rt').textContent = (s.runtimeSec != null ? Math.round(s.runtimeSec / 60) : '--') + ' 分';
-                        document.getElementById('ups-hero-src').textContent = s.source.toUpperCase();
+                        document.getElementById('ups-hero-src').textContent = presentation.sourceLabel;
                         if (s.battery != null && s.outputV != null) {
                             if (upsHeroBattData.length >= 12) { upsHeroBattData.shift(); upsHeroVoltData.shift(); upsHeroLabels.shift(); }
                             upsHeroBattData.push(s.battery);

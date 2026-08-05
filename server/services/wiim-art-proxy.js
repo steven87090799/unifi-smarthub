@@ -286,7 +286,11 @@ async function fetchArtwork(value, {
             : pinnedAgent(target);
         try {
             const response = await axiosInstance.get(target.url.toString(), {
-                responseType: 'stream', maxRedirects: 0, timeout: timeoutMs, proxy: false,
+                responseType: 'stream', maxRedirects: 0, timeout: timeoutMs,
+                // Artwork has already passed DNS/address validation and is
+                // pinned by the agent below. Public CDN, configured private
+                // literals, and every redirect must bypass ambient proxies.
+                proxy: false,
                 signal, validateStatus: () => true,
                 ...(target.url.protocol === 'https:' ? { httpsAgent: agent } : { httpAgent: agent }),
                 headers: { 'User-Agent': 'wiim-temp/2.0' }

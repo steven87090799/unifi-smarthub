@@ -31,6 +31,20 @@ function parseTrustedProxies(value) {
     return entries.join(', ');
 }
 
+function describeTrustedProxyConfiguration({
+    nodeEnv = process.env.NODE_ENV,
+    requireHttps = false,
+    allowInsecureHttp = false,
+    trustedProxies = false
+} = {}) {
+    const enforced = requireHttps === true && allowInsecureHttp !== true;
+    if (nodeEnv !== 'production' || !enforced || trustedProxies) return null;
+    return Object.freeze({
+        code: 'PANEL_TRUSTED_PROXIES_MISSING',
+        message: 'PANEL_TRUSTED_PROXIES is not configured; reverse-proxy TLS termination must specify the actual proxy IP/CIDR, while direct TLS may continue without proxy trust'
+    });
+}
+
 function normalizeOrigins(value) {
     const entries = Array.isArray(value) ? value : String(value || '').split(',');
     return entries.map(entry => String(entry).trim()).filter(Boolean).map(entry => {
@@ -493,4 +507,10 @@ function createPanelSecurity(options = {}) {
     };
 }
 
-module.exports = { createPanelSecurity, parseTrustedProxies, parseBasicCredentials, parseCookies };
+module.exports = {
+    createPanelSecurity,
+    describeTrustedProxyConfiguration,
+    parseTrustedProxies,
+    parseBasicCredentials,
+    parseCookies
+};

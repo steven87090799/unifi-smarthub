@@ -31,6 +31,20 @@ test('main runtime mounts one dedicated config directory and snapshots the broke
     for (const key of ['URL', 'API_KEY', 'MODE']) {
         assert.match(mainService, new RegExp(`NAS_MONITOR_${key}=\\$\\{NAS_MONITOR_${key}:-`));
     }
+    assert.match(mainService, /\$\{SMARTHUB_HOST_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{SMARTHUB_HOST_PORT:-3000\}:3000/u);
+    assert.match(mainService, /SMARTHUB_BIND_ADDRESS=0\.0\.0\.0/u);
+    assert.match(mainService, /user: "1000:1000"/u);
+    assert.match(mainService, /read_only: true/u);
+    assert.match(mainService, /SMARTHUB_ENV_FILE=\/app\/config\/\.env/u);
+});
+
+test('production preflight is part of the fixed UID deployment contract', () => {
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    const packageJson = require('../package.json');
+    assert.equal(packageJson.scripts['preflight:production'], 'node scripts/production-preflight.js');
+    assert.match(readme, /UID\/GID `?1000:1000/u);
+    assert.match(readme, /production preflight/u);
+    assert.match(readme, /chmod `?777.*`?666/u);
 });
 
 test('container health is readiness-based with bounded shutdown', () => {
@@ -77,6 +91,16 @@ test('release identity metadata cannot invalidate stable dependency or payload l
     assert.ok(mainIdentity > mainDockerfile.indexOf('COPY . .'));
 
     const monitorIdentity = monitorDockerfile.indexOf('ARG BUILD_VERSION');
-    assert.ok(monitorIdentity > monitorDockerfile.indexOf('apk add --no-cache tini'));
+    assert.ok(monitorIdentity > monitorDockerfile.indexOf('apk add --no-cache tini='));
     assert.ok(monitorIdentity > monitorDockerfile.indexOf('COPY --chown=node:node build-identity.js'));
+});
+
+test('Docker package inputs are explicitly versioned for the pinned Alpine base', () => {
+    for (const fragment of ['tini=0.19.0-r3', 'nut=2.8.3-r4', 'tzdata=2026c-r0']) {
+        assert.ok(mainDockerfile.includes(fragment), `missing ${fragment}`);
+    }
+    for (const fragment of ['python3=3.14.5-r0', 'make=4.4.1-r4', 'g++=15.2.0-r5']) {
+        assert.ok(mainDockerfile.includes(fragment), `missing ${fragment}`);
+    }
+    assert.match(monitorDockerfile, /tini=0\.19\.0-r3/u);
 });

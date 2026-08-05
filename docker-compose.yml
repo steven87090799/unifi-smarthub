@@ -21,7 +21,7 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=32m
     ports:
-      - "${SMARTHUB_BIND_ADDRESS:-0.0.0.0}:${SMARTHUB_HOST_PORT:-3000}:3000"
+      - "${SMARTHUB_HOST_BIND_ADDRESS:-127.0.0.1}:${SMARTHUB_HOST_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - DATA_DIR=/app/data

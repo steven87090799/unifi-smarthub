@@ -3,6 +3,8 @@
 const fs = require('node:fs');
 const https = require('node:https');
 const { isLoopbackHostname } = require('./nas-monitor-client');
+const { createLanAxiosConfig } = require('./http-egress-policy');
+const { readCaFile } = require('./tls-policy');
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_BASE_URL_LENGTH = 2_048;
@@ -81,17 +83,16 @@ function normalizeBaseUrl(value, { allowInsecureHttp = false } = {}) {
 
 function loadCertificateAuthority(file, fileSystem = fs) {
     if (!file) return undefined;
-    if (typeof file !== 'string' || file.length > 4_096 || /[\u0000-\u001f\u007f]/u.test(file)) {
-        configurationError('ADGUARD_CA_FILE is invalid');
+    try {
+        return readCaFile(file, { fileSystem, field: 'ADGUARD_CA_FILE' });
+    } catch (error) {
+        if (error?.message?.includes('must not be a symlink')) configurationError('ADGUARD_CA_FILE must not be a symlink');
+        if (error?.message?.includes('invalid')) configurationError('ADGUARD_CA_FILE is invalid');
+        if (error?.message?.includes('regular file')) {
+            configurationError(`ADGUARD_CA_FILE must be a non-empty file at most ${MAX_CA_BYTES} bytes`);
+        }
+        configurationError('ADGUARD_CA_FILE cannot be read');
     }
-    let stat;
-    try { stat = fileSystem.statSync(file); }
-    catch { configurationError('ADGUARD_CA_FILE cannot be read'); }
-    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CA_BYTES) {
-        configurationError(`ADGUARD_CA_FILE must be a non-empty file at most ${MAX_CA_BYTES} bytes`);
-    }
-    try { return fileSystem.readFileSync(file); }
-    catch { return configurationError('ADGUARD_CA_FILE cannot be read'); }
 }
 
 function normalizeControlPath(value) {
@@ -123,9 +124,8 @@ function createAdGuardConnection(options = {}) {
     if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 30_000) {
         throw new TypeError('timeoutMs must be an integer between 1000 and 30000');
     }
-    const transport = axios.create({
+    const transport = axios.create(createLanAxiosConfig({
         baseURL: url,
-        proxy: false,
         auth: { username, password },
         headers: { Accept: 'application/json' },
         ...(agent ? { httpsAgent: agent } : {}),
@@ -134,7 +134,7 @@ function createAdGuardConnection(options = {}) {
         maxContentLength: MAX_RESPONSE_BYTES,
         maxBodyLength: MAX_REQUEST_BYTES,
         validateStatus: status => status >= 200 && status < 300
-    });
+    }));
     const client = Object.freeze({
         async request(path, { method = 'get', data, params } = {}) {
             const normalizedMethod = String(method).toLowerCase();

@@ -73,7 +73,7 @@ UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLI
 - 新卡片沿用現有 `data-drag` 容器與 UI tokens。
 - 寫入控制必須同時處理 readonly、CSRF、錯誤與確認狀態。
 - 修改 Tailwind class 後更新 CSS 產物。
-- 新前端 API／設定欄位同步 production、mock 與契約測試。
+- 新前端 API／設定欄位同步 production、mock 與契約測試；UPS 設定頁的 `UPS_ALLOW_FALLBACK` 必須明確呈現 fail-closed 預設。`SMARTHUB_INTERNET_PROXY_MODE` 是 deployment-only 的 restart-required 設定，UI／mock 只顯示與保存 `disabled`／`environment` 選項，不在未重啟前假稱已套用。
 
 ```bash
 rg -n "page-nas" public/index.html

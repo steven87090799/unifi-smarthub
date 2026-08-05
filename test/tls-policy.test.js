@@ -11,6 +11,7 @@ const axios = require('axios');
 const {
     createHttpsAgent,
     destroyAgent,
+    readCaFile,
     resolveTlsPolicy
 } = require('../server/integrations/tls-policy');
 
@@ -80,4 +81,41 @@ test('controller and NAS TLS policy uses a real local HTTPS server for verify, p
     const newAgent = createHttpsAgent(resolveTlsPolicy({ url, caFile: certFile }));
     destroyAgent(oldAgent);
     destroyAgent(newAgent);
+});
+
+test('CA loading is fail-closed for every unsafe filesystem shape', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-ca-shapes-'));
+    try {
+        const regular = path.join(directory, 'regular.pem');
+        fs.writeFileSync(regular, 'ca-bytes\n', { mode: 0o600 });
+        assert.deepEqual(readCaFile(regular), Buffer.from('ca-bytes\n'));
+
+        const empty = path.join(directory, 'empty.pem');
+        fs.writeFileSync(empty, '', { mode: 0o600 });
+        assert.throws(() => readCaFile(empty), /non-empty regular file/u);
+
+        const nested = path.join(directory, 'nested');
+        fs.mkdirSync(nested);
+        assert.throws(() => readCaFile(nested), /non-empty regular file/u);
+
+        const oversized = path.join(directory, 'oversized.pem');
+        fs.writeFileSync(oversized, Buffer.alloc(1024 * 1024 + 1), { mode: 0o600 });
+        assert.throws(() => readCaFile(oversized), /non-empty regular file/u);
+
+        const link = path.join(directory, 'link.pem');
+        fs.symlinkSync(regular, link);
+        assert.throws(() => readCaFile(link), /must not be a symlink/u);
+
+        assert.throws(() => readCaFile('/unreadable/ca.pem', {
+            fileSystem: { lstatSync() { throw new Error('permission denied'); } }
+        }), /cannot be read/u);
+        assert.throws(() => readCaFile('relative-ca.pem'), /absolute path/u);
+        assert.throws(() => resolveTlsPolicy({
+            url: 'https://localhost:8443',
+            caFile: 'relative-ca.pem',
+            fields: { ca: 'ADGUARD_CA_FILE' }
+        }), /absolute path/u);
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
 });

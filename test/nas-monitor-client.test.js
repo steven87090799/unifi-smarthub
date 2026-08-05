@@ -91,7 +91,7 @@ test('TLS verification can only be disabled by an exact explicit flag', () => {
 test('custom CA loading is bounded and does not disclose the API key in errors', () => {
     const axios = fakeAxios();
     const fileSystem = {
-        statSync: () => ({ isFile: () => true, size: 12 }),
+        lstatSync: () => ({ isFile: () => true, size: 12 }),
         readFileSync: () => Buffer.from('test-ca-data')
     };
     createNasMonitorConnection({

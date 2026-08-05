@@ -2,6 +2,8 @@
 
 const fs = require('node:fs');
 const https = require('node:https');
+const { createLanAxiosConfig } = require('./http-egress-policy');
+const { readCaFile } = require('./tls-policy');
 
 const MIN_API_KEY_BYTES = 32;
 const MAX_API_KEY_BYTES = 256;
@@ -79,17 +81,16 @@ function normalizeBaseUrl(value, { allowInsecureHttp = false } = {}) {
 
 function loadCertificateAuthority(file, fileSystem = fs) {
     if (!file) return undefined;
-    if (typeof file !== 'string' || file.length > 4096 || /[\u0000-\u001f\u007f]/.test(file)) {
-        configurationError('NAS_MONITOR_CA_FILE is invalid');
+    try {
+        return readCaFile(file, { fileSystem, field: 'NAS_MONITOR_CA_FILE' });
+    } catch (error) {
+        if (error?.message?.includes('must not be a symlink')) configurationError('NAS_MONITOR_CA_FILE must not be a symlink');
+        if (error?.message?.includes('invalid')) configurationError('NAS_MONITOR_CA_FILE is invalid');
+        if (error?.message?.includes('regular file')) {
+            configurationError(`NAS_MONITOR_CA_FILE must be a non-empty file at most ${MAX_CA_BYTES} bytes`);
+        }
+        configurationError('NAS_MONITOR_CA_FILE cannot be read');
     }
-    let stat;
-    try { stat = fileSystem.statSync(file); }
-    catch { configurationError('NAS_MONITOR_CA_FILE cannot be read'); }
-    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_CA_BYTES) {
-        configurationError(`NAS_MONITOR_CA_FILE must be a non-empty file at most ${MAX_CA_BYTES} bytes`);
-    }
-    try { return fileSystem.readFileSync(file); }
-    catch { return configurationError('NAS_MONITOR_CA_FILE cannot be read'); }
 }
 
 function createNasMonitorConnection(options = {}) {
@@ -112,11 +113,8 @@ function createNasMonitorConnection(options = {}) {
     if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 30_000) {
         throw new TypeError('timeoutMs must be an integer between 1000 and 30000');
     }
-    const client = axios.create({
+    const client = axios.create(createLanAxiosConfig({
         baseURL: url,
-        // A service credential must never be forwarded through ambient
-        // HTTP_PROXY/HTTPS_PROXY/ALL_PROXY settings inherited by the process.
-        proxy: false,
         headers: {
             Accept: 'application/json',
             'X-API-Key': key
@@ -126,7 +124,7 @@ function createNasMonitorConnection(options = {}) {
         maxContentLength: 4 * 1024 * 1024,
         maxBodyLength: 64 * 1024,
         validateStatus: status => status >= 200 && status < 300
-    });
+    }));
     return { url, client, configured: true, tlsVerified: parsed.protocol !== 'https:' || !allowInsecureTls };
 }
 

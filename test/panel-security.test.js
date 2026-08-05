@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const { createPanelSecurity, parseTrustedProxies } = require('../server/middleware/panel-security');
+const {
+    createPanelSecurity,
+    describeTrustedProxyConfiguration,
+    parseTrustedProxies
+} = require('../server/middleware/panel-security');
 
 const basic = (username, password) => `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
 
@@ -283,6 +287,20 @@ test('trusted proxy configuration rejects spoofable blanket trust', () => {
     assert.throws(() => parseTrustedProxies('true'), /explicit proxy/);
     assert.throws(() => parseTrustedProxies('1'), /explicit proxy/);
     assert.throws(() => parseTrustedProxies('10.0.0.0/99'), /Invalid trusted proxy/);
+});
+
+test('production HTTPS without trusted proxies emits a diagnostic without weakening enforcement', () => {
+    const diagnostic = describeTrustedProxyConfiguration({
+        nodeEnv: 'production', requireHttps: true, allowInsecureHttp: false, trustedProxies: false
+    });
+    assert.equal(diagnostic.code, 'PANEL_TRUSTED_PROXIES_MISSING');
+    assert.match(diagnostic.message, /actual proxy IP\/CIDR/u);
+    assert.equal(describeTrustedProxyConfiguration({
+        nodeEnv: 'production', requireHttps: true, allowInsecureHttp: false, trustedProxies: 'loopback'
+    }), null);
+    assert.equal(describeTrustedProxyConfiguration({
+        nodeEnv: 'production', requireHttps: true, allowInsecureHttp: true, trustedProxies: false
+    }), null);
 });
 
 test('production mode cannot silently start without an admin password', () => {

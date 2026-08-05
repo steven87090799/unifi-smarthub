@@ -9,7 +9,11 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const axios = require('axios');
-const { createPpbClient } = require('../server/integrations/ppb-client');
+const {
+    PPB_CLIENT_CLOSED_CODE,
+    PPB_REQUEST_SUPERSEDED_CODE,
+    createPpbClient
+} = require('../server/integrations/ppb-client');
 
 function fakeAxios(sequence = []) {
     const calls = [];
@@ -50,6 +54,49 @@ function baseConfig(overrides = {}) {
         caFile: '',
         ...overrides
     };
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+}
+
+async function waitUntil(predicate, description) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (predicate()) return;
+        await new Promise(resolve => setImmediate(resolve));
+    }
+    throw new Error(`timed out waiting for ${description}`);
+}
+
+function routedAxios({ get: getResponse, post: postResponse }) {
+    const calls = [];
+    return {
+        calls,
+        async get(url, options) {
+            const call = { method: 'get', url, options };
+            calls.push(call);
+            return getResponse(call);
+        },
+        async post(url, body, options) {
+            const call = { method: 'post', url, body, options };
+            calls.push(call);
+            return postResponse(call);
+        }
+    };
+}
+
+function discovery(host, port) {
+    return { status: 302, data: null, headers: { location: `https://${host}:${port}/local/` } };
+}
+
+function isSuperseded(error) {
+    return error?.code === PPB_REQUEST_SUPERSEDED_CODE;
 }
 
 function listen(server) {
@@ -96,9 +143,14 @@ test('PPB TLS is secure by default, reuses an agent, and rotates it on configura
     assert.equal(FakeAgent.instances.length, 2);
     assert.equal(FakeAgent.instances[0].destroyCalls, 1);
     assert.equal(FakeAgent.instances[1].options.rejectUnauthorized, false);
-    client.close();
-    client.close();
+    config = baseConfig({ tlsInsecure: true, password: 'rotated-password' });
+    client.reset();
+    assert.equal(FakeAgent.instances.length, 3);
     assert.equal(FakeAgent.instances[1].destroyCalls, 1);
+    assert.equal(FakeAgent.instances[2].options.rejectUnauthorized, false);
+    client.close();
+    client.close();
+    assert.equal(FakeAgent.instances[2].destroyCalls, 1);
 });
 
 test('PPB custom CA must be an absolute regular non-symlink file and read failures fail closed', async t => {
@@ -155,6 +207,216 @@ test('PPB authorization retries once, warns once for explicit insecure mode, and
     assert.equal(events.length, 1);
     assert.match(events[0].message, /certificate verification is disabled/u);
     assert.doesNotMatch(JSON.stringify(events), /log-secret-password|test-token-must-not-be-logged/u);
+});
+
+test('late discovery cannot commit an old port after a configuration reset', async () => {
+    FakeAgent.instances.length = 0;
+    let config = baseConfig({ host: 'ppb-a.test' });
+    const oldDiscovery = deferred();
+    const axios = routedAxios({
+        get: call => {
+            if (call.url === 'http://ppb-a.test:3052/local/') return oldDiscovery.promise;
+            if (call.url === 'http://ppb-b.test:3052/local/') return discovery('ppb-b.test', 9444);
+            if (call.url.startsWith('https://ppb-b.test:9444/')) return { status: 200, data: { host: 'b' }, headers: {} };
+            throw new Error(`unexpected GET ${call.url}`);
+        },
+        post: call => {
+            assert.match(call.url, /^https:\/\/ppb-b\.test:9444\//u);
+            return { status: 200, data: 'token-b', headers: {} };
+        }
+    });
+    const client = createPpbClient({
+        axios,
+        httpsModule: { Agent: FakeAgent },
+        getConfig: () => config
+    });
+
+    const oldRequest = client.get('/local/rest/v1/ups/status');
+    await waitUntil(() => axios.calls.some(call => call.url === 'http://ppb-a.test:3052/local/'), 'old discovery');
+    config = baseConfig({ host: 'ppb-b.test' });
+    client.reset();
+    assert.deepEqual(await client.get('/local/rest/v1/ups/status'), { host: 'b' });
+
+    oldDiscovery.resolve(discovery('ppb-a.test', 8443));
+    await assert.rejects(oldRequest, isSuperseded);
+    const newHostCalls = axios.calls.filter(call => call.url.startsWith('https://ppb-b.test:'));
+    assert.ok(newHostCalls.length > 0);
+    assert.ok(newHostCalls.every(call => call.url.startsWith('https://ppb-b.test:9444/')));
+    client.close();
+});
+
+test('late login cannot activate an old token or authorize a new host', async () => {
+    FakeAgent.instances.length = 0;
+    let config = baseConfig({ host: 'ppb-a.test' });
+    const oldLogin = deferred();
+    const axios = routedAxios({
+        get: call => {
+            if (call.url === 'http://ppb-a.test:3052/local/') return discovery('ppb-a.test', 8443);
+            if (call.url === 'http://ppb-b.test:3052/local/') return discovery('ppb-b.test', 9444);
+            if (call.url.startsWith('https://ppb-b.test:9444/')) return { status: 200, data: { host: 'b' }, headers: {} };
+            throw new Error(`unexpected GET ${call.url}`);
+        },
+        post: call => {
+            if (call.url.startsWith('https://ppb-a.test:8443/')) return oldLogin.promise;
+            if (call.url.startsWith('https://ppb-b.test:9444/')) return { status: 200, data: 'token-b', headers: {} };
+            throw new Error(`unexpected POST ${call.url}`);
+        }
+    });
+    const client = createPpbClient({
+        axios,
+        httpsModule: { Agent: FakeAgent },
+        getConfig: () => config
+    });
+
+    const oldRequest = client.get('/local/rest/v1/ups/status');
+    await waitUntil(() => axios.calls.some(call => call.method === 'post' && call.url.startsWith('https://ppb-a.test:8443/')), 'old login');
+    config = baseConfig({ host: 'ppb-b.test' });
+    client.reset();
+    await client.get('/local/rest/v1/ups/status');
+
+    oldLogin.resolve({ status: 200, data: 'token-a', headers: {} });
+    await assert.rejects(oldRequest, isSuperseded);
+    await client.get('/local/rest/v1/eventlogs/report');
+    const newHostRequests = axios.calls.filter(call => call.method === 'get' && call.url.startsWith('https://ppb-b.test:9444/'));
+    assert.ok(newHostRequests.every(call => call.options.headers.Authorization === 'token-b'));
+    assert.equal(axios.calls.filter(call => call.method === 'post' && call.url.startsWith('https://ppb-b.test:9444/')).length, 1);
+    client.close();
+});
+
+test('a superseded 401 cannot clear the new token or trigger an old-generation retry', async () => {
+    FakeAgent.instances.length = 0;
+    let config = baseConfig({ host: 'ppb-a.test' });
+    const oldStatus = deferred();
+    const axios = routedAxios({
+        get: call => {
+            if (call.url === 'http://ppb-a.test:3052/local/') return discovery('ppb-a.test', 8443);
+            if (call.url === 'http://ppb-b.test:3052/local/') return discovery('ppb-b.test', 9444);
+            if (call.url.startsWith('https://ppb-a.test:8443/')) return oldStatus.promise;
+            if (call.url.startsWith('https://ppb-b.test:9444/')) return { status: 200, data: { host: 'b' }, headers: {} };
+            throw new Error(`unexpected GET ${call.url}`);
+        },
+        post: call => {
+            if (call.url.startsWith('https://ppb-a.test:8443/')) return { status: 200, data: 'token-a', headers: {} };
+            if (call.url.startsWith('https://ppb-b.test:9444/')) return { status: 200, data: 'token-b', headers: {} };
+            throw new Error(`unexpected POST ${call.url}`);
+        }
+    });
+    const client = createPpbClient({
+        axios,
+        httpsModule: { Agent: FakeAgent },
+        getConfig: () => config
+    });
+
+    const oldRequest = client.get('/local/rest/v1/ups/status');
+    await waitUntil(() => axios.calls.some(call => call.method === 'get' && call.url.startsWith('https://ppb-a.test:8443/')), 'old status request');
+    config = baseConfig({ host: 'ppb-b.test' });
+    client.reset();
+    await client.get('/local/rest/v1/ups/status');
+
+    oldStatus.resolve({ status: 401, data: {}, headers: {} });
+    await assert.rejects(oldRequest, isSuperseded);
+    assert.equal(axios.calls.filter(call => call.method === 'post' && call.url.startsWith('https://ppb-a.test:8443/')).length, 1);
+    assert.equal(axios.calls.filter(call => call.method === 'get' && call.url.startsWith('https://ppb-a.test:8443/')).length, 1);
+    await client.get('/local/rest/v1/eventlogs/report');
+    assert.equal(axios.calls.filter(call => call.method === 'post' && call.url.startsWith('https://ppb-b.test:9444/')).length, 1);
+    assert.ok(axios.calls
+        .filter(call => call.method === 'get' && call.url.startsWith('https://ppb-b.test:9444/'))
+        .every(call => call.options.headers.Authorization === 'token-b'));
+    client.close();
+});
+
+test('login is singleflight within one lease', async () => {
+    FakeAgent.instances.length = 0;
+    const loginFlight = deferred();
+    const axios = routedAxios({
+        get: call => {
+            if (call.url === 'http://ppb.test:3052/local/') return discovery('ppb.test', 8443);
+            return { status: 200, data: { ok: true }, headers: {} };
+        },
+        post: () => loginFlight.promise
+    });
+    const client = createPpbClient({
+        axios,
+        httpsModule: { Agent: FakeAgent },
+        getConfig: () => baseConfig()
+    });
+
+    const first = client.get('/local/rest/v1/ups/status');
+    const second = client.get('/local/rest/v1/eventlogs/report');
+    await waitUntil(() => axios.calls.filter(call => call.method === 'post').length === 1, 'singleflight login');
+    assert.equal(axios.calls.filter(call => call.method === 'post').length, 1);
+    loginFlight.resolve({ status: 200, data: 'singleflight-token', headers: {} });
+    await Promise.all([first, second]);
+    assert.equal(axios.calls.filter(call => call.method === 'get' && call.url.startsWith('https://ppb.test:8443/')).length, 2);
+    client.close();
+});
+
+test('agent lifecycle is fenced, close is idempotent, and reset after close fails closed', async () => {
+    FakeAgent.instances.length = 0;
+    let config = baseConfig({ host: 'ppb-a.test' });
+    const oldDiscovery = deferred();
+    const axios = routedAxios({
+        get: call => call.url === 'http://ppb-a.test:3052/local/'
+            ? oldDiscovery.promise
+            : { status: 200, data: {}, headers: {} },
+        post: () => ({ status: 200, data: 'token', headers: {} })
+    });
+    const client = createPpbClient({
+        axios,
+        httpsModule: { Agent: FakeAgent },
+        getConfig: () => config
+    });
+    const oldRequest = client.get('/local/rest/v1/ups/status');
+    await waitUntil(() => axios.calls.length === 1, 'old agent request');
+    const oldAgent = FakeAgent.instances[0];
+    config = baseConfig({ host: 'ppb-b.test' });
+    client.reset();
+    const newAgent = FakeAgent.instances[1];
+    assert.equal(oldAgent.destroyCalls, 1);
+    assert.equal(newAgent.destroyCalls, 0);
+    oldDiscovery.resolve(discovery('ppb-a.test', 8443));
+    await assert.rejects(oldRequest, isSuperseded);
+    assert.equal(newAgent.destroyCalls, 0);
+
+    client.close();
+    client.close();
+    assert.equal(oldAgent.destroyCalls, 1);
+    assert.equal(newAgent.destroyCalls, 1);
+    assert.equal(client.snapshot().state, 'closed');
+    assert.throws(() => client.reset(), error => error?.code === PPB_CLIENT_CLOSED_CODE);
+});
+
+test('superseded errors, events, and snapshots never expose PPB secrets', async () => {
+    FakeAgent.instances.length = 0;
+    const events = [];
+    const oldLogin = deferred();
+    let config = baseConfig({
+        host: 'ppb-a.test',
+        password: 'ppb-password-secret',
+        tlsInsecure: true
+    });
+    const axios = routedAxios({
+        get: call => call.url === 'http://ppb-a.test:3052/local/'
+            ? discovery('ppb-a.test', 8443)
+            : { status: 200, data: {}, headers: {} },
+        post: () => oldLogin.promise
+    });
+    const client = createPpbClient({
+        axios,
+        httpsModule: { Agent: FakeAgent },
+        logger: { warn: event => events.push(event) },
+        getConfig: () => config
+    });
+    const oldRequest = client.get('/local/rest/v1/ups/status');
+    await waitUntil(() => axios.calls.some(call => call.method === 'post'), 'secret-bearing login request');
+    config = baseConfig({ host: 'ppb-b.test', password: 'new-password-secret', tlsInsecure: true });
+    client.reset();
+    oldLogin.resolve({ status: 200, data: 'ppb-token-secret', headers: {} });
+    const error = await oldRequest.catch(value => value);
+    const rendered = JSON.stringify({ error, events, snapshot: client.snapshot() });
+    assert.equal(error.code, PPB_REQUEST_SUPERSEDED_CODE);
+    assert.doesNotMatch(rendered, /ppb-password-secret|new-password-secret|ppb-token-secret/u);
+    client.close();
 });
 
 test('ambiguous legacy TLS disable cannot silently turn verification off', () => {

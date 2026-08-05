@@ -329,10 +329,12 @@ function rewriteEnvFileAtomically(filePath, transform, options = {}) {
 }
 
 module.exports = {
+    DIRECTORY_FSYNC_UNSUPPORTED,
     ENV_FILE_MODE,
     MAX_ENV_FILE_BYTES,
     EnvFileError,
     assertEnvFileReady,
+    fsyncParentDirectory,
     loadEnvFile,
     parseDesiredEnvFile,
     readEnvFile,

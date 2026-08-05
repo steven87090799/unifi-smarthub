@@ -26,6 +26,10 @@ async function waitFor(predicate, { timeout = 15_000, interval = 50, message = '
     throw new Error(message);
 }
 
+function countFunctionLogs(logs, functionName) {
+    return logs.split(`"function":"${functionName}"`).length - 1;
+}
+
 async function listen(server) {
     await new Promise((resolve, reject) => {
         server.once('error', reject);
@@ -213,7 +217,14 @@ test('server Docker background gate, manual API, and watcher isolation use share
         triggerNasAlerts: false,
         triggerLinuxTemp: false,
         triggerLinuxOffline: false,
-        triggerWiimOffline: false
+        triggerWiimOffline: false,
+        // Keep this integration test focused on the Docker/UniFi watcher
+        // boundary.  System diagnostics can be slow on a busy CI runner and
+        // should not delay the notification watcher under test.
+        triggerSystemCritical: false,
+        triggerSystemWarning: false,
+        triggerSystemRecovery: false,
+        triggerSystemStartup: false
     }));
 
     let runtime;
@@ -270,6 +281,8 @@ test('server Docker background gate, manual API, and watcher isolation use share
 
         // Case E: make the shared inventory malformed.  The Docker scan throws,
         // but its module-level boundary allows the later UniFi watcher path to run.
+        const previousDockerWatcherFailures = countFunctionLogs(runtime.logs(), 'scanDockerNotifications');
+        const previousThreatWatcherFailures = countFunctionLogs(runtime.logs(), 'scanThreats');
         malformedInventory = true;
         response = await adminWrite(runtime, '/api/notifications/settings', {
             enabled: true,
@@ -284,7 +297,11 @@ test('server Docker background gate, manual API, and watcher isolation use share
             triggerDockerHighMemory: false,
             triggerThreats: true,
             triggerNasAlerts: true,
-            triggerLinuxTemp: true
+            triggerLinuxTemp: true,
+            triggerSystemCritical: false,
+            triggerSystemWarning: false,
+            triggerSystemRecovery: false,
+            triggerSystemStartup: false
         });
         assert.equal(response.status, 200, await response.text());
         await sleep(1_200);
@@ -293,11 +310,14 @@ test('server Docker background gate, manual API, and watcher isolation use share
         await waitFor(() => counters.inventory > previousInventoryCalls, {
             message: 'malformed Docker inventory was not sampled'
         });
-        await waitFor(() => runtime.logs().includes('"function":"scanDockerNotifications"'), {
-            timeout: 12_000,
+        await waitFor(() => {
+            const logs = runtime.logs();
+            return countFunctionLogs(logs, 'scanDockerNotifications') > previousDockerWatcherFailures
+                && countFunctionLogs(logs, 'scanThreats') > previousThreatWatcherFailures;
+        }, {
+            timeout: 20_000,
             message: `Docker watcher failure was not isolated\n${runtime.logs()}`
         });
-        assert.match(runtime.logs(), /"function":"scanThreats"/);
     } finally {
         if (!runtime) {
             await new Promise((resolve, reject) => monitor.close(error => error ? reject(error) : resolve()));
