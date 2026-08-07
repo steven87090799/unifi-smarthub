@@ -348,6 +348,17 @@ function createUnifiDeviceThermalSshCollector({
 
     function diagnostics() {
         const config = currentConfiguration();
+        const trustedLanTargetErrors = [...cache.values()]
+            .filter(entry => entry.errorReason === 'trusted_lan_target_required').length;
+        const allTargetsPinned = config.targetIds.length > 0
+            && config.targetIds.every(id => config.hostKeys.has(id));
+        const transportMode = allTargetsPinned
+            ? 'verified'
+            : config.trustedLanMode && config.targetIds.length > 0 && trustedLanTargetErrors === 0
+                ? 'trusted-lan-insecure'
+                : !config.trustedLanMode && config.allowUnpinned
+                    ? 'explicitly-insecure'
+                    : 'unconfigured';
         return {
             configured: configured(config),
             selectedDeviceCount: config.targetIds.length,
@@ -357,6 +368,7 @@ function createUnifiDeviceThermalSshCollector({
             allowUnpinned: config.allowUnpinned,
             trustedLanMode: config.trustedLanMode,
             cachedDeviceCount: cache.size,
+            transportMode,
             running: inflight.size,
             activeConnections: active,
             queued: queue.length,

@@ -79,6 +79,7 @@ test('collector executes only the fixed bounded command and passes host verifica
     assert.equal(config.host, '192.168.1.20');
     assert.equal(config.hostVerifier(key), true);
     assert.equal(result.hostKeyPinned, true);
+    assert.equal(collector.diagnostics().transportMode, 'verified');
     assert.doesNotMatch(JSON.stringify(collector.diagnostics()), /secret|SHA256:/u);
     collector.close();
 });
@@ -97,6 +98,7 @@ test('Trusted LAN device SSH accepts private unpinned targets but rejects public
     assert.equal(privateResult.status, 'supported');
     assert.equal(privatePoolOptions.getConfig().hostVerifier, undefined);
     assert.equal(privateCollector.diagnostics().trustedLanMode, true);
+    assert.equal(privateCollector.diagnostics().transportMode, 'trusted-lan-insecure');
     privateCollector.close();
 
     const publicEnv = configuredEnv({ NODE_ENV: 'production', TRUSTED_LAN_MODE: 'true' });
@@ -107,6 +109,7 @@ test('Trusted LAN device SSH accepts private unpinned targets but rejects public
     const publicResult = await publicCollector.collect(knownDevice(IDS[0], '8.8.8.8'));
     assert.equal(publicResult.status, 'not_configured');
     assert.equal(publicResult.errorReason, 'trusted_lan_target_required');
+    assert.equal(publicCollector.diagnostics().transportMode, 'unconfigured');
     publicCollector.close();
 });
 

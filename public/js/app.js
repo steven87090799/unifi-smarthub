@@ -4096,6 +4096,21 @@
             }
         }
 
+        const TRANSPORT_MODE_LABELS = Object.freeze({
+            verified: 'Verified TLS / Host Key',
+            'private-ca': 'Private CA verified',
+            'trusted-lan-insecure': 'Trusted LAN compatibility',
+            'explicitly-insecure': 'Explicit insecure TLS',
+            'explicit-insecure-http': 'Explicit insecure HTTP',
+            'loopback-http': 'Loopback HTTP',
+            http: 'HTTP',
+            unconfigured: 'Host Key 未設定'
+        });
+        function transportModeLabel(mode) {
+            if (!mode) return '';
+            return TRANSPORT_MODE_LABELS[mode] || `Transport: ${mode}`;
+        }
+
         // 由後端記憶體現況直接彙整 (原本從側邊欄 DOM 推斷，時常不準)
         async function renderConnStatus() {
             const list = document.getElementById('conn-status-list');
@@ -4105,14 +4120,15 @@
                 const trustedStatus = document.getElementById('conn-trusted-lan-status');
                 if (trustedStatus) {
                     const mode = d.trustedLanMode === true ? '已啟用' : '未啟用';
-                    trustedStatus.textContent = `後端狀態：${mode} · 公網整合仍使用 verified TLS`;
+                    trustedStatus.textContent = `後端狀態：${mode}`;
                     trustedStatus.className = d.trustedLanMode === true ? 'text-[9px] text-blue-300' : 'text-[9px] text-slate-500';
                 }
                 const dot = ok => `<span class="w-2 h-2 rounded-full inline-block shrink-0 ${ok === true ? 'bg-emerald-500' : ok === false ? 'bg-red-500' : 'bg-slate-600'}"></span>`;
                 list.innerHTML = (d.devices || []).map(v => {
                     const ok = v.configured ? v.ok : undefined;
                     const state = !v.configured ? '未設定' : v.ok === true ? '已連線' : v.ok === false ? '未連線' : '已設定';
-                    return `<div class="flex items-center gap-2">${dot(ok)}<span class="text-slate-400">${escapeHtml(v.name)}</span><span class="ml-auto mono ${v.configured && v.ok === false ? 'text-red-400' : 'text-slate-300'} text-[10px]">${escapeHtml(state)}${v.configured && v.detail ? ' · ' + escapeHtml(v.detail) : ''}</span></div>`;
+                    const transport = transportModeLabel(v.transportMode);
+                    return `<div class="flex items-center gap-2">${dot(ok)}<span class="text-slate-400">${escapeHtml(v.name)}</span><span class="ml-auto mono ${v.configured && v.ok === false ? 'text-red-400' : 'text-slate-300'} text-[10px]">${escapeHtml(state)}${transport ? ' · ' + escapeHtml(transport) : ''}${v.configured && v.detail ? ' · ' + escapeHtml(v.detail) : ''}</span></div>`;
                 }).join('');
             } catch { list.innerHTML = '<p class="text-red-400 text-xs">狀態讀取失敗</p>'; }
         }

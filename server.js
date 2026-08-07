@@ -6055,9 +6055,11 @@ function safeTransportMode(readMode) {
     try { return readMode() || null; }
     catch { return null; }
 }
-function sshTransportMode(host, fingerprint) {
+function sshTransportMode(host, fingerprint, allowUnpinned = false) {
     if (fingerprint) return 'verified';
-    return trustedLanTarget(host).trusted ? 'trusted-lan-insecure' : 'unconfigured';
+    if (trustedLanTarget(host).trusted) return 'trusted-lan-insecure';
+    const explicitAllow = allowUnpinned === true || allowUnpinned === 'true';
+    return explicitAllow && !trustedLanModeEnabled() ? 'explicitly-insecure' : 'unconfigured';
 }
 app.get('/api/connections/status', async (req, res) => {
     const fresh = (ts, sec) => ts && (Date.now() - ts) < sec * 1000;
@@ -6074,7 +6076,10 @@ app.get('/api/connections/status', async (req, res) => {
     const wiimTransportMode = safeTransportMode(() => {
         const policy = resolveWiimTransportPolicy();
         if (!policy) return null;
-        return wiimInsecureTlsAllowed() ? 'trusted-lan-insecure' : policy.protocol === 'http:' ? 'http' : policy.mode === 'private-ca' ? 'private-ca' : 'verified';
+        if (wiimInsecureHttpAllowed() && !policy.insecure) {
+            return policy.trustedLanApplied ? 'trusted-lan-insecure' : 'explicit-insecure-http';
+        }
+        return policy.mode;
     });
     const upsSnapshot = upsFetchState.snapshot();
     const upsDetail = upsSnapshot.lastGood
@@ -6083,18 +6088,18 @@ app.get('/api/connections/status', async (req, res) => {
     const telemetrySsh = unifiDeviceThermalCollector.diagnostics();
     res.json({
         devices: [
-            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: ucgCollector?.healthy === true, transportMode: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
+            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: ucgCollector?.healthy === true, transportMode: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY, process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
             { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, transportMode: unifiTlsPolicy?.mode || null, detail: localCookie ? 'Session 有效' : '未登入' },
-            { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, transportMode: telemetrySsh.trustedLanMode ? 'trusted-lan-insecure' : telemetrySsh.allowUnpinned ? 'unconfigured' : 'verified', detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
+            { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, transportMode: telemetrySsh.transportMode, detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, transportMode: 'verified', detail: cloud.detail },
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, transportMode: networkTransportMode, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: nasTokenState.isValid(), transportMode: nasTls?.mode || null, detail: nasTokenState.getToken() ? 'Token 有效' : '未登入' },
             { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, transportMode: NASMON_TRANSPORT_MODE || null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
             { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? (wiimFresh && fresh(wiimHit.fetchedAt, 120)) : null, transportMode: wiimTransportMode, detail: wiimIP ? (wiimFresh ? '有回應' : wiimHit ? '最後資料已過期' : '無快取') : '未設定' },
-            { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), detail: upsDetail },
+            { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), transportMode: ppbTransportMode, detail: upsDetail },
             { name: 'AdGuard Home', configured: adgConfigured(), ok: adguardCollector?.healthy === true, transportMode: adguardConnection.transportMode || null, detail: adgLastOkTs ? '有回應' : '尚無資料' },
             { name: 'AdGuard 裝置政策', configured: adguardPolicies.policies.length > 0, ok: adguardPolicies.reconcile.status === 'healthy' ? true : (adguardPolicies.reconcile.status === 'degraded' ? false : null), detail: `${adguardPolicies.policies.length} 筆 · ${adguardPolicies.reconcile.status}` },
-            { name: 'Linux 小主機', configured: linuxConfigured(), ok: linuxCollector?.healthy === true, transportMode: sshTransportMode(process.env.LINUX_HOST, process.env.LINUX_SSH_HOST_KEY), detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
+            { name: 'Linux 小主機', configured: linuxConfigured(), ok: linuxCollector?.healthy === true, transportMode: sshTransportMode(process.env.LINUX_HOST, process.env.LINUX_SSH_HOST_KEY, process.env.LINUX_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')), detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
         ],
         trustedLanMode: trustedLanModeEnabled(),
         transports: {
@@ -6105,9 +6110,9 @@ app.get('/api/connections/status', async (req, res) => {
             adguard: adguardConnection.transportMode || null,
             wiim: wiimTransportMode,
             nasMonitor: NASMON_TRANSPORT_MODE || null,
-            ucgSsh: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY),
-            linuxSsh: sshTransportMode(process.env.LINUX_HOST, process.env.LINUX_SSH_HOST_KEY),
-            unifiDeviceSsh: telemetrySsh.trustedLanMode ? 'trusted-lan-insecure' : telemetrySsh.allowUnpinned ? 'unconfigured' : 'verified',
+            ucgSsh: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY, process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')),
+            linuxSsh: sshTransportMode(process.env.LINUX_HOST, process.env.LINUX_SSH_HOST_KEY, process.env.LINUX_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')),
+            unifiDeviceSsh: telemetrySsh.transportMode,
             siteManager: 'verified'
         }
     });

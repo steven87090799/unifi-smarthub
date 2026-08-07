@@ -41,18 +41,18 @@ UNIFI_NETWORK_SITE_ID=<uuid>
 UNIFI_THREAT_BLOCK_LIST_ID=<uuid>
 UNIFI_THREAT_BLOCK_LIST_NAME=SmartHub Threat Blocks
 TRUSTED_LAN_MODE=true
-UNIFI_NETWORK_TLS_VERIFY=false
+UNIFI_NETWORK_TLS_VERIFY=true
 UNIFI_NETWORK_CA_FILE=
-UNIFI_NETWORK_TLS_INSECURE=true
-UNIFI_NETWORK_ALLOW_INSECURE_HTTP=true
+UNIFI_NETWORK_TLS_INSECURE=false
+UNIFI_NETWORK_ALLOW_INSECURE_HTTP=false
 ```
 
 若未明確設定 `UNIFI_NETWORK_API_URL`，會由 `UNIFI_CONTROLLER_URL` 推導 `/proxy/network/integration`。
 
 安全契約：
 
-- TLS 預設驗證；私有 CA 使用 `UNIFI_NETWORK_CA_FILE`。只有明確 `UNIFI_NETWORK_TLS_INSECURE=true` 才可停用驗證，只有明確 `UNIFI_NETWORK_ALLOW_INSECURE_HTTP=true` 才可使用非 loopback HTTP。
-- Trusted LAN mode 只對分類為私有 endpoint 的 Network Integration API 產生 `trusted-lan-insecure` policy；`api.ui.com`／Site Manager 與其他 Internet integration 不會沿用這份 policy。
+- TLS 安全 baseline 預設驗證；`TRUSTED_LAN_MODE` 是 compatibility master switch，只有分類為私有 endpoint 的 Network Integration API 才會產生 `trusted-lan-insecure` policy。關閉模式後不會自動接受 self-signed TLS 或 HTTP；明確 legacy/manual insecure override 會顯示為 `explicitly-insecure`，不會冒充 Trusted LAN。私有 CA 使用 `UNIFI_NETWORK_CA_FILE` 且永遠優先。
+- `api.ui.com`／Site Manager 與其他 Internet integration 不會沿用這份 policy，持續使用 verified TLS。
 - 啟動時由共用 TLS policy 讀取並解析有界的 CA bytes；GET／PUT transport 只使用 resolved policy，不會再次讀取 raw CA path。insecure HTTPS 或明確 HTTP 模式不會因 stale CA path 被重新讀取而失敗。
 - 設定頁回傳 `clearableFields`；清空 `UNIFI_NETWORK_CA_FILE` 會明確清除 CA path，清空 `UNIFI_NETWORK_API_URL` 會恢復由 `UNIFI_CONTROLLER_URL` 推導的 endpoint。secret 欄位留空仍代表不變更。
 - 清單必須是名稱、ID 完全相符的專用 `IPV4_ADDRESSES` list。

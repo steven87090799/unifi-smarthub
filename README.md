@@ -69,7 +69,7 @@ docker compose --env-file config/.env ps
 6. `docker compose --env-file config/.env ps`
 7. 檢查 `/health`、`/health/ready` 與設定頁的整合狀態。
 
-Trusted LAN 只對私有 IP、loopback、`host.docker.internal` 與 `TRUSTED_LAN_HOSTS` 完全相符的 hostname 放寬 scoped 自簽 TLS、私有 HTTP 與 SSH Host Key pinning。它絕不影響 Site Manager、Telegram、Discord、Webhook、外部圖片/CDN 或其他 Internet integration 的 TLS 驗證；公開部署應設為 `false` 並改用正式 CA／fingerprint。
+`TRUSTED_LAN_MODE` 是 compatibility master switch。安全 baseline（TLS verify=true、insecure=false、HTTP=false、SSH unpinned=false）只會在私有 IP、loopback、`host.docker.internal` 與 `TRUSTED_LAN_HOSTS` 完全相符的 hostname 上產生 scoped 自簽 TLS、私有 HTTP 與 SSH Host Key 相容傳輸。關閉模式後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH；若另設 legacy/manual insecure override，狀態會顯示 `explicitly-insecure`／`explicit-insecure-http`，不會冒充 Trusted LAN。configured CA／SSH fingerprint 永遠優先。它絕不影響 Site Manager、Telegram、Discord、Webhook、外部圖片/CDN 或其他 Internet integration 的 TLS 驗證；公開部署應設為 `false` 並改用正式 CA／fingerprint。
 
 Compose 的 host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內服務仍綁定 `0.0.0.0` 以接受同一 network 的 reverse proxy。若要改成 LAN 發布，必須明確設定 host bind address 並同步套用防火牆／HTTPS 邊界。
 
@@ -147,13 +147,13 @@ PPB_HOST=host.docker.internal
 PPB_PORT=3052
 PPB_USER=...
 PPB_PASSWORD=...
-PPB_TLS_VERIFY=false
-PPB_TLS_INSECURE=true
+PPB_TLS_VERIFY=true
+PPB_TLS_INSECURE=false
 # 私有／自簽 CA 建議掛載後使用：
 # PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
 
-Trusted LAN mode 對可信任 PPB endpoint 會以同一份 effective policy 套用 discovery 後的 login、status 與 event sync；因此 PPB 自簽憑證不會只在 status 路徑被放寬。`UPS_SOURCE=ppb` 且 `UPS_ALLOW_FALLBACK=false` 時不會嘗試 NUT、pwrstat 或 pmset；UPS 狀態仍保留 last-good，單次失敗不會立即抹除資料。公開部署請改用 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false` 或明確私有 CA。
+Trusted LAN mode 對可信任 PPB endpoint 會以同一份 effective policy 套用 discovery 後的 login、status 與 event sync；因此 PPB 自簽憑證不會只在 status 路徑被放寬。`UPS_SOURCE=ppb` 且 `UPS_ALLOW_FALLBACK=false` 時不會嘗試 NUT、pwrstat 或 pmset；UPS 狀態仍保留 last-good，單次失敗不會立即抹除資料。關閉 Trusted LAN 後不會自動接受自簽憑證；請使用正式 CA，或明確且可辨識的 legacy/manual override。
 
 容器內沒有宿主機的 `pwrstat` 或 `pmset`。替代方案是讓容器連到可達的 NUT server；詳見 [UPS 整合摘要](docs/integrations/cyberpower-ups-api.md)。
 

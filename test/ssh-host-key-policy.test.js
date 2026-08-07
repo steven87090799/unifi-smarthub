@@ -40,3 +40,33 @@ test('Trusted LAN SSH permits only private unpinned targets and preserves config
     assert.equal(pinned.configured, true);
     assert.equal(pinned.verifier(Buffer.from('rotated-key')), false);
 });
+
+test('SSH Trusted LAN mode normalizes string booleans before target policy decisions', () => {
+    assert.equal(resolveHostKeyPolicy({
+        host: '192.168.1.20', trustedLanMode: 'false', allowUnpinned: false,
+        field: 'UCG_SSH_HOST_KEY'
+    }).error, 'host_key_not_configured');
+    assert.equal(resolveHostKeyPolicy({
+        host: '192.168.1.20', trustedLanMode: 'true', allowUnpinned: false,
+        field: 'UCG_SSH_HOST_KEY'
+    }).warning, true);
+    assert.equal(resolveHostKeyPolicy({
+        host: '8.8.8.8', trustedLanMode: 'true', allowUnpinned: false,
+        field: 'UCG_SSH_HOST_KEY'
+    }).error, 'host_key_not_configured');
+
+    const fingerprint = fingerprintFromKey(Buffer.from('public-pinned-key'));
+    const pinned = resolveHostKeyPolicy({
+        host: '8.8.8.8', trustedLanMode: 'true', allowUnpinned: false,
+        fingerprint, field: 'UCG_SSH_HOST_KEY'
+    });
+    assert.equal(pinned.configured, true);
+    assert.equal(pinned.verifier(Buffer.from('public-pinned-key')), true);
+
+    const explicitLegacy = resolveHostKeyPolicy({
+        host: '8.8.8.8', trustedLanMode: 'false', allowUnpinned: true,
+        field: 'UCG_SSH_HOST_KEY'
+    });
+    assert.equal(explicitLegacy.warning, true);
+    assert.equal(explicitLegacy.error, undefined);
+});

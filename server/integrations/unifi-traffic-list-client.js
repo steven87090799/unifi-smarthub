@@ -122,7 +122,12 @@ function readConfiguration(environment = process.env) {
             // Keep the established configuration contract small. Target
             // classification is an internal policy decision, not an API or
             // diagnostic field; transport mode remains available to callers.
-            const { trustedLan: _trustedLan, trustedLanTarget: _trustedLanTarget, ...safeTlsPolicy } = resolvedTlsPolicy;
+            const {
+                trustedLan: _trustedLan,
+                trustedLanApplied: _trustedLanApplied,
+                trustedLanTarget: _trustedLanTarget,
+                ...safeTlsPolicy
+            } = resolvedTlsPolicy;
             tlsPolicy = safeTlsPolicy;
         } catch (error) { missing.push(error.field || 'UNIFI_NETWORK_API_URL'); }
     }

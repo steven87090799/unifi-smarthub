@@ -37,8 +37,8 @@ PPB_PORT=3052
 PPB_USER=...
 PPB_PASSWORD=...
 TRUSTED_LAN_MODE=true
-PPB_TLS_VERIFY=false
-PPB_TLS_INSECURE=true
+PPB_TLS_VERIFY=true
+PPB_TLS_INSECURE=false
 # 私有／自簽 CA：PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
 
@@ -49,7 +49,7 @@ PPB_TLS_INSECURE=true
 3. 讀取 `/local/rest/v1/ups/status` 與事件 API。
 4. 401／403 時重新登入一次；服務重啟後重新探索 port。
 
-在 Trusted LAN mode 下，只有經私有 endpoint classification 的 PPB 才使用 scoped `rejectUnauthorized=false`；discovery 後的 login、status 與 event sync 共用同一份 effective policy。公網 endpoint 仍維持 verified TLS。若不使用受控內網相容模式，請使用 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false` 或容器內絕對且非 symlink 的 `PPB_CA_FILE`。容器內不要改用宿主機的 `pwrstat`。
+`TRUSTED_LAN_MODE` 是 compatibility master switch；安全 baseline `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false` 在私有 endpoint classification 下會自動產生 scoped `rejectUnauthorized=false`。只有明確的 legacy/manual insecure override 才會顯示 `explicitly-insecure`，不會冒充 Trusted LAN。discovery 後的 login、status 與 event sync 共用同一份 effective policy。公網 endpoint 仍維持 verified TLS；關閉 Trusted LAN 後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH。私有 CA 與 SSH fingerprint 永遠優先。容器內不要改用宿主機的 `pwrstat`。
 
 ## NUT
 

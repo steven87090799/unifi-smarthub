@@ -190,7 +190,7 @@ function createAdGuardConnection(options = {}) {
         client,
         configured: true,
         tlsVerified: parsed.protocol === 'https:' && tls.verify === true,
-        transportMode: parsed.protocol === 'http:' ? 'http' : tls.mode,
+        transportMode: tls.mode,
         trustedLan: tls.trustedLan === true,
         insecureHttp: parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)
     };

@@ -1527,20 +1527,28 @@ app.get('/api/connections/status', (_req, res) => res.json({
     source: 'mock',
     trustedLanMode: mockConn.TRUSTED_LAN_MODE === 'true',
     transports: {
-        unifiController: 'verified', unifiNetwork: 'verified', nas: 'verified', ppb: 'verified',
-        adguard: 'verified', wiim: 'verified', nasMonitor: 'verified', ucgSsh: 'verified',
-        linuxSsh: 'verified', unifiDeviceSsh: 'verified', siteManager: 'verified'
+        unifiController: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        unifiNetwork: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        nas: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        ppb: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        adguard: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        wiim: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        nasMonitor: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        ucgSsh: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        linuxSsh: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        unifiDeviceSsh: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified',
+        siteManager: 'verified'
     },
     devices: [
-        { name: 'UCG SSH', configured: true, ok: true, detail: mockConn.UCG_IP },
-        { name: 'UniFi Controller', configured: true, ok: true, detail: 'Legacy API' },
-        { name: 'UniFi 裝置 SSH 溫度', configured: true, ok: true, detail: '已選 1 台 · Host Key 1 台' },
-        { name: 'Site Manager', configured: false, ok: null, detail: '' },
-        { name: 'UniFi Threat Blocking', configured: true, ok: true, detail: 'healthy' },
-        { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, detail: mockConn.NAS_HOST || '' },
-        { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, detail: mockConn.NAS_MONITOR_URL || '' },
-        { name: 'WiiM Amp', configured: Boolean(mockConn.WIIM_IP), ok: mockConn.WIIM_IP ? true : null, detail: mockConn.WIIM_IP || '' },
-        { name: 'UPS', configured: true, ok: true, detail: 'PPB/NUT mock' },
+        { name: 'UCG SSH', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: mockConn.UCG_IP },
+        { name: 'UniFi Controller', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: 'Legacy API' },
+        { name: 'UniFi 裝置 SSH 溫度', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: '已選 1 台 · Host Key 1 台' },
+        { name: 'Site Manager', configured: false, ok: null, transportMode: 'verified', detail: '' },
+        { name: 'UniFi Threat Blocking', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: 'healthy' },
+        { name: 'UGREEN NAS', configured: !!(mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD), ok: mockConn.NAS_HOST && mockConn.NAS_USER && mockConnSecrets.NAS_PASSWORD ? true : null, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: mockConn.NAS_HOST || '' },
+        { name: 'NAS Monitor', configured: !!mockConn.NAS_MONITOR_URL, ok: mockConn.NAS_MONITOR_URL ? true : null, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: mockConn.NAS_MONITOR_URL || '' },
+        { name: 'WiiM Amp', configured: Boolean(mockConn.WIIM_IP), ok: mockConn.WIIM_IP ? true : null, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: mockConn.WIIM_IP || '' },
+        { name: 'UPS', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: 'PPB/NUT mock' },
         { name: 'AdGuard 裝置政策', configured: mockAdguardServicePolicies.length > 0, ok: true, detail: `${mockAdguardServicePolicies.length} 筆 · healthy` }
     ]
 }));

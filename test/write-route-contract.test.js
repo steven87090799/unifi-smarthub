@@ -58,6 +58,8 @@ function safeChildEnvironment({ port, dataDir }) {
         LOG_JSON: 'true',
         DEBUG_HTTP: '0',
         MONITOR_ENABLED: 'false',
+        TRUSTED_LAN_MODE: 'false',
+        TRUSTED_LAN_HOSTS: '',
         UCG_IP: '127.0.0.1',
         SSH_PORT: '1',
         SSH_USER: '',
@@ -403,6 +405,8 @@ async function assertSafeLocalWrites(runtime, client) {
     text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} connection readback: ${text}`);
     body = JSON.parse(text);
+    assert.equal(typeof body.fields.TRUSTED_LAN_MODE, 'string');
+    assert.equal(body.fields.TRUSTED_LAN_MODE, runtime.label === 'mock' ? 'true' : 'false');
     assert.equal(body.fields.UPS_SOURCE, 'ppb');
     assert.equal(body.fields.PPB_HOST, '127.0.0.1');
     assert.equal(body.fields.PPB_PORT, '3052');
@@ -421,6 +425,16 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(text.includes(deviceSecret), false, `${runtime.label} device secret leaked in readback`);
     assert.equal(text.includes('aa:bb:cc:dd:ee:ff'), false, `${runtime.label} target MAC leaked in readback`);
     assert.equal(text.includes(deviceFingerprint), false, `${runtime.label} host key leaked in readback`);
+
+    response = await client.read('/api/connections/status');
+    text = await response.text();
+    assert.equal(response.status, 200, `${runtime.label} connection status: ${text}`);
+    const connectionStatus = JSON.parse(text);
+    assert.equal(connectionStatus.trustedLanMode, runtime.label === 'mock');
+    assert.equal(connectionStatus.transports.siteManager, 'verified');
+    assert.ok(connectionStatus.devices.some(device => device.transportMode === 'verified'));
+    assert.equal(text.includes(secret), false, `${runtime.label} status leaked secret`);
+    assert.equal(text.includes(deviceFingerprint), false, `${runtime.label} status leaked host key`);
 
     response = await client.write('POST', '/api/connections', { WIIM_IP: '192.0.2.55' });
     assert.equal(response.status, 200, `${runtime.label} set clearable WiiM IP: ${await response.text()}`);

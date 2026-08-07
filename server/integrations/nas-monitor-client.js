@@ -173,7 +173,9 @@ function createNasMonitorConnection(options = {}) {
         client,
         configured: true,
         tlsVerified: parsed.protocol !== 'https:' || tls.verify === true,
-        transportMode: parsed.protocol === 'http:' ? 'http' : tls.mode,
+        transportMode: parsed.protocol === 'http:'
+            ? (inputs.trustedLanApplied ? 'trusted-lan-insecure' : (isLoopbackHostname(parsed.hostname) ? 'loopback-http' : 'explicit-insecure-http'))
+            : tls.mode,
         trustedLan: tls?.trustedLan === true
     };
 }

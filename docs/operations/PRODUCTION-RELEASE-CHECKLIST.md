@@ -14,7 +14,7 @@
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
 - `UPS_SOURCE` 明確指定時預設 fail-closed；只有明確設定 `UPS_ALLOW_FALLBACK=true` 才可回退到其他來源。
 - Compose host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內 `SMARTHUB_BIND_ADDRESS=0.0.0.0` 只服務 container network。
-- 若部署在受控可信任內網，可使用 `TRUSTED_LAN_MODE=true`，並確認 Controller、NAS、PPB、AdGuard、WiiM 與 SSH target 都經 private/allowlist classification；公網 integration 仍必須 verified TLS。若不使用此模式，PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false` 或使用非 symlink 的容器內絕對 `PPB_CA_FILE`。
+- `TRUSTED_LAN_MODE` 是 compatibility master switch；安全 baseline 應保持 `TLS_VERIFY=true`、`TLS_INSECURE=false`、`ALLOW_INSECURE_HTTP=false` 與 SSH unpinned=false。開啟時只有經 private/allowlist classification 的 Controller、NAS、PPB、AdGuard、WiiM 與 SSH target 產生 scoped compatibility transport；關閉後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH。configured CA／SSH fingerprint 永遠優先；明確 legacy/manual insecure override 必須顯示為 explicit mode。公網 integration 仍必須 verified TLS；公開部署請關閉此模式。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。
 - 正式 Web 入口是 Caddy／Nginx 等 HTTPS reverse proxy；`http://<NAS IP>:3000` 只可作為隔離的 local probe，不是 production 使用路徑。

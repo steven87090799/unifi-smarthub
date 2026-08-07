@@ -38,12 +38,13 @@ function resolveHostKeyPolicy({
         throw new Error(`${field.replace(/HOST_KEY$/u, 'ALLOW_UNPINNED')} must be exactly true or false`);
     }
     const requestedAllow = allowUnpinned === true || allowUnpinned === 'true';
-    const trustedTarget = trustedLanMode === true || trustedLanMode === 'true'
+    const trustedModeEnabled = trustedLanMode === true || trustedLanMode === 'true';
+    const trustedTarget = trustedModeEnabled
         ? isTrustedLanEndpoint(host, { enabled: true, trustedHosts: trustedLanHosts })
         : false;
     // In Trusted LAN mode an unpinned key is a compatibility fallback only
     // for a classified private target. A configured fingerprint always wins.
-    if (requestedAllow && trustedLanMode && !trustedTarget) {
+    if (requestedAllow && trustedModeEnabled && !trustedTarget) {
         return { configured: false, fingerprint: null, verifier: null, insecure: false, error: 'trusted_lan_target_required' };
     }
     const allow = requestedAllow || trustedTarget;

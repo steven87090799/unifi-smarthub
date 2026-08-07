@@ -282,6 +282,7 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ UPS_ALLOW_FALLBACK: 'TRUE' }, fields), 'UPS_ALLOW_FALLBACK');
     validationError(() => parseConnectionUpdates({ SMARTHUB_INTERNET_PROXY_MODE: 'all' }, fields), 'SMARTHUB_INTERNET_PROXY_MODE');
     validationError(() => parseConnectionUpdates({ TRUSTED_LAN_MODE: 'TRUE' }, fields), 'TRUSTED_LAN_MODE');
+    assert.equal(parseConnectionUpdates({ TRUSTED_LAN_MODE: 'false' }, fields).TRUSTED_LAN_MODE, 'false');
     for (const value of ['*.home.lan', 'nas.home.lan evil', '8.8.8.8']) {
         validationError(() => parseConnectionUpdates({ TRUSTED_LAN_HOSTS: value }, fields), 'TRUSTED_LAN_HOSTS');
     }

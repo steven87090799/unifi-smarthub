@@ -167,6 +167,10 @@ function valueProvided(value) {
     return value !== undefined && value !== null && value !== '';
 }
 
+function isSafeTransportDefault(value, expected) {
+    return !valueProvided(value) || value === expected || value === String(expected);
+}
+
 function effectiveValue(env, field, fallback) {
     if (!field) return fallback;
     return env?.[field] === undefined ? fallback : env[field];
@@ -192,20 +196,21 @@ function resolveTrustedLanTransportInputs({
     let allowInsecureHttp = effectiveValue(env, fields.allowHttp);
     const caFile = effectiveValue(env, fields.ca, '');
     const hasCa = valueProvided(caFile);
-    const verifyWasProvided = valueProvided(verify);
     const insecureWasProvided = valueProvided(insecure);
-    const allowHttpWasProvided = valueProvided(allowInsecureHttp);
+    let trustedLanApplied = false;
 
-    if (target.trusted && !hasCa) {
-        if (!verifyWasProvided && !insecureWasProvided) {
-            verify = 'false';
-            insecure = 'true';
-        } else if (!insecureWasProvided && verify === 'false') {
-            // The effective values remain paired; an explicit false flag is
-            // never passed to the TLS resolver without its required partner.
-            insecure = 'true';
-        }
-        if (!allowHttpWasProvided) allowInsecureHttp = 'true';
+    // The example/config baseline is deliberately safe (verify=true,
+    // insecure=false, HTTP=false). Trusted LAN is the compatibility master
+    // switch, so that baseline must still become an effective LAN transport;
+    // only an actual insecure opt-in or a configured CA takes precedence.
+    const safeTransportDefaults = isSafeTransportDefault(verify, true)
+        && isSafeTransportDefault(insecure, false)
+        && isSafeTransportDefault(allowInsecureHttp, false);
+    if (target.trusted && !hasCa && safeTransportDefaults) {
+        verify = 'false';
+        insecure = 'true';
+        allowInsecureHttp = 'true';
+        trustedLanApplied = true;
     }
     if (implicitInsecureWhenVerifyFalse && verify === 'false' && !insecureWasProvided) insecure = 'true';
 
@@ -215,6 +220,7 @@ function resolveTrustedLanTransportInputs({
         caFile,
         allowInsecureHttp,
         trustedLan: target.trusted,
+        trustedLanApplied,
         trustedLanTarget: target
     });
 }
@@ -230,10 +236,16 @@ function resolveIntegrationTlsPolicy(options = {}) {
         fields: options.fields,
         fileSystem: options.fileSystem
     });
-    const mode = inputs.trustedLan && policy.insecure
+    const mode = inputs.trustedLanApplied
         ? 'trusted-lan-insecure'
         : policy.mode;
-    return Object.freeze({ ...policy, mode, trustedLan: inputs.trustedLan, trustedLanTarget: inputs.trustedLanTarget });
+    return Object.freeze({
+        ...policy,
+        mode,
+        trustedLan: inputs.trustedLan,
+        trustedLanApplied: inputs.trustedLanApplied,
+        trustedLanTarget: inputs.trustedLanTarget
+    });
 }
 
 module.exports = {

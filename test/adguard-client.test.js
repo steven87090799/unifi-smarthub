@@ -128,7 +128,7 @@ test('Trusted LAN mode accepts private self-signed HTTPS and private HTTP but ne
         },
         axios: privateHttp.axios
     });
-    assert.equal(httpConnection.transportMode, 'http');
+    assert.equal(httpConnection.transportMode, 'trusted-lan-insecure');
     assert.equal(httpConnection.tlsVerified, false);
 
     const publicHttps = fakeAxios();
