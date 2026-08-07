@@ -73,6 +73,30 @@ test('HTTPS verifies certificates by default and sends bounded client options', 
     assert.equal(axios.calls[0].headers.Authorization, undefined);
 });
 
+test('Trusted LAN mode uses a scoped unverified agent only for private monitor endpoints', () => {
+    const privateFixture = fakeAxios();
+    const privateConnection = createNasMonitorConnection({
+        axios: privateFixture,
+        env: {
+            TRUSTED_LAN_MODE: 'true', NAS_MONITOR_URL: 'https://192.168.1.30',
+            NAS_MONITOR_API_KEY: STRONG_KEY
+        }
+    });
+    assert.equal(privateConnection.transportMode, 'trusted-lan-insecure');
+    assert.equal(privateFixture.calls[0].httpsAgent.options.rejectUnauthorized, false);
+
+    const publicFixture = fakeAxios();
+    const publicConnection = createNasMonitorConnection({
+        axios: publicFixture,
+        env: {
+            TRUSTED_LAN_MODE: 'true', NAS_MONITOR_URL: 'https://monitor.example.test',
+            NAS_MONITOR_API_KEY: STRONG_KEY
+        }
+    });
+    assert.equal(publicConnection.transportMode, 'verified');
+    assert.equal(publicFixture.calls[0].httpsAgent.options.rejectUnauthorized, true);
+});
+
 test('TLS verification can only be disabled by an exact explicit flag', () => {
     const axios = fakeAxios();
     const connection = createNasMonitorConnection({

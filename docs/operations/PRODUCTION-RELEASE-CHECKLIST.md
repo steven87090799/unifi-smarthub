@@ -14,14 +14,15 @@
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
 - `UPS_SOURCE` 明確指定時預設 fail-closed；只有明確設定 `UPS_ALLOW_FALLBACK=true` 才可回退到其他來源。
 - Compose host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內 `SMARTHUB_BIND_ADDRESS=0.0.0.0` 只服務 container network。
-- PPB 保持 `PPB_TLS_VERIFY=true`、`PPB_TLS_INSECURE=false`；私有／自簽 CA 使用容器內絕對路徑 `PPB_CA_FILE`，並確認不是 symlink。
+- `TRUSTED_LAN_MODE` 是 compatibility master switch；安全 baseline 應保持 `TLS_VERIFY=true`、`TLS_INSECURE=false`、`ALLOW_INSECURE_HTTP=false` 與 SSH unpinned=false。開啟時只有經 private/allowlist classification 的 Controller、NAS、PPB、AdGuard、WiiM 與 SSH target 產生 scoped compatibility transport；關閉後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH。configured CA／SSH fingerprint 永遠優先；明確 legacy/manual insecure override 必須顯示為 explicit mode。公網 integration 仍必須 verified TLS；公開部署請關閉此模式。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。
 - 正式 Web 入口是 Caddy／Nginx 等 HTTPS reverse proxy；`http://<NAS IP>:3000` 只可作為隔離的 local probe，不是 production 使用路徑。
 - `PANEL_REQUIRE_HTTPS=true`、`PANEL_ALLOW_INSECURE_HTTP=false`，並只對實際 reverse proxy 設定 `PANEL_TRUSTED_PROXIES`。
 - `SMARTHUB_INTERNET_PROXY_MODE=disabled`；只有明確選擇 `environment` 才讓 public integrations 使用 ambient `HTTP_PROXY`／`HTTPS_PROXY`／`ALL_PROXY`，LAN integrations 永遠 `proxy:false`。
 - UniFi／NAS HTTPS 預設驗證憑證；私有 CA 使用 `*_CA_FILE`，insecure 只能由明確 opt-in 開啟。
-- 已設定所有啟用 SSH integration 的 host fingerprint；未 pin 的 production SSH 連線不得放行。
+- 未使用 Trusted LAN mode 時，已設定所有啟用 SSH integration 的 host fingerprint；使用 Trusted LAN mode 時，未 pin 只可對分類為私有的 UCG／Linux／UniFi Device SSH target 放行，Controller-known device、MAC allowlist、literal IP、固定唯讀指令與 concurrency 邊界仍必須保留。
+- AdGuard connectivity 與 protection 必須是不同狀態；離線需連續 3 次明確 failure，恢復需連續 2 次 fresh success。Site Manager 使用相同 threshold，unknown/stale 不得產生通知。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
 - `.github/dependabot.yml` 只管理版本更新排程、分組與自動 PR 上限；Dependabot Alerts／security updates 仍由 GitHub repository 的 `Settings → Code security and analysis` 設定管理，不能由此檔案宣稱已啟用。
 
@@ -35,7 +36,6 @@ npm test
 npm run check:js
 npm run check:css
 npm run test:smoke
-npm run test:soak
 npm audit --audit-level=low
 git diff --check
 docker compose --env-file config/.env config --quiet
@@ -67,6 +67,8 @@ node --test \
 ```
 
 任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。
+
+本次 Trusted LAN／notification 修正只做完整 unit/integration tests、Compose config/build、offline preflight、smoke 與 90 秒至數分鐘的短 runtime stability check；不執行數小時 `npm run test:soak`。短驗證不等同真實設備、PPB、AdGuard、WiiM、SSH 或通知服務的實機驗收。
 
 Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 的 branch protection／ruleset 應將 `SmartHub CI / Repository gate` 設為 Required Check，要求分支為最新並禁止 CI 未通過時 merge。Workflow 檔存在不代表 repository 規則已啟用；沒有管理權限驗證時記為 `NOT RUN`。
 

@@ -3203,6 +3203,19 @@
                                 儲存並立即套用</button>
                         </div>
 
+                        <div class="bg-blue-950/30 border border-blue-500/30 rounded-xl p-4 space-y-2.5">
+                            <label class="flex items-center gap-2 text-xs font-bold text-blue-200 cursor-pointer">
+                                <input id="conn-TRUSTED_LAN_MODE" type="checkbox" class="conn-input h-4 w-4 accent-blue-500">
+                                可信任內網相容模式
+                            </label>
+                            <p class="text-[10px] text-slate-400 leading-relaxed">僅對私有 IP、loopback、host.docker.internal 與明確 allowlist 內網主機放寬自簽 TLS、HTTP 與 SSH Host Key pinning。Site Manager、Telegram、Discord 與其他公網服務不受影響。</p>
+                            <div>
+                                <label class="text-[9px] text-slate-500 uppercase font-bold">可信任內網 hostname allowlist（選填，逗號分隔）</label>
+                                <input id="conn-TRUSTED_LAN_HOSTS" placeholder="nas.home.lan, adguard.home.lan" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                            </div>
+                            <p id="conn-trusted-lan-status" class="text-[9px] text-slate-500">狀態讀取中…</p>
+                        </div>
+
                         <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
                             <!-- UCG SSH -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">

@@ -6,11 +6,14 @@ SmartHub 透過 LinkPlay `httpapi.asp` 讀取 WiiM 狀態並執行受限控制�
 
 ```env
 WIIM_IP=
+TRUSTED_LAN_MODE=true
+WIIM_TLS_INSECURE=false
+WIIM_ALLOW_INSECURE_HTTP=false
 ```
 
 - `WIIM_IP` 必須是實際 IPv4/IPv6 literal；留空即停用整合，不會啟動取樣、診斷、指令或頁面資料讀取。
-- 先嘗試 `https://<ip>/httpapi.asp?command=...`；只有明確設定 `WIIM_ALLOW_INSECURE_HTTP=true` 才允許 HTTP。
-- `WIIM_TLS_INSECURE=true` 才會對精確設定的 WiiM literal endpoint 停用 HTTPS 憑證驗證；預設仍驗證 TLS。`WIIM_ALLOW_INSECURE_HTTP=true` 只放行精確設定的 WiiM private literal，public artwork CDN 仍必須使用已驗證的 HTTPS。
+- 先嘗試 `https://<ip>/httpapi.asp?command=...`；Trusted LAN 私有 endpoint 可依 master switch 使用 HTTP，其他遠端 endpoint 只有明確設定 `WIIM_ALLOW_INSECURE_HTTP=true` 才允許 HTTP。
+- `TRUSTED_LAN_MODE` 是 compatibility master switch；上述安全 baseline 只會對分類為私有／allowlist 的 WiiM endpoint 產生相容傳輸。關閉模式後不會自動接受自簽憑證或 HTTP；明確 legacy/manual insecure override 顯示為 `explicitly-insecure`／`explicit-insecure-http`，不會冒充 Trusted LAN。公網 endpoint 與 public artwork CDN 每一跳仍必須使用已驗證的 HTTPS。
 - 封面代理固定每一跳 DNS 解析地址，最多跟隨 3 次 redirect、只接受影像 MIME，單項最多 2 MiB；同時最多 4 個 upstream、最多排隊 16 個工作、單次 deadline 7 秒，並使用有項數／總大小／TTL 上限的 LRU 快取與同 key 去重。
 - 常用唯讀指令有 2 秒快取；失聯時最多保留 5 分鐘的 `stale_cache` 顯示資料。stale 不代表在線、不寫入溫度歷史、不觸發成功／恢復通知，也不能回報異動命令成功。
 - `getStatusEx` 的溫度寫入 SQLite；WiiM 頁活動時使用一般裝置取樣設定，預設 5 秒，閒置時回到設定的低頻。

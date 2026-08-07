@@ -59,6 +59,18 @@ docker compose --env-file config/.env ps
 
 本機隔離演練可開啟 `http://127.0.0.1:3000`。正式環境不可把 `http://<NAS IP>:3000` 當作對外入口；請以前置 Caddy／Nginx 終止 HTTPS，再反向代理至 SmartHub 的內部 port。
 
+### 可信任內網最簡部署
+
+1. `cp .env.example config/.env`
+2. 保留 `TRUSTED_LAN_MODE=true`，只填設備 IP、帳號與密碼。
+3. `docker compose --env-file config/.env build unifi-smarthub`
+4. `docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline`
+5. `docker compose --env-file config/.env up -d --no-build`
+6. `docker compose --env-file config/.env ps`
+7. 檢查 `/health`、`/health/ready` 與設定頁的整合狀態。
+
+`TRUSTED_LAN_MODE` 是 compatibility master switch。安全 baseline（TLS verify=true、insecure=false、HTTP=false、SSH unpinned=false）只會在私有 IP、loopback、`host.docker.internal` 與 `TRUSTED_LAN_HOSTS` 完全相符的 hostname 上產生 scoped 自簽 TLS、私有 HTTP 與 SSH Host Key 相容傳輸。關閉模式後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH；若另設 legacy/manual insecure override，狀態會顯示 `explicitly-insecure`／`explicit-insecure-http`，不會冒充 Trusted LAN。configured CA／SSH fingerprint 永遠優先。它絕不影響 Site Manager、Telegram、Discord、Webhook、外部圖片/CDN 或其他 Internet integration 的 TLS 驗證；公開部署應設為 `false` 並改用正式 CA／fingerprint。
+
 Compose 的 host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內服務仍綁定 `0.0.0.0` 以接受同一 network 的 reverse proxy。若要改成 LAN 發布，必須明確設定 host bind address 並同步套用防火牆／HTTPS 邊界。
 
 若 NAS 使用者不是 UID/GID 1000，請在部署主機以 `chown 1000:1000` 或等效 ACL 讓 container process 讀取 `config/.env`，並能在 `config/` 與 `/app/data` 建立、fsync、atomic rename、刪除暫存檔。不要以 `chmod 777`／`666` 掩蓋權限問題；`production-preflight` 必須在實際 container UID 下通過。
@@ -88,6 +100,7 @@ node server-mock.js
 
 | 整合 | 主要欄位 |
 |---|---|
+| Trusted LAN | `TRUSTED_LAN_MODE`, `TRUSTED_LAN_HOSTS` |
 | UCG SSH | `UCG_IP`, `SSH_USER`, `SSH_PASSWORD` |
 | UniFi 本地 | `UNIFI_CONTROLLER_URL`, `UNIFI_USERNAME`, `UNIFI_PASSWORD` |
 | UniFi 裝置溫度（選填） | `UNIFI_DEVICE_SSH_PORT`, `UNIFI_DEVICE_SSH_USER`, `UNIFI_DEVICE_SSH_PASSWORD`, `UNIFI_DEVICE_SSH_TARGET_IDS`, `UNIFI_DEVICE_SSH_HOST_KEYS` |
@@ -104,6 +117,8 @@ node server-mock.js
 
 `WIIM_IP` 是選配 literal IP；留空即停用 WiiM，不會產生模擬溫度、播放狀態或診斷資料。
 
+設定頁的「可信任內網相容模式」是管理員可修改的單一開關；GET 只回傳非機密欄位與 `secretsSet`，不回傳密碼、API key、cookie、token、CA 內容或完整 SSH fingerprint。設定更新使用既有 atomic `.env` writer；需要重建的 NAS Monitor 連線會明確標示待 recreate。
+
 ## 安全與部署邊界
 
 - 只部署在可信任內網；遠端存取使用 VPN 或受信任反向代理。
@@ -117,6 +132,7 @@ node server-mock.js
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
 - Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
 - Device SSH 只接受 Controller 已知設備、最多 32 個明確 MAC、Literal IP 與固定唯讀 thermal command；最多兩條並行連線，可用每台設備的 SHA256 Host Key pinning。密碼、MAC 清單與 fingerprint 不由 GET、診斷、log 或安全備份回傳。
+- Trusted LAN mode 不會建立共用的 insecure Axios client，也不使用 `NODE_TLS_REJECT_UNAUTHORIZED=0`；每個 LAN integration 都有自己的 scoped transport。AdGuard connectivity 與 protection 狀態分開追蹤，連續 3 次失敗才通知離線、連續 2 次成功才通知恢復；Site Manager 使用相同 debounce，但持續使用正常 Internet TLS。
 - 正式映像不可從 dirty checkout、`latest` 或臨時 `--build` 直接發布。
 - Internet/public Axios integrations 的 `SMARTHUB_INTERNET_PROXY_MODE` 預設為 `disabled`；只有明確設為 `environment` 才使用 `HTTP_PROXY`／`HTTPS_PROXY`／`ALL_PROXY`。LAN integrations 永遠不使用 ambient proxy。
 
@@ -137,7 +153,7 @@ PPB_TLS_INSECURE=false
 # PPB_CA_FILE=/app/config/ppb-ca.pem
 ```
 
-未設定 TLS 新欄位時仍會驗證憑證。只有明確設定 `PPB_TLS_INSECURE=true` 才會停用驗證並產生警告；`PPB_TLS_VERIFY=false` 不會單獨關閉驗證。CA 必須是容器內可讀的絕對路徑、一般檔案且不得為 symlink。
+Trusted LAN mode 對可信任 PPB endpoint 會以同一份 effective policy 套用 discovery 後的 login、status 與 event sync；因此 PPB 自簽憑證不會只在 status 路徑被放寬。`UPS_SOURCE=ppb` 且 `UPS_ALLOW_FALLBACK=false` 時不會嘗試 NUT、pwrstat 或 pmset；UPS 狀態仍保留 last-good，單次失敗不會立即抹除資料。關閉 Trusted LAN 後不會自動接受自簽憑證；請使用正式 CA，或明確且可辨識的 legacy/manual override。
 
 容器內沒有宿主機的 `pwrstat` 或 `pmset`。替代方案是讓容器連到可達的 NUT server；詳見 [UPS 整合摘要](docs/integrations/cyberpower-ups-api.md)。
 

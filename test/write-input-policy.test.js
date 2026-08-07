@@ -187,6 +187,7 @@ test('empty-body actions accept only undefined or an empty plain object', () => 
 
 test('connection updates reject .env injection, bad types, oversized values, and unknown fields', () => {
     const fields = [
+        { key: 'TRUSTED_LAN_MODE' }, { key: 'TRUSTED_LAN_HOSTS', clearable: true },
         { key: 'SSH_PORT' },
         { key: 'UNIFI_CONTROLLER_URL' },
         { key: 'UNIFI_NETWORK_API_URL' },
@@ -216,6 +217,8 @@ test('connection updates reject .env injection, bad types, oversized values, and
     assert.deepEqual(parseConnectionUpdates({
         SSH_PORT: '22',
         UNIFI_CONTROLLER_URL: 'https://192.168.1.1:443',
+        TRUSTED_LAN_MODE: 'true',
+        TRUSTED_LAN_HOSTS: 'nas.home.lan, adguard.home.lan',
         UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration',
         UNIFI_NETWORK_TLS_VERIFY: 'true',
         UNIFI_NETWORK_SITE_ID: '11111111-1111-4111-8111-111111111111',
@@ -234,6 +237,8 @@ test('connection updates reject .env injection, bad types, oversized values, and
         PASSWORD: ' spaces and # are data '
     }, fields), {
         SSH_PORT: '22',
+        TRUSTED_LAN_MODE: 'true',
+        TRUSTED_LAN_HOSTS: 'nas.home.lan,adguard.home.lan',
         UNIFI_CONTROLLER_URL: 'https://192.168.1.1:443',
         UNIFI_NETWORK_API_URL: 'https://192.168.1.1/proxy/network/integration',
         UNIFI_NETWORK_TLS_VERIFY: 'true',
@@ -257,6 +262,7 @@ test('connection updates reject .env injection, bad types, oversized values, and
     assert.deepEqual(parseConnectionUpdates({ UNIFI_NETWORK_CA_FILE: '   ' }, fields.map(field => field.key === 'UNIFI_NETWORK_CA_FILE' ? { ...field, clearable: true } : field)), {
         UNIFI_NETWORK_CA_FILE: ''
     });
+    assert.deepEqual(parseConnectionUpdates({ TRUSTED_LAN_HOSTS: '   ' }, fields), { TRUSTED_LAN_HOSTS: '' });
 
     for (const injection of ['safe\nEVIL=1', 'safe\rEVIL=1', 'safe\r\nEVIL=1', 'safe\0EVIL=1']) {
         validationError(() => parseConnectionUpdates({ PASSWORD: injection }, fields), 'PASSWORD');
@@ -275,6 +281,11 @@ test('connection updates reject .env injection, bad types, oversized values, and
     validationError(() => parseConnectionUpdates({ UPS_SOURCE: 'fallback' }, fields), 'UPS_SOURCE');
     validationError(() => parseConnectionUpdates({ UPS_ALLOW_FALLBACK: 'TRUE' }, fields), 'UPS_ALLOW_FALLBACK');
     validationError(() => parseConnectionUpdates({ SMARTHUB_INTERNET_PROXY_MODE: 'all' }, fields), 'SMARTHUB_INTERNET_PROXY_MODE');
+    validationError(() => parseConnectionUpdates({ TRUSTED_LAN_MODE: 'TRUE' }, fields), 'TRUSTED_LAN_MODE');
+    assert.equal(parseConnectionUpdates({ TRUSTED_LAN_MODE: 'false' }, fields).TRUSTED_LAN_MODE, 'false');
+    for (const value of ['*.home.lan', 'nas.home.lan evil', '8.8.8.8']) {
+        validationError(() => parseConnectionUpdates({ TRUSTED_LAN_HOSTS: value }, fields), 'TRUSTED_LAN_HOSTS');
+    }
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_API_URL: 'http://127.0.0.1:8080' }, fields).UNIFI_NETWORK_API_URL, 'http://127.0.0.1:8080');
     validationError(() => parseConnectionUpdates({ UNIFI_NETWORK_TLS_VERIFY: 'TRUE' }, fields), 'UNIFI_NETWORK_TLS_VERIFY');
     assert.equal(parseConnectionUpdates({ UNIFI_NETWORK_TLS_INSECURE: 'true' }, fields).UNIFI_NETWORK_TLS_INSECURE, 'true');

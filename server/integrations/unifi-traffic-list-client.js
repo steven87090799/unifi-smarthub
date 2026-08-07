@@ -1,7 +1,10 @@
 'use strict';
 
 const net = require('node:net');
-const { resolveTlsPolicy } = require('./tls-policy');
+const {
+    resolveIntegrationTlsPolicy,
+    resolveTrustedLanTransportInputs
+} = require('./trusted-lan-policy');
 
 const DEFAULT_LIST_NAME = 'SmartHub Threat Blocks';
 const EMPTY_LIST_SENTINEL = '192.0.2.1';
@@ -61,7 +64,6 @@ function readConfiguration(environment = process.env) {
     const siteId = environment.UNIFI_NETWORK_SITE_ID || '';
     const listId = environment.UNIFI_THREAT_BLOCK_LIST_ID || '';
     const listName = environment.UNIFI_THREAT_BLOCK_LIST_NAME || DEFAULT_LIST_NAME;
-    const tlsVerify = parseTlsVerify(environment.UNIFI_NETWORK_TLS_VERIFY);
     const explicitUrl = environment.UNIFI_NETWORK_API_URL || '';
     const controllerUrl = environment.UNIFI_CONTROLLER_URL || '';
     const missing = [];
@@ -72,8 +74,31 @@ function readConfiguration(environment = process.env) {
     if (typeof listName !== 'string' || listName.trim().length < 1 || listName.trim().length > 128) {
         missing.push('UNIFI_THREAT_BLOCK_LIST_NAME');
     }
-    const tlsInsecure = parseStrictBoolean(environment.UNIFI_NETWORK_TLS_INSECURE, false);
-    const allowInsecureHttp = parseStrictBoolean(environment.UNIFI_NETWORK_ALLOW_INSECURE_HTTP, false);
+    const trustedInputs = (() => {
+        try {
+            return resolveTrustedLanTransportInputs({
+                url: explicitUrl || `${controllerUrl.replace(/\/$/u, '')}/proxy/network/integration`,
+                integration: 'unifi_network',
+                env: environment,
+                fields: {
+                    verify: 'UNIFI_NETWORK_TLS_VERIFY', insecure: 'UNIFI_NETWORK_TLS_INSECURE',
+                    ca: 'UNIFI_NETWORK_CA_FILE', allowHttp: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP'
+                }
+            });
+        } catch (error) {
+            missing.push(error.field || 'TRUSTED_LAN_MODE');
+            return null;
+        }
+    })();
+    const tlsVerify = trustedInputs
+        ? parseTlsVerify(trustedInputs.verify)
+        : parseTlsVerify(environment.UNIFI_NETWORK_TLS_VERIFY);
+    const tlsInsecure = trustedInputs
+        ? parseStrictBoolean(trustedInputs.insecure, false)
+        : parseStrictBoolean(environment.UNIFI_NETWORK_TLS_INSECURE, false);
+    const allowInsecureHttp = trustedInputs
+        ? parseStrictBoolean(trustedInputs.allowInsecureHttp, false)
+        : parseStrictBoolean(environment.UNIFI_NETWORK_ALLOW_INSECURE_HTTP, false);
     if (tlsVerify === null) missing.push('UNIFI_NETWORK_TLS_VERIFY');
     if (tlsInsecure === null) missing.push('UNIFI_NETWORK_TLS_INSECURE');
     if (allowInsecureHttp === null) missing.push('UNIFI_NETWORK_ALLOW_INSECURE_HTTP');
@@ -84,18 +109,26 @@ function readConfiguration(environment = process.env) {
         const source = explicitUrl || `${controllerUrl.replace(/\/$/u, '')}/proxy/network/integration`;
         try {
             baseUrl = normalizeBaseUrl(source, { allowInsecureHttp });
-            tlsPolicy = resolveTlsPolicy({
+            const resolvedTlsPolicy = resolveIntegrationTlsPolicy({
                 url: baseUrl,
-                verify: tlsVerify === false ? 'false' : 'true',
-                insecure: tlsInsecure ? 'true' : 'false',
-                caFile: environment.UNIFI_NETWORK_CA_FILE || '',
-                allowInsecureHttp,
+                integration: 'unifi_network',
+                env: environment,
                 fields: {
                     url: 'UNIFI_NETWORK_API_URL', verify: 'UNIFI_NETWORK_TLS_VERIFY',
                     insecure: 'UNIFI_NETWORK_TLS_INSECURE', ca: 'UNIFI_NETWORK_CA_FILE',
                     allowHttp: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP'
                 }
             });
+            // Keep the established configuration contract small. Target
+            // classification is an internal policy decision, not an API or
+            // diagnostic field; transport mode remains available to callers.
+            const {
+                trustedLan: _trustedLan,
+                trustedLanApplied: _trustedLanApplied,
+                trustedLanTarget: _trustedLanTarget,
+                ...safeTlsPolicy
+            } = resolvedTlsPolicy;
+            tlsPolicy = safeTlsPolicy;
         } catch (error) { missing.push(error.field || 'UNIFI_NETWORK_API_URL'); }
     }
     return {
