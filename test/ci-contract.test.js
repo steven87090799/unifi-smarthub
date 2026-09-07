@@ -71,6 +71,17 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.ok(workflow.indexOf('Validate release evidence') < workflow.indexOf('Upload SBOM and vulnerability reports'));
 });
 
+test('Gitleaks allowlist is explicit and limited to deterministic fixture values', () => {
+    const config = fs.readFileSync(path.join(ROOT, '.gitleaks.toml'), 'utf8');
+    assert.match(config, /^\[allowlist\]/mu);
+    for (const fixture of [
+        '^0123456789abcdef0123456789abcdef$',
+        '^1234567890abcdef$',
+        '^fedcba0987654321$'
+    ]) assert.match(config, new RegExp(fixture.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
+    assert.doesNotMatch(config, /paths\s*=|test\/\.\*/u);
+});
+
 test('isolated runtime smoke is a bounded blocking gate after tests and image builds', () => {
     const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
     const smokeStep = workflow.match(
