@@ -208,7 +208,7 @@ docker compose --env-file config/.env up -d --no-build --pull never
 
 `release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision、image ID 與映像身分。若使用 registry，仍需成對記錄不可變 digest；部署時保留 release JSON 的 `image_ids` 與 registry digest，不能只記錄可重指向的 tag。
 
-Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.5-r0`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
+Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`libcrypto3=3.5.8-r0`、`libssl3=3.5.8-r0`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.7-r1`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
 
 ## 開發原則
 

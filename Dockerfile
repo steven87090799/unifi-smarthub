@@ -9,6 +9,8 @@ FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a
 RUN apk add --no-cache \
     tini=0.19.0-r3 \
     nut=2.8.3-r4 \
+    libcrypto3=3.5.8-r0 \
+    libssl3=3.5.8-r0 \
     tzdata=2026c-r0
 
 WORKDIR /app
