@@ -324,6 +324,9 @@ logger.info({
 });
 
 const app = express();
+// Keep qs-backed parsing explicit across Express major versions so repeated
+// and nested query values still reach the strict route schemas unchanged.
+app.set('query parser', 'extended');
 // 前端與後端同源 (由本伺服器託管)，不需要 CORS；移除全開 cors() 以避免跨站請求濫用
 const trustedProxies = parseTrustedProxies(process.env.PANEL_TRUSTED_PROXIES);
 if (trustedProxies) app.set('trust proxy', trustedProxies);
@@ -6453,11 +6456,15 @@ app.use((error, req, res, _next) => {
     if (res.headersSent) return _next(error);
     const isTooLarge = error && (error.type === 'entity.too.large' || error.status === 413);
     const isJsonError = error && (error.type === 'entity.parse.failed' || error instanceof SyntaxError);
+    const isMalformedUrl = error instanceof URIError || error?.code === 'ERR_HTTP_INVALID_URI';
+    const isBadRequest = isJsonError || isMalformedUrl || error?.status === 400 || error?.statusCode === 400;
     apiError(res, error, {
-        status: isTooLarge ? 413 : isJsonError ? 400 : 500,
-        code: isTooLarge || isJsonError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+        status: isTooLarge ? 413 : isBadRequest ? 400 : 500,
+        code: isTooLarge || isBadRequest ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
         publicMessage: isTooLarge ? 'JSON request body exceeds 256 KiB'
-            : isJsonError ? 'Invalid JSON request body' : 'Internal server error',
+            : isJsonError ? 'Invalid JSON request body'
+                : isMalformedUrl ? 'Invalid request URL'
+                    : isBadRequest ? 'Invalid request' : 'Internal server error',
         module: 'api.middleware', function: 'errorHandler', fields: { method: req.method, path: req.path }
     });
 });

@@ -185,3 +185,70 @@ test('production preflight rejects ambiguous panel transport flags', () => {
         fs.rmSync(f.root, { recursive: true, force: true });
     }
 });
+
+test('production preflight enforces a non-placeholder panel password of at least 16 characters', () => {
+    const f = fixture();
+    try {
+        for (const password of ['', '1', '123456789012345']) {
+            assert.throws(
+                () => runPreflight({ env: { ...environment(f), PANEL_PASSWORD: password }, nodeVersion: '24.18.0' }),
+                error => error.check === 'panel-password'
+            );
+        }
+        assert.doesNotThrow(() => runPreflight({
+            env: { ...environment(f), PANEL_PASSWORD: '1234567890abcdef' },
+            nodeVersion: '24.18.0'
+        }));
+    } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test('production preflight rejects known and example password placeholders', () => {
+    const f = fixture();
+    try {
+        for (const password of [
+            'password', 'admin', 'administrator', 'changeme', 'change-me', '123456', '12345678',
+            'your_password', 'your_panel_password', 'example', 'test', 'ci-only-strong-test-password',
+            '<set-a-password>', '${PANEL_PASSWORD}'
+        ]) {
+            assert.throws(
+                () => runPreflight({ env: { ...environment(f), PANEL_PASSWORD: password }, nodeVersion: '24.18.0' }),
+                error => error.check === 'panel-password',
+                password
+            );
+        }
+    } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+    }
+});
+
+test('production preflight validates a configured readonly password independently and requires separation', () => {
+    const f = fixture();
+    try {
+        const strongAdmin = '1234567890abcdef';
+        assert.doesNotThrow(() => runPreflight({
+            env: {
+                ...environment(f), PANEL_PASSWORD: strongAdmin,
+                PANEL_READONLY_PASSWORD: 'fedcba0987654321'
+            },
+            nodeVersion: '24.18.0'
+        }));
+        assert.throws(
+            () => runPreflight({
+                env: { ...environment(f), PANEL_PASSWORD: strongAdmin, PANEL_READONLY_PASSWORD: '123456789012345' },
+                nodeVersion: '24.18.0'
+            }),
+            error => error.check === 'panel-readonly-password'
+        );
+        assert.throws(
+            () => runPreflight({
+                env: { ...environment(f), PANEL_PASSWORD: strongAdmin, PANEL_READONLY_PASSWORD: strongAdmin },
+                nodeVersion: '24.18.0'
+            }),
+            error => error.check === 'panel-readonly-password'
+        );
+    } finally {
+        fs.rmSync(f.root, { recursive: true, force: true });
+    }
+});

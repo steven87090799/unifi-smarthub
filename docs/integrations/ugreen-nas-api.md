@@ -10,7 +10,7 @@ NAS_PORT=9443
 NAS_SCHEME=https
 NAS_USER=monitor
 NAS_PASSWORD=...
-TRUSTED_LAN_MODE=true
+TRUSTED_LAN_MODE=false
 NAS_TLS_VERIFY=true
 NAS_TLS_INSECURE=false
 NAS_ALLOW_INSECURE_HTTP=false
@@ -30,7 +30,7 @@ NAS_ALLOW_INSECURE_HTTP=false
 - `/ugreen/v1/storage/volume/list`
 - UGOS logs 與 UPS 狀態相關路徑
 
-UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。`TRUSTED_LAN_MODE` 是 compatibility master switch；上述安全 baseline 只在分類為私有 endpoint 時產生 scoped 自簽憑證與私有 HTTP 相容傳輸。關閉模式後不會自動接受 self-signed TLS 或 HTTP；明確 legacy/manual insecure override 會顯示為 `explicitly-insecure`，不會冒充 Trusted LAN。NAS login singleflight、token cache、retry 與 failure accounting 不因此改變。公開 endpoint 仍必須使用 verified TLS 或私有 CA，configured CA 永遠優先。
+UGOS 回應巢狀結構可能漂移，解析器以有界深度尋找欄位。`TRUSTED_LAN_MODE` 預設為 `false`，只有明確啟用且分類為私有 endpoint 時才產生 scoped 自簽憑證與私有 HTTP 相容傳輸。關閉模式後不會自動接受 self-signed TLS 或 HTTP；明確 legacy/manual insecure override 會顯示為 `explicitly-insecure`，不會冒充 Trusted LAN。NAS login singleflight、token cache、retry 與 failure accounting 不因此改變。公開 endpoint 仍必須使用 verified TLS 或私有 CA，configured CA 永遠優先。
 
 ## 歷史
 

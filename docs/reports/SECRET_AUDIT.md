@@ -1,4 +1,9 @@
-# Secret Audit
+# Secret Audit (historical snapshot)
+
+This report records the earlier point-in-time audit below; it is not a current
+release verdict. The current `SmartHub CI / Repository gate` now performs a
+pinned full-history Gitleaks scan with a complete checkout. Its result belongs
+to the exact workflow run for the release candidate.
 
 Audit base: `cb48da28fe58932dc26f1d785787a4293a6bae17`; current branch head at
 the follow-up scan: `a58aff3`. The scan used tracked files from the current

@@ -39,6 +39,13 @@ test('Trusted LAN classification accepts only the bounded private target set', (
     assert.equal(isTrustedLanEndpoint('nas.home.lan', { enabled: false, trustedHosts: 'nas.home.lan' }), false);
 });
 
+test('Trusted LAN classification is disabled when the master switch is omitted', () => {
+    const target = resolveTrustedLanTarget({ endpoint: '192.168.1.50' });
+    assert.equal(target.enabled, false);
+    assert.equal(target.trusted, false);
+    assert.equal(target.source, null);
+});
+
 test('Trusted LAN host allowlist is exact and rejects wildcard or ambiguous entries', () => {
     assert.deepEqual(parseTrustedLanHosts('nas.home.lan, adguard.home.lan'), ['nas.home.lan', 'adguard.home.lan']);
     for (const value of ['*.home.lan', 'nas.home.lan evil', 'nas..home.lan', '8.8.8.8']) {
@@ -86,14 +93,23 @@ test('Trusted LAN TLS and HTTP policy remains strict for public endpoints', () =
     }), /requires explicit/u);
 });
 
-test('Trusted LAN master switch derives private compatibility from the safe example baseline', () => {
+test('Trusted LAN master switch derives private compatibility only after explicit opt-in', () => {
     const fields = {
         verify: 'NAS_TLS_VERIFY', insecure: 'NAS_TLS_INSECURE',
         ca: 'NAS_CA_FILE', allowHttp: 'NAS_ALLOW_INSECURE_HTTP'
     };
     const example = exampleEnvironment();
-    const enabled = resolveIntegrationTlsPolicy({
+    const safeDefault = resolveIntegrationTlsPolicy({
         url: 'https://192.168.1.50:9443', integration: 'nas', env: example, fields
+    });
+    assert.equal(safeDefault.mode, 'verified');
+    assert.equal(safeDefault.verify, true);
+    assert.equal(safeDefault.insecure, false);
+    assert.equal(safeDefault.allowInsecureHttp, false);
+    assert.equal(safeDefault.trustedLanApplied, false);
+
+    const enabled = resolveIntegrationTlsPolicy({
+        url: 'https://192.168.1.50:9443', integration: 'nas', env: { ...example, TRUSTED_LAN_MODE: 'true' }, fields
     });
     assert.equal(enabled.mode, 'trusted-lan-insecure');
     assert.equal(enabled.verify, false);
@@ -102,8 +118,7 @@ test('Trusted LAN master switch derives private compatibility from the safe exam
     assert.equal(enabled.trustedLanApplied, true);
 
     const disabled = resolveIntegrationTlsPolicy({
-        url: 'https://192.168.1.50:9443', integration: 'nas',
-        env: { ...example, TRUSTED_LAN_MODE: 'false' }, fields
+        url: 'https://192.168.1.50:9443', integration: 'nas', env: { ...example, TRUSTED_LAN_MODE: 'false' }, fields
     });
     assert.equal(disabled.mode, 'verified');
     assert.equal(disabled.verify, true);

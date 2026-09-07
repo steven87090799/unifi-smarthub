@@ -21,6 +21,39 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Scan full Git history for secrets
+        env:
+          GITLEAKS_VERSION: 8.24.3
+          GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+        run: |
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$GITLEAKS_SHA256" "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/gitleaks" dir \
+            --config "$GITHUB_WORKSPACE/.gitleaks.toml" \
+            --redact \
+            --no-banner \
+            --exit-code 1 \
+            --log-level error \
+            --report-format sarif \
+            --report-path "$RUNNER_TEMP/gitleaks-current.sarif" \
+            "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/gitleaks" git \
+            --config "$GITHUB_WORKSPACE/.gitleaks.toml" \
+            --redact \
+            --no-banner \
+            --exit-code 1 \
+            --log-level error \
+            --report-format sarif \
+            --report-path "$RUNNER_TEMP/gitleaks-history.sarif" \
+            --log-opts="--all" \
+            "$GITHUB_WORKSPACE"
 
       - name: Use Node.js 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -48,7 +81,7 @@ jobs:
           mkdir -p config
           cp .env.example config/.env
           if ! grep -q '^PANEL_PASSWORD=' config/.env; then
-            printf '\nPANEL_PASSWORD=ci-only-strong-test-password\n' >> config/.env
+            printf '\nPANEL_PASSWORD=smarthub-ci-20260907-panel-credential\n' >> config/.env
           fi
           chmod 700 config
           chmod 600 config/.env

@@ -406,7 +406,7 @@ async function assertSafeLocalWrites(runtime, client) {
     assert.equal(response.status, 200, `${runtime.label} connection readback: ${text}`);
     body = JSON.parse(text);
     assert.equal(typeof body.fields.TRUSTED_LAN_MODE, 'string');
-    assert.equal(body.fields.TRUSTED_LAN_MODE, runtime.label === 'mock' ? 'true' : 'false');
+    assert.equal(body.fields.TRUSTED_LAN_MODE, 'false');
     assert.equal(body.fields.UPS_SOURCE, 'ppb');
     assert.equal(body.fields.PPB_HOST, '127.0.0.1');
     assert.equal(body.fields.PPB_PORT, '3052');
@@ -430,7 +430,7 @@ async function assertSafeLocalWrites(runtime, client) {
     text = await response.text();
     assert.equal(response.status, 200, `${runtime.label} connection status: ${text}`);
     const connectionStatus = JSON.parse(text);
-    assert.equal(connectionStatus.trustedLanMode, runtime.label === 'mock');
+    assert.equal(connectionStatus.trustedLanMode, false);
     assert.equal(connectionStatus.transports.siteManager, 'verified');
     assert.ok(connectionStatus.devices.some(device => device.transportMode === 'verified'));
     assert.equal(text.includes(secret), false, `${runtime.label} status leaked secret`);

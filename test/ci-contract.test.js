@@ -22,6 +22,13 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /docker compose[\s\S]+config --quiet/u);
     assert.match(workflow, /docker compose[\s\S]+build unifi-smarthub/u);
     assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\s+# v7/u);
+    assert.match(workflow, /fetch-depth:\s*0/u);
+    assert.match(workflow, /Scan full Git history for secrets/u);
+    assert.match(workflow, /gitleaks.*dir/u);
+    assert.match(workflow, /gitleaks.*git/u);
+    assert.match(workflow, /GITLEAKS_SHA256:\s*[0-9a-f]{64}/u);
+    assert.match(workflow, /--redact/u);
+    assert.match(workflow, /--exit-code 1/u);
     assert.match(workflow, /uses:\s*actions\/setup-node@[0-9a-f]{40}\s+# v7/u);
     assert.match(workflow, /node-version-file:\s*\.nvmrc/u);
     assert.match(workflow, /Generate SBOM and scan built images/u);
@@ -62,6 +69,17 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
         < workflow.indexOf('Run isolated production preflight'));
     assert.ok(workflow.indexOf('Generate exact-head release evidence') < workflow.indexOf('Validate release evidence'));
     assert.ok(workflow.indexOf('Validate release evidence') < workflow.indexOf('Upload SBOM and vulnerability reports'));
+});
+
+test('Gitleaks allowlist is explicit and limited to deterministic fixture values', () => {
+    const config = fs.readFileSync(path.join(ROOT, '.gitleaks.toml'), 'utf8');
+    assert.match(config, /^\[allowlist\]/mu);
+    for (const fixture of [
+        '^0123456789abcdef0123456789abcdef$',
+        '^1234567890abcdef$',
+        '^fedcba0987654321$'
+    ]) assert.match(config, new RegExp(fixture.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'u'));
+    assert.doesNotMatch(config, /paths\s*=|test\/\.\*/u);
 });
 
 test('isolated runtime smoke is a bounded blocking gate after tests and image builds', () => {
