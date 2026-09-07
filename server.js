@@ -26,6 +26,12 @@ const {
     strictBoolean: strictTlsBoolean
 } = require('./server/integrations/tls-policy');
 const { resolveHostKeyPolicy } = require('./server/integrations/ssh-host-key-policy');
+const {
+    isTrustedLanEndpoint,
+    resolveIntegrationTlsPolicy,
+    resolveTrustedLanTarget,
+    strictBoolean: strictTrustedLanBoolean
+} = require('./server/integrations/trusted-lan-policy');
 const { createSseBackpressureManager } = require('./server/services/sse-backpressure');
 const { rebuildAuthRetryHeaders, shouldRetryControllerRequest } = require('./server/integrations/unifi-auth-retry');
 const ENV_FILE = path.resolve(process.env.SMARTHUB_ENV_FILE || path.join(__dirname, '.env'));
@@ -116,6 +122,11 @@ const {
 const { createDockerMetricAlertState } = require('./server/services/docker-notification-state');
 const { createRecoverableFailureState } = require('./server/services/recoverable-failure-state');
 const {
+    STATES: CONNECTIVITY_STATES,
+    createBooleanTransitionState,
+    createConnectivityTransitionState
+} = require('./server/services/connectivity-transition-state');
+const {
     createAutoDefenseBlockState,
     isRecentAlarmTimestamp
 } = require('./server/services/auto-defense-block-state');
@@ -150,7 +161,7 @@ const {
     telemetryHistoryRows
 } = require('./server/services/unifi-device-telemetry');
 const { normalizeWiimIp } = require('./server/services/wiim-config');
-const { createArtworkCache, createArtworkFetcher, fetchArtwork, isBlockedAddress } = require('./server/services/wiim-art-proxy');
+const { createArtworkCache, createArtworkFetcher, fetchArtwork } = require('./server/services/wiim-art-proxy');
 const { createWiimClient, parseWiimTemperatures } = require('./server/services/wiim-client');
 const {
     createInternetAxiosClient,
@@ -161,6 +172,18 @@ const {
 } = require('./server/integrations/http-egress-policy');
 
 const INTERNET_PROXY_MODE = resolveInternetProxyMode(process.env.SMARTHUB_INTERNET_PROXY_MODE);
+
+function trustedLanModeEnabled() {
+    return strictTrustedLanBoolean(process.env.TRUSTED_LAN_MODE, 'TRUSTED_LAN_MODE', false);
+}
+
+function trustedLanTarget(endpoint) {
+    return resolveTrustedLanTarget({
+        endpoint,
+        enabled: trustedLanModeEnabled(),
+        trustedHosts: process.env.TRUSTED_LAN_HOSTS
+    });
+}
 
 if (process.env.BUILD_IDENTITY_REQUIRED !== undefined
     && !['true', 'false'].includes(process.env.BUILD_IDENTITY_REQUIRED)) {
@@ -389,20 +412,20 @@ const internetAxiosClient = createInternetAxiosClient(axios, { proxyMode: INTERN
 const wiimArtAxiosClient = axios.create({ proxy: false });
 let unifiCsrfToken = '';
 let unifiAgent = null;
+let unifiTlsPolicy = null;
 function buildUnifiClient() {
     const controllerUrl = process.env.UNIFI_CONTROLLER_URL || 'https://127.0.0.1';
-    const tls = resolveTlsPolicy({
+    const tls = resolveIntegrationTlsPolicy({
         url: controllerUrl,
-        verify: process.env.UNIFI_CONTROLLER_TLS_VERIFY,
-        insecure: process.env.UNIFI_CONTROLLER_TLS_INSECURE,
-        caFile: process.env.UNIFI_CONTROLLER_CA_FILE,
-        allowInsecureHttp: process.env.UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP,
+        integration: 'unifi_controller',
+        env: process.env,
         fields: {
             url: 'UNIFI_CONTROLLER_URL', verify: 'UNIFI_CONTROLLER_TLS_VERIFY',
             insecure: 'UNIFI_CONTROLLER_TLS_INSECURE', ca: 'UNIFI_CONTROLLER_CA_FILE',
             allowHttp: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP'
         }
     });
+    unifiTlsPolicy = tls;
     destroyAgent(unifiAgent);
     unifiAgent = createHttpsAgent(tls);
     if (tls.warning) sysLog('TLS', `UniFi Controller transport mode: ${tls.mode} (explicit insecure opt-in)`, true);
@@ -569,7 +592,10 @@ const ucgSshPool = createSshConnectionPool({
         const policy = resolveHostKeyPolicy({
             fingerprint: process.env.UCG_SSH_HOST_KEY,
             allowUnpinned: process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production'),
-            field: 'UCG_SSH_HOST_KEY'
+            field: 'UCG_SSH_HOST_KEY',
+            host: process.env.UCG_IP,
+            trustedLanMode: trustedLanModeEnabled(),
+            trustedLanHosts: process.env.TRUSTED_LAN_HOSTS
         });
         if (policy.error) throw new Error(policy.error);
         return {
@@ -1055,7 +1081,8 @@ const adguardServicePolicyClient = {
     configuration: () => ({
         configured: adguardConnection.configured,
         transport: adguardConnection.url ? new URL(adguardConnection.url).protocol.replace(':', '') : null,
-        tlsVerified: adguardConnection.tlsVerified
+        tlsVerified: adguardConnection.tlsVerified,
+        transportMode: adguardConnection.transportMode || null
     }),
     listClients: () => adgReq('/control/clients'),
     listServices: () => adgReq('/control/blocked_services/all'),
@@ -2244,10 +2271,12 @@ async function notificationWatcher() {
     if (s.triggerCloudOffline) {
         try {
             const cloud = await checkCloudStatus({ probe: false });
-            if (cloud.configured && cloudLastOnline !== null && cloud.ok !== cloudLastOnline && notifBootstrapped) {
-                await notify(cloud.ok ? '☁️ Site Manager 已恢復連線' : '☁️ Site Manager 連線失敗', cloud.detail || (cloud.ok ? '雲端 API 回應正常' : '請檢查 API Key 與外網連線'));
+            const transition = siteManagerConnectivityState.observe(cloud.observation, { eligible: cloud.configured });
+            if (notifBootstrapped && transition.notify === 'offline') {
+                await notify('☁️ Site Manager 連線失敗', cloud.detail || '請檢查 API Key 與外網連線');
+            } else if (notifBootstrapped && transition.notify === 'recovered') {
+                await notify('☁️ Site Manager 已恢復連線', cloud.detail || '雲端 API 回應正常');
             }
-            if (cloud.configured && cloud.ok !== null) cloudLastOnline = cloud.ok;
         } catch (error) {
             logRecoverableFailure('watcher.cloud', error, { module: 'watcher.notifications', function: 'checkCloudOnline', code: ERROR_CODES.EXT_UNIFI_FAILED });
         }
@@ -2517,25 +2546,36 @@ async function notificationWatcher() {
     }
     // AdGuard：保護被暫停 / 失聯 (轉態通知)
     if ((s.triggerAdgProtection !== false || s.triggerAdgOffline || s.triggerAdgHighBlockRate) && adgConfigured()) {
-        let on = null;
+        let overviewObservation = { kind: 'unknown', snapshot: null };
         try {
-            const overview = readCollectorSnapshot('adguard.overview');
-            on = !!overview.status?.protection_enabled;
+            overviewObservation = collectorConnectivityObservation('adguard.overview');
         }
         catch (error) {
-            on = null;
             logRecoverableFailure('watcher.adguard', error, { module: 'watcher.notifications', function: 'checkAdguard', code: ERROR_CODES.EXT_ADGUARD_FAILED });
         }
-        if (s.triggerAdgOffline && on === null && adgWasOn !== null && notifBootstrapped) {
+        const connectivity = adguardConnectivityState.observe(overviewObservation.kind);
+        if (s.triggerAdgOffline && notifBootstrapped && connectivity.notify === 'offline') {
             await notify('🛡️ AdGuard 失聯', 'AdGuard Home 無回應，DNS 防護狀態未知');
+        } else if (s.triggerAdgOffline && notifBootstrapped && connectivity.notify === 'recovered') {
+            await notify('🛡️ AdGuard 已恢復連線', 'AdGuard Home 回應已恢復，DNS 防護狀態重新取樣');
         }
-        if (s.triggerAdgProtection !== false && on !== null && adgWasOn !== null && on !== adgWasOn && notifBootstrapped) {
-            await notify(on ? '🛡️ AdGuard 保護已恢復' : '⚠️ AdGuard 保護已暫停', on ? 'DNS 廣告攔截恢復運作' : '全網 DNS 廣告攔截目前停用中');
+        const isOnline = connectivity.state === CONNECTIVITY_STATES.ONLINE
+            && overviewObservation.kind === 'success';
+        const protectionEnabled = isOnline
+            && typeof overviewObservation.snapshot?.data?.status?.protection_enabled === 'boolean'
+            ? overviewObservation.snapshot.data.status.protection_enabled
+            : null;
+        // A confirmed recovery starts a new protection baseline. This avoids
+        // emitting a protection transition for the first healthy snapshot.
+        if (connectivity.notify === 'recovered') adguardProtectionState.reset();
+        const protectionTransition = adguardProtectionState.observe(protectionEnabled);
+        if (s.triggerAdgProtection !== false && notifBootstrapped && protectionTransition.transition) {
+            const enabled = protectionTransition.snapshot.value === true;
+            await notify(enabled ? '🛡️ AdGuard 保護已恢復' : '⚠️ AdGuard 保護已暫停', enabled ? 'DNS 廣告攔截恢復運作' : '全網 DNS 廣告攔截目前停用中');
         }
-        if (s.triggerAdgHighBlockRate && on !== null && Date.now() - lastAdgBlockRateTs > 30 * 60 * 1000) {
+        if (s.triggerAdgHighBlockRate && isOnline && Date.now() - lastAdgBlockRateTs > 30 * 60 * 1000) {
             try {
-                const overview = readCollectorSnapshot('adguard.overview');
-                const stats = overview.stats;
+                const stats = overviewObservation.snapshot.data.stats;
                 const queries = Number(stats.num_dns_queries || 0);
                 const blocked = Number(stats.num_blocked_filtering || 0);
                 const rate = queries > 0 ? blocked / queries * 100 : 0;
@@ -2547,7 +2587,6 @@ async function notificationWatcher() {
                 logRecoverableFailure('watcher.adguardStats', error, { module: 'watcher.notifications', function: 'checkAdguardBlockRate', code: ERROR_CODES.EXT_ADGUARD_FAILED });
             }
         }
-        if (on !== null) adgWasOn = on;
     }
     // Linux 小主機：過熱 / 磁碟滿 (30 分鐘冷卻)、離線/恢復 (轉態)
     if ((s.triggerLinuxTemp !== false || s.triggerLinuxOffline || s.triggerLinuxDisk || s.triggerLinuxHighCpu || s.triggerLinuxHighMemory || s.triggerLinuxHighLoad) && linuxConfigured()) {
@@ -2610,9 +2649,11 @@ const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
 let lastWiimTempAlertTs = 0, lastWiimVolumeTs = 0;
 let wiimPlaybackState = null;
-let adgWasOn = null, lastAdgBlockRateTs = 0, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0, lastLinuxCpuTs = 0, lastLinuxMemoryTs = 0, lastLinuxLoadTs = 0;
+let lastAdgBlockRateTs = 0, lnxWasOnline = null, lastLinuxTempTs = 0, lastLinuxDiskTs = 0, lastLinuxCpuTs = 0, lastLinuxMemoryTs = 0, lastLinuxLoadTs = 0;
 let nasWasOnline = null, unifiWasOnline = null;
-let cloudLastOnline = null;
+const adguardConnectivityState = createConnectivityTransitionState({ offlineThreshold: 3, recoveryThreshold: 2 });
+const adguardProtectionState = createBooleanTransitionState();
+const siteManagerConnectivityState = createConnectivityTransitionState({ offlineThreshold: 3, recoveryThreshold: 2 });
 let dockerWatcherBootstrapped = false, systemIssueWatcherBootstrapped = false;
 const dockerContainerStates = new Map();
 const dockerMetricAlertState = createDockerMetricAlertState({ maxEntries: 2000 });
@@ -2844,12 +2885,10 @@ function buildNasClient() {
         nasAgent = null;
         return { base: null, client: null, tls: null };
     }
-    const tls = resolveTlsPolicy({
+    const tls = resolveIntegrationTlsPolicy({
         url: base,
-        verify: process.env.NAS_TLS_VERIFY,
-        insecure: process.env.NAS_TLS_INSECURE,
-        caFile: process.env.NAS_CA_FILE,
-        allowInsecureHttp: process.env.NAS_ALLOW_INSECURE_HTTP,
+        integration: 'nas',
+        env: process.env,
         fields: {
             url: 'NAS_HOST', verify: 'NAS_TLS_VERIFY', insecure: 'NAS_TLS_INSECURE',
             ca: 'NAS_CA_FILE', allowHttp: 'NAS_ALLOW_INSECURE_HTTP'
@@ -3490,11 +3529,11 @@ function buildNasMonClient() {
             module: 'integration.nasMonitor', function: 'buildClient', code: ERROR_CODES.SYS_CONFIG_INVALID,
             message: 'NAS Monitor configuration rejected; integration disabled', error
         });
-        return { url: null, client: null, configured: false };
+        return { url: null, client: null, configured: false, transportMode: null };
     }
 }
 let nasMonConfigurationError = null;
-let { url: NASMON_URL, client: nasMonClient } = buildNasMonClient();
+let { url: NASMON_URL, client: nasMonClient, transportMode: NASMON_TRANSPORT_MODE } = buildNasMonClient();
 let nasMonLastSuccessAt = null;
 let nasMonLastFailureAt = null;
 let nasMonConsecutiveFailures = 0;
@@ -3914,6 +3953,7 @@ app.post('/api/settings', (req, res) => {
 /* ===================== 連線設定 (網頁安全更新 config/.env) ===================== */
 // 允許透過設定頁修改的欄位 (secret: GET 時只回「是否已設定」)
 const CONN_FIELDS = [
+    { key: 'TRUSTED_LAN_MODE' }, { key: 'TRUSTED_LAN_HOSTS', clearable: true },
     { key: 'UCG_IP' }, { key: 'SSH_PORT' }, { key: 'SSH_USER' }, { key: 'SSH_PASSWORD', secret: true }, { key: 'WAN_IFACE' },
     { key: 'UNIFI_CONTROLLER_URL' }, { key: 'UNIFI_CONTROLLER_TLS_VERIFY' }, { key: 'UNIFI_CONTROLLER_CA_FILE', clearable: true },
     { key: 'UNIFI_CONTROLLER_TLS_INSECURE' }, { key: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP' },
@@ -3986,8 +4026,11 @@ function rebuildClients() {
     unifiClient = buildUnifiClient();
     unifiCloudClient = buildUnifiCloudClient();
     ({ base: NAS_BASE, client: nasClient, tls: nasTls } = buildNasClient());
-    ({ url: NASMON_URL, client: nasMonClient } = buildNasMonClient());
+    ({ url: NASMON_URL, client: nasMonClient, transportMode: NASMON_TRANSPORT_MODE } = buildNasMonClient());
     adguardConnection = buildAdguardConnection();
+    adguardConnectivityState.reset();
+    adguardProtectionState.reset();
+    siteManagerConnectivityState.reset();
     resetSseUpstream({ reconnect: true });
     wiimIP = normalizeWiimIp(process.env.WIIM_IP);
     invalidateLocalSession();             // 重置 UniFi session + CSRF token
@@ -4036,11 +4079,12 @@ app.post('/api/connections', (req, res) => {
             const desired = parseDesiredEnvFile(ENV_FILE);
             const effective = { ...process.env, ...desired, ...updates };
             writeInput.validatePpbTlsSettings(effective);
+            const ppbTls = resolvePpbTlsPolicyForEnvironment(effective);
             normalizePpbClientConfig({
                 host: effective.PPB_HOST,
                 httpPort: effective.PPB_PORT,
-                tlsVerify: effective.PPB_TLS_VERIFY,
-                tlsInsecure: effective.PPB_TLS_INSECURE,
+                tlsVerify: ppbTls.verify ? 'true' : 'false',
+                tlsInsecure: ppbTls.insecure ? 'true' : 'false',
                 caFile: effective.PPB_CA_FILE
             }, fs);
         } catch (error) {
@@ -4069,35 +4113,41 @@ app.post('/api/connections', (req, res) => {
         const desired = parseDesiredEnvFile(ENV_FILE);
         const effective = { ...process.env, ...desired, ...updates };
         resolveInternetProxyMode(effective.SMARTHUB_INTERNET_PROXY_MODE);
-        if (effective.UNIFI_CONTROLLER_URL) resolveTlsPolicy({
+        if (effective.UNIFI_CONTROLLER_URL) resolveIntegrationTlsPolicy({
             url: effective.UNIFI_CONTROLLER_URL,
-            verify: effective.UNIFI_CONTROLLER_TLS_VERIFY,
-            insecure: effective.UNIFI_CONTROLLER_TLS_INSECURE,
-            caFile: effective.UNIFI_CONTROLLER_CA_FILE,
-            allowInsecureHttp: effective.UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP,
+            integration: 'unifi_controller',
+            env: effective,
             fields: { url: 'UNIFI_CONTROLLER_URL', verify: 'UNIFI_CONTROLLER_TLS_VERIFY', insecure: 'UNIFI_CONTROLLER_TLS_INSECURE', ca: 'UNIFI_CONTROLLER_CA_FILE', allowHttp: 'UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP' }
         });
-        if (effective.UNIFI_NETWORK_API_URL || effective.UNIFI_CONTROLLER_URL) resolveTlsPolicy({
+        if (effective.UNIFI_NETWORK_API_URL || effective.UNIFI_CONTROLLER_URL) resolveIntegrationTlsPolicy({
             url: effective.UNIFI_NETWORK_API_URL || `${effective.UNIFI_CONTROLLER_URL.replace(/\/$/u, '')}/proxy/network/integration`,
-            verify: effective.UNIFI_NETWORK_TLS_VERIFY,
-            insecure: effective.UNIFI_NETWORK_TLS_INSECURE,
-            caFile: effective.UNIFI_NETWORK_CA_FILE,
-            allowInsecureHttp: effective.UNIFI_NETWORK_ALLOW_INSECURE_HTTP,
+            integration: 'unifi_network',
+            env: effective,
             fields: { url: 'UNIFI_NETWORK_API_URL', verify: 'UNIFI_NETWORK_TLS_VERIFY', insecure: 'UNIFI_NETWORK_TLS_INSECURE', ca: 'UNIFI_NETWORK_CA_FILE', allowHttp: 'UNIFI_NETWORK_ALLOW_INSECURE_HTTP' }
         });
-        if (effective.NAS_HOST) resolveTlsPolicy({
+        if (effective.NAS_HOST) resolveIntegrationTlsPolicy({
             url: `${effective.NAS_SCHEME || 'https'}://${effective.NAS_HOST}:${effective.NAS_PORT || '9443'}`,
-            verify: effective.NAS_TLS_VERIFY,
-            insecure: effective.NAS_TLS_INSECURE,
-            caFile: effective.NAS_CA_FILE,
-            allowInsecureHttp: effective.NAS_ALLOW_INSECURE_HTTP,
+            integration: 'nas',
+            env: effective,
             fields: { url: 'NAS_HOST', verify: 'NAS_TLS_VERIFY', insecure: 'NAS_TLS_INSECURE', ca: 'NAS_CA_FILE', allowHttp: 'NAS_ALLOW_INSECURE_HTTP' }
         });
         if (effective.UCG_IP && effective.SSH_USER && !isPlaceholder(effective.SSH_PASSWORD)) {
-            resolveHostKeyPolicy({ fingerprint: effective.UCG_SSH_HOST_KEY, allowUnpinned: effective.UCG_SSH_ALLOW_UNPINNED, field: 'UCG_SSH_HOST_KEY' });
+            resolveHostKeyPolicy({
+                fingerprint: effective.UCG_SSH_HOST_KEY,
+                allowUnpinned: effective.UCG_SSH_ALLOW_UNPINNED,
+                field: 'UCG_SSH_HOST_KEY', host: effective.UCG_IP,
+                trustedLanMode: effective.TRUSTED_LAN_MODE,
+                trustedLanHosts: effective.TRUSTED_LAN_HOSTS
+            });
         }
         if (effective.LINUX_HOST && effective.LINUX_SSH_USER && !isPlaceholder(effective.LINUX_SSH_PASSWORD)) {
-            resolveHostKeyPolicy({ fingerprint: effective.LINUX_SSH_HOST_KEY, allowUnpinned: effective.LINUX_SSH_ALLOW_UNPINNED, field: 'LINUX_SSH_HOST_KEY' });
+            resolveHostKeyPolicy({
+                fingerprint: effective.LINUX_SSH_HOST_KEY,
+                allowUnpinned: effective.LINUX_SSH_ALLOW_UNPINNED,
+                field: 'LINUX_SSH_HOST_KEY', host: effective.LINUX_HOST,
+                trustedLanMode: effective.TRUSTED_LAN_MODE,
+                trustedLanHosts: effective.TRUSTED_LAN_HOSTS
+            });
         }
     } catch (error) {
         return apiError(res, error, {
@@ -4763,12 +4813,36 @@ app.get('/sw.js', (req, res) => {
 
 // --- WiiM Amp Integration Endpoints & Background Polling ---
 let wiimIP = normalizeWiimIp(process.env.WIIM_IP); // 空值代表選配 WiiM 完全停用
-const wiimTlsInsecure = strictTlsBoolean(process.env.WIIM_TLS_INSECURE, 'WIIM_TLS_INSECURE', false);
-const wiimAllowInsecureHttp = strictTlsBoolean(process.env.WIIM_ALLOW_INSECURE_HTTP, 'WIIM_ALLOW_INSECURE_HTTP', false);
+function resolveWiimTransportPolicy() {
+    if (!wiimIP) return null;
+    return resolveIntegrationTlsPolicy({
+        url: `https://${wiimIP}`,
+        integration: 'wiim',
+        env: process.env,
+        fields: {
+            insecure: 'WIIM_TLS_INSECURE',
+            allowHttp: 'WIIM_ALLOW_INSECURE_HTTP'
+        }
+    });
+}
+function wiimInsecureTlsAllowed() {
+    const policy = resolveWiimTransportPolicy();
+    return Boolean(policy?.insecure && isTrustedLanEndpoint(wiimIP, {
+        enabled: true,
+        trustedHosts: process.env.TRUSTED_LAN_HOSTS
+    }));
+}
+function wiimInsecureHttpAllowed() {
+    const policy = resolveWiimTransportPolicy();
+    return Boolean(policy?.allowInsecureHttp && isTrustedLanEndpoint(wiimIP, {
+        enabled: true,
+        trustedHosts: process.env.TRUSTED_LAN_HOSTS
+    }));
+}
 const wiimClient = createWiimClient({
     getIp: () => wiimIP,
-    getAllowInsecureTls: () => wiimTlsInsecure,
-    getAllowInsecureHttp: () => wiimAllowInsecureHttp && isBlockedAddress(wiimIP),
+    getAllowInsecureTls: wiimInsecureTlsAllowed,
+    getAllowInsecureHttp: wiimInsecureHttpAllowed,
     request: async ({ protocol, host, command, insecureTls }) => {
         const agent = protocol === 'https:' ? new https.Agent({ rejectUnauthorized: !insecureTls }) : null;
         try {
@@ -4926,8 +5000,11 @@ app.get('/api/wiim/art', async (req, res) => {
     try {
         const result = await wiimArtFetcher.fetch(key, u, {
             allowedPrivateAddresses: [wiimIP],
-            allowInsecureTls: wiimTlsInsecure,
-            allowInsecureHttp: wiimAllowInsecureHttp
+            // The artwork proxy independently re-validates every resolved
+            // address, redirect, and CDN certificate. These flags only
+            // authorize the exact configured WiiM private literal.
+            allowInsecureTls: wiimInsecureTlsAllowed(),
+            allowInsecureHttp: wiimInsecureHttpAllowed()
         });
         res.set('Content-Type', result.type); res.send(result.buffer);
     } catch (e) {
@@ -5044,18 +5121,47 @@ async function readPwrstat() {
 // 必須以 PPB_HOST 指向實際跑 PowerPanel Business 的機器 IP
 const PPB_HOST = () => process.env.PPB_HOST || '127.0.0.1';
 const PPB_HTTP_PORT = () => process.env.PPB_PORT || '3052';
+let ppbTlsPolicy = null;
+function resolvePpbTlsPolicyForEnvironment(environment = process.env) {
+    // The PPB client has historically treated an explicit TLS_INSECURE=true
+    // as authoritative while TLS_VERIFY defaults to true when omitted. Make
+    // that effective pair explicit before the shared resolver validates it;
+    // no configuration error is swallowed and the resulting agent remains
+    // visibly unverified.
+    const effectiveEnvironment = environment.PPB_TLS_INSECURE === 'true'
+        && (environment.PPB_TLS_VERIFY === undefined
+            || environment.PPB_TLS_VERIFY === ''
+            || environment.PPB_TLS_VERIFY === 'true')
+        ? { ...environment, PPB_TLS_VERIFY: 'false' }
+        : environment;
+    return resolveIntegrationTlsPolicy({
+        url: `https://${effectiveEnvironment.PPB_HOST || '127.0.0.1'}:${effectiveEnvironment.PPB_PORT || '3052'}`,
+        integration: 'ppb',
+        env: effectiveEnvironment,
+        fields: {
+            verify: 'PPB_TLS_VERIFY', insecure: 'PPB_TLS_INSECURE',
+            ca: 'PPB_CA_FILE'
+        }
+    });
+}
+function resolvePpbTlsPolicy() {
+    return resolvePpbTlsPolicyForEnvironment(process.env);
+}
 const ppbClient = createPpbClient({
     axios,
     logger,
-    getConfig: () => ({
-        host: PPB_HOST(),
-        httpPort: PPB_HTTP_PORT(),
-        user: process.env.PPB_USER || '',
-        password: process.env.PPB_PASSWORD || '',
-        tlsInsecure: process.env.PPB_TLS_INSECURE || 'false',
-        tlsVerify: process.env.PPB_TLS_VERIFY,
-        caFile: process.env.PPB_CA_FILE || ''
-    })
+    getConfig: () => {
+        ppbTlsPolicy = resolvePpbTlsPolicy();
+        return {
+            tlsInsecure: ppbTlsPolicy.insecure ? 'true' : 'false',
+            tlsVerify: ppbTlsPolicy.verify ? 'true' : 'false',
+            caFile: process.env.PPB_CA_FILE || '',
+            host: PPB_HOST(),
+            httpPort: PPB_HTTP_PORT(),
+            user: process.env.PPB_USER || '',
+            password: process.env.PPB_PASSWORD || ''
+        };
+    }
 });
 async function readPpb() {
     if (!process.env.PPB_USER || !process.env.PPB_PASSWORD) return null;
@@ -5733,7 +5839,10 @@ const linuxSshPool = createSshConnectionPool({
         const policy = resolveHostKeyPolicy({
             fingerprint: process.env.LINUX_SSH_HOST_KEY,
             allowUnpinned: process.env.LINUX_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production'),
-            field: 'LINUX_SSH_HOST_KEY'
+            field: 'LINUX_SSH_HOST_KEY',
+            host: process.env.LINUX_HOST,
+            trustedLanMode: trustedLanModeEnabled(),
+            trustedLanHosts: process.env.TRUSTED_LAN_HOSTS
         });
         if (policy.error) throw new Error(policy.error);
         return {
@@ -5904,18 +6013,53 @@ app.get('/api/linux/history', (req, res) => {
 // Site Manager 雲端沒有像其他設備一樣有背景輪詢會順手更新「最後成功時間」；
 // 連線設定頁可主動探測，但通知 watcher 只能讀取 collector snapshot。
 let cloudLastOk = null;
+function collectorConnectivityObservation(name) {
+    const snapshot = deviceCollectorSnapshot(name);
+    if (!snapshot || snapshot.data === undefined) return { kind: 'unknown', snapshot };
+    if (snapshot.healthy === true && snapshot.fresh === true) return { kind: 'success', snapshot };
+    const hasCurrentFailure = snapshot.lastErrorAt != null
+        && (snapshot.lastSuccessAt == null || snapshot.lastErrorAt >= snapshot.lastSuccessAt)
+        && Number(snapshot.consecutiveFailures) > 0;
+    // Retained stale data is not a live success. A collector error recorded
+    // after its last success is an explicit failure; otherwise the observer
+    // cannot safely advance a connectivity transition.
+    if (hasCurrentFailure) return { kind: 'failure', snapshot };
+    return { kind: 'unknown', snapshot };
+}
 async function checkCloudStatus({ probe = true } = {}) {
-    if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) return { configured: false, ok: null, detail: '' };
+    if (!process.env.UNIFI_API_KEY || process.env.UNIFI_API_KEY.includes('your_unifi')) {
+        return { configured: false, ok: null, observation: 'unknown', detail: '' };
+    }
     if (!probe) {
-        const snapshot = deviceCollectorSnapshot('cloud.health');
-        const ok = snapshot?.healthy === true ? true : snapshot?.data !== undefined ? false : null;
-        return { configured: true, ok, detail: ok === true ? '連線正常' : ok === false ? '連線失敗' : '尚無 collector snapshot' };
+        const observation = collectorConnectivityObservation('cloud.health');
+        const ok = observation.kind === 'success' ? true : observation.kind === 'failure' ? false : null;
+        return {
+            configured: true,
+            ok,
+            observation: observation.kind,
+            detail: ok === true ? '連線正常' : ok === false ? '連線失敗' : '尚無 collector snapshot'
+        };
     }
     try {
         await getCloudHealthCached();
-        cloudLastOk = deviceCollectorSnapshot('cloud.health')?.healthy === true;
-    } catch { cloudLastOk = false; }
-    return { configured: true, ok: cloudLastOk, detail: cloudLastOk ? '連線正常' : '連線失敗 (API Key 無效或被限流)' };
+        const observation = collectorConnectivityObservation('cloud.health');
+        cloudLastOk = observation.kind === 'success' ? true : observation.kind === 'failure' ? false : null;
+        return { configured: true, ok: cloudLastOk, observation: observation.kind, detail: cloudLastOk === true ? '連線正常' : cloudLastOk === false ? '連線失敗 (API Key 無效或被限流)' : '尚無 collector snapshot' };
+    } catch {
+        const observation = collectorConnectivityObservation('cloud.health');
+        cloudLastOk = observation.kind === 'failure' ? false : null;
+        return { configured: true, ok: cloudLastOk, observation: observation.kind, detail: cloudLastOk === false ? '連線失敗 (API Key 無效或被限流)' : '尚無 collector snapshot' };
+    }
+}
+function safeTransportMode(readMode) {
+    try { return readMode() || null; }
+    catch { return null; }
+}
+function sshTransportMode(host, fingerprint, allowUnpinned = false) {
+    if (fingerprint) return 'verified';
+    if (trustedLanTarget(host).trusted) return 'trusted-lan-insecure';
+    const explicitAllow = allowUnpinned === true || allowUnpinned === 'true';
+    return explicitAllow && !trustedLanModeEnabled() ? 'explicitly-insecure' : 'unconfigured';
 }
 app.get('/api/connections/status', async (req, res) => {
     const fresh = (ts, sec) => ts && (Date.now() - ts) < sec * 1000;
@@ -5924,9 +6068,19 @@ app.get('/api/connections/status', async (req, res) => {
     const adguardCollector = deviceCollectorSnapshot('adguard.overview');
     const wiimHit = wiimIP ? wiimClient.peek('getStatusEx') : null;
     const wiimFresh = wiimHit && (wiimHit.source === 'fresh_cache' || wiimHit.source === 'live');
-            const cloud = await checkCloudStatus({ probe: false });
+    const cloud = await checkCloudStatus({ probe: false });
     const threatBlocks = threatIpBlockingService.snapshot();
     const adguardPolicies = adguardServicePolicyService.snapshot();
+    const networkTransportMode = safeTransportMode(() => threatTrafficListClient.configuration().tlsPolicy?.mode);
+    const ppbTransportMode = safeTransportMode(() => resolvePpbTlsPolicy().mode);
+    const wiimTransportMode = safeTransportMode(() => {
+        const policy = resolveWiimTransportPolicy();
+        if (!policy) return null;
+        if (wiimInsecureHttpAllowed() && !policy.insecure) {
+            return policy.trustedLanApplied ? 'trusted-lan-insecure' : 'explicit-insecure-http';
+        }
+        return policy.mode;
+    });
     const upsSnapshot = upsFetchState.snapshot();
     const upsDetail = upsSnapshot.lastGood
         ? `${(upsSnapshot.lastGood.actualSource || '').toUpperCase()} · 電池 ${upsSnapshot.lastGood.battery ?? '--'}%${upsSnapshot.dataIsStale ? ` · 資料已過 ${Math.round((upsSnapshot.staleAgeMs || 0) / 1000)} 秒` : ''}`
@@ -5934,19 +6088,33 @@ app.get('/api/connections/status', async (req, res) => {
     const telemetrySsh = unifiDeviceThermalCollector.diagnostics();
     res.json({
         devices: [
-            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: ucgCollector?.healthy === true, detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
-            { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, detail: localCookie ? 'Session 有效' : '未登入' },
-            { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
-            { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, detail: cloud.detail },
-            { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
-            { name: 'UGREEN NAS', configured: nasConfigured(), ok: nasTokenState.isValid(), detail: nasTokenState.getToken() ? 'Token 有效' : '未登入' },
-            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
-            { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? (wiimFresh && fresh(wiimHit.fetchedAt, 120)) : null, detail: wiimIP ? (wiimFresh ? '有回應' : wiimHit ? '最後資料已過期' : '無快取') : '未設定' },
-            { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), detail: upsDetail },
-            { name: 'AdGuard Home', configured: adgConfigured(), ok: adguardCollector?.healthy === true, detail: adgLastOkTs ? '有回應' : '尚無資料' },
+            { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: ucgCollector?.healthy === true, transportMode: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY, process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
+            { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, transportMode: unifiTlsPolicy?.mode || null, detail: localCookie ? 'Session 有效' : '未登入' },
+            { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, transportMode: telemetrySsh.transportMode, detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
+            { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, transportMode: 'verified', detail: cloud.detail },
+            { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, transportMode: networkTransportMode, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
+            { name: 'UGREEN NAS', configured: nasConfigured(), ok: nasTokenState.isValid(), transportMode: nasTls?.mode || null, detail: nasTokenState.getToken() ? 'Token 有效' : '未登入' },
+            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, transportMode: NASMON_TRANSPORT_MODE || null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
+            { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? (wiimFresh && fresh(wiimHit.fetchedAt, 120)) : null, transportMode: wiimTransportMode, detail: wiimIP ? (wiimFresh ? '有回應' : wiimHit ? '最後資料已過期' : '無快取') : '未設定' },
+            { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), transportMode: ppbTransportMode, detail: upsDetail },
+            { name: 'AdGuard Home', configured: adgConfigured(), ok: adguardCollector?.healthy === true, transportMode: adguardConnection.transportMode || null, detail: adgLastOkTs ? '有回應' : '尚無資料' },
             { name: 'AdGuard 裝置政策', configured: adguardPolicies.policies.length > 0, ok: adguardPolicies.reconcile.status === 'healthy' ? true : (adguardPolicies.reconcile.status === 'degraded' ? false : null), detail: `${adguardPolicies.policies.length} 筆 · ${adguardPolicies.reconcile.status}` },
-            { name: 'Linux 小主機', configured: linuxConfigured(), ok: linuxCollector?.healthy === true, detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
-        ]
+            { name: 'Linux 小主機', configured: linuxConfigured(), ok: linuxCollector?.healthy === true, transportMode: sshTransportMode(process.env.LINUX_HOST, process.env.LINUX_SSH_HOST_KEY, process.env.LINUX_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')), detail: linuxCache ? `${linuxCache.data.hostname} · ${linuxCache.data.cpuTemp ?? '--'}°C` : '尚無資料' }
+        ],
+        trustedLanMode: trustedLanModeEnabled(),
+        transports: {
+            unifiController: unifiTlsPolicy?.mode || null,
+            unifiNetwork: networkTransportMode,
+            nas: nasTls?.mode || null,
+            ppb: ppbTransportMode,
+            adguard: adguardConnection.transportMode || null,
+            wiim: wiimTransportMode,
+            nasMonitor: NASMON_TRANSPORT_MODE || null,
+            ucgSsh: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY, process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')),
+            linuxSsh: sshTransportMode(process.env.LINUX_HOST, process.env.LINUX_SSH_HOST_KEY, process.env.LINUX_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')),
+            unifiDeviceSsh: telemetrySsh.transportMode,
+            siteManager: 'verified'
+        }
     });
 });
 

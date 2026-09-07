@@ -1,10 +1,14 @@
 'use strict';
 
 const fs = require('node:fs');
-const https = require('node:https');
 const { isLoopbackHostname } = require('./nas-monitor-client');
 const { createLanAxiosConfig } = require('./http-egress-policy');
-const { readCaFile } = require('./tls-policy');
+const { createHttpsAgent, readCaFile } = require('./tls-policy');
+const {
+    resolveIntegrationTlsPolicy,
+    resolveTrustedLanTransportInputs,
+    strictBoolean: trustedLanBoolean
+} = require('./trusted-lan-policy');
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_BASE_URL_LENGTH = 2_048;
@@ -23,6 +27,11 @@ class AdGuardConfigurationError extends Error {
 
 function configurationError(message) {
     throw new AdGuardConfigurationError(message);
+}
+
+function wrapConfigurationError(error) {
+    if (error instanceof AdGuardConfigurationError) throw error;
+    throw new AdGuardConfigurationError(error?.message || 'AdGuard configuration is invalid');
 }
 
 function exactBoolean(value, field, fallback) {
@@ -110,16 +119,44 @@ function createAdGuardConnection(options = {}) {
     const rawUrl = env.ADGUARD_URL || legacyBaseUrl(env);
     if (!rawUrl) return { url: null, client: null, configured: false, tlsVerified: false };
 
-    const allowInsecureHttp = exactBoolean(env.ADGUARD_ALLOW_INSECURE_HTTP, 'ADGUARD_ALLOW_INSECURE_HTTP', false);
-    const tlsVerify = exactBoolean(env.ADGUARD_TLS_VERIFY, 'ADGUARD_TLS_VERIFY', true);
+    let transportInputs;
+    try {
+        transportInputs = resolveTrustedLanTransportInputs({
+            url: rawUrl,
+            integration: 'adguard',
+            env,
+            implicitInsecureWhenVerifyFalse: true,
+            fields: {
+                verify: 'ADGUARD_TLS_VERIFY', ca: 'ADGUARD_CA_FILE',
+                allowHttp: 'ADGUARD_ALLOW_INSECURE_HTTP'
+            }
+        });
+    } catch (error) { wrapConfigurationError(error); }
+    let allowInsecureHttp;
+    try {
+        allowInsecureHttp = trustedLanBoolean(
+            transportInputs.allowInsecureHttp, 'ADGUARD_ALLOW_INSECURE_HTTP', false
+        );
+    } catch (error) { wrapConfigurationError(error); }
     const url = normalizeBaseUrl(rawUrl, { allowInsecureHttp });
     const username = boundedCredential(env.ADGUARD_USER, 'ADGUARD_USER', { max: 128, username: true });
     const password = boundedCredential(env.ADGUARD_PASSWORD, 'ADGUARD_PASSWORD', { max: 256 });
     const parsed = new URL(url);
-    const agent = parsed.protocol === 'https:' ? new https.Agent({
-        rejectUnauthorized: tlsVerify,
-        ca: loadCertificateAuthority(env.ADGUARD_CA_FILE, options.fs || fs)
-    }) : undefined;
+    let tls;
+    try {
+        tls = resolveIntegrationTlsPolicy({
+            url,
+            integration: 'adguard',
+            env,
+            implicitInsecureWhenVerifyFalse: true,
+            fields: {
+                verify: 'ADGUARD_TLS_VERIFY', ca: 'ADGUARD_CA_FILE',
+                allowHttp: 'ADGUARD_ALLOW_INSECURE_HTTP'
+            },
+            fileSystem: options.fs || fs
+        });
+    } catch (error) { wrapConfigurationError(error); }
+    const agent = createHttpsAgent(tls);
     const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 30_000) {
         throw new TypeError('timeoutMs must be an integer between 1000 and 30000');
@@ -152,7 +189,9 @@ function createAdGuardConnection(options = {}) {
         url,
         client,
         configured: true,
-        tlsVerified: parsed.protocol === 'https:' && tlsVerify,
+        tlsVerified: parsed.protocol === 'https:' && tls.verify === true,
+        transportMode: tls.mode,
+        trustedLan: tls.trustedLan === true,
         insecureHttp: parsed.protocol === 'http:' && !isLoopbackHostname(parsed.hostname)
     };
 }
