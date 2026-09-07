@@ -138,8 +138,10 @@ function endpointHostname(endpoint) {
     }
 }
 
-function resolveTrustedLanTarget({ endpoint, enabled = true, trustedHosts } = {}) {
-    const trustedLanMode = strictBoolean(enabled, 'TRUSTED_LAN_MODE', true);
+function resolveTrustedLanTarget({ endpoint, enabled = false, trustedHosts } = {}) {
+    // Trusted LAN can retain legacy private-device compatibility, but it must
+    // never be implicit when a caller omits the master switch.
+    const trustedLanMode = strictBoolean(enabled, 'TRUSTED_LAN_MODE', false);
     const hostname = endpointHostname(endpoint);
     if (!trustedLanMode || !hostname) {
         return Object.freeze({ enabled: trustedLanMode, trusted: false, hostname, source: null });

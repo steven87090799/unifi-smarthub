@@ -22,6 +22,13 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /docker compose[\s\S]+config --quiet/u);
     assert.match(workflow, /docker compose[\s\S]+build unifi-smarthub/u);
     assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\s+# v7/u);
+    assert.match(workflow, /fetch-depth:\s*0/u);
+    assert.match(workflow, /Scan full Git history for secrets/u);
+    assert.match(workflow, /gitleaks.*dir/u);
+    assert.match(workflow, /gitleaks.*git/u);
+    assert.match(workflow, /GITLEAKS_SHA256:\s*[0-9a-f]{64}/u);
+    assert.match(workflow, /--redact/u);
+    assert.match(workflow, /--exit-code 1/u);
     assert.match(workflow, /uses:\s*actions\/setup-node@[0-9a-f]{40}\s+# v7/u);
     assert.match(workflow, /node-version-file:\s*\.nvmrc/u);
     assert.match(workflow, /Generate SBOM and scan built images/u);

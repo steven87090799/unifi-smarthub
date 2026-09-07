@@ -103,7 +103,7 @@ NAS_MONITOR_MODE=docker_only
 NAS_MONITOR_CA_FILE=/app/config/monitor-ca.pem
 ```
 
-Trusted LAN 私有 endpoint 可依 `TRUSTED_LAN_MODE` 的安全 baseline 使用 scoped HTTP；其他遠端 endpoint 只有在 VPN 與 firewall 已保護、且無法使用 TLS 時，才明確設 `NAS_MONITOR_ALLOW_INSECURE_HTTP=true`。不要以 `NAS_MONITOR_TLS_INSECURE=true` 當一般解法。遠端模式不啟用 SmartHub Compose 內的 profile。
+Trusted LAN 私有 endpoint 可在明確設定 `TRUSTED_LAN_MODE=true` 後依安全 baseline 使用 scoped HTTP；預設值為 `false`。其他遠端 endpoint 只有在 VPN 與 firewall 已保護、且無法使用 TLS 時，才明確設 `NAS_MONITOR_ALLOW_INSECURE_HTTP=true`。不要以 `NAS_MONITOR_TLS_INSECURE=true` 當一般解法。遠端模式不啟用 SmartHub Compose 內的 profile。
 
 ## 模式
 

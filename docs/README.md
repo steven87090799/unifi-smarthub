@@ -10,6 +10,7 @@
 | 後端定位 | [backend-map.md](reference/backend-map.md) |
 | 前端定位 | [frontend-map.md](reference/frontend-map.md) |
 | 正式發布 | [PRODUCTION-RELEASE-CHECKLIST.md](operations/PRODUCTION-RELEASE-CHECKLIST.md) |
+| 本次 production blockers 修復 | [PRODUCTION_RELEASE_BLOCKERS_20260907.md](reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md) |
 | Production Acceptance | [PRODUCTION_ACCEPTANCE.md](operations/PRODUCTION_ACCEPTANCE.md) |
 | Production-like staging 驗收 | [PRODUCTION-STAGING-ACCEPTANCE.md](operations/PRODUCTION-STAGING-ACCEPTANCE.md) |
 | Docker 容器管理 | [NAS-DOCKER-MONITOR-SETUP.md](operations/NAS-DOCKER-MONITOR-SETUP.md) |
