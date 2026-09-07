@@ -78,6 +78,32 @@ test('isolated runtime smoke is a bounded blocking gate after tests and image bu
     assert.doesNotMatch(workflow, /ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION/u);
 });
 
+test('successful main CI publishes private GHCR images from the exact CI head', () => {
+    const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'publish-ghcr.yml'), 'utf8');
+    assert.match(workflow, /workflow_run:/u);
+    assert.match(workflow, /workflows:\s*\n\s*- SmartHub CI/u);
+    assert.match(workflow, /conclusion == 'success'/u);
+    assert.match(workflow, /workflow_run\.event == 'push'/u);
+    assert.match(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/u);
+    assert.match(workflow, /fetch-depth: 0/u);
+    assert.match(workflow, /git tag --points-at "\$REVISION"/u);
+    assert.match(workflow, /packages:\s*write/u);
+    assert.match(workflow, /registry: \$\{\{ env\.REGISTRY \}\}/u);
+    assert.match(workflow, /secrets\.GITHUB_TOKEN/u);
+    assert.match(workflow, /:sha-\$REVISION/u);
+    assert.match(workflow, /release_tag=stable/u);
+    assert.match(workflow, /\$MAIN_IMAGE:\$release_tag/u);
+    assert.match(workflow, /\$MONITOR_IMAGE:\$release_tag/u);
+    assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/u);
+    assert.match(workflow, /BUILD_IDENTITY_REQUIRED=true/u);
+    assert.match(workflow, /provenance: true/u);
+    assert.match(workflow, /sbom: true/u);
+    assert.match(workflow, /attestations:\s*write/u);
+    assert.match(workflow, /id-token:\s*write/u);
+    assert.match(workflow, /uses:\s*docker\/login-action@[0-9a-f]{40}\s+# v3\.4\.0/u);
+    assert.match(workflow, /uses:\s*docker\/build-push-action@[0-9a-f]{40}\s+# v6\.18\.0/u);
+});
+
 test('JavaScript syntax checker discovers source files and applies bounded exclusions', () => {
     const checker = fs.readFileSync(path.join(ROOT, 'scripts', 'check-js-syntax.js'), 'utf8');
     assert.match(checker, /node_modules/u);

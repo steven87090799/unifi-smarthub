@@ -1,14 +1,8 @@
 services:
   unifi-smarthub:
-    build:
-      context: .
-      args:
-        BUILD_VERSION: ${BUILD_VERSION:-}
-        BUILD_REVISION: ${BUILD_REVISION:-}
-        BUILD_CREATED: ${BUILD_CREATED:-}
-        BUILD_DIRTY: ${BUILD_DIRTY:-}
-        BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
-    image: ${SMARTHUB_IMAGE:-unifi-smarthub:dev}
+    # Runtime/NAS Compose pulls a prebuilt image from GHCR. Local CI/development
+    # builds add docker-compose.build.yml as an explicit override.
+    image: ${SMARTHUB_IMAGE:-${SMARTHUB_IMAGE_REPOSITORY:-ghcr.io/steven87090799/unifi-smarthub}:${SMARTHUB_IMAGE_TAG:-stable}}
     restart: unless-stopped
     stop_grace_period: 20s
     user: "1000:1000"
@@ -64,15 +58,7 @@ services:
 
   nas-monitor:
     profiles: ["nas-monitor"]
-    build:
-      context: ./nas-monitor
-      args:
-        BUILD_VERSION: ${BUILD_VERSION:-}
-        BUILD_REVISION: ${BUILD_REVISION:-}
-        BUILD_CREATED: ${BUILD_CREATED:-}
-        BUILD_DIRTY: ${BUILD_DIRTY:-}
-        BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
-    image: ${NAS_MONITOR_IMAGE:-unifi-smarthub-nas-monitor:dev}
+    image: ${NAS_MONITOR_IMAGE:-${NAS_MONITOR_IMAGE_REPOSITORY:-ghcr.io/steven87090799/unifi-smarthub-nas-monitor}:${SMARTHUB_IMAGE_TAG:-stable}}
     restart: unless-stopped
     stop_grace_period: 20s
     user: "1000:1000"

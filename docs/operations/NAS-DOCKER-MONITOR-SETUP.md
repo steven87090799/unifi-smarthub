@@ -59,15 +59,16 @@ DOCKER_SOCKET_GID=<輸出的數字>
 
 Docker Desktop／OrbStack 常見值為 `0`。權限不足時修正 GID，不要把 monitor 改成 root。
 
-5. 驗證並啟動：
+5. 驗證並啟動（GHCR runtime image）：
 
 ```bash
-docker compose --env-file config/.env config --quiet
-docker compose --env-file config/.env --profile nas-monitor up -d --build
-docker compose --env-file config/.env ps
+# 私有 GHCR 首次設定先以 PAT（classic，read:packages）登入 ghcr.io。
+./scripts/update-nas.sh --profile nas-monitor
 ```
 
-正式發布應先建立不可變成對映像，再改用 `--no-build --pull never`；見 [正式發布檢查清單](PRODUCTION-RELEASE-CHECKLIST.md)。
+正式 NAS 不在 NAS 上 build source；GitHub Actions 通過 `SmartHub CI` 後會發布 `stable`、commit-SHA 或 `vX.Y.Z` image。要固定版本時，執行 `./scripts/update-nas.sh --tag v3.0.1`；最高保證部署則將 `SMARTHUB_IMAGE`／`NAS_MONITOR_IMAGE` 改成同一 release 的 registry digest，再執行同一個腳本。
+
+正式發布應先建立／拉取不可變成對映像，再改用 `--no-build --pull never`；見 [正式發布檢查清單](PRODUCTION-RELEASE-CHECKLIST.md)。
 
 API 快速確認：
 

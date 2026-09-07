@@ -15,13 +15,18 @@ test('production documentation points operators to the immutable paired-image re
 
     assert.match(readme, /docs\/operations\/PRODUCTION-RELEASE-CHECKLIST\.md/);
     assert.match(checklist, /npm run release:build/);
-    assert.match(checklist, /SMARTHUB_IMAGE=unifi-smarthub:<12-char-revision>/);
-    assert.match(checklist, /NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>/);
+    assert.match(checklist, /SMARTHUB_IMAGE=ghcr\.io\/steven87090799\/unifi-smarthub@sha256:<digest>/);
+    assert.match(checklist, /NAS_MONITOR_IMAGE=ghcr\.io\/steven87090799\/unifi-smarthub-nas-monitor@sha256:<digest>/);
     assert.match(checklist, /up -d --no-build --pull never/);
-    assert.match(checklist, /docker compose --env-file config\/\.env config --quiet/);
+    assert.match(checklist, /docker-compose\.build\.yml config --quiet/);
     assert.match(checklist, /--profile nas-monitor config --quiet/);
-    assert.match(envExample, /SMARTHUB_IMAGE=unifi-smarthub:0123456789ab/);
-    assert.match(envExample, /NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:0123456789ab/);
+    assert.match(envExample, /SMARTHUB_IMAGE_REPOSITORY=ghcr\.io\/steven87090799\/unifi-smarthub/);
+    assert.match(envExample, /NAS_MONITOR_IMAGE_REPOSITORY=ghcr\.io\/steven87090799\/unifi-smarthub-nas-monitor/);
+    assert.match(envExample, /SMARTHUB_IMAGE_TAG=stable/);
+    assert.match(readme, /scripts\/update-nas\.sh/);
+    assert.match(readme, /scripts\/update-nas\.sh --tag v3\.0\.1/);
+    assert.match(checklist, /scripts\/update-nas\.sh --tag v3\.0\.1/);
+    assert.match(checklist, /publish-ghcr\.yml/);
     assert.match(readme, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.match(readme, /sudo install -d -o 1000 -g 1000 -m 700 config/u);
     assert.match(readme, /production-preflight/u);
@@ -29,15 +34,15 @@ test('production documentation points operators to the immutable paired-image re
     assert.match(readme, historyDbInitializer);
     assert.match(checklist, historyDbInitializer);
     assert.match(checklist, /既有資料庫跳過且不可覆蓋/u);
-    const readmeBuild = readme.indexOf('docker compose --env-file config/.env build unifi-smarthub');
+    const readmeBuild = readme.indexOf('docker-compose.build.yml build unifi-smarthub');
     const readmeInitialize = readme.indexOf('createHistoryDb');
     const readmePreflight = readme.indexOf('production-preflight.js --offline');
-    const readmeStart = readme.indexOf('docker compose --env-file config/.env up -d --no-build');
+    const readmeStart = readme.indexOf('docker-compose.build.yml up -d --no-build --pull never');
     assert.ok(readmeBuild < readmeInitialize && readmeInitialize < readmePreflight && readmePreflight < readmeStart);
-    const checklistBuild = checklist.indexOf('docker compose --env-file config/.env build unifi-smarthub');
+    const checklistBuild = checklist.indexOf('docker-compose.build.yml build unifi-smarthub');
     const checklistInitialize = checklist.indexOf('node -e "const { createHistoryDb }');
     const checklistPreflight = checklist.indexOf('production-preflight.js --offline');
-    const checklistStart = checklist.indexOf('docker compose --env-file config/.env up -d --no-build\n');
+    const checklistStart = checklist.indexOf('docker-compose.build.yml up -d --no-build --pull never');
     assert.ok(checklistBuild < checklistInitialize && checklistInitialize < checklistPreflight && checklistPreflight < checklistStart);
     assert.ok(checklist.indexOf('production-preflight.js --offline')
         < checklist.indexOf('up -d --no-build --pull never'));
@@ -101,15 +106,17 @@ test('the operation manual matches the enforced production gates', () => {
     assert.match(manual, /npm run check:css/u);
     assert.match(manual, /npm run test:smoke/u);
     assert.match(manual, /npm audit --audit-level=low/u);
-    assert.match(manual, /docker compose --env-file config\/\.env build unifi-smarthub/u);
+    assert.match(manual, /docker compose --env-file config\/\.env -f docker-compose\.yml -f docker-compose\.build\.yml build unifi-smarthub/u);
     assert.match(manual, /--profile nas-monitor build/u);
     assert.match(manual, /production-preflight/u);
     assert.match(manual, /fetchHealth/u);
     assert.match(manual, /configGeneration/u);
-    assert.ok(manual.indexOf('docker compose --env-file config/.env build unifi-smarthub')
+    assert.match(manual, /scripts\/update-nas\.sh/u);
+    assert.match(manual, /read:packages/u);
+    assert.ok(manual.indexOf('docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml build unifi-smarthub')
         < manual.indexOf('production-preflight.js --offline'));
     assert.ok(manual.indexOf('production-preflight.js --offline')
-        < manual.indexOf('docker compose --env-file config/.env up -d --no-build'));
+        < manual.indexOf('up -d --no-build --pull never'));
     assert.match(manual, /SMARTHUB_INTERNET_PROXY_MODE/u);
     assert.doesNotMatch(manual, /npm audit --audit-level=high/u);
 });

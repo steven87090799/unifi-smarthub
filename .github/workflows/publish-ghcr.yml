@@ -1,0 +1,154 @@
+name: Publish SmartHub images
+
+on:
+  workflow_run:
+    workflows:
+      - SmartHub CI
+    types:
+      - completed
+
+permissions: {}
+
+concurrency:
+  group: smarthub-ghcr-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish GHCR images
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    env:
+      REGISTRY: ghcr.io
+      REVISION: ${{ github.event.workflow_run.head_sha }}
+      REF_NAME: ${{ github.event.workflow_run.head_branch }}
+
+    steps:
+      - name: Check out the exact CI head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd6a0 # v3.11.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1 # v3.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release identity
+        id: identity
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          created="$(git show -s --format=%cI "$REVISION")"
+          created_iso="$(node -e 'console.log(new Date(process.argv[1]).toISOString())' "$created")"
+          {
+            echo "version=$version"
+            echo "created=$created_iso"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image names
+        id: images
+        shell: bash
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "main=$repository"
+            echo "monitor=${repository}-nas-monitor"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release tags
+        id: tags
+        shell: bash
+        env:
+          MAIN_IMAGE: ${{ steps.images.outputs.main }}
+          MONITOR_IMAGE: ${{ steps.images.outputs.monitor }}
+          REF_NAME: ${{ env.REF_NAME }}
+          REVISION: ${{ env.REVISION }}
+        run: |
+          ref_name="${REF_NAME#refs/tags/}"
+          case "$ref_name" in
+            main)
+              release_tag=stable
+              ;;
+            v[0-9]*)
+              if ! printf '%s\n' "$ref_name" | grep -Eq '^v[0-9][A-Za-z0-9_.-]{0,127}$'; then
+                echo "Release tag must match v<version>: $ref_name" >&2
+                exit 1
+              fi
+              release_tag="$ref_name"
+              ;;
+            *)
+              # workflow_run.head_branch can be empty for a tag-triggered run.
+              # The full checkout lets us resolve the release tag from the
+              # exact CI SHA instead of guessing from the workflow_run ref.
+              release_tag="$(git tag --points-at "$REVISION" \
+                | grep -E '^v[0-9][A-Za-z0-9_.-]{0,127}$' \
+                | sort | tail -n 1 || true)"
+              [ -n "$release_tag" ] || {
+                echo "Refusing to publish unsupported CI ref: $ref_name" >&2
+                exit 1
+              }
+              ;;
+          esac
+          {
+            echo 'main<<TAGS'
+            printf '%s\n' "$MAIN_IMAGE:sha-$REVISION"
+            printf '%s\n' "$MAIN_IMAGE:$release_tag"
+            echo 'TAGS'
+            echo 'monitor<<TAGS'
+            printf '%s\n' "$MONITOR_IMAGE:sha-$REVISION"
+            printf '%s\n' "$MONITOR_IMAGE:$release_tag"
+            echo 'TAGS'
+            echo "release_tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push SmartHub image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4 # v6.18.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.main }}
+          build-args: |
+            BUILD_VERSION=${{ steps.identity.outputs.version }}
+            BUILD_REVISION=${{ env.REVISION }}
+            BUILD_CREATED=${{ steps.identity.outputs.created }}
+            BUILD_DIRTY=false
+            BUILD_IDENTITY_REQUIRED=true
+          provenance: true
+          sbom: true
+
+      - name: Build and push NAS Monitor image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4 # v6.18.0
+        with:
+          context: ./nas-monitor
+          file: ./nas-monitor/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.monitor }}
+          build-args: |
+            BUILD_VERSION=${{ steps.identity.outputs.version }}
+            BUILD_REVISION=${{ env.REVISION }}
+            BUILD_CREATED=${{ steps.identity.outputs.created }}
+            BUILD_DIRTY=false
+            BUILD_IDENTITY_REQUIRED=true
+          provenance: true
+          sbom: true

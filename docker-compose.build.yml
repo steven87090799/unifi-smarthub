@@ -1,0 +1,24 @@
+services:
+  # Explicit local/CI build overlay. Production/NAS must use the base
+  # docker-compose.yml and pull the already-built registry images instead.
+  unifi-smarthub:
+    build:
+      context: .
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-}
+        BUILD_REVISION: ${BUILD_REVISION:-}
+        BUILD_CREATED: ${BUILD_CREATED:-}
+        BUILD_DIRTY: ${BUILD_DIRTY:-}
+        BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
+    image: unifi-smarthub:dev
+
+  nas-monitor:
+    build:
+      context: ./nas-monitor
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-}
+        BUILD_REVISION: ${BUILD_REVISION:-}
+        BUILD_CREATED: ${BUILD_CREATED:-}
+        BUILD_DIRTY: ${BUILD_DIRTY:-}
+        BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
+    image: unifi-smarthub-nas-monitor:dev

@@ -16,6 +16,7 @@
 <header id="top">
   <h1>SmartHub 完整操作手冊、規格與文件導航</h1>
   <p>適用於本目錄的 SmartHub 3.0.0。此檔可離線開啟，集中操作介面、資料流、設定、部署、維護、除錯與所有 Markdown 文件的可點選索引；密碼、Token、API Key 一律不應填入本文件或提交至 Git。</p>
+  <p class="note"><strong>GHCR／NAS 更新：</strong>正式 NAS 使用根目錄的 registry-only <code>docker-compose.yml</code> 與 <code>scripts/update-nas.sh</code>；<code>main</code> 或 <code>vX.Y.Z</code> tag 通過 <code>SmartHub CI</code> 後，GitHub Actions 才發布配對的 multi-arch image。私有 GHCR 先用只具 <code>read:packages</code> 的 PAT 登入；版本更新可執行 <code>./scripts/update-nas.sh --tag v3.0.1</code>，第一次新 volume 才加 <code>--initialize</code>，需要 Docker Monitor 才加 <code>--profile nas-monitor</code>。最高保證部署把兩個 image ref 固定為同一 release 的 registry digest。</p>
 </header>
 <div class="layout">
   <nav class="toc" aria-label="章節目錄">
@@ -139,14 +140,15 @@ cd unifi-smarthub
 install -d -m 700 config
 install -m 600 .env.example config/.env
 # 編輯 config/.env：至少設定 PANEL_PASSWORD，再填需要的整合
-npm ci
-docker compose --env-file config/.env build unifi-smarthub
-docker compose --env-file config/.env --profile nas-monitor build
-# 只有全新的 smarthub-data volume 第一次需要；既有資料庫不要覆蓋
-docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
-docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline
-docker compose --env-file config/.env up -d --no-build
-docker compose --env-file config/.env ps
+# 私有 GHCR 先以只具 read:packages 的 PAT 登入 ghcr.io
+docker login ghcr.io --username &lt;github-username&gt;
+# 第一次使用全新的 smarthub-data volume 才初始化；既有 DB 會拒絕初始化
+./scripts/update-nas.sh --tag stable --initialize
+# 使用 stable 更新
+./scripts/update-nas.sh
+# 使用固定發布 tag 更新（兩個 image 使用同一 tag）
+./scripts/update-nas.sh --tag v3.0.1
+# 需要 Docker Monitor 時：./scripts/update-nas.sh --tag v3.0.1 --profile nas-monitor
 curl -fsS http://127.0.0.1:3000/health
 curl -fsS http://127.0.0.1:3000/health/ready</pre><p>本機隔離演練可使用 <code>http://127.0.0.1:3000</code>；正式對外必須以前置 Caddy／Nginx 終止 HTTPS，再反向代理至內部 port，不可把 <code>http://&lt;NAS IP&gt;:3000</code> 當作 production 入口。<code>config/</code> 建議 0700、<code>config/.env</code> 必須 0600，且根目錄不要留下第二份 <code>.env</code>。Docker 容器內上游不能填 <code>localhost</code>／<code>127.0.0.1</code>。</p><h3>開發與假資料</h3><pre>SMARTHUB_ENV_FILE=config/.env npm start
 # 另一個終端：純假資料預覽（port 3005）
@@ -159,10 +161,11 @@ SOAK_DURATION_MS=90000 npm run test:soak
 npm audit --audit-level=low
 git diff --check
 
-docker compose --env-file config/.env config --quiet
-docker compose --env-file config/.env --profile nas-monitor config --quiet
-docker compose --env-file config/.env build unifi-smarthub
-docker compose --env-file config/.env --profile nas-monitor build</pre><p><code>npm test</code> 只負責 Unit、Integration、Contract 與 Security 測試；<code>npm run test:smoke</code> 是獨立的正式 <code>server.js</code> 啟動、登入、CSRF、權限、SIGTERM 與重啟持久化 gate。Low、Moderate、High 或 Critical 任一漏洞都會阻擋正式發布。</p></li><li>執行 <code>npm run release:build</code>。它拒絕任何 staged、unstaged、untracked 差異，從 <code>git archive HEAD</code> 建立 SmartHub 與 NAS Monitor 成對不可變映像。</li><li>把輸出的 revision image tags（或 registry immutable digests）填入 <code>config/.env</code> 的 <code>SMARTHUB_IMAGE</code>、<code>NAS_MONITOR_IMAGE</code>。</li><li>用相同 config／project 啟動：<pre>docker compose --env-file config/.env -p smarthub-prod up -d --no-build --pull never
+docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml config --quiet
+docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml --profile nas-monitor config --quiet
+docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml build unifi-smarthub
+docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml --profile nas-monitor build
+docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline</pre><p><code>npm test</code> 只負責 Unit、Integration、Contract 與 Security 測試；<code>npm run test:smoke</code> 是獨立的正式 <code>server.js</code> 啟動、登入、CSRF、權限、SIGTERM 與重啟持久化 gate。Low、Moderate、High 或 Critical 任一漏洞都會阻擋正式發布。</p></li><li>執行 <code>npm run release:build</code>。它拒絕任何 staged、unstaged、untracked 差異，從 <code>git archive HEAD</code> 建立 SmartHub 與 NAS Monitor 成對不可變映像。</li><li>把輸出的 revision image tags（或 registry immutable digests）填入 <code>config/.env</code> 的 <code>SMARTHUB_IMAGE</code>、<code>NAS_MONITOR_IMAGE</code>。</li><li>用相同 config／project 啟動：<pre>docker compose --env-file config/.env -p smarthub-prod up -d --no-build --pull never
 # 只有需要 NAS Monitor 時
 docker compose --env-file config/.env -p smarthub-prod --profile nas-monitor up -d --no-build --pull never</pre></li><li>比對執行中的 image ID 與 release JSON，執行 health、登入角色、SQLite、整合與重啟驗證，並保留發布紀錄。</li></ol><h3>NAS Monitor profile</h3><p>預設沒有啟用。只有必須看／控 Docker 時才設定 <code>COMPOSE_PROFILES=nas-monitor</code> 或加 <code>--profile nas-monitor</code>。它以非 root 運行但可寫 Docker socket 仍等同宿主 root；必須先啟用 mutations／logs，並設定各自的 allowlist／managed label。</p><h3>回滾</h3><ol><li>把 SmartHub 與 NAS Monitor 同時改回上一組已驗證的 image tag／digest。</li><li>使用同一個 project、config dir、env file、profile 執行 <code>up -d --no-build --pull never</code>。</li><li>重新檢查 health、角色、SQLite、重要整合、重啟與還原狀態。</li></ol><div class="danger">不要以 <code>docker compose down -v</code> 回滾；<code>-v</code> 會刪除持久 volume 與資料。</div></section>
 

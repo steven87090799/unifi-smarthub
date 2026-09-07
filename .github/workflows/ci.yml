@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
@@ -56,22 +58,32 @@ jobs:
 
       - name: Validate Compose profiles
         run: |
-          sudo docker compose --env-file config/.env config --quiet
-          sudo docker compose --env-file config/.env --profile nas-monitor config --quiet
+          sudo docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml config --quiet
+          sudo docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml \
+            --profile nas-monitor config --quiet
 
       - name: Build production images without starting containers
         run: |
-          sudo docker compose --env-file config/.env build unifi-smarthub
-          sudo docker compose --env-file config/.env --profile nas-monitor build
+          sudo docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml build unifi-smarthub
+          sudo docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml \
+            --profile nas-monitor build
 
       - name: Initialize isolated SQLite volume for preflight
         run: |
-          sudo docker compose --env-file config/.env run --rm --no-deps \
+          sudo docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml \
+            run --rm --no-deps \
             unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
 
       - name: Run isolated production preflight
         run: |
-          sudo docker compose --env-file config/.env run --rm --no-deps \
+          sudo docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml \
+            run --rm --no-deps \
             unifi-smarthub node scripts/production-preflight.js --offline
 
       - name: Run isolated production runtime smoke test

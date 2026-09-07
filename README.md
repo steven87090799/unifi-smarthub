@@ -26,7 +26,11 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 
 ## 快速開始
 
-需求：Node.js 24.18.x（`.nvmrc`）；正式部署另需 Docker Compose。
+需求：正式部署需要 Docker Compose；只有從 source 本機建置才需要 Node.js 24.18.x（`.nvmrc`）。
+
+### NAS 使用 GHCR 映像（一般更新路徑）
+
+GitHub repository 是原始碼來源，GHCR 才是 NAS 要拉取的 container image registry。第一次部署仍需把 Compose、更新腳本與 `config/.env` 放到 NAS；之後 GitHub Actions 會在 `main` 或 `vX.Y.Z` tag 通過 `SmartHub CI` 後發布成對的 multi-arch image。`stable` 是方便自動更新的移動 channel；`vX.Y.Z` 是給 NAS 指定版本的 release tag；若要最高可稽核／可回滾保證，將兩個 image ref 改成同一個 release 的 digest。
 
 ```bash
 git clone <repository-url>
@@ -44,17 +48,56 @@ else
 fi
 # 編輯 config/.env，正式環境至少設定 PANEL_PASSWORD
 
+# 私有 repository／GHCR package 必須先登入；token 只需 read:packages。
+read -r -s GHCR_READ_TOKEN
+printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io \
+  --username <github-username> --password-stdin
+unset GHCR_READ_TOKEN
+
+# 第一次使用全新的 smarthub-data volume 才加 --initialize；既有 DB 會拒絕初始化。
+./scripts/update-nas.sh --tag stable --initialize
+# 使用 stable 更新：只需重新拉取並以新 image 重建：
+./scripts/update-nas.sh
+# 使用 GitHub 發布的固定 tag 更新（SmartHub 與 NAS Monitor 會使用同一 tag）：
+./scripts/update-nas.sh --tag v3.0.1
+# 啟用 Docker Monitor 時：
+# ./scripts/update-nas.sh --tag v3.0.1 --profile nas-monitor
+```
+
+GitHub Actions 尚未成功發布對應 tag 前，`pull` 會正常失敗；先確認 `SmartHub CI` 與 `Publish SmartHub images` 都成功。私有 repository 不會讓 NAS 自動取得權限；NAS 使用的 GitHub PAT（classic）應只給 `read:packages`，不要把它寫入 repository、`config/.env` 或命令列歷史。也可以在 `config/.env` 只填一個 `SMARTHUB_IMAGE_TAG=v3.0.1`，之後執行不帶 `--tag` 的腳本；若同時存在舊的完整 `SMARTHUB_IMAGE`／`NAS_MONITOR_IMAGE`，`--tag` 會以當次命令覆蓋它們。
+
+### GitHub 發布方式
+
+合併到 `main` 並等待 `SmartHub CI` 成功後，Actions 會發布 `stable` 與 `sha-<commit>`。要讓 NAS 使用固定版本，從已通過檢查的 `main` commit 建立並推送版本 tag：
+
+```bash
+git tag -a v3.0.1 -m "SmartHub v3.0.1"
+git push origin v3.0.1
+```
+
+`v3.0.1` push 會先觸發完整 `SmartHub CI`，只有 exact CI head 成功後才發布 `v3.0.1` 與配對的 `-nas-monitor:v3.0.1`；NAS 再執行 `./scripts/update-nas.sh --tag v3.0.1`。不要重用或強制移動已部署的 release tag；需要可驗證的回滾時，記錄兩個 image digest。
+
+### 本機從 source 建置
+
+需要修改 source 或離線 build 時，使用明確的 build overlay；正式 NAS 不使用這個 overlay：
+
+```bash
 npm ci
-# 固定順序：先建立映像，再以同一映像做離線 writer/preflight gate，最後只啟動已建立的映像。
-docker compose --env-file config/.env build unifi-smarthub
-docker compose --env-file config/.env --profile nas-monitor build
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml build unifi-smarthub
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml --profile nas-monitor build
 # 僅第一次使用全新的 smarthub-data volume 時執行一次；既有資料庫不要覆蓋。
-docker compose --env-file config/.env run --rm --no-deps \
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml run --rm --no-deps \
   unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
-docker compose --env-file config/.env run --rm --no-deps \
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
-docker compose --env-file config/.env up -d --no-build
-docker compose --env-file config/.env ps
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml up -d --no-build --pull never
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml ps
 ```
 
 本機隔離演練可開啟 `http://127.0.0.1:3000`。正式環境不可把 `http://<NAS IP>:3000` 當作對外入口；請以前置 Caddy／Nginx 終止 HTTPS，再反向代理至 SmartHub 的內部 port。
@@ -110,9 +153,9 @@ node server-mock.js
 - `config/.env` 是唯一部署設定來源，權限應為 `0600`；不要在根目錄保留第二份 `.env`。
 - SmartHub container 預設 UID/GID 為 `1000:1000`；啟動前必須以 [production preflight](scripts/production-preflight.js) 驗證 config/data 寫入與 atomic rename。
 - `production-preflight` 不會替空資料 volume 偷建資料庫；第一次使用新的 `smarthub-data` volume 時，先以同一個 image 執行一次 `createHistoryDb` 初始化 schema，既有資料庫不可覆蓋。
-- 正式部署順序固定為 `build` → `production-preflight.js --offline` → `up -d --no-build`；preflight 不得在 build 前執行，也不得以 `up --build` 繞過同一映像驗證。
+- 本機 source gate 順序固定為 `build overlay` → `production-preflight.js --offline` → `up -d --no-build --pull never`；GHCR/NAS 更新則為 `config` → `pull` → `production-preflight.js --offline` → `up -d --no-build --pull never`。preflight 不得在 image 就緒前執行，也不得以 `up --build` 繞過已驗證映像。
 - 所有 Compose 指令都使用同一個 `--env-file config/.env`。
-- 正式映像使用不可變的 commit tag 或 registry digest，不使用 `latest`；主服務預設 256 MiB，只有在 soak／backup 證據支持時才調整。
+- GHCR 會同時發布不可變的 `sha-<commit>` tag；`main` 另發布 `stable`，版本 tag（例如 `v3.0.1`）則由 tag push 的 exact CI head 發布。高保證部署使用 registry digest，不使用 `latest`。主服務預設 256 MiB，只有在 soak／backup 證據支持時才調整。
 - `nas-monitor` 預設不啟用。可寫 Docker socket 等同宿主機 root 權限；詳見 [Docker 容器管理指南](docs/operations/NAS-DOCKER-MONITOR-SETUP.md)。
 - 前端依賴與 WiFi QR 均由 SmartHub 同源提供，不把 SSID、密碼或遙測送往第三方服務。
 - Dashboard JavaScript 全部由同源外部檔案載入；CSP 的 `script-src` 只有 `'self'`，不允許 inline script、inline handler 或 `unsafe-eval`。
@@ -144,6 +187,7 @@ PPB_TLS_INSECURE=false
 ## 資料與備份
 
 - Docker volume `/app/data` 是正式 runtime 權威來源。
+- `scripts/update-nas.sh` 只替換 image；它會記錄現有容器的 `/app/data` volume identity，若 Compose project／目錄變更造成 volume identity 改變就拒絕宣稱更新成功。更新時保持同一個部署目錄與 Compose project，不要對既有資料使用 `--initialize`。
 - 歷史、事件、報表與政策使用 SQLite WAL。
 - 一般歷史樣本先進入有上限的記憶體佇列，再批次寫入；正常關機與 UPS 狀態轉換會強制 flush。
 - 線上安全備份由「設定 → 備份與還原」產生，不包含 secret。
@@ -169,6 +213,8 @@ docker compose --env-file config/.env logs | grep Diag
 
 Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 24.18.x 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
 
+`main` 的 `SmartHub CI` 成功後，`Publish SmartHub images` 會 checkout 同一個 CI head，發布 `ghcr.io/steven87090799/unifi-smarthub:sha-<commit>`、`:stable` 與配對的 `-nas-monitor` image；推送 `vX.Y.Z` tag 時，則發布 `:vX.Y.Z` 與同一 revision 的 `:sha-<commit>`。兩種路徑都支援 `linux/amd64`、`linux/arm64`。這是 image 發布證據，不等於 NAS 實機驗收；NAS 更新仍應保留 health、SQLite、restart 與 rollback 證據。
+
 本機也可獨立重跑同一個隔離 smoke：
 
 ```bash
@@ -177,13 +223,13 @@ npm run test:smoke
 
 Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI / Repository gate` 設為 Required Check，並禁止 CI 未通過的 PR merge；若尚未設定，不能把 workflow 存在誤稱為 branch protection 已啟用。
 
-先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate，再建立不可變成對映像：
+先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate；`npm run release:build` 是本機 clean paired-image identity/reproducibility 檢查，正常 GitHub → GHCR 發布由 `Publish SmartHub images` 完成：
 
 ```bash
 npm run release:build
-# 將 release:build 輸出的成對不可變 revision tag 寫入 config/.env：
-# SMARTHUB_IMAGE=unifi-smarthub:<12-char-revision>
-# NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
+# GHCR workflow 的成對 registry digest 寫入 config/.env，或使用 GHCR stable channel：
+# SMARTHUB_IMAGE=ghcr.io/steven87090799/unifi-smarthub@sha256:<digest>
+# NAS_MONITOR_IMAGE=ghcr.io/steven87090799/unifi-smarthub-nas-monitor@sha256:<digest>
 docker compose --env-file config/.env run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
 docker compose --env-file config/.env up -d --no-build --pull never
@@ -191,7 +237,7 @@ docker compose --env-file config/.env up -d --no-build --pull never
 
 `release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision、image ID 與映像身分。若使用 registry，仍需成對記錄不可變 digest；部署時保留 release JSON 的 `image_ids` 與 registry digest，不能只記錄可重指向的 tag。
 
-Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.5-r0`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
+Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.7-r1`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
 
 ## 開發原則
 
