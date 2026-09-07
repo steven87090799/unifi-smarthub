@@ -1,0 +1,13 @@
+title = "SmartHub Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deterministic non-secret fixtures retained in test history"
+regexTarget = "secret"
+regexes = [
+    '''^0123456789abcdef0123456789abcdef$''',
+    '''^1234567890abcdef$''',
+    '''^fedcba0987654321$''',
+]

@@ -30,6 +30,21 @@ const CA_FIELDS = Object.freeze([
     'ADGUARD_CA_FILE'
 ]);
 const PROBE_PREFIX = '.smarthub-production-preflight-';
+const MIN_PRODUCTION_PASSWORD_LENGTH = 16;
+const KNOWN_WEAK_PASSWORDS = Object.freeze(new Set([
+    'password',
+    'admin',
+    'administrator',
+    'changeme',
+    'change-me',
+    '123456',
+    '12345678',
+    'your_password',
+    'your_panel_password',
+    'example',
+    'test',
+    'ci-only-strong-test-password'
+]));
 
 class ProductionPreflightError extends Error {
     constructor(check, message, cause) {
@@ -41,6 +56,24 @@ class ProductionPreflightError extends Error {
 
 function fail(check, message, cause) {
     throw new ProductionPreflightError(check, message, cause);
+}
+
+function isObviousPasswordPlaceholder(value) {
+    const normalized = String(value).trim().toLowerCase();
+    return KNOWN_WEAK_PASSWORDS.has(normalized)
+        || /^your(?:[_-]|$)/u.test(normalized)
+        || /^<[^>]+>$/u.test(normalized)
+        || /^\$\{[^}]+\}$/u.test(normalized);
+}
+
+function validateProductionPassword(value, field = 'PANEL_PASSWORD') {
+    if (typeof value !== 'string' || value.length < MIN_PRODUCTION_PASSWORD_LENGTH) {
+        fail(field, `${field} must be at least ${MIN_PRODUCTION_PASSWORD_LENGTH} characters`);
+    }
+    if (isObviousPasswordPlaceholder(value)) {
+        fail(field, `${field} must not use a known placeholder or weak password`);
+    }
+    return value;
 }
 
 function assertDirectory(directory, check, { fs: fsImpl = fs } = {}) {
@@ -173,10 +206,12 @@ function runPreflight({ env = process.env, nodeVersion = process.versions.node, 
     const parsed = dotenv.parse(rawEnv);
     const effective = { ...parsed, ...env };
 
-    if (typeof effective.PANEL_PASSWORD !== 'string' || effective.PANEL_PASSWORD.length === 0) {
-        fail('panel-password', 'PANEL_PASSWORD must be configured');
+    validateProductionPassword(effective.PANEL_PASSWORD, 'panel-password');
+    if (effective.PANEL_READONLY_PASSWORD !== undefined && effective.PANEL_READONLY_PASSWORD !== '') {
+        validateProductionPassword(effective.PANEL_READONLY_PASSWORD, 'panel-readonly-password');
     }
-    if (effective.PANEL_READONLY_PASSWORD && effective.PANEL_READONLY_PASSWORD === effective.PANEL_PASSWORD) {
+    if (effective.PANEL_READONLY_PASSWORD !== undefined && effective.PANEL_READONLY_PASSWORD !== ''
+        && effective.PANEL_READONLY_PASSWORD === effective.PANEL_PASSWORD) {
         fail('panel-readonly-password', 'PANEL_READONLY_PASSWORD must differ from PANEL_PASSWORD');
     }
     let requireHttps;
@@ -250,11 +285,15 @@ if (require.main === module) main();
 
 module.exports = {
     CA_FIELDS,
+    KNOWN_WEAK_PASSWORDS,
+    MIN_PRODUCTION_PASSWORD_LENGTH,
     ProductionPreflightError,
+    isObviousPasswordPlaceholder,
     main,
     probeDirectory,
     runPreflight,
     validateAllowedOrigins,
     validateNodeEngine,
+    validateProductionPassword,
     validateSqlite
 };

@@ -9,6 +9,7 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - 文件索引：[docs/README.md](docs/README.md)
 - 完整操作與文件規格：[SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html](SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html)
 - 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
+- 本次 production blockers 修復：[docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md](docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md)
 - 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
 - 長期硬化報告：[docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md](docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md)
 - Post-merge audit：[docs/reports/POST_MERGE_AUDIT_HARDENING.md](docs/reports/POST_MERGE_AUDIT_HARDENING.md)
@@ -46,7 +47,7 @@ else
   sudo chmod 700 config
   sudo chmod 600 config/.env
 fi
-# 編輯 config/.env，正式環境至少設定 PANEL_PASSWORD
+# 編輯 config/.env，正式環境設定至少 16 字元且非 placeholder 的 PANEL_PASSWORD
 
 # 私有 repository／GHCR package 必須先登入；token 只需 read:packages。
 read -r -s GHCR_READ_TOKEN
@@ -105,14 +106,14 @@ docker compose --env-file config/.env \
 ### 可信任內網最簡部署
 
 1. `cp .env.example config/.env`
-2. 保留 `TRUSTED_LAN_MODE=true`，只填設備 IP、帳號與密碼。
+2. 保留安全預設 `TRUSTED_LAN_MODE=false`，只填設備 IP、帳號與密碼；若明確接受私有設備的相容風險，才設定為 `true`。
 3. `docker compose --env-file config/.env build unifi-smarthub`
 4. `docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline`
 5. `docker compose --env-file config/.env up -d --no-build`
 6. `docker compose --env-file config/.env ps`
 7. 檢查 `/health`、`/health/ready` 與設定頁的整合狀態。
 
-`TRUSTED_LAN_MODE` 是 compatibility master switch。安全 baseline（TLS verify=true、insecure=false、HTTP=false、SSH unpinned=false）只會在私有 IP、loopback、`host.docker.internal` 與 `TRUSTED_LAN_HOSTS` 完全相符的 hostname 上產生 scoped 自簽 TLS、私有 HTTP 與 SSH Host Key 相容傳輸。關閉模式後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH；若另設 legacy/manual insecure override，狀態會顯示 `explicitly-insecure`／`explicit-insecure-http`，不會冒充 Trusted LAN。configured CA／SSH fingerprint 永遠優先。它絕不影響 Site Manager、Telegram、Discord、Webhook、外部圖片/CDN 或其他 Internet integration 的 TLS 驗證；公開部署應設為 `false` 並改用正式 CA／fingerprint。
+`TRUSTED_LAN_MODE` 是 compatibility master switch，安全預設為 `false`。公開部署應維持關閉並使用正式 CA／SSH fingerprint；若明確設為 `true`，安全 baseline（TLS verify=true、insecure=false、HTTP=false、SSH unpinned=false）只會在私有 IP、loopback、`host.docker.internal` 與 `TRUSTED_LAN_HOSTS` 完全相符的 hostname 上產生 scoped 自簽 TLS、私有 HTTP 與 SSH Host Key 相容傳輸。關閉模式後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH；未 pin 的 Trusted LAN SSH 會留下可觀測 warning。若另設 legacy/manual insecure override，狀態會顯示 `explicitly-insecure`／`explicit-insecure-http`，不會冒充 Trusted LAN。configured CA／SSH fingerprint 永遠優先。它絕不影響 Site Manager、Telegram、Discord、Webhook、外部圖片/CDN 或其他 Internet integration 的 TLS 驗證。
 
 Compose 的 host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內服務仍綁定 `0.0.0.0` 以接受同一 network 的 reverse proxy。若要改成 LAN 發布，必須明確設定 host bind address 並同步套用防火牆／HTTPS 邊界。
 
@@ -237,7 +238,7 @@ Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱�
 npm run test:smoke
 ```
 
-Repository 管理員應在 `main` branch protection／ruleset 將 `SmartHub CI / Repository gate` 設為 Required Check，並禁止 CI 未通過的 PR merge；若尚未設定，不能把 workflow 存在誤稱為 branch protection 已啟用。
+`main` branch protection 已將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失，不能把 workflow 存在誤稱為 branch protection 已啟用。
 
 先依 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md) 執行必要 gate；`npm run release:build` 是本機 clean paired-image identity/reproducibility 檢查，正常 GitHub → GHCR 發布由 `Publish SmartHub images` 完成：
 

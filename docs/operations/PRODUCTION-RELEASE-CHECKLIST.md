@@ -9,12 +9,12 @@
 - Preflight 會要求 `config/.env` 及 SQLite `smarthub.db` 可讀寫；既有 `-wal`／`-shm` 也必須是可讀寫 regular file，並以 `PRAGMA quick_check=ok` 驗證。`--offline` 才會額外執行 `BEGIN IMMEDIATE; ROLLBACK;` writer probe。
 - 新的 `smarthub-data` volume 必須先以同一個已建立 image 執行一次 `createHistoryDb` 初始化 schema；preflight 不會自動略過或建立遺失的資料庫，既有 volume 不可重建覆蓋。
 - 根目錄沒有第二份 `.env`；所有 Compose 指令使用同一個 `--env-file config/.env`。
-- 已設定 `PANEL_PASSWORD`；唯讀密碼不得等於管理員密碼。
+- 已設定至少 16 字元、非 `password`／`admin`／`changeme`／`your_*`／其他範例 placeholder 的 `PANEL_PASSWORD`；若設定唯讀密碼，也必須同樣符合長度／placeholder 政策且不得等於管理員密碼。
 - 容器內 upstream 位址不是 `localhost`／`127.0.0.1`。
 - Docker UPS 使用 `UPS_SOURCE=ppb`、`host.docker.internal:3052`，或容器可達的 NUT server。
 - `UPS_SOURCE` 明確指定時預設 fail-closed；只有明確設定 `UPS_ALLOW_FALLBACK=true` 才可回退到其他來源。
 - Compose host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內 `SMARTHUB_BIND_ADDRESS=0.0.0.0` 只服務 container network。
-- `TRUSTED_LAN_MODE` 是 compatibility master switch；安全 baseline 應保持 `TLS_VERIFY=true`、`TLS_INSECURE=false`、`ALLOW_INSECURE_HTTP=false` 與 SSH unpinned=false。開啟時只有經 private/allowlist classification 的 Controller、NAS、PPB、AdGuard、WiiM 與 SSH target 產生 scoped compatibility transport；關閉後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH。configured CA／SSH fingerprint 永遠優先；明確 legacy/manual insecure override 必須顯示為 explicit mode。公網 integration 仍必須 verified TLS；公開部署請關閉此模式。
+- `TRUSTED_LAN_MODE` 預設為 `false`；公開部署應維持關閉並使用私有 CA／SSH fingerprint。只有明確開啟且經 private/allowlist classification 的 Controller、NAS、PPB、AdGuard、WiiM 與 SSH target 才產生 scoped compatibility transport；未 pin 的 Trusted LAN SSH 必須留下 warning。關閉後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH。configured CA／SSH fingerprint 永遠優先；明確 legacy/manual insecure override 必須顯示為 explicit mode。公網 integration 仍必須 verified TLS。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
 - 既有 stack 更新必須使用同一部署目錄／Compose project；`scripts/update-nas.sh` 會比對更新前後 `/app/data` named-volume identity，變更時拒絕成功。`--initialize` 只允許第一次沒有既有 SmartHub container／DB 的部署。
 - `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。
@@ -77,11 +77,11 @@ node --test \
   test/release-build.test.js
 ```
 
-任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。
+任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。`SmartHub CI / Repository gate` 另以 pinned Gitleaks binary、`fetch-depth: 0` 與 `--log-opts=--all` 掃描完整 Git history；不得只掃 PR diff，也不得把 secret report 寫入 log。
 
-本次 Trusted LAN／notification 修正只做完整 unit/integration tests、Compose config/build、offline preflight、smoke 與 90 秒至數分鐘的短 runtime stability check；不執行數小時 `npm run test:soak`。短驗證不等同真實設備、PPB、AdGuard、WiiM、SSH 或通知服務的實機驗收。
+本次 production blockers 修復不執行本機 test、install、audit、build、Docker、runtime 或實機驗證；唯一驗證權威是 GitHub Actions exact-head gate。Hosted mock／isolated checks 也不等同真實設備、PPB、AdGuard、WiiM、SSH、Docker socket、disaster recovery 或 24／72 小時 acceptance。
 
-Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 的 branch protection／ruleset 應將 `SmartHub CI / Repository gate` 設為 Required Check，要求分支為最新並禁止 CI 未通過時 merge。Workflow 檔存在不代表 repository 規則已啟用；沒有管理權限驗證時記為 `NOT RUN`。
+Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 已設定 branch protection，將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失則記為 `NOT RUN`。
 
 ### GHCR / NAS 自動更新
 

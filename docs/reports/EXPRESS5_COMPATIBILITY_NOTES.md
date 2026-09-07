@@ -1,31 +1,36 @@
 # Express 5 Compatibility Notes
 
-Dependabot PR #8 (`express` 4.22.2 → 5.2.1) remains open, non-draft, based on
-`main`, with a clean merge state and a passing historical `Repository gate` on
-its own head. This task does not merge it or upgrade Express.
+This release-blocker remediation selects Express `5.2.1` with `qs` `6.16.0`
+and body-parser `2.3.0`, using the complete lockfile resolution from the
+Dependabot dependency update as the dependency baseline. The Dependabot PR
+itself is not merged into this branch; compatibility changes and regression
+coverage live here.
 
-## Required compatibility review before a separate upgrade
+## Static compatibility decisions
 
-- Express 5 forwards rejected promises from async handlers to the error
-  middleware. Review every route that currently catches, sends a response, or
-  intentionally returns after an async operation so a second response is not
-  attempted.
-- Review all custom error middleware and `apiError` paths for the Express 5
-  four-argument error-handler contract and for errors raised after headers are
-  sent.
-- Re-run the exact body-parser, raw backup upload, URL-encoded, CSP/static
-  asset, SSE, and graceful-shutdown tests; middleware ordering is security
-  sensitive in this application.
-- Review route/path parsing for Express 5's newer `path-to-regexp` behavior,
-  especially encoded identifiers and wildcard/parameter routes.
-- Re-test `req.query`, `req.params`, `req.body`, response status/header
-  behavior, and the panel Origin/CSRF middleware using both production and
-  mock servers.
-- Rebuild the CSS and run the release build, isolated runtime smoke, short
-  soak, both Docker builds, and the pinned vulnerability scan against the
-  dependency-updated lockfile.
+- Both production and mock applications set `query parser` to `extended`, so
+  repeated, array, nested, and prototype-like query values remain visible to
+  the existing exact-query schemas instead of silently changing parser policy.
+- The production and mock error middleware retain the four-argument Express
+  contract, delegate after `headersSent`, map malformed URLs to a non-leaking
+  400 response, and preserve bounded JSON/raw-body 413 responses.
+- Existing route strings use named parameters rather than Express 5 wildcard or
+  optional path syntax. The regression test exercises an encoded parameter and
+  a malformed percent-encoded URL.
+- Existing security and lifecycle suites remain the owners for login,
+  Origin/CSRF, readonly/admin authorization, SSE, and graceful shutdown
+  behavior; the new Express regression test checks their middleware ordering
+  contract in the production bootstrap as well as async rejection and
+  after-response error handling in an Express 5 harness.
 
-Recommendation: keep PR #8 separate and non-merged until this compatibility
-matrix is run on a dedicated branch. Current status is `DEFERRED`; no conflict
-or rebase is required at the time of this audit, but that is not evidence that
-the application is Express 5 compatible.
+## Validation boundary
+
+`SmartHub CI / Repository gate` is the only validation authority for this
+dependency migration. The gate runs locked install, JavaScript and CSS checks,
+the full test suite, low-level npm audit, Compose/profile checks, preflight,
+smoke/soak, SBOM/Trivy, and the full-history secret scan. No local test,
+install, audit, build, Docker, or runtime command is evidence for this report.
+
+Real UniFi Controller/NAS/UPS/AdGuard/WiiM/SSH, Docker socket, disaster
+recovery, and 24/72-hour acceptance remain `NOT RUN` until an authorized
+production-like environment is available.

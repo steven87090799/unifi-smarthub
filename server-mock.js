@@ -31,6 +31,8 @@ const { WebPushServiceError } = require('./server/services/web-push');
 const { registerWebPushRoutes } = require('./server/routes/web-push-routes');
 
 const app = express();
+// Keep mock query parsing aligned with the production Express application.
+app.set('query parser', 'extended');
 app.use((_req, res, next) => {
     const requestId = randomUUID();
     res.locals.requestId = requestId;
@@ -1423,7 +1425,7 @@ app.delete('/api/adguard/service-policies/:id', mockSecurity.requireAdmin, (req,
 /* ===== 連線設定 (模擬) ===== */
 const MOCK_CONNECTION_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'mock-connections.json');
 const mockConnDefaults = {
-    TRUSTED_LAN_MODE: 'true', TRUSTED_LAN_HOSTS: '',
+    TRUSTED_LAN_MODE: 'false', TRUSTED_LAN_HOSTS: '',
     UCG_IP: '192.168.0.1', SSH_PORT: '22', SSH_USER: 'root', WAN_IFACE: 'eth4',
     UNIFI_CONTROLLER_URL: 'https://192.168.0.1', UNIFI_CONTROLLER_TLS_VERIFY: 'true', UNIFI_CONTROLLER_CA_FILE: '',
     UNIFI_CONTROLLER_TLS_INSECURE: 'false', UNIFI_CONTROLLER_ALLOW_INSECURE_HTTP: 'false', UNIFI_USERNAME: 'demo',
@@ -1739,11 +1741,15 @@ app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
     const isTooLarge = error && (error.type === 'entity.too.large' || error.status === 413);
     const isJsonError = error && (error.type === 'entity.parse.failed' || error instanceof SyntaxError);
+    const isMalformedUrl = error instanceof URIError || error?.code === 'ERR_HTTP_INVALID_URI';
+    const isBadRequest = isJsonError || isMalformedUrl || error?.status === 400 || error?.statusCode === 400;
     return mockApiError(res, error, {
-        status: isTooLarge ? 413 : isJsonError ? 400 : 500,
-        code: isTooLarge || isJsonError ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
+        status: isTooLarge ? 413 : isBadRequest ? 400 : 500,
+        code: isTooLarge || isBadRequest ? ERROR_CODES.API_VALIDATION_FAILED : ERROR_CODES.API_INTERNAL_ERROR,
         publicMessage: isTooLarge ? 'JSON request body exceeds 256 KiB'
-            : isJsonError ? 'Invalid JSON request body' : 'Internal server error'
+            : isJsonError ? 'Invalid JSON request body'
+                : isMalformedUrl ? 'Invalid request URL'
+                    : isBadRequest ? 'Invalid request' : 'Internal server error'
     });
 });
 

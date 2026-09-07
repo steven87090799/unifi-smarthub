@@ -23,7 +23,7 @@
     "chart.js": "4.5.1",
     "d3": "7.9.0",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "qrcode": "1.5.4",
     "ssh2": "^1.15.0",
     "topojson-client": "3.1.0",
