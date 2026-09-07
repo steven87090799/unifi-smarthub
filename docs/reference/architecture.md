@@ -40,9 +40,11 @@
 
 ## 發布模型
 
-- `npm run release:build` 從 clean `git archive HEAD` 建立 SmartHub／NAS Monitor 成對映像。
+- `SmartHub CI` 是 required-check candidate；成功後 `Publish SmartHub images` 從同一個 exact CI head 建立並發布 GHCR 的 SmartHub／NAS Monitor 成對 multi-arch 映像。
+- GHCR 同時保留 `sha-<commit>` tag；`main` 另發布 `stable`，`vX.Y.Z` tag 則在 exact CI head 成功後發布固定版本 tag。private package 由 GitHub Actions `GITHUB_TOKEN` 發布，NAS 以最小權限 `read:packages` PAT 拉取。
 - 兩個映像必須具有一致 version、revision、created 與 clean identity。
-- 正式部署使用不可變 tag 或 digest，並以 `--no-build --pull never` 做本機 rehearsal。
+- NAS runtime Compose 不含 `build:`；`docker-compose.build.yml` 僅供本機／CI source build。正式部署使用 `scripts/update-nas.sh` 先 pull、再 offline preflight、最後以 `--no-build --pull never` recreate。高保證部署使用成對 registry digest。
+- runtime SQLite 與 JSON 狀態留在 named volume `/app/data`，`config/.env` 留在獨立 bind mount；更新腳本會在 recreate 前後比對 `/app/data` volume identity，避免 project／目錄變更時誤用空 volume。
 - 完整流程見 `operations/PRODUCTION-RELEASE-CHECKLIST.md`。
 
 ## 修改原則

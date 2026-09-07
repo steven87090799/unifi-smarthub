@@ -16,6 +16,7 @@
 - Compose host-side port 預設只發布到 `127.0.0.1`（`SMARTHUB_HOST_BIND_ADDRESS`）；容器內 `SMARTHUB_BIND_ADDRESS=0.0.0.0` 只服務 container network。
 - `TRUSTED_LAN_MODE` 預設為 `false`；公開部署應維持關閉並使用私有 CA／SSH fingerprint。只有明確開啟且經 private/allowlist classification 的 Controller、NAS、PPB、AdGuard、WiiM 與 SSH target 才產生 scoped compatibility transport；未 pin 的 Trusted LAN SSH 必須留下 warning。關閉後不會自動接受 self-signed TLS、HTTP 或 unpinned SSH。configured CA／SSH fingerprint 永遠優先；明確 legacy/manual insecure override 必須顯示為 explicit mode。公網 integration 仍必須 verified TLS。
 - 已完成安全備份；需要完整離線備份時先停止服務並保存 DB／WAL／SHM。
+- 既有 stack 更新必須使用同一部署目錄／Compose project；`scripts/update-nas.sh` 會比對更新前後 `/app/data` named-volume identity，變更時拒絕成功。`--initialize` 只允許第一次沒有既有 SmartHub container／DB 的部署。
 - `config/.env` 已由 NAS 的加密備份機制另行保護，備份目的地位於不同 storage mount；同一 Docker volume 不等於 disaster recovery。
 - 正式 Web 入口是 Caddy／Nginx 等 HTTPS reverse proxy；`http://<NAS IP>:3000` 只可作為隔離的 local probe，不是 production 使用路徑。
 - `PANEL_REQUIRE_HTTPS=true`、`PANEL_ALLOW_INSECURE_HTTP=false`，並只對實際 reverse proxy 設定 `PANEL_TRUSTED_PROXIES`。
@@ -24,11 +25,12 @@
 - 未使用 Trusted LAN mode 時，已設定所有啟用 SSH integration 的 host fingerprint；使用 Trusted LAN mode 時，未 pin 只可對分類為私有的 UCG／Linux／UniFi Device SSH target 放行，Controller-known device、MAC allowlist、literal IP、固定唯讀指令與 concurrency 邊界仍必須保留。
 - AdGuard connectivity 與 protection 必須是不同狀態；離線需連續 3 次明確 failure，恢復需連續 2 次 fresh success。Site Manager 使用相同 threshold，unknown/stale 不得產生通知。
 - 只有需要 Docker 管理時才啟用 `nas-monitor` profile。
+- 若 repository／GHCR package 是 private，NAS 已以 GitHub PAT（classic）登入 `ghcr.io`，且 token 只具 `read:packages`；不要把 token 放進 `config/.env`。
 - `.github/dependabot.yml` 只管理版本更新排程、分組與自動 PR 上限；Dependabot Alerts／security updates 仍由 GitHub repository 的 `Settings → Code security and analysis` 設定管理，不能由此檔案宣稱已啟用。
 
 ## 2. 程式庫檢查
 
-正式 release 執行完整 gate；部署相關命令必須保持 Build → Preflight → Start：
+正式 release 執行完整 gate；source build 命令使用明確的 build overlay，部署相關命令必須保持 Build/Pull → Preflight → Start：
 
 ```bash
 npm ci
@@ -38,16 +40,25 @@ npm run check:css
 npm run test:smoke
 npm audit --audit-level=low
 git diff --check
-docker compose --env-file config/.env config --quiet
-docker compose --env-file config/.env --profile nas-monitor config --quiet
-docker compose --env-file config/.env build unifi-smarthub
-docker compose --env-file config/.env --profile nas-monitor build
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml config --quiet
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml \
+  --profile nas-monitor config --quiet
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml build unifi-smarthub
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml \
+  --profile nas-monitor build
 # 僅第一次使用全新的 smarthub-data volume 時執行一次；既有資料庫跳過且不可覆蓋。
-docker compose --env-file config/.env run --rm --no-deps \
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml run --rm --no-deps \
   unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
-docker compose --env-file config/.env run --rm --no-deps \
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
-docker compose --env-file config/.env up -d --no-build
+docker compose --env-file config/.env \
+  -f docker-compose.yml -f docker-compose.build.yml up -d --no-build --pull never
 ```
 
 若只需快速定位安全／Docker／restart／release 契約：
@@ -71,6 +82,37 @@ node --test \
 本次 production blockers 修復不執行本機 test、install、audit、build、Docker、runtime 或實機驗證；唯一驗證權威是 GitHub Actions exact-head gate。Hosted mock／isolated checks 也不等同真實設備、PPB、AdGuard、WiiM、SSH、Docker socket、disaster recovery 或 24／72 小時 acceptance。
 
 Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 已設定 branch protection，將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失則記為 `NOT RUN`。
+
+### GHCR / NAS 自動更新
+
+`main` 的 `SmartHub CI` 成功後，`.github/workflows/publish-ghcr.yml` 會 checkout 同一個 CI head，發布 SmartHub 與 NAS Monitor 的 `sha-<commit>` tag 及 `stable` moving tag；推送 `vX.Y.Z` tag 時，先跑同一個完整 `SmartHub CI`，成功後再發布 `vX.Y.Z` 與 `sha-<commit>`。兩條路徑都建置 `linux/amd64` 與 `linux/arm64`。NAS 只需要持有 runtime Compose、`config/.env` 與 `scripts/update-nas.sh`；不需要在 NAS 執行 Node/npm build。
+
+私有 repository 的 GHCR package 預設也應視為 private。NAS 首次設定時以最小權限 PAT（classic，`read:packages`）登入：
+
+```bash
+read -r -s GHCR_READ_TOKEN
+printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io \
+  --username <github-username> --password-stdin
+unset GHCR_READ_TOKEN
+```
+
+第一次使用新的 volume：
+
+```bash
+./scripts/update-nas.sh --tag stable --initialize
+```
+
+之後每次更新：
+
+```bash
+./scripts/update-nas.sh
+# 固定使用已發布版本；兩個 paired image 會使用同一個 tag。
+./scripts/update-nas.sh --tag v3.0.1
+# 啟用 NAS Monitor 時：
+./scripts/update-nas.sh --tag v3.0.1 --profile nas-monitor
+```
+
+也可以在 `config/.env` 設定 `SMARTHUB_IMAGE_TAG=v3.0.1`，讓腳本每次使用該 tag；`--tag` 只覆蓋當次命令，且會同時覆蓋舊格式的完整 image ref。腳本會依序執行 Compose config、pull、同一個新 image 的 offline preflight，再以 `up -d --no-build --pull never` 重建；pull／preflight 失敗時不會主動停止現有服務，也不會使用 `down -v`。`stable` 會移動，若要固定 release，將 `SMARTHUB_IMAGE` 與 `NAS_MONITOR_IMAGE` 改為同一 release 的 registry digest，並保存前後 image digest、health、restart、SQLite 與回滾證據。
 
 ### HTTPS reverse proxy 範例
 
@@ -121,16 +163,16 @@ smarthub.example.internal {
 npm run release:build
 ```
 
-此命令會拒絕 staged、unstaged、untracked 差異，從 `git archive HEAD` 建置兩個 staging image，驗證 version／revision／created／dirty identity，再成對發布 revision tags。
+此命令會拒絕 staged、unstaged、untracked 差異，從 `git archive HEAD` 建置兩個 staging image，驗證 version／revision／created／dirty identity，再產生本機成對 revision tags；它本身不等於 GHCR push。一般 GitHub → GHCR 發布由 `publish-ghcr.yml` 在 exact successful CI head 執行。
 
 保存輸出 JSON 的 `revision`、`images`、`image_ids`，並寫入部署主機：
 
 ```dotenv
-SMARTHUB_IMAGE=unifi-smarthub:<12-char-revision>
-NAS_MONITOR_IMAGE=unifi-smarthub-nas-monitor:<12-char-revision>
+SMARTHUB_IMAGE=ghcr.io/steven87090799/unifi-smarthub@sha256:<digest>
+NAS_MONITOR_IMAGE=ghcr.io/steven87090799/unifi-smarthub-nas-monitor@sha256:<digest>
 ```
 
-本機 tag／image ID 不等於 registry digest。若使用 registry，必須成對 push、記錄兩個 immutable digest，並以 digest 或不可變 tag 部署。
+本機 tag／image ID 不等於 registry digest。若使用 registry，必須成對 push、記錄兩個 immutable digest，並以 digest 或不可變 tag 部署；`stable` 只供明確接受 moving-channel 風險的自動更新路徑。
 
 ## 4. 隔離演練與啟動
 
@@ -138,9 +180,11 @@ Preflight 必須針對已建立的同一組 release image 執行；通過後才�
 
 ```bash
 # 僅全新的 smarthub-data volume 執行一次；既有資料庫跳過且不可覆蓋。
-docker compose --env-file config/.env run --rm --no-deps \
+docker compose --env-file config/.env \
+  run --rm --no-deps \
   unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
-docker compose --env-file config/.env run --rm --no-deps \
+docker compose --env-file config/.env \
+  run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
 ```
 

@@ -4,7 +4,7 @@ FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a
 # nut：提供 upsc 客戶端，容器內才能讀取 NAS/主機上 NUT server 的 UPS 數據 (UPS_SOURCE=nut)
 # tzdata：時區資料，配合 TZ 環境變數讓報表排程/日誌時間正確 (預設 UTC 會差 8 小時)
 # Keep the Alpine package inputs explicit alongside the immutable base image.
-# These versions were resolved from Alpine v3.24 on 2026-08-02; refresh them
+# These versions were resolved from Alpine v3.24 on 2026-09-07; refresh them
 # deliberately with the base digest and the resulting SBOM when upgrading.
 RUN apk add --no-cache \
     tini=0.19.0-r3 \
