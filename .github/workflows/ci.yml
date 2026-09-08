@@ -174,7 +174,11 @@ jobs:
         if: steps.scope.outputs.run_runtime == 'true'
         run: |
           set -Eeuo pipefail
-          compose=(sudo env SMARTHUB_HOST_PORT=3000 docker compose --env-file config/.env \
+          # The preceding production preflight keeps HTTPS mandatory. This
+          # override is only for the loopback-only CI smoke endpoint.
+          compose=(sudo env SMARTHUB_HOST_PORT=3000 \
+            CI_PANEL_REQUIRE_HTTPS=false CI_PANEL_ALLOW_INSECURE_HTTP=false \
+            docker compose --env-file config/.env \
             -f docker-compose.yml -f docker-compose.build.yml)
           cleanup() {
             status=$?

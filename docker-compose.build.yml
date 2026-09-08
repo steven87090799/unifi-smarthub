@@ -11,6 +11,11 @@ services:
         BUILD_DIRTY: ${BUILD_DIRTY:-}
         BUILD_IDENTITY_REQUIRED: ${BUILD_IDENTITY_REQUIRED:-false}
     image: unifi-smarthub:dev
+    environment:
+      # CI may explicitly override the panel transport for a loopback-only
+      # HTTP smoke after production preflight has validated the real policy.
+      PANEL_REQUIRE_HTTPS: ${CI_PANEL_REQUIRE_HTTPS:-${PANEL_REQUIRE_HTTPS:-}}
+      PANEL_ALLOW_INSECURE_HTTP: ${CI_PANEL_ALLOW_INSECURE_HTTP:-${PANEL_ALLOW_INSECURE_HTTP:-}}
 
   nas-monitor:
     build:
