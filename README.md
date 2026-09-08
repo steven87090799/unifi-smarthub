@@ -6,14 +6,16 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - 開發假資料：`server-mock.js`，port `3005`
 - 歷史資料：SQLite `data/smarthub.db`
 - 目前版本：`3.0.0`
+- AI／Claude Code 低上下文入口：[CLAUDE.md](CLAUDE.md)；任務分流：[CONTEXT.md](CONTEXT.md)
 - 文件索引：[docs/README.md](docs/README.md)
 - 完整操作與文件規格：[SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html](SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html)
 - 正式發布：[docs/operations/PRODUCTION-RELEASE-CHECKLIST.md](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)
-- 本次 production blockers 修復：[docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md](docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md)
-- 最終驗證：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
+- 最新 production blocker 記錄：[docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md](docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md)
+- 歷史 production readiness：[docs/reports/PRODUCTION_READINESS_REPORT.md](docs/reports/PRODUCTION_READINESS_REPORT.md)
 - 長期硬化報告：[docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md](docs/reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md)
 - Post-merge audit：[docs/reports/POST_MERGE_AUDIT_HARDENING.md](docs/reports/POST_MERGE_AUDIT_HARDENING.md)
-- Production Acceptance：[docs/operations/PRODUCTION_ACCEPTANCE.md](docs/operations/PRODUCTION_ACCEPTANCE.md)
+- Production-like staging 驗收：[docs/operations/PRODUCTION-STAGING-ACCEPTANCE.md](docs/operations/PRODUCTION-STAGING-ACCEPTANCE.md)
+- 歷史 Production Acceptance：[docs/operations/PRODUCTION_ACCEPTANCE.md](docs/operations/PRODUCTION_ACCEPTANCE.md)
 
 ## 主要能力
 
@@ -24,6 +26,10 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 - SQLite 歷史、事件、報表、政策、Web Push、備份／還原與重啟復原。
 - Discord、Telegram、Webhook、Web Push 與 Telegram 指令中心。
 - 可選的 NAS Monitor；Docker 操作與日誌各自使用明確 allowlist。
+
+## AI 修改流程（低上下文）
+
+AI 工作一開始只讀 `CLAUDE.md` 與 `CONTEXT.md`，再依任務選一份 reference map；不要先讀整個 repository。後端先看 [backend-map.md](docs/reference/backend-map.md)，前端先看 [frontend-map.md](docs/reference/frontend-map.md)，部署才看本 README 與 [正式發布檢查清單](docs/operations/PRODUCTION-RELEASE-CHECKLIST.md)。大型 source、`data/`、`.env`、依賴與歷史報告都採按需精讀；先用 `rg` 定位，再讀行號區段。這套流程是為了避免每次對話把整個專案重複送入上下文。
 
 ## 快速開始
 

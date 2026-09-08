@@ -15,14 +15,14 @@
 <body>
 <header id="top">
   <h1>SmartHub 完整操作手冊、規格與文件導航</h1>
-  <p>適用於本目錄的 SmartHub 3.0.0。此檔可離線開啟，集中操作介面、資料流、設定、部署、維護、除錯與所有 Markdown 文件的可點選索引；密碼、Token、API Key 一律不應填入本文件或提交至 Git。</p>
+  <p>適用於本目錄的 SmartHub 3.0.0。此檔可離線開啟，集中操作介面、資料流、設定、部署、維護、除錯與所有 Markdown 文件的可點選索引；密碼、Token、API Key 一律不應填入本文件或提交至 Git。AI 修改專案時先讀 <code>CLAUDE.md</code> 與 <code>CONTEXT.md</code>，再依任務精讀，不要整個 repository 預讀。</p>
   <p class="note"><strong>GHCR／NAS 更新：</strong>正式 NAS 使用根目錄的 registry-only <code>docker-compose.yml</code> 與 <code>scripts/update-nas.sh</code>；<code>main</code> 或 <code>vX.Y.Z</code> tag 通過 <code>SmartHub CI</code> 後，GitHub Actions 才發布配對的 multi-arch image。私有 GHCR 先用只具 <code>read:packages</code> 的 PAT 登入；版本更新可執行 <code>./scripts/update-nas.sh --tag v3.0.1</code>，第一次新 volume 才加 <code>--initialize</code>，需要 Docker Monitor 才加 <code>--profile nas-monitor</code>。最高保證部署把兩個 image ref 固定為同一 release 的 registry digest。</p>
 </header>
 <div class="layout">
   <nav class="toc" aria-label="章節目錄">
     <strong>章節目錄</strong>
     <span class="toc-note">每張卡片都有重點說明與對照文件；點擊即可跳到對應章節。</span>
-    <a href="#read-first"><span class="toc-title">1. 使用前必讀</span><span class="toc-summary">了解系統範圍、風險操作與安全界線。</span><span class="toc-ref">（參考：README.md、docs/README.md）</span></a>
+    <a href="#read-first"><span class="toc-title">1. 使用前必讀</span><span class="toc-summary">了解系統範圍、風險操作與安全界線。</span><span class="toc-ref">（參考：CLAUDE.md、CONTEXT.md、README.md、docs/README.md）</span></a>
     <a href="#architecture"><span class="toc-title">2. 架構與資料流</span><span class="toc-summary">掌握 SPA、後端、SQLite、外部整合與生命週期。</span><span class="toc-ref">（參考：docs/reference/architecture.md）</span></a>
     <a href="#roles"><span class="toc-title">3. 登入、權限與安全</span><span class="toc-summary">管理員、唯讀、CSRF、Origin 與健康快照。</span><span class="toc-ref">（參考：docs/reference/backend-map.md）</span></a>
     <a href="#navigation"><span class="toc-title">4. 全域介面與導覽</span><span class="toc-summary">理解側欄、主題、版面、圖表與切頁行為。</span><span class="toc-ref">（參考：docs/reference/frontend-map.md）</span></a>
@@ -33,7 +33,7 @@
     <a href="#deployment"><span class="toc-title">9. 安裝、部署、更新與回滾</span><span class="toc-summary">使用不可變成對映像完成受控發布與回復。</span><span class="toc-ref">（參考：docs/operations/PRODUCTION-RELEASE-CHECKLIST.md）</span></a>
     <a href="#operations"><span class="toc-title">10. 日常維運</span><span class="toc-summary">日常監看、調整後檢查與發布後追蹤。</span><span class="toc-ref">（參考：docs/operations/OBSERVABILITY.md）</span></a>
     <a href="#debug"><span class="toc-title">11. Debug 與故障排除</span><span class="toc-summary">安全蒐證、health、log、worker 與整合排查。</span><span class="toc-ref">（參考：docs/operations/OBSERVABILITY.md）</span></a>
-    <a href="#development"><span class="toc-title">12. 開發與修改規格</span><span class="toc-summary">維持 production、mock、測試與安全契約一致。</span><span class="toc-ref">（參考：AGENTS.md、CONTEXT.md）</span></a>
+    <a href="#development"><span class="toc-title">12. 開發與修改規格</span><span class="toc-summary">維持 production、mock、測試與安全契約一致。</span><span class="toc-ref">（參考：CLAUDE.md、AGENTS.md、CONTEXT.md）</span></a>
     <a href="#api"><span class="toc-title">13. API 與檔案對照</span><span class="toc-summary">依 API 類型快速找到 route、policy、service owner。</span><span class="toc-ref">（參考：docs/reference/backend-map.md）</span></a>
     <a href="#checklist"><span class="toc-title">14. 操作檢核表</span><span class="toc-summary">首次上線、高風險操作與手冊維護的確認清單。</span><span class="toc-ref">（參考：docs/operations/PRODUCTION-RELEASE-CHECKLIST.md）</span></a>
     <a href="#documents"><span class="toc-title">15. 文件導航與詳細規格</span><span class="toc-summary">查看所有 Markdown 的位置、用途與可點選連結。</span><span class="toc-ref">（參考：docs/README.md）</span></a>
@@ -200,14 +200,14 @@ curl --user admin http://127.0.0.1:3000/api/system/status</pre><table><thead><tr
         <tr><td>NAS、Docker、硬碟與 NAS Monitor</td><td><a href="docs/integrations/ugreen-nas-api.md">ugreen-nas-api.md</a>、<a href="docs/operations/NAS-DOCKER-MONITOR-SETUP.md">NAS-DOCKER-MONITOR-SETUP.md</a></td><td>區分 UGOS、Monitor、Docker socket 權限、allowlist 與部署方式。</td></tr>
         <tr><td>UPS、PPB、NUT、電壓事件</td><td><a href="docs/integrations/cyberpower-ups-api.md">cyberpower-ups-api.md</a>、<a href="docs/operations/POLLING-INTERVALS.md">POLLING-INTERVALS.md</a></td><td>確認來源順序、TLS／CA、安全預設與 UPS 專屬 3 秒取樣。</td></tr>
         <tr><td>WiiM 播放與控制</td><td><a href="docs/integrations/wiim-amp-api.md">wiim-amp-api.md</a></td><td>列出唯讀／異動命令、參數驗證與高風險確認。</td></tr>
-        <tr><td>未來功能、工程債與歷史發布證據</td><td><a href="docs/planning/ROADMAP.md">ROADMAP.md</a>、<a href="docs/planning/REVIEW-TODO.md">REVIEW-TODO.md</a>、<a href="docs/reports/PRODUCTION_READINESS_REPORT.md">PRODUCTION_READINESS_REPORT.md</a></td><td>分別記錄產品方向、尚未完成工程工作與最新稽核判定。</td></tr>
+        <tr><td>未來功能、工程債與歷史發布證據</td><td><a href="docs/planning/ROADMAP.md">ROADMAP.md</a>、<a href="docs/planning/REVIEW-TODO.md">REVIEW-TODO.md</a>、<a href="docs/reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md">PRODUCTION_RELEASE_BLOCKERS_20260907.md</a></td><td>分別記錄產品方向、尚未完成工程工作與最近一次 production blocker 記錄；目前結論仍以 source、tests 與 exact-head CI 為準。</td></tr>
       </tbody></table>
 
       <h3>根目錄：入口與協作規則</h3>
       <div class="grid">
         <article class="doc-card"><h4><a data-doc-path="README.md" href="README.md">README.md</a></h4><p>專案介紹、安裝、設定、安全邊界、健康檢查與正式發布入口。</p><p class="small">給使用者、部署者與第一次接手專案的人。</p></article>
         <article class="doc-card"><h4><a data-doc-path="AGENTS.md" href="AGENTS.md">AGENTS.md</a></h4><p>AI 協作規則、資料安全與任務路由。</p><p class="small">修改程式前先確認範圍與必守契約。</p></article>
-        <article class="doc-card"><h4><a data-doc-path="CLAUDE.md" href="CLAUDE.md">CLAUDE.md</a></h4><p>Claude Code 自動載入的精簡專案入口。</p><p class="small">以 @path 導入共用規則與現行前後端地圖，不重複維護內容。</p></article>
+        <article class="doc-card"><h4><a data-doc-path="CLAUDE.md" href="CLAUDE.md">CLAUDE.md</a></h4><p>Claude Code 唯一自動載入的低上下文專案入口。</p><p class="small">提供任務分流、讀取邊界、流程與驗證規則；連結只用來定位，不會要求預讀整份 map。</p></article>
         <article class="doc-card"><h4><a data-doc-path="CONTEXT.md" href="CONTEXT.md">CONTEXT.md</a></h4><p>低上下文閱讀入口，指示不同任務先讀哪一份索引。</p><p class="small">日常定位後端、前端、部署、整合與診斷工作。</p></article>
         <article class="doc-card"><h4><a data-doc-path="EXCLUDE-FILES.md" href="EXCLUDE-FILES.md">EXCLUDE-FILES.md</a></h4><p>不應預讀的機密、runtime、大型檔案與低頻文件規則。</p><p class="small">需要時可精準讀取，不是永久禁止。</p></article>
       </div>
