@@ -77,15 +77,15 @@ node --test \
   test/release-build.test.js
 ```
 
-任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。`SmartHub CI / Repository gate` 另以 pinned Gitleaks binary、`fetch-depth: 0` 與 `--log-opts=--all` 掃描完整 Git history；不得只掃 PR diff，也不得把 secret report 寫入 log。
+任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。runtime／release scope 的 `SmartHub CI / Repository gate` 另以 pinned Gitleaks binary、`fetch-depth: 0` 與 `--log-opts=--all` 掃描完整 Git history；所有 scope 仍掃描當前樹，不得把 secret report 寫入 log。
 
 本次 production blockers 修復不執行本機 test、install、audit、build、Docker、runtime 或實機驗證；唯一驗證權威是 GitHub Actions exact-head gate。Hosted mock／isolated checks 也不等同真實設備、PPB、AdGuard、WiiM、SSH、Docker socket、disaster recovery 或 24／72 小時 acceptance。
 
-Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，執行隔離 `npm run test:smoke`；它只使用臨時 DATA_DIR／ENV_FILE／port、loopback 假整合與假帳密，不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 已設定 branch protection，將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失則記為 `NOT RUN`。
+Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 先依變更 scope 分流；runtime／release scope 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，以實際 Compose image 執行 `RUNTIME_SMOKE_BASE_URL=http://127.0.0.1:3000 npm run test:smoke`，驗證 readiness、登入、CSRF、權限與 restart persistence，並執行 blocking short soak。文件／測試-only scope 不建置未受影響的 image。Hosted gate 不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 已設定 branch protection，將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失則記為 `NOT RUN`。
 
 ### GHCR / NAS 自動更新
 
-`main` 的 `SmartHub CI` 成功後，`.github/workflows/publish-ghcr.yml` 會 checkout 同一個 CI head，發布 SmartHub 與 NAS Monitor 的 `sha-<commit>` tag 及 `stable` moving tag；推送 `vX.Y.Z` tag 時，先跑同一個完整 `SmartHub CI`，成功後再發布 `vX.Y.Z` 與 `sha-<commit>`。兩條路徑都建置 `linux/amd64` 與 `linux/arm64`。NAS 只需要持有 runtime Compose、`config/.env` 與 `scripts/update-nas.sh`；不需要在 NAS 執行 Node/npm build。
+`main` 的 `SmartHub CI` 成功並產生 exact-head release evidence 後，`.github/workflows/publish-ghcr.yml` 才會 checkout 同一個 CI head，發布 SmartHub 與 NAS Monitor 的 `sha-<commit>` tag 及 `stable` moving tag；文件／測試-only push 不會重建 image。推送 `vX.Y.Z` tag 時，先跑同一個完整 `SmartHub CI`，成功後再發布 `vX.Y.Z` 與 `sha-<commit>`。兩條路徑都建置 `linux/amd64` 與 `linux/arm64`，並掃描實際推送的兩個 platform digest。NAS 只需要持有 runtime Compose、`config/.env` 與 `scripts/update-nas.sh`；不需要在 NAS 執行 Node/npm build。
 
 私有 repository 的 GHCR package 預設也應視為 private。NAS 首次設定時以最小權限 PAT（classic，`read:packages`）登入：
 

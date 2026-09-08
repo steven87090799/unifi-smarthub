@@ -2,6 +2,9 @@ name: SmartHub CI
 
 on:
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
   push:
     branches:
       - main
@@ -26,11 +29,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Scan full Git history for secrets
+      - name: Determine validation scope
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          changed_file="$RUNNER_TEMP/smarthub-changed-files.txt"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            compare_sha="$BASE_SHA"
+          elif [[ "$REF_NAME" == refs/tags/* ]]; then
+            compare_sha=''
+          else
+            compare_sha="$BEFORE_SHA"
+          fi
+          if [ -n "$compare_sha" ] && git cat-file -e "$compare_sha^{commit}" 2>/dev/null; then
+            git diff --name-only "$compare_sha" "$HEAD_SHA" -- > "$changed_file"
+          else
+            : > "$changed_file"
+          fi
+          node scripts/ci-scope.js "$changed_file" >> "$GITHUB_OUTPUT"
+
+      - name: Scan current tree and selected Git history for secrets
+        if: steps.scope.outputs.run_current_secret_scan == 'true'
         env:
           GITLEAKS_VERSION: 8.24.3
           GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+          RUN_HISTORY_SCAN: ${{ steps.scope.outputs.run_history_secret_scan }}
         run: |
+          set -euo pipefail
           archive="$RUNNER_TEMP/gitleaks.tar.gz"
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
@@ -46,16 +78,18 @@ jobs:
             --report-format sarif \
             --report-path "$RUNNER_TEMP/gitleaks-current.sarif" \
             "$GITHUB_WORKSPACE"
-          "$RUNNER_TEMP/gitleaks" git \
-            --config "$GITHUB_WORKSPACE/.gitleaks.toml" \
-            --redact \
-            --no-banner \
-            --exit-code 1 \
-            --log-level error \
-            --report-format sarif \
-            --report-path "$RUNNER_TEMP/gitleaks-history.sarif" \
-            --log-opts="--all" \
-            "$GITHUB_WORKSPACE"
+          if [ "$RUN_HISTORY_SCAN" = "true" ]; then
+            "$RUNNER_TEMP/gitleaks" git \
+              --config "$GITHUB_WORKSPACE/.gitleaks.toml" \
+              --redact \
+              --no-banner \
+              --exit-code 1 \
+              --log-level error \
+              --report-format sarif \
+              --report-path "$RUNNER_TEMP/gitleaks-history.sarif" \
+              --log-opts="--all" \
+              "$GITHUB_WORKSPACE"
+          fi
 
       - name: Use Node.js 24
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -64,21 +98,34 @@ jobs:
           cache: npm
 
       - name: Install locked dependencies
+        if: >-
+          steps.scope.outputs.run_tests == 'true' ||
+          steps.scope.outputs.run_css == 'true' ||
+          steps.scope.outputs.run_audit == 'true'
         run: npm ci
 
       - name: Check JavaScript syntax
+        if: steps.scope.outputs.run_js == 'true'
         run: npm run check:js
 
       - name: Run unit, integration, contract, and security tests
+        if: steps.scope.outputs.run_tests == 'true'
         run: npm test
 
+      - name: Run documentation contract test
+        if: steps.scope.outputs.run_docs == 'true'
+        run: node --test test/documentation-contract.test.js
+
       - name: Verify checked-in CSS
+        if: steps.scope.outputs.run_css == 'true'
         run: npm run check:css
 
       - name: Audit production dependencies
+        if: steps.scope.outputs.run_audit == 'true'
         run: npm audit --audit-level=low
 
       - name: Prepare isolated Compose configuration
+        if: steps.scope.outputs.run_runtime == 'true'
         run: |
           mkdir -p config
           cp .env.example config/.env
@@ -90,6 +137,7 @@ jobs:
           sudo chown 1000:1000 config config/.env
 
       - name: Validate Compose profiles
+        if: steps.scope.outputs.run_runtime == 'true'
         run: |
           sudo docker compose --env-file config/.env \
             -f docker-compose.yml -f docker-compose.build.yml config --quiet
@@ -98,6 +146,7 @@ jobs:
             --profile nas-monitor config --quiet
 
       - name: Build production images without starting containers
+        if: steps.scope.outputs.run_runtime == 'true'
         run: |
           sudo docker compose --env-file config/.env \
             -f docker-compose.yml -f docker-compose.build.yml build unifi-smarthub
@@ -106,6 +155,7 @@ jobs:
             --profile nas-monitor build
 
       - name: Initialize isolated SQLite volume for preflight
+        if: steps.scope.outputs.run_runtime == 'true'
         run: |
           sudo docker compose --env-file config/.env \
             -f docker-compose.yml -f docker-compose.build.yml \
@@ -113,21 +163,70 @@ jobs:
             unifi-smarthub node -e "const { createHistoryDb } = require('./db'); const db = createHistoryDb(process.env.DATA_DIR); db.close();"
 
       - name: Run isolated production preflight
+        if: steps.scope.outputs.run_runtime == 'true'
         run: |
           sudo docker compose --env-file config/.env \
             -f docker-compose.yml -f docker-compose.build.yml \
             run --rm --no-deps \
             unifi-smarthub node scripts/production-preflight.js --offline
 
-      - name: Run isolated production runtime smoke test
-        run: npm run test:smoke
+      - name: Run isolated production container runtime smoke test
+        if: steps.scope.outputs.run_runtime == 'true'
+        run: |
+          set -Eeuo pipefail
+          # The preceding production preflight keeps HTTPS mandatory. This
+          # override is only for the loopback-only CI smoke endpoint.
+          compose=(sudo env SMARTHUB_HOST_PORT=3000 \
+            CI_PANEL_REQUIRE_HTTPS=false CI_PANEL_ALLOW_INSECURE_HTTP=false \
+            CI_PANEL_PASSWORD=ci-runtime-admin-password \
+            CI_PANEL_READONLY_USERNAME=readonly \
+            CI_PANEL_READONLY_PASSWORD=ci-runtime-readonly-password \
+            docker compose --env-file config/.env \
+            -f docker-compose.yml -f docker-compose.build.yml)
+          cleanup() {
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              "${compose[@]}" ps || true
+              "${compose[@]}" logs --no-color || true
+            fi
+            "${compose[@]}" down --volumes --remove-orphans || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+          "${compose[@]}" up -d --no-build unifi-smarthub
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/health/ready > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo 'container readiness did not become healthy' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          RUNTIME_SMOKE_BASE_URL=http://127.0.0.1:3000 npm run test:smoke
+          "${compose[@]}" restart unifi-smarthub
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/health/ready > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo 'container readiness did not recover after restart' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          RUNTIME_SMOKE_BASE_URL=http://127.0.0.1:3000 \
+            RUNTIME_SMOKE_EXPECT_PERSISTENCE=true npm run test:smoke
         timeout-minutes: 5
 
       - name: Run blocking short runtime soak
+        if: steps.scope.outputs.run_runtime == 'true'
         run: SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak
         timeout-minutes: 5
 
       - name: Generate SBOM and scan built images
+        if: steps.scope.outputs.run_runtime == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/smarthub-sbom"
           for image in unifi-smarthub:dev unifi-smarthub-nas-monitor:dev; do
@@ -162,7 +261,7 @@ jobs:
           test -z "$(git status --short --untracked-files=no)"
 
       - name: Generate exact-head release evidence
-        if: success()
+        if: success() && steps.scope.outputs.run_runtime == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/smarthub-sbom"
           RELEASE_HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
@@ -193,7 +292,7 @@ jobs:
           NODE
 
       - name: Validate release evidence
-        if: success()
+        if: success() && steps.scope.outputs.run_runtime == 'true'
         run: |
           RELEASE_HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
           SMART_HUB_IMAGE_ID="$(docker image inspect unifi-smarthub:dev --format '{{.Id}}')" \
@@ -218,7 +317,7 @@ jobs:
           NODE
 
       - name: Upload SBOM and vulnerability reports
-        if: success()
+        if: success() && steps.scope.outputs.run_runtime == 'true'
         id: upload-artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -158,7 +158,7 @@ npm run check:js
 npm test
 npm run check:css
 npm run test:smoke
-SOAK_DURATION_MS=90000 npm run test:soak
+SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak
 npm audit --audit-level=low
 git diff --check
 
