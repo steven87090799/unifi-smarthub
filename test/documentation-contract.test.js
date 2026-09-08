@@ -87,13 +87,18 @@ test('the complete operation manual links every maintained Markdown file', () =>
     }
 });
 
-test('Claude Code keeps a thin auto-loaded project entrypoint', () => {
+test('Claude Code keeps a single low-context auto-loaded project entrypoint', () => {
     const claude = read('CLAUDE.md');
 
-    assert.match(claude, /@AGENTS\.md/u);
-    assert.match(claude, /@CONTEXT\.md/u);
-    assert.match(claude, /@docs\/reference\/backend-map\.md/u);
-    assert.match(claude, /@docs\/reference\/frontend-map\.md/u);
+    assert.match(claude, /唯一 AI 初始入口/u);
+    assert.match(claude, /CONTEXT\.md/u);
+    assert.match(claude, /docs\/reference\/backend-map\.md/u);
+    assert.match(claude, /docs\/reference\/frontend-map\.md/u);
+    assert.match(claude, /git status --short --branch/u);
+    assert.match(claude, /rg -n/u);
+    assert.match(claude, /server-mock\.js/u);
+    assert.match(claude, /PRODUCTION-RELEASE-CHECKLIST\.md/u);
+    assert.doesNotMatch(claude, /^@(?:AGENTS|CONTEXT|docs\/)/mu);
     assert.doesNotMatch(claude, /SERVER-MAP\.md|FRONTEND-MAP\.md|docs\/ARCHITECTURE\.md/u);
 });
 
