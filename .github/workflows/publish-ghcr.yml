@@ -261,7 +261,8 @@ jobs:
               suffix="${platform#linux/}"
               docker pull --platform "$platform" "$reference"
               local_image="smarthub-release-scan-${names[$index]}:${suffix}"
-              docker tag "$reference" "$local_image"
+              pulled_image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+              docker tag "$pulled_image_id" "$local_image"
               docker run --rm \
                 -v /var/run/docker.sock:/var/run/docker.sock:ro \
                 -v "$output_dir:/out" \

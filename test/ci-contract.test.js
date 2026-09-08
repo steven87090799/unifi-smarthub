@@ -136,6 +136,8 @@ test('successful main CI publishes private GHCR images from the exact CI head', 
     assert.match(workflow, /steps\.build-main\.outputs\.digest/u);
     assert.match(workflow, /steps\.build-monitor\.outputs\.digest/u);
     assert.match(workflow, /docker pull --platform "\$platform" "\$reference"/u);
+    assert.match(workflow, /docker image inspect --format '\{\{\.Id\}\}' "\$reference"/u);
+    assert.match(workflow, /docker tag "\$pulled_image_id" "\$local_image"/u);
     assert.match(workflow, /image --exit-code 1 --severity HIGH,CRITICAL/u);
     assert.match(workflow, /smarthub-published-image-evidence-\$\{\{ github\.run_id \}\}/u);
     assert.match(workflow, /attestations:\s*write/u);
