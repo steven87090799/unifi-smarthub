@@ -236,14 +236,20 @@ docker compose --env-file config/.env logs | grep Diag
 
 ## 正式發布
 
-Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 24.18.x 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
+Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 會先依變更範圍分流：文件-only 變更只跑文件契約與當前樹 secret scan；測試-only 變更保留完整測試但跳過 image／soak；runtime、依賴、Docker 或 workflow 變更才執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，以及真正啟動 Compose image 的 container smoke。Container smoke 會驗證 `/health/ready`、登入、CSRF、權限與 restart 後持久化。
 
-`main` 的 `SmartHub CI` 成功後，`Publish SmartHub images` 會 checkout 同一個 CI head，發布 `ghcr.io/steven87090799/unifi-smarthub-private:sha-<commit>`、`:stable` 與配對的 `-nas-monitor` image；推送 `vX.Y.Z` tag 時，則發布 `:vX.Y.Z` 與同一 revision 的 `:sha-<commit>`。兩種路徑都支援 `linux/amd64`、`linux/arm64`。這是 image 發布證據，不等於 NAS 實機驗收；NAS 更新仍應保留 health、SQLite、restart 與 rollback 證據。
+`main` 的 `SmartHub CI` 成功且產生 exact-head release evidence 後，`Publish SmartHub images` 才會 checkout 同一個 CI head，發布 `ghcr.io/steven87090799/unifi-smarthub-private:sha-<commit>`、`:stable` 與配對的 `-nas-monitor` image；文件／測試-only push 不會重建未變更的 image。推送 `vX.Y.Z` tag 時，則發布 `:vX.Y.Z` 與同一 revision 的 `:sha-<commit>`。兩種發布路徑都支援 `linux/amd64`、`linux/arm64`，並對實際推送的兩個 platform digest 執行 HIGH／CRITICAL Trivy scan。這是 image 發布證據，不等於 NAS 實機驗收；NAS 更新仍應保留 health、SQLite、restart 與 rollback 證據。
 
-本機也可獨立重跑同一個隔離 smoke：
+本機可獨立重跑 source smoke：
 
 ```bash
 npm run test:smoke
+```
+
+若要驗證已啟動的 Compose image，先依上方 build／preflight／`up -d --no-build` 流程啟動，再執行：
+
+```bash
+RUNTIME_SMOKE_BASE_URL=http://127.0.0.1:3000 npm run test:smoke
 ```
 
 `main` branch protection 已將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失，不能把 workflow 存在誤稱為 branch protection 已啟用。

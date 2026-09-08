@@ -9,8 +9,11 @@ const ROOT = path.join(__dirname, '..');
 
 test('GitHub Actions CI is a bounded required-check candidate with all repository gates', () => {
     const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const scope = fs.readFileSync(path.join(ROOT, 'scripts', 'ci-scope.js'), 'utf8');
     const audit = fs.readFileSync(path.join(ROOT, 'docs', 'reports', 'PRODUCTION_FINALIZATION_AUDIT.md'), 'utf8');
     assert.match(workflow, /pull_request:/u);
+    assert.match(workflow, /workflow_dispatch:/u);
+    assert.match(workflow, /schedule:\s*\n\s*- cron:/u);
     assert.match(workflow, /push:\s*\n\s*branches:\s*\n\s*-\s*main/u);
     assert.match(workflow, /contents:\s*read/u);
     assert.match(workflow, /timeout-minutes:/u);
@@ -23,7 +26,9 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /docker compose[\s\S]+build unifi-smarthub/u);
     assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\s+# v7/u);
     assert.match(workflow, /fetch-depth:\s*0/u);
-    assert.match(workflow, /Scan full Git history for secrets/u);
+    assert.match(workflow, /Determine validation scope/u);
+    assert.match(workflow, /scripts\/ci-scope\.js/u);
+    assert.match(workflow, /Scan current tree and selected Git history for secrets/u);
     assert.match(workflow, /gitleaks.*dir/u);
     assert.match(workflow, /gitleaks.*git/u);
     assert.match(workflow, /GITLEAKS_SHA256:\s*[0-9a-f]{64}/u);
@@ -55,6 +60,10 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.doesNotMatch(audit, /^EXACT_HEAD=/mu);
     assert.doesNotMatch(audit, /^HOSTED_CI_RUN=/mu);
     assert.match(workflow, /SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak/u);
+    assert.match(workflow, /RUNTIME_SMOKE_BASE_URL=http:\/\/127\.0\.0\.1:3000 npm run test:smoke/u);
+    assert.match(workflow, /docker compose[\s\S]+up -d --no-build unifi-smarthub/u);
+    assert.match(workflow, /docker compose[\s\S]+restart unifi-smarthub/u);
+    assert.match(workflow, /down --volumes --remove-orphans/u);
     assert.match(workflow, /git diff --check/u);
     assert.match(workflow, /name: smarthub-ci-diagnostics-\$\{\{ github\.run_id \}\}/u);
     const evidence = workflow.slice(workflow.indexOf('- name: Generate exact-head release evidence'), workflow.indexOf('- name: Validate release evidence'));
@@ -69,6 +78,7 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
         < workflow.indexOf('Run isolated production preflight'));
     assert.ok(workflow.indexOf('Generate exact-head release evidence') < workflow.indexOf('Validate release evidence'));
     assert.ok(workflow.indexOf('Validate release evidence') < workflow.indexOf('Upload SBOM and vulnerability reports'));
+    assert.match(scope, /run_history_secret_scan/u);
 });
 
 test('Gitleaks allowlist is explicit and limited to deterministic fixture values', () => {
@@ -82,13 +92,13 @@ test('Gitleaks allowlist is explicit and limited to deterministic fixture values
     assert.doesNotMatch(config, /paths\s*=|test\/\.\*/u);
 });
 
-test('isolated runtime smoke is a bounded blocking gate after tests and image builds', () => {
+test('isolated production container smoke is a bounded blocking gate after image build', () => {
     const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
     const smokeStep = workflow.match(
-        /- name: Run isolated production runtime smoke test[\s\S]*?(?=\n\s+- name:|\s*$)/u
+        /- name: Run isolated production container runtime smoke test[\s\S]*?(?=\n\s+- name:|\s*$)/u
     );
     assert.ok(smokeStep, 'runtime smoke step is required');
-    assert.match(smokeStep[0], /run:\s*npm run test:smoke/u);
+    assert.match(smokeStep[0], /RUNTIME_SMOKE_BASE_URL=http:\/\/127\.0\.0\.1:3000 npm run test:smoke/u);
     assert.match(smokeStep[0], /timeout-minutes:\s*5/u);
     assert.doesNotMatch(smokeStep[0], /continue-on-error/u);
     assert.ok(workflow.indexOf('npm run test:smoke') > workflow.indexOf('npm test'));
@@ -102,6 +112,8 @@ test('successful main CI publishes private GHCR images from the exact CI head', 
     assert.match(workflow, /workflows:\s*\n\s*- SmartHub CI/u);
     assert.match(workflow, /conclusion == 'success'/u);
     assert.match(workflow, /workflow_run\.event == 'push'/u);
+    assert.match(workflow, /actions\/runs\/\$\{SOURCE_RUN_ID\}\/artifacts/u);
+    assert.match(workflow, /Skip unchanged runtime publication/u);
     assert.match(workflow, /ref: \$\{\{ github\.event\.workflow_run\.head_sha \}\}/u);
     assert.match(workflow, /fetch-depth: 0/u);
     assert.match(workflow, /git tag --points-at "\$REVISION"/u);
@@ -116,10 +128,18 @@ test('successful main CI publishes private GHCR images from the exact CI head', 
     assert.match(workflow, /BUILD_IDENTITY_REQUIRED=true/u);
     assert.match(workflow, /provenance: true/u);
     assert.match(workflow, /sbom: true/u);
+    assert.match(workflow, /Scan exact published multi-arch image digests/u);
+    assert.match(workflow, /steps\.build-main\.outputs\.digest/u);
+    assert.match(workflow, /steps\.build-monitor\.outputs\.digest/u);
+    assert.match(workflow, /docker pull --platform "\$platform" "\$reference"/u);
+    assert.match(workflow, /image --exit-code 1 --severity HIGH,CRITICAL/u);
+    assert.match(workflow, /smarthub-published-image-evidence-\$\{\{ github\.run_id \}\}/u);
     assert.match(workflow, /attestations:\s*write/u);
     assert.match(workflow, /id-token:\s*write/u);
+    assert.match(workflow, /uses:\s*docker\/setup-buildx-action@[0-9a-f]{40}\s+# v3\.11\.1/u);
     assert.match(workflow, /uses:\s*docker\/login-action@[0-9a-f]{40}\s+# v3\.4\.0/u);
     assert.match(workflow, /uses:\s*docker\/build-push-action@[0-9a-f]{40}\s+# v6\.18\.0/u);
+    assert.match(workflow, /if: steps\.publish-scope\.outputs\.run_runtime == 'true'/u);
 });
 
 test('JavaScript syntax checker discovers source files and applies bounded exclusions', () => {

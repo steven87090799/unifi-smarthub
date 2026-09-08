@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
+      actions: read
       contents: read
       packages: write
       attestations: write
@@ -38,13 +39,41 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
+      - name: Determine whether image publication is required
+        id: publish-scope
+        shell: bash
+        env:
+          REVISION: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          evidence_count="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false and (.name | startswith("smarthub-release-evidence-")))] | length')"
+          if [ "$evidence_count" -eq 1 ]; then
+            echo 'run_runtime=true' >> "$GITHUB_OUTPUT"
+          elif [ "$evidence_count" -eq 0 ]; then
+            echo 'run_runtime=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "expected at most one release evidence artifact, found $evidence_count" >&2
+            exit 1
+          fi
+
+      - name: Skip unchanged runtime publication
+        if: steps.publish-scope.outputs.run_runtime != 'true'
+        run: echo 'No runtime-affecting changes; keeping the existing GHCR image tags.'
+
       - name: Set up QEMU
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
       - name: Set up Docker Buildx
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
       - name: Log in to GHCR
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1 # v3.4.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -53,6 +82,7 @@ jobs:
 
       - name: Resolve release identity
         id: identity
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         shell: bash
         run: |
           version="$(node -p "require('./package.json').version")"
@@ -65,6 +95,7 @@ jobs:
 
       - name: Resolve image names
         id: images
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         shell: bash
         run: |
           repository="ghcr.io/${GITHUB_REPOSITORY,,}-private"
@@ -74,6 +105,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Refuse existing non-private packages
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -93,6 +125,7 @@ jobs:
 
       - name: Resolve release tags
         id: tags
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         shell: bash
         env:
           MAIN_IMAGE: ${{ steps.images.outputs.main }}
@@ -138,6 +171,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push SmartHub image
+        if: steps.publish-scope.outputs.run_runtime == 'true'
+        id: build-main
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4 # v6.18.0
         with:
           context: .
@@ -155,6 +190,8 @@ jobs:
           sbom: true
 
       - name: Build and push NAS Monitor image
+        if: steps.publish-scope.outputs.run_runtime == 'true'
+        id: build-monitor
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4 # v6.18.0
         with:
           context: ./nas-monitor
@@ -172,6 +209,7 @@ jobs:
           sbom: true
 
       - name: Verify paired packages remain private
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -186,6 +224,7 @@ jobs:
           done
 
       - name: Verify authenticated release pulls
+        if: steps.publish-scope.outputs.run_runtime == 'true'
         env:
           MAIN_IMAGE: ${{ steps.images.outputs.main }}
           MONITOR_IMAGE: ${{ steps.images.outputs.monitor }}
@@ -196,3 +235,54 @@ jobs:
             docker buildx imagetools inspect "$name:$RELEASE_TAG"
             docker pull --platform linux/amd64 "$name:$RELEASE_TAG"
           done
+
+      - name: Scan exact published multi-arch image digests
+        if: steps.publish-scope.outputs.run_runtime == 'true'
+        env:
+          MAIN_IMAGE: ${{ steps.images.outputs.main }}
+          MONITOR_IMAGE: ${{ steps.images.outputs.monitor }}
+          MAIN_DIGEST: ${{ steps.build-main.outputs.digest }}
+          MONITOR_DIGEST: ${{ steps.build-monitor.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/smarthub-published-scan"
+          mkdir -p "$output_dir"
+          printf 'main=%s@%s\nmonitor=%s@%s\n' \
+            "$MAIN_IMAGE" "$MAIN_DIGEST" "$MONITOR_IMAGE" "$MONITOR_DIGEST" \
+            > "$output_dir/release-image-digests.txt"
+          images=("$MAIN_IMAGE" "$MONITOR_IMAGE")
+          digests=("$MAIN_DIGEST" "$MONITOR_DIGEST")
+          names=(smarthub nas-monitor)
+          for index in 0 1; do
+            reference="${images[$index]}@${digests[$index]}"
+            docker buildx imagetools inspect "$reference"
+            for platform in linux/amd64 linux/arm64; do
+              suffix="${platform#linux/}"
+              docker pull --platform "$platform" "$reference"
+              local_image="smarthub-release-scan-${names[$index]}:${suffix}"
+              docker tag "$reference" "$local_image"
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock:ro \
+                -v "$output_dir:/out" \
+                -v "$RUNNER_TEMP/trivy-cache:/root/.cache" \
+                aquasec/trivy@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e \
+                image --format json \
+                --output "/out/${names[$index]}-${suffix}.trivy.json" \
+                --severity HIGH,CRITICAL "$local_image"
+              docker run --rm \
+                -v /var/run/docker.sock:/var/run/docker.sock:ro \
+                -v "$RUNNER_TEMP/trivy-cache:/root/.cache" \
+                aquasec/trivy@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e \
+                image --exit-code 1 --severity HIGH,CRITICAL "$local_image"
+            done
+          done
+
+      - name: Upload published image scan reports
+        if: success() && steps.publish-scope.outputs.run_runtime == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smarthub-published-image-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/smarthub-published-scan
+          if-no-files-found: error
+          retention-days: 14

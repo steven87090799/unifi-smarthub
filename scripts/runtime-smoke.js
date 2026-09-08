@@ -234,6 +234,15 @@ async function verifySecurityAndPersistenceWrite(runtime) {
     assert.equal(persisted.body.watcherSec, 41);
 }
 
+async function verifyPersistedSetting(runtime) {
+    const admin = await login(runtime, 'admin', ADMIN_PASSWORD, 'admin');
+    const persisted = await requestJson(runtime, '/api/settings', {
+        headers: { cookie: admin.cookie }
+    });
+    assert.equal(persisted.response.status, 200);
+    assert.equal(persisted.body.watcherSec, 41);
+}
+
 function assertCleanRuntimeOutput(runtime) {
     assert.doesNotMatch(runtime.output, BAD_RUNTIME_OUTPUT, `${runtime.label} emitted fatal or SQLite lock output`);
 }
@@ -309,6 +318,30 @@ process.once('uncaughtException', error => handleFatal('uncaughtException', erro
 process.once('unhandledRejection', reason => handleFatal('unhandledRejection', reason));
 
 async function main() {
+    if (process.env.RUNTIME_SMOKE_BASE_URL) {
+        const runtime = {
+            label: 'container runtime',
+            baseUrl: process.env.RUNTIME_SMOKE_BASE_URL.replace(/\/$/u, '')
+        };
+        await verifyHealth(runtime);
+        if (process.env.RUNTIME_SMOKE_EXPECT_PERSISTENCE === 'true') {
+            await verifyPersistedSetting(runtime);
+        } else {
+            await verifySecurityAndPersistenceWrite(runtime);
+        }
+        process.stdout.write([
+            'Runtime smoke PASS',
+            'mode=container',
+            'health=200',
+            'ready=200',
+            'security=PASS',
+            process.env.RUNTIME_SMOKE_EXPECT_PERSISTENCE === 'true'
+                ? 'restart_persistence=PASS'
+                : 'admin_valid_csrf=200'
+        ].join(' ') + '\n');
+        return;
+    }
+
     try {
         temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'smarthub-runtime-smoke-'));
         const dataDir = path.join(temporaryRoot, 'data');
