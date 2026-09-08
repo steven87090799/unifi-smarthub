@@ -14,6 +14,7 @@ data/
 # 大型主檔：先讀 map，再精準讀
 server.js
 public/index.html
+public/js/app.js
 server-mock.js
 db.js
 observability/
@@ -25,6 +26,7 @@ docs/integrations/
 docs/operations/
 docs/planning/
 docs/reports/
+SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html
 
 # Git／系統
 .git/

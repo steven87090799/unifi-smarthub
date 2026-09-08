@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
@@ -97,9 +98,37 @@ test('Claude Code keeps a single low-context auto-loaded project entrypoint', ()
     assert.match(claude, /git status --short --branch/u);
     assert.match(claude, /rg -n/u);
     assert.match(claude, /server-mock\.js/u);
+    assert.match(claude, /public\/js\/app\.js/u);
+    assert.match(claude, /100 KiB/u);
     assert.match(claude, /PRODUCTION-RELEASE-CHECKLIST\.md/u);
     assert.doesNotMatch(claude, /^@(?:AGENTS|CONTEXT|docs\/)/mu);
     assert.doesNotMatch(claude, /SERVER-MAP\.md|FRONTEND-MAP\.md|docs\/ARCHITECTURE\.md/u);
+});
+
+function ignorePatternMatches(pattern, file) {
+    if (pattern.endsWith('/')) return file === pattern.slice(0, -1) || file.startsWith(pattern);
+    if (!pattern.includes('*')) return file === pattern;
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\\*/gu, '.*');
+    return new RegExp(`^${escaped}$`, 'u').test(file);
+}
+
+test('AI ignore entrypoints stay synchronized and cover large tracked files', () => {
+    const codexIgnore = read('.codexignore');
+    const claudeIgnore = read('.claudeignore');
+    assert.equal(claudeIgnore, codexIgnore);
+    assert.match(codexIgnore, /^public\/js\/app\.js$/mu);
+    assert.match(codexIgnore, /^SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW\.html$/mu);
+
+    const patterns = codexIgnore.split(/\r?\n/u)
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#') && !line.startsWith('!'));
+    const trackedFiles = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT })
+        .toString('utf8').split('\0').filter(Boolean);
+    const largeFiles = trackedFiles.filter(file => fs.statSync(path.join(ROOT, file)).size > 100 * 1024);
+
+    for (const file of largeFiles) {
+        assert.ok(patterns.some(pattern => ignorePatternMatches(pattern, file)), `${file} is not excluded from AI context`);
+    }
 });
 
 test('the operation manual matches the enforced production gates', () => {
