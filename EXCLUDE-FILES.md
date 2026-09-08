@@ -16,10 +16,11 @@
 | `docs/reference/architecture.md` | 全域架構 | 跨模組設計 |
 | `.git/`, `*.log`, `.DS_Store` | 工具／系統雜訊 | 通常不讀 |
 
-## 可先讀
+## 可先讀（依序）
 
-- `AGENTS.md`
-- `CONTEXT.md`
+- `CLAUDE.md`：唯一 AI 初始入口與任務分流表
+- `AGENTS.md`：repository 必守規則
+- `CONTEXT.md`：低上下文路由
 - `docs/reference/backend-map.md`
 - `docs/reference/frontend-map.md`
 - 任務涉及部署時才讀 `README.md`
