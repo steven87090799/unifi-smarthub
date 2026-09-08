@@ -15,13 +15,13 @@ test('production documentation points operators to the immutable paired-image re
 
     assert.match(readme, /docs\/operations\/PRODUCTION-RELEASE-CHECKLIST\.md/);
     assert.match(checklist, /npm run release:build/);
-    assert.match(checklist, /SMARTHUB_IMAGE=ghcr\.io\/steven87090799\/unifi-smarthub@sha256:<digest>/);
-    assert.match(checklist, /NAS_MONITOR_IMAGE=ghcr\.io\/steven87090799\/unifi-smarthub-nas-monitor@sha256:<digest>/);
+    assert.match(checklist, /SMARTHUB_IMAGE=ghcr\.io\/steven87090799\/unifi-smarthub-private@sha256:<digest>/);
+    assert.match(checklist, /NAS_MONITOR_IMAGE=ghcr\.io\/steven87090799\/unifi-smarthub-private-nas-monitor@sha256:<digest>/);
     assert.match(checklist, /up -d --no-build --pull never/);
     assert.match(checklist, /docker-compose\.build\.yml config --quiet/);
     assert.match(checklist, /--profile nas-monitor config --quiet/);
-    assert.match(envExample, /SMARTHUB_IMAGE_REPOSITORY=ghcr\.io\/steven87090799\/unifi-smarthub/);
-    assert.match(envExample, /NAS_MONITOR_IMAGE_REPOSITORY=ghcr\.io\/steven87090799\/unifi-smarthub-nas-monitor/);
+    assert.match(envExample, /SMARTHUB_IMAGE_REPOSITORY=ghcr\.io\/steven87090799\/unifi-smarthub-private/);
+    assert.match(envExample, /NAS_MONITOR_IMAGE_REPOSITORY=ghcr\.io\/steven87090799\/unifi-smarthub-private-nas-monitor/);
     assert.match(envExample, /SMARTHUB_IMAGE_TAG=stable/);
     assert.match(readme, /scripts\/update-nas\.sh/);
     assert.match(readme, /scripts\/update-nas\.sh --tag v3\.0\.1/);

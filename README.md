@@ -31,6 +31,8 @@ SmartHub 是自架的 Node.js／Express 管理面板，整合 UniFi、UCG、UGRE
 
 ### NAS 使用 GHCR 映像（一般更新路徑）
 
+正式發布改用 `unifi-smarthub-private` 與 `unifi-smarthub-private-nas-monitor` 私有套件；舊的公開套件不再接收新版本。既有 NAS 請同步新版 Compose，並將 `config/.env` 的 `SMARTHUB_IMAGE_REPOSITORY`／`NAS_MONITOR_IMAGE_REPOSITORY` 更新為下方私有路徑；舊完整 image ref 請移除或更新。發布工作會檢查成對套件 visibility 必須是 private。
+
 GitHub repository 是原始碼來源，GHCR 才是 NAS 要拉取的 container image registry。第一次部署仍需把 Compose、更新腳本與 `config/.env` 放到 NAS；之後 GitHub Actions 會在 `main` 或 `vX.Y.Z` tag 通過 `SmartHub CI` 後發布成對的 multi-arch image。`stable` 是方便自動更新的移動 channel；`vX.Y.Z` 是給 NAS 指定版本的 release tag；若要最高可稽核／可回滾保證，將兩個 image ref 改成同一個 release 的 digest。
 
 ```bash
@@ -230,7 +232,7 @@ docker compose --env-file config/.env logs | grep Diag
 
 Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 使用 Node.js 24.18.x 執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，最後以 `npm run test:smoke` 啟動正式 `server.js`，在全臨時資料與 loopback 假整合環境驗證登入、CSRF、權限、SIGTERM 與重啟持久化。
 
-`main` 的 `SmartHub CI` 成功後，`Publish SmartHub images` 會 checkout 同一個 CI head，發布 `ghcr.io/steven87090799/unifi-smarthub:sha-<commit>`、`:stable` 與配對的 `-nas-monitor` image；推送 `vX.Y.Z` tag 時，則發布 `:vX.Y.Z` 與同一 revision 的 `:sha-<commit>`。兩種路徑都支援 `linux/amd64`、`linux/arm64`。這是 image 發布證據，不等於 NAS 實機驗收；NAS 更新仍應保留 health、SQLite、restart 與 rollback 證據。
+`main` 的 `SmartHub CI` 成功後，`Publish SmartHub images` 會 checkout 同一個 CI head，發布 `ghcr.io/steven87090799/unifi-smarthub-private:sha-<commit>`、`:stable` 與配對的 `-nas-monitor` image；推送 `vX.Y.Z` tag 時，則發布 `:vX.Y.Z` 與同一 revision 的 `:sha-<commit>`。兩種路徑都支援 `linux/amd64`、`linux/arm64`。這是 image 發布證據，不等於 NAS 實機驗收；NAS 更新仍應保留 health、SQLite、restart 與 rollback 證據。
 
 本機也可獨立重跑同一個隔離 smoke：
 
@@ -245,8 +247,8 @@ npm run test:smoke
 ```bash
 npm run release:build
 # GHCR workflow 的成對 registry digest 寫入 config/.env，或使用 GHCR stable channel：
-# SMARTHUB_IMAGE=ghcr.io/steven87090799/unifi-smarthub@sha256:<digest>
-# NAS_MONITOR_IMAGE=ghcr.io/steven87090799/unifi-smarthub-nas-monitor@sha256:<digest>
+# SMARTHUB_IMAGE=ghcr.io/steven87090799/unifi-smarthub-private@sha256:<digest>
+# NAS_MONITOR_IMAGE=ghcr.io/steven87090799/unifi-smarthub-private-nas-monitor@sha256:<digest>
 docker compose --env-file config/.env run --rm --no-deps \
   unifi-smarthub node scripts/production-preflight.js --offline
 docker compose --env-file config/.env up -d --no-build --pull never

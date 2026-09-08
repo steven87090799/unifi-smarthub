@@ -168,8 +168,8 @@ npm run release:build
 保存輸出 JSON 的 `revision`、`images`、`image_ids`，並寫入部署主機：
 
 ```dotenv
-SMARTHUB_IMAGE=ghcr.io/steven87090799/unifi-smarthub@sha256:<digest>
-NAS_MONITOR_IMAGE=ghcr.io/steven87090799/unifi-smarthub-nas-monitor@sha256:<digest>
+SMARTHUB_IMAGE=ghcr.io/steven87090799/unifi-smarthub-private@sha256:<digest>
+NAS_MONITOR_IMAGE=ghcr.io/steven87090799/unifi-smarthub-private-nas-monitor@sha256:<digest>
 ```
 
 本機 tag／image ID 不等於 registry digest。若使用 registry，必須成對 push、記錄兩個 immutable digest，並以 digest 或不可變 tag 部署；`stable` 只供明確接受 moving-channel 風險的自動更新路徑。

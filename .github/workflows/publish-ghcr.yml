@@ -67,11 +67,29 @@ jobs:
         id: images
         shell: bash
         run: |
-          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}-private"
           {
             echo "main=$repository"
             echo "monitor=${repository}-nas-monitor"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Refuse existing non-private packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          package="${GITHUB_REPOSITORY#*/}-private"
+          for name in "$package" "${package}-nas-monitor"; do
+            status=$(curl --silent --show-error --output "$RUNNER_TEMP/package.json" --write-out '%{http_code}' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/users/$owner/packages/container/$name")
+            case "$status" in
+              404) ;; # New GHCR packages default to private.
+              200) jq -e '.visibility == "private"' "$RUNNER_TEMP/package.json" ;;
+              *) echo "Package visibility lookup failed: HTTP $status" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Resolve release tags
         id: tags
@@ -152,3 +170,29 @@ jobs:
             BUILD_IDENTITY_REQUIRED=true
           provenance: true
           sbom: true
+
+      - name: Verify paired packages remain private
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          package="${GITHUB_REPOSITORY#*/}-private"
+          for name in "$package" "${package}-nas-monitor"; do
+            gh api "users/$owner/packages/container/$name" \
+              --jq '{name, visibility}' > "$RUNNER_TEMP/package.json"
+            jq -e '.visibility == "private"' "$RUNNER_TEMP/package.json"
+            cat "$RUNNER_TEMP/package.json"
+          done
+
+      - name: Verify authenticated release pulls
+        env:
+          MAIN_IMAGE: ${{ steps.images.outputs.main }}
+          MONITOR_IMAGE: ${{ steps.images.outputs.monitor }}
+          RELEASE_TAG: ${{ steps.tags.outputs.release_tag }}
+        shell: bash
+        run: |
+          for name in "$MAIN_IMAGE" "$MONITOR_IMAGE"; do
+            docker buildx imagetools inspect "$name:$RELEASE_TAG"
+            docker pull --platform linux/amd64 "$name:$RELEASE_TAG"
+          done

@@ -26,8 +26,8 @@ test('runtime Compose is registry-only and local builds require an explicit over
     const mainService = compose.slice(compose.indexOf('  unifi-smarthub:'), compose.indexOf('\n  nas-monitor:'));
     const monitorService = compose.slice(compose.indexOf('  nas-monitor:'));
     assert.doesNotMatch(compose, /\n\s+build:/u);
-    assert.match(mainService, /image: \$\{SMARTHUB_IMAGE:-\$\{SMARTHUB_IMAGE_REPOSITORY:-ghcr\.io\/steven87090799\/unifi-smarthub\}:\$\{SMARTHUB_IMAGE_TAG:-stable\}\}/u);
-    assert.match(monitorService, /image: \$\{NAS_MONITOR_IMAGE:-\$\{NAS_MONITOR_IMAGE_REPOSITORY:-ghcr\.io\/steven87090799\/unifi-smarthub-nas-monitor\}:\$\{SMARTHUB_IMAGE_TAG:-stable\}\}/u);
+    assert.match(mainService, /image: \$\{SMARTHUB_IMAGE:-\$\{SMARTHUB_IMAGE_REPOSITORY:-ghcr\.io\/steven87090799\/unifi-smarthub-private\}:\$\{SMARTHUB_IMAGE_TAG:-stable\}\}/u);
+    assert.match(monitorService, /image: \$\{NAS_MONITOR_IMAGE:-\$\{NAS_MONITOR_IMAGE_REPOSITORY:-ghcr\.io\/steven87090799\/unifi-smarthub-private-nas-monitor\}:\$\{SMARTHUB_IMAGE_TAG:-stable\}\}/u);
     assert.match(buildCompose, /unifi-smarthub:\n\s+build:/u);
     assert.match(buildCompose, /nas-monitor:\n\s+build:/u);
     assert.match(buildCompose, /image: unifi-smarthub:dev/u);
