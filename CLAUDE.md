@@ -7,8 +7,9 @@
 - 先確認目前工作目錄與 `git status --short --branch`；保留使用者既有修改，不重設、不覆蓋、不刪除。
 - 先分類任務，再只選一條讀取路徑。除非任務是全域發布／架構稽核，不要同時讀後端 map、前端 map、整份 README、operations 與 reports。
 - 優先順序是：目前 source／tests → 對應 reference map → 對應 operations／integration 文件 → 歷史 report。報告不取代目前程式。
-- `server.js`、`public/index.html`、`server-mock.js`、`db.js`、`observability/`、`data/`、`.env`、`node_modules/`、`package-lock.json` 預設不整檔讀取。
+- `server.js`、`public/index.html`、`public/js/app.js`、`server-mock.js`、`db.js`、`observability/`、`data/`、`.env`、`node_modules/`、`package-lock.json`、`SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html` 預設不整檔讀取。
 - 先用 `rg -n` 找 symbol、route、section、測試或錯誤，再用 `sed -n '起,迄p'` 讀最小必要區段；不要用 `cat` 或一次輸出大型檔案。
+- 上下文預算：超過 100 KiB 的 tracked 檔案不得整檔讀取；source／文件一次以不超過 400 行為原則；搜尋命中超過 50 行時先縮小 pattern。
 - 不讀取或回印 secret：`.env`、`config/`、`data/`、token、password、API key、cookie、完整 CA／SSH fingerprint。需要確認設定時只看 `.env.example` 或欄位是否存在。
 - 修改前端可見 API／設定時，必須一起檢查 production、`server-mock.js` 與對應契約測試；不要只改 UI。
 - 歷史資料權威是 `db.js`／SQLite；不要恢復整檔 JSON 寫入，也不要為了測試碰正式 `data/`。
