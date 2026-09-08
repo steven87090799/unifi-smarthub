@@ -101,6 +101,8 @@ test('isolated production container smoke is a bounded blocking gate after image
     assert.match(smokeStep[0], /RUNTIME_SMOKE_BASE_URL=http:\/\/127\.0\.0\.1:3000 npm run test:smoke/u);
     assert.match(smokeStep[0], /CI_PANEL_REQUIRE_HTTPS=false/u);
     assert.match(smokeStep[0], /CI_PANEL_ALLOW_INSECURE_HTTP=false/u);
+    assert.match(smokeStep[0], /CI_PANEL_PASSWORD=ci-runtime-admin-password/u);
+    assert.match(smokeStep[0], /CI_PANEL_READONLY_PASSWORD=ci-runtime-readonly-password/u);
     assert.match(smokeStep[0], /timeout-minutes:\s*5/u);
     assert.doesNotMatch(smokeStep[0], /continue-on-error/u);
     assert.ok(workflow.indexOf('npm run test:smoke') > workflow.indexOf('npm test'));

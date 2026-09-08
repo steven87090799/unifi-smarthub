@@ -178,6 +178,9 @@ jobs:
           # override is only for the loopback-only CI smoke endpoint.
           compose=(sudo env SMARTHUB_HOST_PORT=3000 \
             CI_PANEL_REQUIRE_HTTPS=false CI_PANEL_ALLOW_INSECURE_HTTP=false \
+            CI_PANEL_PASSWORD=ci-runtime-admin-password \
+            CI_PANEL_READONLY_USERNAME=readonly \
+            CI_PANEL_READONLY_PASSWORD=ci-runtime-readonly-password \
             docker compose --env-file config/.env \
             -f docker-compose.yml -f docker-compose.build.yml)
           cleanup() {
