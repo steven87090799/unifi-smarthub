@@ -257,11 +257,21 @@ jobs:
           for index in 0 1; do
             reference="${images[$index]}@${digests[$index]}"
             docker buildx imagetools inspect "$reference"
+            docker buildx imagetools inspect --raw "$reference" > "$output_dir/${names[$index]}-index.json"
             for platform in linux/amd64 linux/arm64; do
               suffix="${platform#linux/}"
-              docker pull --platform "$platform" "$reference"
+              # Each platform needs its own immutable reference in Docker's local store.
+              platform_digest="$(jq -er --arg arch "$suffix" '
+                [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest]
+                | if length == 1 then .[0] else error("Expected exactly one platform manifest") end
+                | select(test("^sha256:[a-f0-9]{64}$"))
+              ' "$output_dir/${names[$index]}-index.json")"
+              platform_reference="${images[$index]}@$platform_digest"
+              printf '%s-%s=%s\n' "${names[$index]}" "$suffix" "$platform_reference" >> "$output_dir/release-image-digests.txt"
+              docker pull --platform "$platform" "$platform_reference"
+              test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$platform_reference")" = "$platform"
               local_image="smarthub-release-scan-${names[$index]}:${suffix}"
-              pulled_image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+              pulled_image_id="$(docker image inspect --format '{{.Id}}' "$platform_reference")"
               docker tag "$pulled_image_id" "$local_image"
               docker run --rm \
                 -v /var/run/docker.sock:/var/run/docker.sock:ro \
