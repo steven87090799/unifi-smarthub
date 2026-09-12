@@ -62,6 +62,7 @@ UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLI
 - `public/js/app.js`：Dashboard 輪詢、渲染、設定與互動主程式。
 - `public/js/frontend-lifecycle.js`：可測試的 hydration、page-scoped resource 與 observer lifecycle primitive。
 - `public/js/web-push.js`：瀏覽器訂閱／取消訂閱；Web Push 是額外通知 fan-out。
+- `frontend/console.css`：Console UI tokens、responsive sidebar、表格與動態效果；與 Tailwind 合併建置，互動沿用 `public/js/app.js`。
 - `public/assets/tailwind.css`：由 `npm run build:css` 產生；`npm run check:css` 驗證。
 - Chart.js、D3、TopoJSON、world-atlas：由 `/vendor/<package>/<version>/...` 同源提供。
 - `/sw.js`：由後端產生；API／health 不進 cache，通知點擊只接受 same-origin path。

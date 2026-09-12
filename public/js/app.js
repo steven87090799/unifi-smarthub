@@ -532,6 +532,7 @@
         const smartChartUxPlugin = {
             id: 'smartChartUx',
             beforeInit(chart) {
+                applyConsoleChartPalette(chart, document.documentElement.classList.contains('light'));
                 const host = chart.canvas.parentElement;
                 if (host) host.classList.add('chart-host', 'chart-loading');
                 chart.canvas.setAttribute('role', 'img');
@@ -582,8 +583,9 @@
             }
         };
 
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.font.family = "'Noto Sans TC', sans-serif";
+        Chart.defaults.color = '#8c98aa';
+        Chart.defaults.borderColor = 'rgba(180,197,218,.095)';
+        Chart.defaults.font.family = "Inter, 'Noto Sans TC', sans-serif";
         Chart.defaults.font.size = 11;
         Chart.defaults.animation.duration = 240;
         Chart.defaults.animation.easing = 'easeOutQuart';
@@ -652,6 +654,20 @@
             playChartReveal(chart);
         }
 
+        // 即時資料沿用既有輪詢頻率，只在可見頁面把舊值平滑補間到新值。
+        function updateLiveChart(chart) {
+            if (!chart) return;
+            const section = chart.canvas?.closest('section');
+            const isVisible = !document.hidden && !section?.classList.contains('hidden');
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            if (!isVisible || reduceMotion) {
+                chart.update('none');
+                return;
+            }
+            chart.options.animation = { duration: 900, easing: 'easeOutCubic' };
+            chart.update();
+        }
+
         function replayPageChartEntrances(page) {
             const pageCharts = {
                 overview: [trendChart, ovHourlyChart],
@@ -680,13 +696,77 @@
             const modal = document.getElementById(id);
             if (!modal) return;
             modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+            modal.classList.toggle('is-open', open);
+            if (!modal.hasAttribute('tabindex')) modal.tabIndex = -1;
+            document.body.classList.toggle('modal-open',
+                open || Boolean(document.querySelector('[role="dialog"].is-open')));
             if (open) {
                 modal._returnFocus = document.activeElement;
-                requestAnimationFrame(() => modal.querySelector('button')?.focus());
+                requestAnimationFrame(() => {
+                    const focusable = getDialogFocusable(modal);
+                    (modal.querySelector('[autofocus]') || focusable[0])?.focus();
+                });
             } else if (modal._returnFocus?.focus) {
-                modal._returnFocus.focus();
+                const returnFocus = modal._returnFocus;
                 modal._returnFocus = null;
+                requestAnimationFrame(() => {
+                    if (returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+                });
             }
+        }
+
+        function getDialogFocusable(modal) {
+            return [...modal.querySelectorAll(
+                'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )].filter(element => !element.hidden && element.getClientRects().length > 0);
+        }
+
+        function trapDialogFocus(event, modal) {
+            const focusable = getDialogFocusable(modal);
+            if (!focusable.length) {
+                event.preventDefault();
+                modal.focus();
+                return;
+            }
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        }
+
+        function initSidebarLabels() {
+            document.querySelectorAll('#sidebar .nav-btn').forEach(button => {
+                const textNode = [...button.childNodes].find(node =>
+                    node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+                if (!textNode) return;
+                const label = textNode.textContent.trim().replace(/\s+/g, ' ');
+                const span = document.createElement('span');
+                span.className = 'nav-label';
+                span.textContent = label;
+                button.replaceChild(span, textNode);
+                button.title = label;
+            });
+        }
+
+        function setSidebarCollapsed(collapsed) {
+            const next = Boolean(collapsed);
+            document.body.classList.toggle('sidebar-collapsed', next);
+            localStorage.setItem('sidebarCollapsed.v1', next ? '1' : '0');
+            const button = document.getElementById('sidebar-collapse-toggle');
+            if (button) {
+                button.setAttribute('aria-expanded', next ? 'false' : 'true');
+                button.setAttribute('aria-label', next ? '展開側邊欄' : '收合側邊欄');
+                button.title = next ? '展開側邊欄' : '收合側邊欄';
+            }
+        }
+
+        function toggleSidebarCollapse() {
+            setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
         }
 
         function persistUiPreference(key, value) {
@@ -710,6 +790,8 @@
         }
         function initUiSystem() {
             document.querySelectorAll('button:not([type])').forEach(button => { button.type = 'button'; });
+            initSidebarLabels();
+            setSidebarCollapsed(localStorage.getItem('sidebarCollapsed.v1') === '1');
             document.querySelector('.nav-btn[data-page="overview"]')?.setAttribute('aria-current', 'page');
             document.querySelector('header button[aria-controls="sidebar"]')?.setAttribute('aria-expanded', 'false');
             document.getElementById('sidebar')?.setAttribute('aria-hidden', window.innerWidth < 1024 ? 'true' : 'false');
@@ -737,21 +819,77 @@
             }));
             observer.observe(document.querySelector('main'), { childList: true, characterData: true, subtree: true });
             document.addEventListener('keydown', event => {
+                const openDialog = [...document.querySelectorAll('[role="dialog"].is-open')].at(-1);
+                if (event.key === 'Tab' && openDialog) {
+                    trapDialogFocus(event, openDialog);
+                    return;
+                }
                 if (event.key !== 'Escape') return;
                 if (!document.getElementById('client-modal').classList.contains('hidden')) closeClientDetail();
                 else if (!document.getElementById('smart-modal').classList.contains('hidden')) closeDiskSmart();
                 else if (!document.getElementById('docker-log-modal').classList.contains('hidden')) closeDockerLog();
+                else if (window.innerWidth < 1024 && !document.getElementById('sidebar').classList.contains('-translate-x-full')) {
+                    toggleSidebar(false);
+                }
             });
             restoreUiPreferences();
         }
 
+        function mapConsoleChartColor(value, light) {
+            if (Array.isArray(value)) return value.map(color => mapConsoleChartColor(color, light));
+            if (typeof value !== 'string') return value;
+            const exact = light ? {
+                '#3b82f6': '#526f90', '#60a5fa': '#405f82', '#2563eb': '#526f90',
+                '#8b5cf6': '#766a9c', '#a78bfa': '#766a9c', '#7c3aed': '#6f6097',
+                '#10b981': '#3f8065', '#34d399': '#4c8e73', '#22c55e': '#3f8065',
+                '#f59e0b': '#9a6f2f', '#fbbf24': '#a47a3c',
+                '#ef4444': '#a6515d', '#f87171': '#b15d68', '#fb7185': '#a6515d',
+                '#64748b': '#6b7788', '#94a3b8': '#64748b', '#cbd5e1': '#475569'
+            } : {
+                '#3b82f6': '#7697bf', '#60a5fa': '#94b6de', '#2563eb': '#6688b0',
+                '#8b5cf6': '#9386bb', '#a78bfa': '#a69ac9', '#7c3aed': '#8375ad',
+                '#10b981': '#79b99d', '#34d399': '#87c3aa', '#22c55e': '#79b99d',
+                '#f59e0b': '#c9a369', '#fbbf24': '#d3b277',
+                '#ef4444': '#d79098', '#f87171': '#dda0a7', '#fb7185': '#d79098',
+                '#64748b': '#758195', '#94a3b8': '#8c98aa', '#cbd5e1': '#aab5c4'
+            };
+            const normalized = value.toLowerCase();
+            if (exact[normalized]) return exact[normalized];
+            const replacements = light ? [
+                [/rgba?\(\s*59\s*,\s*130\s*,\s*246\s*,/gi, 'rgba(82,111,144,'],
+                [/rgba?\(\s*139\s*,\s*92\s*,\s*246\s*,/gi, 'rgba(118,106,156,'],
+                [/rgba?\(\s*16\s*,\s*185\s*,\s*129\s*,/gi, 'rgba(63,128,101,'],
+                [/rgba?\(\s*245\s*,\s*158\s*,\s*11\s*,/gi, 'rgba(154,111,47,'],
+                [/rgba?\(\s*239\s*,\s*68\s*,\s*68\s*,/gi, 'rgba(166,81,93,']
+            ] : [
+                [/rgba?\(\s*59\s*,\s*130\s*,\s*246\s*,/gi, 'rgba(118,151,191,'],
+                [/rgba?\(\s*139\s*,\s*92\s*,\s*246\s*,/gi, 'rgba(147,134,187,'],
+                [/rgba?\(\s*16\s*,\s*185\s*,\s*129\s*,/gi, 'rgba(121,185,157,'],
+                [/rgba?\(\s*245\s*,\s*158\s*,\s*11\s*,/gi, 'rgba(201,163,105,'],
+                [/rgba?\(\s*239\s*,\s*68\s*,\s*68\s*,/gi, 'rgba(215,144,152,']
+            ];
+            return replacements.reduce((color, [pattern, replacement]) =>
+                color.replace(pattern, replacement), value);
+        }
+
+        function applyConsoleChartPalette(chart, light) {
+            (chart.data?.datasets || []).forEach(dataset => {
+                ['borderColor', 'backgroundColor', 'pointBackgroundColor', 'pointBorderColor'].forEach(key => {
+                    const originalKey = `$consoleOriginal${key[0].toUpperCase()}${key.slice(1)}`;
+                    if (!(originalKey in dataset)) dataset[originalKey] = dataset[key];
+                    dataset[key] = mapConsoleChartColor(dataset[originalKey], light);
+                });
+            });
+        }
+
         function refreshChartTheme(theme) {
             const light = theme === 'light';
-            const muted = light ? '#475569' : '#94a3b8';
-            const grid = light ? 'rgba(100,116,139,.18)' : 'rgba(51,65,85,.28)';
+            const muted = light ? '#64748b' : '#8c98aa';
+            const grid = light ? 'rgba(71,85,105,.15)' : 'rgba(180,197,218,.095)';
             Chart.defaults.color = muted;
             Chart.defaults.borderColor = grid;
             Object.values(Chart.instances || {}).forEach(chart => {
+                applyConsoleChartPalette(chart, light);
                 const legendLabels = chart.config.options?.plugins?.legend?.labels;
                 if (legendLabels) legendLabels.color = muted;
                 Object.values(chart.config.options?.scales || {}).forEach(scale => {
@@ -894,11 +1032,27 @@
         }
 
         function toggleSidebar(open) {
-            document.getElementById('sidebar').classList.toggle('-translate-x-full', !open);
-            document.getElementById('sidebar-backdrop').classList.toggle('hidden', !open);
+            const sidebar = document.getElementById('sidebar');
+            const backdrop = document.getElementById('sidebar-backdrop');
+            sidebar.classList.toggle('-translate-x-full', !open);
+            backdrop.classList.toggle('hidden', !open);
+            backdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
             const trigger = document.querySelector('header button[aria-controls="sidebar"]');
             if (trigger) trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
-            document.getElementById('sidebar').setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
+            sidebar.setAttribute('aria-hidden', window.innerWidth < 1024 && !open ? 'true' : 'false');
+            if (window.innerWidth < 1024) {
+                if (open) {
+                    sidebar._returnFocus = trigger || document.activeElement;
+                    requestAnimationFrame(() =>
+                        sidebar.querySelector('.nav-btn[aria-current="page"], .nav-btn')?.focus());
+                } else if (sidebar._returnFocus?.focus) {
+                    const returnFocus = sidebar._returnFocus;
+                    sidebar._returnFocus = null;
+                    requestAnimationFrame(() => {
+                        if (returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+                    });
+                }
+            }
         }
 
         const OVERVIEW_FLIP_NUMBER_IDS = [
@@ -1385,6 +1539,86 @@
             }
         }
 
+        function mapLabelBox(x, y, anchor, width, height = 11) {
+            const left = anchor === 'start' ? x : anchor === 'end' ? x - width : x - (width / 2);
+            return { left, right: left + width, top: y - height + 2, bottom: y + 3 };
+        }
+
+        function mapBoxesOverlap(a, b, padding = 3) {
+            return a.left < b.right + padding
+                && a.right > b.left - padding
+                && a.top < b.bottom + padding
+                && a.bottom > b.top - padding;
+        }
+
+        function layoutThreatMapLabels(points) {
+            const placed = [];
+            const markerBoxes = points.map(point => {
+                const radius = 4 + Math.min(point.n * 1.5, 12);
+                return {
+                    country: point.country,
+                    left: point.x - radius - 3,
+                    right: point.x + radius + 3,
+                    top: point.y - radius - 3,
+                    bottom: point.y + radius + 3
+                };
+            });
+
+            return [...points]
+                .sort((a, b) => b.n - a.n || a.country.localeCompare(b.country))
+                .map(point => {
+                    const radius = 4 + Math.min(point.n * 1.5, 12);
+                    const label = `${point.country} (${point.n})`;
+                    const width = Math.max(36, label.length * 5.15);
+                    const candidates = [];
+                    [0, -14, 14, -28, 28, -42, 42].forEach(offset => {
+                        candidates.push({ x: point.x + radius + 6, y: point.y + 3 + offset, anchor: 'start' });
+                        candidates.push({ x: point.x - radius - 6, y: point.y + 3 + offset, anchor: 'end' });
+                    });
+                    candidates.push(
+                        { x: point.x, y: point.y - radius - 8, anchor: 'middle' },
+                        { x: point.x, y: point.y + radius + 16, anchor: 'middle' }
+                    );
+
+                    let best = null;
+                    candidates.forEach((candidate, index) => {
+                        const box = mapLabelBox(candidate.x, candidate.y, candidate.anchor, width);
+                        const outside = box.left < 7 || box.right > 793 || box.top < 7 || box.bottom > 393;
+                        const labelCollisions = placed.filter(entry => mapBoxesOverlap(box, entry.box)).length;
+                        const markerCollisions = markerBoxes.filter(entry => (
+                            entry.country !== point.country && mapBoxesOverlap(box, entry, 1)
+                        )).length;
+                        const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+                        const score = (outside ? 100000 : 0)
+                            + (labelCollisions * 10000)
+                            + (markerCollisions * 1200)
+                            + distance
+                            + (index * 0.01);
+                        if (!best || score < best.score) best = { ...candidate, box, score };
+                    });
+
+                    placed.push({ country: point.country, box: best.box });
+                    const leaderTargetX = best.anchor === 'start'
+                        ? best.x - 2
+                        : best.anchor === 'end' ? best.x + 2 : best.x;
+                    const leaderTargetY = best.y - 3;
+                    const angle = Math.atan2(leaderTargetY - point.y, leaderTargetX - point.x);
+
+                    return {
+                        ...point,
+                        r: radius,
+                        label,
+                        labelX: best.x,
+                        labelY: best.y,
+                        labelAnchor: best.anchor,
+                        leaderX1: point.x + Math.cos(angle) * (radius + 1),
+                        leaderY1: point.y + Math.sin(angle) * (radius + 1),
+                        leaderX2: leaderTargetX,
+                        leaderY2: leaderTargetY
+                    };
+                });
+        }
+
         function updateWorldMap() {
             if (!mapProjection || !worldFeatures) return;
             const sinceTs = parseInt(localStorage.getItem('secStatsResetTs') || '0', 10);
@@ -1410,18 +1644,177 @@
                 if (xy && !isNaN(xy[0])) pts.push({ x: xy[0], y: xy[1], n, country });
             });
             const g = d3.select('#map-points');
-            g.selectAll('*').remove();
-            pts.forEach(p => {
-                const r = 4 + Math.min(p.n * 1.5, 12);
-                g.append('circle').attr('cx', p.x).attr('cy', p.y).attr('r', r)
-                    .attr('fill', 'rgba(239,68,68,0.25)').attr('stroke', '#ef4444').attr('stroke-width', 1).attr('class', 'map-pulse');
-                g.append('circle').attr('cx', p.x).attr('cy', p.y).attr('r', 2).attr('fill', '#ef4444');
-                g.append('text').attr('x', p.x + r + 3).attr('y', p.y + 3)
-                    .attr('fill', '#94a3b8').attr('font-size', '9px').attr('font-weight', 'bold')
-                    .text(`${p.country} (${p.n})`);
-            });
+            const layoutPoints = layoutThreatMapLabels(pts);
+            const pointGroups = g.selectAll('g.map-point-group').data(layoutPoints, point => point.country);
+            pointGroups.exit()
+                .transition().duration(260)
+                .style('opacity', 0)
+                .remove();
+
+            const entering = pointGroups.enter()
+                .append('g')
+                .attr('class', 'map-point-group')
+                .attr('role', 'img')
+                .style('opacity', 0);
+            entering.append('line')
+                .attr('class', 'map-leader')
+                .attr('x1', point => point.x)
+                .attr('y1', point => point.y)
+                .attr('x2', point => point.x)
+                .attr('y2', point => point.y);
+            entering.append('circle')
+                .attr('class', 'map-pulse map-marker-halo')
+                .attr('cx', point => point.x)
+                .attr('cy', point => point.y)
+                .attr('r', 0)
+                .attr('fill', 'rgba(239,68,68,0.22)')
+                .attr('stroke', '#ef4444')
+                .attr('stroke-width', 1);
+            entering.append('circle')
+                .attr('class', 'map-marker-core')
+                .attr('cx', point => point.x)
+                .attr('cy', point => point.y)
+                .attr('r', 0)
+                .attr('fill', '#ef4444');
+            entering.append('text')
+                .attr('class', 'map-label')
+                .attr('x', point => point.x)
+                .attr('y', point => point.y)
+                .attr('fill', '#aab6c8')
+                .attr('font-weight', '700')
+                .style('opacity', 0);
+
+            const merged = entering.merge(pointGroups)
+                .attr('aria-label', point => `${point.country}，${point.n} 次攻擊`);
+            const movement = d3.transition('threat-map-layout')
+                .duration(620)
+                .ease(d3.easeCubicOut);
+            merged.transition(movement).style('opacity', 1);
+            merged.select('.map-leader').transition(movement)
+                .attr('x1', point => point.leaderX1)
+                .attr('y1', point => point.leaderY1)
+                .attr('x2', point => point.leaderX2)
+                .attr('y2', point => point.leaderY2);
+            merged.select('.map-marker-halo').transition(movement)
+                .attr('cx', point => point.x)
+                .attr('cy', point => point.y)
+                .attr('r', point => point.r);
+            merged.select('.map-marker-core').transition(movement)
+                .attr('cx', point => point.x)
+                .attr('cy', point => point.y)
+                .attr('r', 2);
+            merged.select('.map-label')
+                .text(point => point.label)
+                .attr('text-anchor', point => point.labelAnchor)
+                .transition(movement)
+                .style('opacity', 1)
+                .attr('x', point => point.labelX)
+                .attr('y', point => point.labelY);
+
             const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
             document.getElementById('map-top-countries').innerHTML = top.map(([c, n], i) => `<span class="mono">#${i + 1} ${escapeHtml(c)} ×${n}</span>`).join('<br>');
+        }
+
+        const liveMetricAnimationState = new WeakMap();
+
+        function getUiElement(target) {
+            return typeof target === 'string' ? document.getElementById(target) : target;
+        }
+
+        function animateLiveMetricNumber(target, nextValue, options = {}) {
+            const element = getUiElement(target);
+            const next = Number(nextValue);
+            if (!element || !Number.isFinite(next)) return;
+
+            const previous = liveMetricAnimationState.get(element);
+            if (previous?.frame) cancelAnimationFrame(previous.frame);
+            const parsed = Number.parseFloat(element.textContent.replace(/,/g, ''));
+            const from = Number.isFinite(previous?.current)
+                ? previous.current
+                : Number.isFinite(parsed) ? parsed : next;
+            const {
+                duration = 900,
+                decimals = 0,
+                prefix = '',
+                suffix = '',
+                format = value => `${prefix}${value.toFixed(decimals)}${suffix}`
+            } = options;
+            const state = { current: from, frame: 0 };
+            liveMetricAnimationState.set(element, state);
+            element.classList.add('live-metric-value');
+
+            const render = value => {
+                state.current = value;
+                element.textContent = format(value);
+            };
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            if (reduceMotion || document.hidden || Math.abs(next - from) < 0.01) {
+                render(next);
+                return;
+            }
+
+            const startedAt = performance.now();
+            const step = now => {
+                const elapsed = Math.min(1, (now - startedAt) / duration);
+                const eased = 1 - Math.pow(1 - elapsed, 3);
+                render(from + ((next - from) * eased));
+                if (elapsed < 1) state.frame = requestAnimationFrame(step);
+                else state.frame = 0;
+            };
+            state.frame = requestAnimationFrame(step);
+        }
+
+        function setLiveMetricBar(target, nextValue) {
+            const element = getUiElement(target);
+            const next = Math.max(0, Math.min(100, Number(nextValue) || 0));
+            if (!element) return;
+            element.classList.add('live-metric-bar');
+            const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+            if (reduceMotion || document.hidden) {
+                element.style.width = `${next}%`;
+                element.dataset.liveBarReady = 'true';
+                return;
+            }
+            if (!element.dataset.liveBarReady) {
+                element.style.width = '0%';
+                element.dataset.liveBarReady = 'true';
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    element.style.width = `${next}%`;
+                }));
+                return;
+            }
+            requestAnimationFrame(() => {
+                element.style.width = `${next}%`;
+            });
+        }
+
+        function updateHardwareCoreRows(values) {
+            const grid = document.getElementById('core-grid');
+            if (!grid || !Array.isArray(values) || !values.length) return;
+            grid.querySelectorAll('[data-core-index]').forEach(row => {
+                if (Number(row.dataset.coreIndex) >= values.length) row.remove();
+            });
+            grid.querySelectorAll(':scope > :not([data-core-index])').forEach(node => node.remove());
+
+            values.forEach((value, index) => {
+                let row = grid.querySelector(`[data-core-index="${index}"]`);
+                if (!row) {
+                    row = document.createElement('div');
+                    row.dataset.coreIndex = String(index);
+                    row.className = 'hardware-core-row';
+                    row.innerHTML = `
+                        <div class="flex justify-between text-slate-400 mb-0.5">
+                            <span>Core ${index}</span>
+                            <span class="mono" data-core-value>0%</span>
+                        </div>
+                        <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden">
+                            <div class="bg-blue-500 h-full live-metric-bar" data-core-bar style="width: 0%;"></div>
+                        </div>`;
+                    grid.appendChild(row);
+                }
+                animateLiveMetricNumber(row.querySelector('[data-core-value]'), value, { suffix: '%' });
+                setLiveMetricBar(row.querySelector('[data-core-bar]'), value);
+            });
         }
 
         /* ==================== 硬體 (真實數據) ==================== */
@@ -1433,8 +1826,11 @@
                 document.getElementById('side-ucg-dot').className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
 
                 if (data.cpuTemp) {
-                    document.getElementById('cpu-temp').innerText = data.cpuTemp;
-                    document.getElementById('cpu-temp-f').innerText = `/ ${Math.round(data.cpuTemp * 1.8 + 32)}°F`;
+                    animateLiveMetricNumber('cpu-temp', data.cpuTemp);
+                    animateLiveMetricNumber('cpu-temp-f', Math.round(data.cpuTemp * 1.8 + 32), {
+                        prefix: '/ ',
+                        suffix: '°F'
+                    });
                     document.getElementById('kpi-temp').innerText = data.cpuTemp;
                     // 總覽雙設備體檢 — UCG 溫度
                     const tc = tempColor(data.cpuTemp);
@@ -1461,27 +1857,26 @@
                 }
                 // 總覽雙設備體檢 — UCG CPU/記憶體 + 上線徽章
                 const setV = (id, v) => { const e = document.getElementById(id); if (e) e.innerText = v; };
-                const setBar = (id, v) => { const e = document.getElementById(id); if (e) e.style.width = (v || 0) + '%'; };
+                const setBar = (id, v) => setLiveMetricBar(id, v);
                 setV('ov-ucg-cpu', (data.cpuUsage != null ? data.cpuUsage : '--') + '%');
                 setBar('ov-ucg-cpu-bar', data.cpuUsage);
                 if (data.memUsagePct != null) { setV('ov-ucg-mem', data.memUsagePct + '%'); setBar('ov-ucg-mem-bar', data.memUsagePct); }
                 setOverviewStatusDot('ov-ucg-badge', 'ok', '連線正常');
 
-                document.getElementById('cpu-usage').innerText = data.cpuUsage + '%';
+                animateLiveMetricNumber('cpu-usage', data.cpuUsage, { suffix: '%' });
                 if (data.cores && data.cores.length) {
-                    const grid = document.getElementById('core-grid');
-                    grid.innerHTML = data.cores.map((val, i) => `
-                    <div>
-                        <div class="flex justify-between text-slate-400 mb-0.5"><span>Core ${i}</span><span class="mono">${val}%</span></div>
-                        <div class="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800"><div class="bg-blue-500 h-full transition-all duration-300" style="width: ${val}%;"></div></div>
-                    </div>`).join('');
+                    updateHardwareCoreRows(data.cores);
                 }
 
-                document.getElementById('mem-usage-str').innerText = `${data.memStr} (${data.memUsagePct}%)`;
-                document.getElementById('mem-bar').style.width = data.memUsagePct + '%';
+                animateLiveMetricNumber('mem-usage-str', data.memUsagePct, {
+                    format: value => `${data.memStr} (${Math.round(value)}%)`
+                });
+                setLiveMetricBar('mem-bar', data.memUsagePct);
                 if (data.emmcStr) {
-                    document.getElementById('emmc-usage-str').innerText = `${data.emmcStr} (${data.emmcUsagePct}%)`;
-                    document.getElementById('emmc-bar').style.width = data.emmcUsagePct + '%';
+                    animateLiveMetricNumber('emmc-usage-str', data.emmcUsagePct, {
+                        format: value => `${data.emmcStr} (${Math.round(value)}%)`
+                    });
+                    setLiveMetricBar('emmc-bar', data.emmcUsagePct);
                 }
 
                 // WAN 狀態 KPI（網埠明細已整合到下方的「全網路裝置埠對照」卡）
@@ -1500,7 +1895,7 @@
                     tempChartData.push(data.cpuTemp);
                     usageChartData.push(data.cpuUsage);
                     chartLabels.push(new Date().toLocaleTimeString());
-                    updateChartWithEntrance(hwChart);
+                    updateLiveChart(hwChart);
                 }
                 return { ok: true, data };
             } catch (e) {
@@ -2010,15 +2405,19 @@
                 const result = await res.json();
                 if (result.source === 'error') throw new Error(result.error || 'Cloud sites unavailable');
                 const sites = result.data || [];
-                ['cloud-status-badge', 'cloud-status-badge-sec'].forEach(id => {
+                ['cloud-status-badge', 'cloud-status-badge-mobile', 'cloud-status-badge-sec'].forEach(id => {
                     const badge = document.getElementById(id);
                     if (badge) {
                         if (['not_configured', 'error', 'fallback', 'fallback_on_error'].includes(result.source)) {
                             badge.innerText = 'SITE MANAGER: 未設定';
+                            badge.dataset.siteManagerState = 'warning';
+                            badge.title = 'Site Manager 尚未設定或目前無法連線';
                             badge.classList.remove('bg-blue-500/10', 'text-blue-400', 'border-blue-500/20');
                             badge.classList.add('bg-amber-500/10', 'text-amber-400', 'border-amber-500/20');
                         } else {
                             badge.innerText = 'SITE MANAGER: ONLINE';
+                            badge.dataset.siteManagerState = 'online';
+                            badge.title = 'Site Manager 已連線';
                             badge.classList.remove('bg-amber-500/10', 'text-amber-400', 'border-amber-500/20');
                             badge.classList.add('bg-blue-500/10', 'text-blue-400', 'border-blue-500/20');
                         }
@@ -2630,7 +3029,7 @@
                 // disk/list 實測回應時間僅 0.00005 秒 (UGOS 內部記憶體快取，非即時 SMART 查詢)，
                 // 不會喚醒休眠硬碟，可安全定期呼叫。真正會發 SMART 指令、有喚醒風險的是 smart/info，
                 // 那支僅在你點擊「看 SMART」時才呼叫 (且有確認彈窗)。
-                nasDiskStatic = (await diskRes.json()).disks || nasDiskStatic || [];
+                nasDiskStatic = diskPayload.disks || nasDiskStatic || [];
                 const lite = ov.disksLite || [];
                 const staticBy = {}; (nasDiskStatic || []).forEach(d => { staticBy[d.name] = d; });
                 const disks = lite.map(l => ({ ...(staticBy[l.name] || {}), name: l.name, temperature: l.temperature, sleeping: l.sleeping, status: (staticBy[l.name] || {}).status || 'good' }));
@@ -5761,6 +6160,7 @@
 
 /* Static HTML actions are external code; element attributes contain only opaque IDs. */
 const STATIC_EVENT_HANDLERS = Object.freeze({
+    "console-sidebar-collapse"(event) { toggleSidebarCollapse() },
     "h1"(event) { toggleSidebar(false) },
     "h2"(event) { navigate('overview') },
     "h3"(event) { navigate('clients') },
