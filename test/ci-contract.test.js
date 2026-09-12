@@ -135,8 +135,11 @@ test('successful main CI publishes private GHCR images from the exact CI head', 
     assert.match(workflow, /Scan exact published multi-arch image digests/u);
     assert.match(workflow, /steps\.build-main\.outputs\.digest/u);
     assert.match(workflow, /steps\.build-monitor\.outputs\.digest/u);
-    assert.match(workflow, /docker pull --platform "\$platform" "\$reference"/u);
-    assert.match(workflow, /docker image inspect --format '\{\{\.Id\}\}' "\$reference"/u);
+    assert.match(workflow, /docker buildx imagetools inspect --raw "\$reference"/u);
+    assert.match(workflow, /Expected exactly one platform manifest/u);
+    assert.match(workflow, /docker pull --platform "\$platform" "\$platform_reference"/u);
+    assert.doesNotMatch(workflow, /docker pull --platform "\$platform" "\$reference"/u);
+    assert.match(workflow, /docker image inspect --format '\{\{\.Id\}\}' "\$platform_reference"/u);
     assert.match(workflow, /docker tag "\$pulled_image_id" "\$local_image"/u);
     assert.match(workflow, /image --exit-code 1 --severity HIGH,CRITICAL/u);
     assert.match(workflow, /smarthub-published-image-evidence-\$\{\{ github\.run_id \}\}/u);
