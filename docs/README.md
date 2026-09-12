@@ -26,3 +26,8 @@
 | 本次 production finalization audit | [PRODUCTION_FINALIZATION_AUDIT.md](reports/PRODUCTION_FINALIZATION_AUDIT.md) |
 
 權威順序：實際 source／tests → `reference/backend-map.md`／`reference/frontend-map.md` → 現行 `operations/`／`integrations/` → 日期綁定的 `reports/`。報告只代表其記錄日期、branch 與 commit，不取代目前程式；`PRODUCTION_ACCEPTANCE.md`、`PRODUCTION_READINESS_REPORT.md` 等歷史矩陣不能當成目前 exact-head 驗收。HTML 手冊列出所有 Markdown 的位置、用途與連結。
+
+## Console UI 歷史設計
+
+- [設計基線](reports/CONSOLE_UI_REDESIGN_BASELINE.md)
+- [改版報告](reports/CONSOLE_UI_REDESIGN_REPORT.md)

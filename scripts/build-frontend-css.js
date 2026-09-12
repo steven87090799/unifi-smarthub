@@ -8,6 +8,7 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const OUTPUT = path.join(ROOT, 'public', 'assets', 'tailwind.css');
+const CONSOLE_SOURCE = path.join(ROOT, 'frontend', 'console.css');
 const check = process.argv.includes('--check');
 const temporaryDirectory = check ? fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-tailwind-')) : null;
 const destination = check ? path.join(temporaryDirectory, 'tailwind.css') : OUTPUT;
@@ -25,6 +26,7 @@ try {
         process.stderr.write(result.stderr || result.stdout || 'Tailwind build failed\n');
         process.exit(result.status || 1);
     }
+    fs.appendFileSync(destination, `\n${fs.readFileSync(CONSOLE_SOURCE, 'utf8')}`);
     if (check) {
         assert.deepEqual(fs.readFileSync(destination), fs.readFileSync(OUTPUT),
             'public/assets/tailwind.css is stale; run npm run build:css');
