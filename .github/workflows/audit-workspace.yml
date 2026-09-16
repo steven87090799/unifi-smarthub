@@ -1,0 +1,66 @@
+name: Isolated audit workspace
+
+on:
+  push:
+    branches: [codex/production-readiness-deep-audit-20260916]
+    paths: [.github/workflows/audit-workspace.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact audit base without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 5db2b72d86ada93f46297e4d974f7dcedb93dcaa
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Use locked Node.js version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+      - name: Scan tracked source and history before export
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/gitleaks" dir --config .gitleaks.toml --redact --no-banner --exit-code 1 --log-level error .
+          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner --exit-code 1 --log-level error --log-opts=--all .
+      - name: Install locked dependencies in the isolated runner
+        run: npm ci
+      - name: Export only source objects and installed runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/audit-export"
+          mkdir -p "$out/runtime/bin" "$out/runtime/lib"
+          test "$(git rev-parse HEAD)" = 5db2b72d86ada93f46297e4d974f7dcedb93dcaa
+          git branch audit-base HEAD
+          git bundle create "$out/base.bundle" audit-base
+          cp "$(command -v node)" "$out/runtime/bin/node"
+          cp -a "$(npm root -g)/npm" "$out/runtime/lib/npm"
+          tar -czf "$out/dependencies.tar.gz" node_modules
+          tar -czf "$out/runtime.tar.gz" -C "$out/runtime" .
+          rm -r "$out/runtime"
+          node --version > "$out/runtime-version.txt"
+          npm --version >> "$out/runtime-version.txt"
+          git rev-parse HEAD > "$out/base-sha.txt"
+          cd "$out"
+          sha256sum base.bundle dependencies.tar.gz runtime.tar.gz > SHA256SUMS
+      - name: Upload isolated audit workspace
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: smarthub-audit-workspace-5db2b72
+          path: ${{ runner.temp }}/audit-export
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
