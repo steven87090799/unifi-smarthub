@@ -30,6 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p1-delivery"
           test "$GITHUB_REF_NAME" = 'codex/p1-long-run-reliability-20260918'
           git merge-base --is-ancestor 5db2b72d86ada93f46297e4d974f7dcedb93dcaa HEAD
           python3 <<'PY'
@@ -43,6 +44,9 @@ jobs:
           git apply --check "$RUNNER_TEMP/p1-fix.patch"
           git apply --index "$RUNNER_TEMP/p1-fix.patch"
           npm run build:css
+          cp public/assets/tailwind.css "$RUNNER_TEMP/p1-delivery/tailwind.css"
+          sha256sum frontend/console.css public/index.html public/js/*.js node_modules/tailwindcss/package.json public/assets/tailwind.css > "$RUNNER_TEMP/p1-delivery/css-input-hashes.txt"
+          npm ls --all --json > "$RUNNER_TEMP/p1-delivery/dependency-tree.json"
           printf '%s  %s\n' '70cffe5189d2c4316a62191291c1ee6be94a63950339d2fdcfd2b8261b5757aa' 'public/assets/tailwind.css' | sha256sum --check
           git add public/assets/tailwind.css
           git diff --cached --check
@@ -62,6 +66,7 @@ jobs:
           git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/p1-delivery/tree-sha.txt"
           { node --version; npm --version; } > "$RUNNER_TEMP/p1-delivery/environment.txt"
       - name: Audit locked dependencies without weakening threshold
+        if: always()
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/p1-delivery"
