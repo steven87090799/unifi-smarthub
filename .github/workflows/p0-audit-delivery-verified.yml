@@ -55,6 +55,9 @@ jobs:
           set -euo pipefail
           rm .github/workflows/p0-audit-workspace.yml .github/workflows/p0-audit-delivery.yml .github/workflows/p0-audit-transfer-diagnostic.yml .github/workflows/p0-audit-delivery-verified.yml
           git add -- server/middleware/panel-security.js server/services/config-backup.js test/panel-security-path.test.js test/write-route-contract.test.js test/config-backup.test.js public/assets/tailwind.css docs/reports/PRODUCTION_READINESS_P0_AUDIT_20260918.md docs/README.md SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html .github/workflows/p0-audit-workspace.yml .github/workflows/p0-audit-delivery.yml .github/workflows/p0-audit-transfer-diagnostic.yml .github/workflows/p0-audit-delivery-verified.yml
+          git ls-files -s > "$RUNNER_TEMP/p0-delivery/index.txt"
+          git diff --cached --binary 5db2b72d86ada93f46297e4d974f7dcedb93dcaa > "$RUNNER_TEMP/p0-delivery/staged.patch"
+          git write-tree | tee "$RUNNER_TEMP/p0-delivery/actual-tree.txt"
           git diff --cached --check
           test "$(git write-tree)" = 533ad874a7009bd3bcbe9c10857a8d46a7e2a8ff
       - name: Prepare Git objects without changing any ref
