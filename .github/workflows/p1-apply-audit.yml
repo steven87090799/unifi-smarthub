@@ -13,6 +13,8 @@ jobs:
     if: github.ref == 'refs/heads/codex/p1-long-run-reliability-20260918'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NODE_PATH: ''
     steps:
       - name: Check out exact audit branch head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -26,7 +28,7 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Verify and apply previously tested patch
+      - name: Verify and apply tested patch and independent review
         shell: bash
         run: |
           set -euo pipefail
@@ -40,15 +42,20 @@ jobs:
           patch = lzma.decompress(packed)
           assert hashlib.sha256(patch).hexdigest() == '9c913fc25328fbc14c500156882fc4021b9c827a47bee65814022adcd13cfe91'
           Path(os.environ['RUNNER_TEMP'], 'p1-fix.patch').write_bytes(patch)
+          review = lzma.decompress(Path('.github/p1-review.patch.xz').read_bytes())
+          assert hashlib.sha256(review).hexdigest() == 'd5201a5bfb971b98027b7bb9013c42ef696310a03f45839867091cbdc1a57cfe'
+          Path(os.environ['RUNNER_TEMP'], 'p1-review.patch').write_bytes(review)
           PY
           git apply --check "$RUNNER_TEMP/p1-fix.patch"
           git apply --index "$RUNNER_TEMP/p1-fix.patch"
+          git apply --check "$RUNNER_TEMP/p1-review.patch"
+          git apply --index "$RUNNER_TEMP/p1-review.patch"
           npm run build:css
           cp public/assets/tailwind.css "$RUNNER_TEMP/p1-delivery/tailwind.css"
           sha256sum frontend/console.css public/index.html public/js/*.js node_modules/tailwindcss/package.json public/assets/tailwind.css > "$RUNNER_TEMP/p1-delivery/css-input-hashes.txt"
-          npm ls --all --json > "$RUNNER_TEMP/p1-delivery/dependency-tree.json"
-          printf '%s  %s\n' '70cffe5189d2c4316a62191291c1ee6be94a63950339d2fdcfd2b8261b5757aa' 'public/assets/tailwind.css' | sha256sum --check
-          git add public/assets/tailwind.css
+          printf '%s  %s\n' '9e08c5cb8be71b8b19ad230dc67e4bb7bca7a27746e3991631f6a5bb14e53770' 'public/assets/tailwind.css' | sha256sum --check
+          npm run check:css
+          git diff --exit-code -- public/assets/tailwind.css
           git diff --cached --check
       - name: Commit and push only the independent audit branch
         shell: bash
@@ -59,7 +66,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'fix: harden long-running reliability and recovery'
           git push origin HEAD:refs/heads/codex/p1-long-run-reliability-20260918
-          mkdir -p "$RUNNER_TEMP/p1-delivery"
           git branch p1-audit-delivered HEAD
           git bundle create "$RUNNER_TEMP/p1-delivery/repository.bundle" p1-audit-delivered
           git rev-parse HEAD > "$RUNNER_TEMP/p1-delivery/head-sha.txt"
