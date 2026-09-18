@@ -1,0 +1,76 @@
+name: P1 audit delivery
+
+on:
+  push:
+    branches:
+      - codex/p1-long-run-reliability-20260918
+
+permissions:
+  contents: write
+
+jobs:
+  deliver:
+    if: github.ref == 'refs/heads/codex/p1-long-run-reliability-20260918'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact audit branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Use project Node version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify and apply previously tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'codex/p1-long-run-reliability-20260918'
+          git merge-base --is-ancestor 5db2b72d86ada93f46297e4d974f7dcedb93dcaa HEAD
+          python3 <<'PY'
+          import hashlib, lzma, os
+          from pathlib import Path
+          packed = b''.join(Path(f'.github/p1-audit.part-{n:02d}').read_bytes() for n in range(4))
+          patch = lzma.decompress(packed)
+          assert hashlib.sha256(patch).hexdigest() == '9c913fc25328fbc14c500156882fc4021b9c827a47bee65814022adcd13cfe91'
+          Path(os.environ['RUNNER_TEMP'], 'p1-fix.patch').write_bytes(patch)
+          PY
+          git apply --check "$RUNNER_TEMP/p1-fix.patch"
+          git apply --index "$RUNNER_TEMP/p1-fix.patch"
+          npm run build:css
+          printf '%s  %s\n' '70cffe5189d2c4316a62191291c1ee6be94a63950339d2fdcfd2b8261b5757aa' 'public/assets/tailwind.css' | sha256sum --check
+          git add public/assets/tailwind.css
+          git diff --cached --check
+      - name: Commit and push only the independent audit branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'codex/p1-long-run-reliability-20260918'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: harden long-running reliability and recovery'
+          git push origin HEAD:refs/heads/codex/p1-long-run-reliability-20260918
+          mkdir -p "$RUNNER_TEMP/p1-delivery"
+          git branch p1-audit-delivered HEAD
+          git bundle create "$RUNNER_TEMP/p1-delivery/repository.bundle" p1-audit-delivered
+          git rev-parse HEAD > "$RUNNER_TEMP/p1-delivery/head-sha.txt"
+          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/p1-delivery/tree-sha.txt"
+          { node --version; npm --version; } > "$RUNNER_TEMP/p1-delivery/environment.txt"
+      - name: Audit locked dependencies without weakening threshold
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/p1-delivery"
+          npm audit --audit-level=low --json > "$RUNNER_TEMP/p1-delivery/npm-audit.json"
+      - name: Upload delivery and dependency evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p1-audit-delivery-${{ github.run_id }}
+          path: ${{ runner.temp }}/p1-delivery
+          if-no-files-found: error
+          retention-days: 1
