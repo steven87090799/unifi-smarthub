@@ -96,7 +96,12 @@ function checkpointDatabaseForRollback(file) {
     const db = new Database(file, { fileMustExist: true });
     try {
         db.pragma('busy_timeout = 5000');
-        db.pragma('wal_checkpoint(TRUNCATE)');
+        const checkpoint = db.pragma('wal_checkpoint(TRUNCATE)')[0];
+        if (!checkpoint || checkpoint.busy !== 0 || checkpoint.log !== checkpoint.checkpointed) {
+            throw new BackupValidationError('current database WAL checkpoint is busy; restore was not applied', {
+                code: 'restore_checkpoint_busy', httpStatus: 409
+            });
+        }
         const quick = db.pragma('quick_check');
         if (quick.length !== 1 || quick[0].quick_check !== 'ok') throw new BackupValidationError('current database quick_check failed before restore');
     } finally { db.close(); }
@@ -202,6 +207,13 @@ function writeFileDurably(file, bytes, mode = 0o600) {
     } finally { fs.closeSync(descriptor); }
 }
 
+function copyFileDurably(source, target) {
+    fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(target, 0o600);
+    const descriptor = fs.openSync(target, 'r');
+    try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+}
+
 function writeJsonDurably(file, value) {
     writeFileDurably(file, Buffer.from(`${JSON.stringify(value, null, 2)}\n`));
 }
@@ -267,8 +279,7 @@ function rollbackTransaction(dataDir, transaction) {
         const temp = `${target}.restore-rollback`;
         try { fs.unlinkSync(temp); } catch (error) { if (error.code !== 'ENOENT') throw error; }
         if (transaction.present.includes(name)) {
-            fs.copyFileSync(backup, temp, fs.constants.COPYFILE_EXCL);
-            fs.chmodSync(temp, 0o600);
+            copyFileDurably(backup, temp);
             fs.renameSync(temp, target);
         } else {
             try { fs.unlinkSync(target); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -328,14 +339,16 @@ function applyPendingRestore(options) {
             const stat = fs.statSync(target);
             if (!stat.isFile()) throw new Error(`${name} is not a regular file`);
             if (name === 'smarthub.db') checkpointDatabaseForRollback(target);
-            fs.copyFileSync(target, path.join(backupDirectory, name), fs.constants.COPYFILE_EXCL);
-            fs.chmodSync(path.join(backupDirectory, name), 0o600);
+            copyFileDurably(target, path.join(backupDirectory, name));
             present.push(name);
         } catch (error) {
             if (error.code !== 'ENOENT') throw error;
         }
     }
+    // Both the snapshot bytes and its parent directory must survive before the
+    // recovery journal can authorize replacing any live file.
     syncDirectory(backupDirectory);
+    syncDirectory(backupRoot);
     const transaction = {
         version: 1,
         backupDirectory: path.relative(dataDir, backupDirectory),
@@ -352,10 +365,7 @@ function applyPendingRestore(options) {
             const target = path.join(dataDir, name);
             const temp = `${target}.restore-new`;
             try { fs.unlinkSync(temp); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-            fs.copyFileSync(source, temp, fs.constants.COPYFILE_EXCL);
-            fs.chmodSync(temp, 0o600);
-            const descriptor = fs.openSync(temp, 'r');
-            try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
+            copyFileDurably(source, temp);
             fs.renameSync(temp, target);
         }
         for (const suffix of ['-wal', '-shm']) {
