@@ -1,0 +1,164 @@
+{
+  "baseSha": "5db2b72d86ada93f46297e4d974f7dcedb93dcaa",
+  "branch": "codex/p1-long-run-reliability-20260918",
+  "node": "v24.18.0",
+  "npmLocal": "10.9.2",
+  "scope": "isolated local tests; not production acceptance",
+  "baselineFullTests": {
+    "result": "PASS",
+    "tests": 755,
+    "pass": 755,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 32578.442953,
+    "environment": "non-root Node 24.18.0; NODE_PATH empty"
+  },
+  "fixedFullTests": {
+    "result": "PASS",
+    "tests": 773,
+    "pass": 773,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 32742.378576,
+    "environment": "non-root Node 24.18.0; NODE_PATH empty"
+  },
+  "regressionGroups": {
+    "history": {
+      "before": "FAIL",
+      "after": "PASS"
+    },
+    "controller": {
+      "before": "FAIL",
+      "after": "PASS"
+    },
+    "backpressure": {
+      "before": "FAIL",
+      "after": "PASS"
+    },
+    "integrationGeneration": {
+      "before": "FAIL",
+      "after": "PASS"
+    },
+    "cleanupRecovery": {
+      "before": "FAIL",
+      "after": "PASS"
+    }
+  },
+  "checkJs": "PASS",
+  "checkCss": "PASS",
+  "smoke": {
+    "result": "PASS",
+    "health": 200,
+    "ready": 200,
+    "adminLogin": 200,
+    "readonlyLogin": 200,
+    "readonlyWrite": 403,
+    "adminMissingCsrf": 403,
+    "adminValidCsrf": 200,
+    "sigtermExitCodes": [
+      0,
+      0
+    ],
+    "shutdownDeadlineMs": 12000,
+    "restartPersistence": "PASS",
+    "cleanup": "PASS"
+  },
+  "soak": {
+    "before": {
+      "result": "PASS",
+      "durationMs": 90081,
+      "timerFinal": 0,
+      "sseClientsFinal": 0,
+      "browserSessionsFinal": 0,
+      "collectorsRunningFinal": 0,
+      "collectorCachePeakEntries": 64,
+      "collectorCachePeakBytes": 1888,
+      "collectorCacheFinalEntries": 0,
+      "collectorCacheFinalBytes": 0,
+      "unexpectedHandlesFinal": 0,
+      "unexpectedRequestsFinal": 0,
+      "unhandledRejections": 0,
+      "uncaughtExceptions": 0,
+      "sshConnections": "NOT RUN: no real SSH workload in this soak",
+      "containerRestarts": "NOT RUN: local Docker unavailable"
+    },
+    "after": {
+      "result": "PASS",
+      "durationMs": 90087,
+      "timerFinal": 0,
+      "sseClientsFinal": 0,
+      "browserSessionsFinal": 0,
+      "collectorsRunningFinal": 0,
+      "collectorCachePeakEntries": 64,
+      "collectorCachePeakBytes": 1888,
+      "collectorCacheFinalEntries": 0,
+      "collectorCacheFinalBytes": 0,
+      "unexpectedHandlesFinal": 0,
+      "unexpectedRequestsFinal": 0,
+      "unhandledRejections": 0,
+      "uncaughtExceptions": 0,
+      "sshConnections": "NOT RUN: no real SSH workload in this soak",
+      "containerRestarts": "NOT RUN: local Docker unavailable"
+    }
+  },
+  "rootReproductions": {
+    "rollup240": {
+      "before": 180,
+      "after": 240
+    },
+    "bufferMax4At500Errors": {
+      "before": 500,
+      "after": 4
+    },
+    "delayed401ExtraLogins24": {
+      "before": 24,
+      "after": 1
+    },
+    "offlineImmediateLoginCalls50": {
+      "before": 50,
+      "after": 1
+    }
+  },
+  "sourceSha256": {
+    "db.js": "6ecd33fbb36db442e6d70af36b551de7925bc0289e25c570d818be966dd77b60",
+    "server.js": "6af64022c735ae0c0cb06b78f920d9393329ba4232ae21c48542cdf85c94bd8f",
+    "server/storage/history-aggregation.js": "7df66936b0b4a1ff4dbb2dab68577e1c2816fcdd3b8516569c8f27f815391329",
+    "server/services/wiim-client.js": "9983e45c0ca14e88e9b80750ea32f0afb40d361db03df16854bf84d630b236bd",
+    "server/services/nas-request-retry.js": "30e7415fb17ac7f3a7d1cc167e03c25e101475e5dc85ddb1441a1c84a6cb38c8",
+    "scripts/p1-reliability-evidence.js": "9e49c615c204efde40964a9cfdb22e16e9c15ddc6b8600cd2e91f7a7a5977c79",
+    "scripts/p1-resource-probe.js": "127ca796e3b7b7c6b637c9e276e317d78335efe8c30c0eafc9e11ecc54e6d7dc"
+  },
+  "initialBaselineFullTests": {
+    "result": "FAIL",
+    "tests": 755,
+    "pass": 754,
+    "fail": 1,
+    "firstRootCause": "Local NODE_PATH loaded global autoprefixer; not stale repository CSS. Resolved by clearing NODE_PATH, without changing CSS or tests."
+  },
+  "measuredPreReviewSourceSha256": {
+    "db.js": "d41bee24486e1c263a9376aea80a9152bb72dffc67bcfc58c21184387905cfda",
+    "server.js": "6af64022c735ae0c0cb06b78f920d9393329ba4232ae21c48542cdf85c94bd8f",
+    "server/storage/history-aggregation.js": "7df66936b0b4a1ff4dbb2dab68577e1c2816fcdd3b8516569c8f27f815391329",
+    "server/services/wiim-client.js": "9983e45c0ca14e88e9b80750ea32f0afb40d361db03df16854bf84d630b236bd",
+    "server/services/nas-request-retry.js": "30e7415fb17ac7f3a7d1cc167e03c25e101475e5dc85ddb1441a1c84a6cb38c8",
+    "scripts/p1-reliability-evidence.js": "9e49c615c204efde40964a9cfdb22e16e9c15ddc6b8600cd2e91f7a7a5977c79",
+    "scripts/p1-resource-probe.js": "127ca796e3b7b7c6b637c9e276e317d78335efe8c30c0eafc9e11ecc54e6d7dc"
+  },
+  "telemetryTimestampReview": {
+    "result": "PASS",
+    "beforeCounter": 59,
+    "expectedAndAfterCounter": 5000,
+    "tests": "existing interleaved-device test expanded, 7/7 targeted history/recovery tests PASS",
+    "beforeFailureReproduced": true
+  },
+  "hostedNpmAudit": {
+    "result": "PASS",
+    "runId": 35318294910,
+    "workflowOverall": "FAIL due to intentionally preserved CSS checksum diagnostic",
+    "dependencies": 282,
+    "vulnerabilities": 0
+  },
+  "measurementScopeNote": "Synthetic and 90s soak JSON retain measured pre-review hashes. Final two telemetry timestamp propagation edits are outside the trend benchmark and sampler/SSE soak call chains; final full regression suite rerun."
+}
