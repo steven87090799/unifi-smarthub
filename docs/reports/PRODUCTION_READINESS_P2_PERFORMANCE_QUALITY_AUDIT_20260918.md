@@ -4,7 +4,7 @@
 
 本次從獨立的最新 `origin/main` 基底開始，確認並修復 **3 項 P2、1 項 P3**，沒有合併其他 P0/P1 分支。修復範圍是 SQLite 清理候選查詢、Service Worker 快取與生命週期，以及前端頁面計時器／已排程回呼。沒有改 public API、DB schema、依賴版本、正式設定或容器上限。
 
-基底在乾淨依賴環境及非 root 使用者下 **755/755 PASS**；修復後 **793/793 PASS**。新增的 38 個測試包含實際 SQL 執行計畫、結果一致性、生成的 Service Worker 行為，以及 14 頁輪詢矩陣。先在基底確認 regression 會失敗，再驗證修復後通過。正式 server 的隔離 smoke 與 **90.059 秒**短 soak 均通過。這不等於正式設備驗收、完整真實瀏覽器驗收，或 24/72 小時耐久驗證。
+基底在乾淨依賴環境及非 root 使用者下 **755/755 PASS**；最終修復樹 **798/798 PASS**。新增的 43 個測試包含實際 SQL 執行計畫、結果一致性、生成的 Service Worker 行為、14 頁輪詢矩陣，以及 UPS sampling deadline／隔離 runtime fixture 回歸。先在基底確認 regression 會失敗，再驗證修復後通過。正式 server 的隔離 smoke 與 **90.059 秒**短 soak 均通過。這不等於正式設備驗收、完整真實瀏覽器驗收，或 24/72 小時耐久驗證。
 
 365 天「合成資料量」的遙測候選查詢中位數 **48.203 → 0.046 ms**；30 天合成資料完整清理 **549.054 → 307.373 ms**。這些是特定查詢／fixture 的實測，不能推導整個網站快一千倍，也不能稱為真實運作 365 天。
 
@@ -42,7 +42,7 @@
 | Scope／取樣／快取 | activity-lease、adaptive-sampler、backend-sampler-registry、device-collector-cache、sample-deduper | per-tab lease → 匹配 sampler；shared in-flight/cache → snapshot | 同名 unit/integration、upstream fixture | REVIEWED；不改現有上游取樣語意 |
 | UniFi／SSH／Cloud | server.js UniFi owners、site-manager、unifi-auth-retry、SSH pool/stream/thermal、telemetry snapshot | Controller auth、typed transport/TLS、bounded SSH、snapshot/history/alerts | UniFi／SSH／Site Manager／TLS tests | 重要邊界 REVIEWED；實機 NOT RUN |
 | NAS／Docker broker | NAS login/token/retry、nas-monitor-client、`nas-monitor/server.js`、docker policies/snapshots | singleflight、token fencing、bounded retry、semaphore、allowlist、SSE | nas-monitor、NAS retry、docker-log/action、SSE | REVIEWED；假 socket PASS，實際 socket NOT RUN |
-| UPS／PPB | ups-state/source-selection/observability、ppb-event-sync、ppb-client | background sample → state/snapshot → DB/events → notification；GET 不寫入 | UPS runtime/read-only/state、PPB tests | REVIEWED；真實 PPB/UPS NOT RUN |
+| UPS／PPB | ups-state/source-selection/observability、ppb-event-sync、ppb-client | background sample → state/snapshot → DB/events → notification；GET 不寫入 | UPS runtime/read-only/state/deadline、PPB tests | REVIEWED；P2-004 FIXED；真實 PPB/UPS NOT RUN |
 | WiiM／AdGuard／防禦 | wiim-client/art/config/command、AdGuard client/service/policy、threat-ip-blocking | typed stale/cache、明確 mutation confirmation、allowlist／到期 reconcile | WiiM、AdGuard、threat policy/service/route | 邊界 REVIEWED；無實機異動 |
 | 報表／通知 | report-runner/schedule、notification-delivery、web-push | DB claim/lease/fencing → bounded delivery；partial terminal；Web Push fan-out | report-runner/schedule-db、notification、web-push | REVIEWED；隔離 failure/recovery PASS |
 | 持久化／復原 | instance-lock、json/env-file-store、config-backup | single owner、atomic rename/fsync、backup integrity、staged restore | lock/store/backup/config-restart/preflight | REVIEWED；正式 DR NOT RUN |
@@ -76,8 +76,9 @@
 | P2-001 | `db.js:521–625` | 10 個分批候選查詢以計算後的 bucket alias 排序；LIMIT 前仍掃描／排序 retention 範圍 | 長歷史增加同步 CPU／event-loop stall；真實 `EXPLAIN` 出現 Sorter，365d fixture 可重現 | 依既有索引的來源時間排序；單調 bucket 保持結果順序，去重可提早停止；新 SQL tests 及原有 aggregation/atomicity tests PASS；FIXED | `DISTINCT` 仍需要去重暫存結構；完整 cleanup／備份仍受資料量與儲存影響 |
 | P2-002 | `server/services/pwa-service-worker.js:28–49` | 任意非 API GET/query variant 可入 cache；cache.put 未綁 event lifetime、quota rejection 未處理；fallback 跨 cache version 查詢 | 1000 query variants 從 13 膨脹至 1013 entries；容量錯誤可造成未處理 rejection／舊版 fallback | 只允許同源固定 public shell、無 query；排除 private/no-store/redirect/error；同步 waitUntil、catch cache failure；限定當前 cache；行為測試 PASS；FIXED | 真 browser quota/update/offline 驗收 BLOCKED；既有 Service Worker client 須由正常版本更新取代 |
 | P2-003 | `public/js/app.js:298–307,1189–1205,1225,1290–1313,4839` | WiiM interval 沒有 scoped owner；clear timer 不會使已排入事件佇列的舊 polling callback 失效 | hidden/unrelated page 仍更新 progress；切頁、隱藏、同頁重建後舊 callback 仍可新增 fetch | scoped resource 清理 WiiM timer；pollingGeneration fence 與 visibility guard；100 次切換、3 tabs、14 頁矩陣 PASS；FIXED | 不宣稱所有已經開始的 async fetch 都已 abort；真 browser navigation/visual regression 仍待驗收 |
+| P2-004 | `server.js:5439–5650`、`test/ups-runtime.test.js` | adaptive UPS timer 若在 freshness deadline 前極短時間醒來，`sampleUpsIfDue()` 會正確略過讀取，但 sampler 接著重新排完整 5 秒，造成 outage/recovery 最壞額外延遲；CI runtime fixture 又依賴 PATH 中不存在的 `cat`，掩蓋真實 invocation count | Hosted CI 可重現 recovery timeout（約 25.5 秒，`last=null`）；1 ms early wake 可被放大成完整 interval | `upsRemainingSampleDelayMs()` 依最後成功/失敗 attempt 重排「剩餘」deadline，保留原 freshness/singleflight guard；fixture 改用 POSIX shell builtin；新增成功/失敗 early timer、manual sample、active/idle 改變、backward clock 與 invocation counter 回歸；FIXED | 真實 UPS/PPB 裝置與長時間 outage/recovery 仍 NOT RUN；wall-clock 大幅異常只驗證 bounded retry，不代表外部時鐘環境完整驗收 |
 
-P2-001 regression 在基底捕捉 10 個排序路徑；P2-002 在基底捕捉 cache growth、lifetime/quota/fallback；P2-003 的 WiiM 測試基底 3 個失敗，polling matrix 基底 16 PASS/1 FAIL（已排程舊 callback）。修復後全部綠燈。修改既有 panel-login assertion 是把 fallback 契約從全域 cache 強化為當前 build cache，同時斷言不再出現舊呼叫，沒有刪測試放寬 gate。
+P2-001 regression 在基底捕捉 10 個排序路徑；P2-002 在基底捕捉 cache growth、lifetime/quota/fallback；P2-003 的 WiiM 測試基底 3 個失敗，polling matrix 基底 16 PASS/1 FAIL（已排程舊 callback）；P2-004 由 Hosted CI 實際捕捉 UPS recovery timeout，並以 deterministic deadline tests 固化 1 ms early-wake root cause。修復後全部綠燈。修改既有 panel-login assertion 是把 fallback 契約從全域 cache 強化為當前 build cache，同時斷言不再出現舊呼叫，沒有刪測試放寬 gate。
 
 ## P3 Findings
 
@@ -85,11 +86,11 @@ P2-001 regression 在基底捕捉 10 個排序路徑；P2-002 在基底捕捉 ca
 |---|---|---|---|
 | P3-001 | `pwa-service-worker.js:10` | HTML 已引用 `frontend-lifecycle.js`，但 PWA shell 沒列出；補入既有固定 shell | 掃描 SPA executable assets 的預快取完整性測試先紅後綠；FIXED |
 
-沒有為 P3 引進框架或大型重構；P0/P1 沒有在本次範圍中宣稱已修復。
+沒有為 P3 引進框架或大型重構。原始 P2 範圍發現的 Alpine package revision release blocker 原先依規則列為 P1/OUT OF SCOPE；後續使用者要求把剩餘失敗一併修完，因此另以最小變更刷新 `nut` 與 `tzdata` 精確 revision 並同步 deployment contract，未改 memory limit、gate 或架構。
 
 ## Fixes
 
-僅改三個 production source 檔案：`db.js`、`public/js/app.js`、`server/services/pwa-service-worker.js`。其餘是 regression tests／helpers、可重跑的 benchmark、量測摘要、此報告與必要文件索引。沒有新增 production dependency、DB index、schema migration、external request 或新的全域常駐輪詢。
+最終產品程式變更包含 `db.js`、`public/js/app.js`、`server/services/pwa-service-worker.js`、`server.js`，並刷新 `Dockerfile` 的兩個已失效 Alpine 精確 revision；其餘是 regression tests／helpers、可重跑的 benchmark、量測摘要、此報告與必要文件索引。沒有新增 production dependency、DB index、schema migration、external request 或新的全域常駐輪詢。
 
 ## Frontend
 
@@ -158,7 +159,7 @@ env -u NODE_PATH node --expose-gc scripts/p2-performance-audit.js . /tmp/p2-afte
 | 基底 npm ci | PASS / Hosted transfer | 真正依 lockfile 安裝 Node24 依賴，再驗 hash 轉移；不是本機網路 npm ci |
 | 基底 npm test | PASS 755/755 | 非 root、unset NODE_PATH、exact base worktree |
 | 新 regression 對基底 | 預期 FAIL | SQL sorting、SW cache/lifetime、WiiM timers、queued polling 均實際捕捉 |
-| 修復後 npm test | PASS 793/793 | 0 fail/skip/cancel，32.683 秒 |
+| 最終修復樹 npm test | PASS 798/798 | Node 24.18.0、非 root、移除全域 NODE_PATH；0 fail/skip/cancel，本機重跑 32.156 秒 |
 | npm run check:js | PASS | 真執行 |
 | npm run check:css | PASS | checked-in CSS 未重建／未修改 |
 | git diff --check | PASS | 真執行；最終文件再驗 |
@@ -169,7 +170,7 @@ env -u NODE_PATH node --expose-gc scripts/p2-performance-audit.js . /tmp/p2-afte
 | Docker/Compose/SBOM/Trivy/Gitleaks | 本機 NOT RUN | 無 Docker/scanner；Hosted latest HEAD gate 另列 |
 | 24h/72h／實機復原 | NOT RUN | 不以短 soak/unit/CI 推定 |
 
-最初本機測試 753/755：一個 root 身分繞過檔案權限語意，另一個環境 NODE_PATH 把全域 Autoprefixer 注入 Tailwind。換成非 root 並移除 NODE_PATH 後，**未修改 production source 即基底 755/755 PASS**。另外曾有既有 panel-login regex 與新 current-cache fallback 不一致；已強化 assertion 並完整重跑 793/793。保留第一個錯誤和原因，不靠反覆 retry 掩蓋。
+最初本機測試 753/755：一個 root 身分繞過檔案權限語意，另一個環境 NODE_PATH 把全域 Autoprefixer 注入 Tailwind。換成非 root 並移除 NODE_PATH 後，**未修改 production source 即基底 755/755 PASS**。另外曾有既有 panel-login regex 與新 current-cache fallback 不一致；已強化 assertion 並完整重跑 798/798。保留第一個錯誤和原因，不靠反覆 retry 掩蓋。
 
 工具單次命令約 30 秒的外部終止曾中斷合併的 long-running checks；那不是 application timeout。之後在同一次稽核中取得完整 90.059 秒完成紀錄，不把中斷的短執行算通過。
 
@@ -200,6 +201,14 @@ env -u NODE_PATH node --expose-gc scripts/p2-performance-audit.js . /tmp/p2-afte
 
 Rollback 使用先前成對的不可變 image/tag/digest，再按既有 preflight/update 流程；不刪 volume、不回復舊 DB schema。前端需走正常 build revision／Service Worker 更新，可能仍有舊 client 等待 refresh。PR 保持 Draft，沒有 merge 或 auto-merge。
 
+## CI Follow-up
+
+初次 PR gate 曾先在 Docker build 暴露 Alpine mutable repository 與 exact revision pin 不一致（`nut 2.8.3-r4 → r5`、`tzdata 2026c-r0 → 2026d-r0`），後續另一輪又在 UPS production runtime recovery 暴露 sampling deadline 延遲。兩者都沒有用 retry 或降低 gate 掩蓋：Docker pin 與 contract 已同步刷新；UPS deadline root cause、fixture 與 5 個新增 regression 已完成。
+
+程式／測試修復 HEAD `0633c51c4ffed4e9da842e983fa2bf0f934dd2b1` 的 **SmartHub CI run #95 / Repository gate SUCCESS**。該 run 實際通過 secret scan、Node 24 locked install、JavaScript syntax、完整 tests、CSS、production dependency audit、Compose profiles、production image build、SQLite preflight、production container runtime smoke、blocking short soak、SBOM/Trivy、repository hygiene 與 exact-head release evidence。Run URL：<https://github.com/steven87090799/unifi-smarthub/actions/runs/35332764575>。
+
+文件同步 commit 會形成新的 PR HEAD；最終交付以 PR body 記錄該最新 HEAD 的 GitHub Actions 結論，避免在同一 commit 內容中自我嵌入未知 SHA。
+
 ## NOT RUN / BLOCKED
 
 真 Controller／SSH／NAS／UPS／PPB／WiiM／AdGuard、real notification delivery、NAS socket/permission、正式備份還原/DR、registry pull、24/72h 均 NOT RUN。真 Chromium 被環境管理政策 BLOCKED。本機 npm registry/Docker/scanner BLOCKED；CI 的結果只記錄實際完成的 latest HEAD，未完成者不得寫 PASS。完整 90/180/365d cleanup、正式 report latency 與 idle resource profile 沒有量測。
@@ -210,4 +219,4 @@ SQLite 仍為同步單一連線，cleanup 原子 bucket 的極端資料量、其
 
 ## Final Status
 
-**已完成本次有證據支持的 3 P2／1 P3 修復、回歸測試及本機隔離驗證；交付獨立 Draft PR，正式發布驗收仍有上述 NOT RUN/BLOCKED。** Latest HEAD 的 GitHub Actions 結論在 PR body 與最終交付紀錄逐項列示；不能以本報告當成預先保證 CI 綠燈。沒有因為未找到更多問題而宣稱軟體百分之百無 bug。
+**已完成有證據支持的 4 P2／1 P3 修復，並完成後續 Alpine release blocker 修復；最終修復樹本機 798/798 PASS，程式修復 HEAD 的完整 Repository gate 亦 SUCCESS。** 交付仍維持獨立 Draft PR；真實設備、真瀏覽器、正式 NAS/cgroup、24h/72h 等上述 NOT RUN/BLOCKED 不因 CI 成功而視為完成。Latest HEAD 的 GitHub Actions 結論以 PR body 與最終交付紀錄為準。沒有因為目前 gate 綠燈而宣稱軟體百分之百無 bug。
