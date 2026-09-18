@@ -1,0 +1,47 @@
+name: P1 audit sandbox
+
+on:
+  push:
+    branches:
+      - codex/p1-long-run-reliability-20260918
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare isolated P1 audit workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact independent audit base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 5db2b72d86ada93f46297e4d974f7dcedb93dcaa
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export committed source without credentials
+        run: |
+          mkdir -p "$RUNNER_TEMP/p1-workspace"
+          git update-ref refs/heads/p1-audit-base HEAD
+          git bundle create "$RUNNER_TEMP/p1-workspace/repository.bundle" refs/heads/p1-audit-base
+          git rev-parse HEAD > "$RUNNER_TEMP/p1-workspace/base-sha.txt"
+      - name: Use project Node version
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies in isolated runner
+        run: |
+          npm ci
+          tar -czf "$RUNNER_TEMP/p1-workspace/node-modules.tar.gz" node_modules
+          cp "$(command -v node)" "$RUNNER_TEMP/p1-workspace/node"
+          { node --version; npm --version; uname -a; } > "$RUNNER_TEMP/p1-workspace/environment.txt"
+      - name: Upload isolated audit workspace
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p1-audit-workspace-${{ github.run_id }}
+          path: ${{ runner.temp }}/p1-workspace
+          if-no-files-found: error
+          retention-days: 1
