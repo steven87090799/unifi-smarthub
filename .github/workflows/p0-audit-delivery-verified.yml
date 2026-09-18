@@ -1,0 +1,105 @@
+name: Prepare integrity-verified P0 delivery
+on:
+  push:
+    branches: [codex/p0-release-blocker-audit-20260918]
+    paths: [.github/workflows/p0-audit-delivery-verified.yml]
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+      - name: Verify and restore exact original transfer bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = steven87090799/unifi-smarthub
+          test "$GITHUB_REF" = refs/heads/codex/p0-release-blocker-audit-20260918
+          git merge-base --is-ancestor 5db2b72d86ada93f46297e4d974f7dcedb93dcaa HEAD
+          mkdir -p "$RUNNER_TEMP/p0-delivery"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const zlib = require('node:zlib');
+          const crypto = require('node:crypto');
+          const sha = value => crypto.createHash('sha256').update(value).digest('hex');
+          const source = fs.readFileSync('.github/workflows/p0-audit-delivery.yml', 'utf8');
+          const match = source.match(/PATCH_GZIP_BASE64: >-\n([\s\S]*?)\n    steps:/);
+          if (!match) throw new Error('transfer payload not found');
+          let encoded = match[1].replace(/\s/g, '');
+          if (sha(encoded) !== 'bf9347c5372bd2cccb16ff36bcf162b4a411df3ac4667018373316534c5ee07e') throw new Error('unexpected transferred bytes');
+          for (const [start, end, replacement] of [[318,319,'Q'],[264,264,'2N']]) encoded = encoded.slice(0,start) + replacement + encoded.slice(end);
+          const compressed = Buffer.from(encoded, 'base64');
+          if (sha(compressed) !== '20b844b96903c455b46f264f7461193d7b731366e2411ddace3aa0f85a6f35ad3') throw new Error('compressed integrity mismatch');
+          const patch = zlib.gunzipSync(compressed);
+          if (sha(patch) !== '6489722c8f431c039bcf2897e540447febb434ebae2fbcf7fbbe5384f124dcfa') throw new Error('patch integrity mismatch');
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/p0-delivery/final.patch`, patch);
+          console.log(`Exact local patch verified: ${patch.length} bytes`);
+          NODE
+          git apply --check "$RUNNER_TEMP/p0-delivery/final.patch"
+          git apply "$RUNNER_TEMP/p0-delivery/final.patch"
+      - name: Install locked dependencies and regenerate tracked CSS
+        run: |
+          npm ci
+          npm run build:css
+      - name: Verify final tree and remove temporary workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/p0-audit-workspace.yml .github/workflows/p0-audit-delivery.yml .github/workflows/p0-audit-transfer-diagnostic.yml .github/workflows/p0-audit-delivery-verified.yml
+          git add -- server/middleware/panel-security.js server/services/config-backup.js test/panel-security-path.test.js test/write-route-contract.test.js test/config-backup.test.js public/assets/tailwind.css docs/reports/PRODUCTION_READINESS_P0_AUDIT_20260918.md docs/README.md SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html .github/workflows/p0-audit-workspace.yml .github/workflows/p0-audit-delivery.yml .github/workflows/p0-audit-transfer-diagnostic.yml .github/workflows/p0-audit-delivery-verified.yml
+          git diff --cached --check
+          test "$(git write-tree)" = 533ad874a7009bd3bcbe9c10857a8d46a7e2a8ff
+      - name: Prepare Git objects without changing any ref
+        env:
+          GH_OBJECT_TOKEN: ${{ github.token }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const cp = require('node:child_process');
+          const repo = 'steven87090799/unifi-smarthub';
+          const expected = '533ad874a7009bd3bcbe9c10857a8d46a7e2a8ff';
+          const git = (...args) => cp.execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const paths = ['server/middleware/panel-security.js','server/services/config-backup.js','test/panel-security-path.test.js','test/write-route-contract.test.js','test/config-backup.test.js','public/assets/tailwind.css','docs/reports/PRODUCTION_READINESS_P0_AUDIT_20260918.md','docs/README.md','SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html'];
+          async function api(endpoint, body) {
+            const response = await fetch(`https://api.github.com/repos/${repo}/git/${endpoint}`, {
+              method: 'POST', headers: { Authorization: `Bearer ${process.env.GH_OBJECT_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' }, body: JSON.stringify(body)
+            });
+            if (!response.ok) throw new Error(`Git object API ${endpoint} failed: HTTP ${response.status}`);
+            return response.json();
+          }
+          (async () => {
+            const tree = [];
+            for (const file of paths) {
+              const blob = await api('blobs', { content: fs.readFileSync(file).toString('base64'), encoding: 'base64' });
+              if (blob.sha !== git('hash-object', file)) throw new Error(`blob mismatch: ${file}`);
+              tree.push({ path: file, mode: '100644', type: 'blob', sha: blob.sha });
+            }
+            for (const file of ['.github/workflows/p0-audit-workspace.yml','.github/workflows/p0-audit-delivery.yml','.github/workflows/p0-audit-transfer-diagnostic.yml','.github/workflows/p0-audit-delivery-verified.yml']) tree.push({ path: file, mode: '100644', type: 'blob', sha: null });
+            const prepared = await api('trees', { base_tree: git('rev-parse', 'HEAD^{tree}'), tree });
+            if (prepared.sha !== expected) throw new Error('prepared GitHub tree mismatch');
+            const evidence = { repository: repo, parent_sha: process.env.GITHUB_SHA, prepared_tree: prepared.sha, patch_sha256: '6489722c8f431c039bcf2897e540447febb434ebae2fbcf7fbbe5384f124dcfa', node: process.version, npm: cp.execFileSync('npm',['--version'],{encoding:'utf8'}).trim(), ref_mutated: false, paths };
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/p0-delivery/prepared-tree.json`, JSON.stringify(evidence,null,2)+'\n');
+            console.log(`Verified delivery tree: ${prepared.sha}; no refs changed`);
+          })().catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+      - name: Audit exact-tree locked dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          npm audit --audit-level=low 2>&1 | tee "$RUNNER_TEMP/p0-delivery/npm-audit.log"
+      - name: Upload delivery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: smarthub-p0-delivery-evidence
+          path: ${{ runner.temp }}/p0-delivery
+          if-no-files-found: error
+          retention-days: 7
