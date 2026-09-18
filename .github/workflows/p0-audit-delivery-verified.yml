@@ -37,7 +37,7 @@ jobs:
           if (sha(encoded) !== 'bf9347c5372bd2cccb16ff36bcf162b4a411df3ac4667018373316534c5ee07e') throw new Error('unexpected transferred bytes');
           for (const [start, end, replacement] of [[318,319,'Q'],[264,264,'2N']]) encoded = encoded.slice(0,start) + replacement + encoded.slice(end);
           const compressed = Buffer.from(encoded, 'base64');
-          if (sha(compressed) !== '20b844b96903c455b46f264f7461193d7b731366e2411ddace3aa0f85a6f35ad3') throw new Error('compressed integrity mismatch');
+          if (sha(compressed) !== '6c742e4d587519f7a9bc443dd75f6c2e6d55f8fdb2c5748a6e6d05a006860600') throw new Error('compressed integrity mismatch');
           const patch = zlib.gunzipSync(compressed);
           if (sha(patch) !== '6489722c8f431c039bcf2897e540447febb434ebae2fbcf7fbbe5384f124dcfa') throw new Error('patch integrity mismatch');
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/p0-delivery/final.patch`, patch);
