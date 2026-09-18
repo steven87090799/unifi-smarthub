@@ -45,10 +45,26 @@ jobs:
           NODE
           git apply --check "$RUNNER_TEMP/p0-delivery/final.patch"
           git apply "$RUNNER_TEMP/p0-delivery/final.patch"
-      - name: Install locked dependencies and regenerate tracked CSS
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'docs/reports/PRODUCTION_READINESS_P0_AUDIT_20260918.md';
+          let text = fs.readFileSync(file, 'utf8');
+          const replacements = [
+            ['另同步重新生成 `public/assets/tailwind.css`：base 的 checked-in CSS 與既有 build script 結果不一致，\n原始 `check:css` 與 frontend asset test 失敗。這是通過有效 release gate 所需的產物同步，\n不列為 P0、不修改 UI 功能、不刪除測試。', '本地首次 CSS 差異來自全域 `NODE_PATH` 載入不同 Autoprefixer，並非 repository 產物過期。\n清除 `NODE_PATH` 後重新驗證完整測試與 CSS gate，輸出與 base 完全一致。\n已撤回不必要的 CSS 變更；最終 PR 不修改 UI 產物。'],
+            ['| `npm run check:css` | PASS | 由既有 build script 同步產物後通過 |', '| `npm run check:css` | PASS | `NODE_PATH` 已清除；與 base 完全一致，沒有 CSS 變更 |']
+          ];
+          for (const [before, after] of replacements) {
+            if (!text.includes(before)) throw new Error('report correction anchor mismatch');
+            text = text.replace(before, after);
+          }
+          fs.writeFileSync(file, text);
+          NODE
+      - name: Install locked dependencies and verify unchanged CSS
         run: |
+          unset NODE_PATH
           npm ci
           npm run build:css
+          git diff --exit-code -- public/assets/tailwind.css
       - name: Verify final tree and remove temporary workflows
         shell: bash
         run: |
@@ -59,7 +75,7 @@ jobs:
           git diff --cached --binary 5db2b72d86ada93f46297e4d974f7dcedb93dcaa > "$RUNNER_TEMP/p0-delivery/staged.patch"
           git write-tree | tee "$RUNNER_TEMP/p0-delivery/actual-tree.txt"
           git diff --cached --check
-          test "$(git write-tree)" = 533ad874a7009bd3bcbe9c10857a8d46a7e2a8ff
+          test "$(git write-tree)" = de3499a9768e9a891027fa2d91e2a1b9a609cbf3
       - name: Prepare Git objects without changing any ref
         env:
           GH_OBJECT_TOKEN: ${{ github.token }}
@@ -68,7 +84,7 @@ jobs:
           const fs = require('node:fs');
           const cp = require('node:child_process');
           const repo = 'steven87090799/unifi-smarthub';
-          const expected = '533ad874a7009bd3bcbe9c10857a8d46a7e2a8ff';
+          const expected = 'de3499a9768e9a891027fa2d91e2a1b9a609cbf3';
           const git = (...args) => cp.execFileSync('git', args, { encoding: 'utf8' }).trim();
           const paths = ['server/middleware/panel-security.js','server/services/config-backup.js','test/panel-security-path.test.js','test/write-route-contract.test.js','test/config-backup.test.js','public/assets/tailwind.css','docs/reports/PRODUCTION_READINESS_P0_AUDIT_20260918.md','docs/README.md','SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW.html'];
           async function api(endpoint, body) {
@@ -88,7 +104,7 @@ jobs:
             for (const file of ['.github/workflows/p0-audit-workspace.yml','.github/workflows/p0-audit-delivery.yml','.github/workflows/p0-audit-transfer-diagnostic.yml','.github/workflows/p0-audit-delivery-verified.yml']) tree.push({ path: file, mode: '100644', type: 'blob', sha: null });
             const prepared = await api('trees', { base_tree: git('rev-parse', 'HEAD^{tree}'), tree });
             if (prepared.sha !== expected) throw new Error('prepared GitHub tree mismatch');
-            const evidence = { repository: repo, parent_sha: process.env.GITHUB_SHA, prepared_tree: prepared.sha, patch_sha256: '6489722c8f431c039bcf2897e540447febb434ebae2fbcf7fbbe5384f124dcfa', node: process.version, npm: cp.execFileSync('npm',['--version'],{encoding:'utf8'}).trim(), ref_mutated: false, paths };
+            const evidence = { repository: repo, parent_sha: process.env.GITHUB_SHA, prepared_tree: prepared.sha, patch_sha256: '6489722c8f431c039bcf2897e540447febb434ebae2fbcf7fbbe5384f124dcfa', report_corrections_applied: true, css_unchanged: true, node: process.version, npm: cp.execFileSync('npm',['--version'],{encoding:'utf8'}).trim(), ref_mutated: false, paths };
             fs.writeFileSync(`${process.env.RUNNER_TEMP}/p0-delivery/prepared-tree.json`, JSON.stringify(evidence,null,2)+'\n');
             console.log(`Verified delivery tree: ${prepared.sha}; no refs changed`);
           })().catch(error => { console.error(error.message); process.exitCode = 1; });
