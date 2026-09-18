@@ -26,6 +26,8 @@ Module._load = function isolatedDotenv(request, parent, isMain) {
 require(process.argv[1]);
 `;
 
+const PWRSTAT_FIXTURE = `#!/bin/sh\ncount=0\nIFS= read -r count < \"$UPS_COUNT_FILE\" || :\nprintf '%s\\n' $((count + 1)) > \"$UPS_COUNT_FILE\"\nIFS= read -r mode < \"$UPS_MODE_FILE\"\n[ \"$mode\" = success ] || exit 1\nprintf '%s\\n' 'Model Name.............. Runtime Test UPS' 'State................... Normal' 'Utility Voltage......... 120.0 V' 'Output Voltage.......... 120.0 V' 'Battery Capacity........ 95 %' 'Remaining Runtime....... 30 min' 'Load.................... 20 %'\n`;
+
 async function unusedPort() {
     const socket = net.createServer();
     await new Promise((resolve, reject) => {
@@ -74,6 +76,26 @@ test('UPS in-flight reads return generation-scoped metadata before the poll comm
     assert.match(SERVER_SOURCE, /isPpbRequestSupersededError\(pollError\)[\s\S]+transitions: \[\]/u);
 });
 
+test('isolated pwrstat fixture counts actual invocations with an empty system PATH', t => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-pwrstat-counter-'));
+    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    const modeFile = path.join(dataDir, 'mode');
+    const countFile = path.join(dataDir, 'count');
+    const executable = path.join(dataDir, 'pwrstat-fixture');
+    fs.writeFileSync(executable, PWRSTAT_FIXTURE, { mode: 0o700 });
+    fs.writeFileSync(countFile, '0\n');
+    for (const [index, mode] of ['success', 'failure', 'success'].entries()) {
+        fs.writeFileSync(modeFile, `${mode}\n`);
+        const result = spawnSync(executable, ['-status'], {
+            env: { PATH: dataDir, UPS_MODE_FILE: modeFile, UPS_COUNT_FILE: countFile },
+            encoding: 'utf8'
+        });
+        assert.equal(result.status, mode === 'success' ? 0 : 1);
+        assert.equal(Number(fs.readFileSync(countFile, 'utf8')), index + 1,
+            'a missing external command must not reset the upstream count to one');
+    }
+});
+
 test('production UPS route retains last-good data across confirmed outage and recovery', { timeout: 45_000 }, async t => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-ups-runtime-'));
     t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
@@ -84,7 +106,7 @@ test('production UPS route retains last-good data across confirmed outage and re
     const pwrstat = path.join(dataDir, 'pwrstat-fixture');
     fs.writeFileSync(modeFile, 'success');
     fs.writeFileSync(countFile, '0');
-    fs.writeFileSync(pwrstat, `#!/bin/sh\ncount=$(cat \"$UPS_COUNT_FILE\" 2>/dev/null || printf '0')\nprintf '%s\\n' $((count + 1)) > \"$UPS_COUNT_FILE\"\nIFS= read -r mode < \"$UPS_MODE_FILE\"\n[ \"$mode\" = success ] || exit 1\nprintf '%s\\n' 'Model Name.............. Runtime Test UPS' 'State................... Normal' 'Utility Voltage......... 120.0 V' 'Output Voltage.......... 120.0 V' 'Battery Capacity........ 95 %' 'Remaining Runtime....... 30 min' 'Load.................... 20 %'\n`);
+    fs.writeFileSync(pwrstat, PWRSTAT_FIXTURE);
     fs.chmodSync(pwrstat, 0o700);
     fs.writeFileSync(path.join(dataDir, 'app-settings.json'), JSON.stringify({
         reportEnabled: false,
