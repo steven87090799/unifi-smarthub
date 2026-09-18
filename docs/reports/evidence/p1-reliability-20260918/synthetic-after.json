@@ -1,0 +1,553 @@
+{
+  "kind": "synthetic-data-not-elapsed-soak",
+  "createdAt": "2026-09-18T06:51:45.995Z",
+  "node": "v24.18.0",
+  "platform": "linux/x64",
+  "dbSourceSha256": "d41bee24486e1c263a9376aea80a9152bb72dffc67bcfc58c21184387905cfda",
+  "results": [
+    {
+      "scenario": "30 days equivalent synthetic data, one point per minute, one series",
+      "days": 30,
+      "cadenceMs": 60000,
+      "inputPoints": 43200,
+      "counts": {
+        "raw": 1440,
+        "rollupSamples": 41760,
+        "rollupRows": 15264
+      },
+      "sampleConservation": true,
+      "sqliteQuickCheck": "ok",
+      "restartEqual": true,
+      "repeatedCleanupRollups": 0,
+      "loadMs": 198.094,
+      "cleanupMs": 2323.526,
+      "queryLatenciesMs": [
+        224.257,
+        194.559,
+        189.742,
+        163.225,
+        163.919
+      ],
+      "queryMedianMs": 189.742,
+      "returnedPoints": 240,
+      "nestedDataPreserved": true,
+      "sizeBefore": {
+        "database": 6246400,
+        "wal": 4181832
+      },
+      "sizeAfter": {
+        "database": 10203136,
+        "wal": 0
+      },
+      "peakWalBytes": 4280712,
+      "checkpoint": [
+        {
+          "busy": 0,
+          "log": 0,
+          "checkpointed": 0
+        }
+      ],
+      "cpuMicroseconds": {
+        "user": 4120904,
+        "system": 169714
+      },
+      "elapsedMs": 3690.266,
+      "eventLoopDelayMs": {
+        "mean": 18.335,
+        "p99": 194.773,
+        "max": 241.172
+      },
+      "peakRss": 282652672,
+      "peakHeapUsed": 128156144,
+      "snapshots": {
+        "startup": {
+          "rss": 49995776,
+          "heapTotal": 7720960,
+          "heapUsed": 5698560,
+          "external": 1987838,
+          "arrayBuffers": 143667,
+          "handles": 1,
+          "requests": 0
+        },
+        "warmup": {
+          "rss": 56045568,
+          "heapTotal": 11128832,
+          "heapUsed": 6468600,
+          "external": 1987878,
+          "arrayBuffers": 143667,
+          "handles": 0,
+          "requests": 0
+        },
+        "loaded": {
+          "rss": 75407360,
+          "heapTotal": 15585280,
+          "heapUsed": 8326392,
+          "external": 1987878,
+          "arrayBuffers": 143667,
+          "handles": 0,
+          "requests": 0
+        },
+        "cleaned": {
+          "rss": 90824704,
+          "heapTotal": 15847424,
+          "heapUsed": 7198952,
+          "external": 1987878,
+          "arrayBuffers": 143667,
+          "handles": 0,
+          "requests": 0
+        },
+        "recovered": {
+          "rss": 282652672,
+          "heapTotal": 160722944,
+          "heapUsed": 29765200,
+          "external": 1987842,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "postGc": {
+          "rss": 281903104,
+          "heapTotal": 141152256,
+          "heapUsed": 5526552,
+          "external": 1987842,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        }
+      },
+      "cleanup": {
+        "started_at": "2026-09-18T06:47:40.309Z",
+        "completed_at": "2026-09-18T06:47:42.632Z",
+        "duration_ms": 2323.01,
+        "rows_processed": 74880,
+        "rows_deleted": 74880,
+        "rollups_created": 48384,
+        "last_error": null,
+        "retention_days": 365,
+        "raw_caps": {
+          "history": 1000000,
+          "telemetry": 1000000
+        },
+        "raw_pressure": {
+          "history": {
+            "trend": false,
+            "ucg": false,
+            "nas": false,
+            "ups": false,
+            "wiim": false,
+            "linux": false
+          },
+          "telemetry": false
+        }
+      }
+    },
+    {
+      "scenario": "90 days equivalent synthetic data, one point per minute, one series",
+      "days": 90,
+      "cadenceMs": 60000,
+      "inputPoints": 129600,
+      "counts": {
+        "raw": 1440,
+        "rollupSamples": 128160,
+        "rollupRows": 16704
+      },
+      "sampleConservation": true,
+      "sqliteQuickCheck": "ok",
+      "restartEqual": true,
+      "repeatedCleanupRollups": 0,
+      "loadMs": 534.034,
+      "cleanupMs": 13297.51,
+      "queryLatenciesMs": [
+        121.282,
+        111.115,
+        143.302,
+        114.68,
+        111.552
+      ],
+      "queryMedianMs": 114.68,
+      "returnedPoints": 240,
+      "nestedDataPreserved": true,
+      "sizeBefore": {
+        "database": 21835776,
+        "wal": 4330152
+      },
+      "sizeAfter": {
+        "database": 22794240,
+        "wal": 0
+      },
+      "peakWalBytes": 4330152,
+      "checkpoint": [
+        {
+          "busy": 0,
+          "log": 0,
+          "checkpointed": 0
+        }
+      ],
+      "cpuMicroseconds": {
+        "user": 14712144,
+        "system": 208470
+      },
+      "elapsedMs": 14588.033,
+      "eventLoopDelayMs": {
+        "mean": 14.411,
+        "p99": 21.414,
+        "max": 143.917
+      },
+      "peakRss": 295542784,
+      "peakHeapUsed": 93090480,
+      "snapshots": {
+        "startup": {
+          "rss": 281903104,
+          "heapTotal": 141152256,
+          "heapUsed": 5585016,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 1,
+          "requests": 0
+        },
+        "warmup": {
+          "rss": 281903104,
+          "heapTotal": 141152256,
+          "heapUsed": 7108624,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "loaded": {
+          "rss": 287932416,
+          "heapTotal": 141152256,
+          "heapUsed": 7743144,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "cleaned": {
+          "rss": 294989824,
+          "heapTotal": 141414400,
+          "heapUsed": 31418392,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "recovered": {
+          "rss": 295542784,
+          "heapTotal": 204328960,
+          "heapUsed": 93090480,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "postGc": {
+          "rss": 295542784,
+          "heapTotal": 146919424,
+          "heapUsed": 5671760,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        }
+      },
+      "cleanup": {
+        "started_at": "2026-09-18T06:47:44.333Z",
+        "completed_at": "2026-09-18T06:47:57.630Z",
+        "duration_ms": 13297.48,
+        "rows_processed": 264960,
+        "rows_deleted": 264960,
+        "rollups_created": 154080,
+        "last_error": null,
+        "retention_days": 365,
+        "raw_caps": {
+          "history": 1000000,
+          "telemetry": 1000000
+        },
+        "raw_pressure": {
+          "history": {
+            "trend": false,
+            "ucg": false,
+            "nas": false,
+            "ups": false,
+            "wiim": false,
+            "linux": false
+          },
+          "telemetry": false
+        }
+      }
+    },
+    {
+      "scenario": "180 days equivalent synthetic data, one point per minute, one series",
+      "days": 180,
+      "cadenceMs": 60000,
+      "inputPoints": 259200,
+      "counts": {
+        "raw": 1440,
+        "rollupSamples": 257760,
+        "rollupRows": 18864
+      },
+      "sampleConservation": true,
+      "sqliteQuickCheck": "ok",
+      "restartEqual": true,
+      "repeatedCleanupRollups": 0,
+      "loadMs": 1090.578,
+      "cleanupMs": 46120.474,
+      "queryLatenciesMs": [
+        149.455,
+        162.065,
+        160.785,
+        163.475,
+        147.481
+      ],
+      "queryMedianMs": 160.785,
+      "returnedPoints": 240,
+      "nestedDataPreserved": true,
+      "sizeBefore": {
+        "database": 46714880,
+        "wal": 4363112
+      },
+      "sizeAfter": {
+        "database": 46342144,
+        "wal": 0
+      },
+      "peakWalBytes": 4363112,
+      "checkpoint": [
+        {
+          "busy": 0,
+          "log": 0,
+          "checkpointed": 0
+        }
+      ],
+      "cpuMicroseconds": {
+        "user": 48164066,
+        "system": 397281
+      },
+      "elapsedMs": 48174.358,
+      "eventLoopDelayMs": {
+        "mean": 20.561,
+        "p99": 34.734,
+        "max": 165.544
+      },
+      "peakRss": 313544704,
+      "peakHeapUsed": 118799224,
+      "snapshots": {
+        "startup": {
+          "rss": 295542784,
+          "heapTotal": 146919424,
+          "heapUsed": 5686704,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 1,
+          "requests": 0
+        },
+        "warmup": {
+          "rss": 295542784,
+          "heapTotal": 146919424,
+          "heapUsed": 7179344,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "loaded": {
+          "rss": 298688512,
+          "heapTotal": 146919424,
+          "heapUsed": 10000664,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "cleaned": {
+          "rss": 307019776,
+          "heapTotal": 146919424,
+          "heapUsed": 28097256,
+          "external": 1988943,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "recovered": {
+          "rss": 313544704,
+          "heapTotal": 197427200,
+          "heapUsed": 118799224,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "postGc": {
+          "rss": 312909824,
+          "heapTotal": 140627968,
+          "heapUsed": 4770000,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        }
+      },
+      "cleanup": {
+        "started_at": "2026-09-18T06:47:59.479Z",
+        "completed_at": "2026-09-18T06:48:45.600Z",
+        "duration_ms": 46120.44,
+        "rows_processed": 550080,
+        "rows_deleted": 550080,
+        "rollups_created": 312624,
+        "last_error": null,
+        "retention_days": 365,
+        "raw_caps": {
+          "history": 1000000,
+          "telemetry": 1000000
+        },
+        "raw_pressure": {
+          "history": {
+            "trend": false,
+            "ucg": false,
+            "nas": false,
+            "ups": false,
+            "wiim": false,
+            "linux": false
+          },
+          "telemetry": false
+        }
+      }
+    },
+    {
+      "scenario": "365 days equivalent synthetic data, one point per minute, one series",
+      "days": 365,
+      "cadenceMs": 60000,
+      "inputPoints": 525600,
+      "counts": {
+        "raw": 1440,
+        "rollupSamples": 524160,
+        "rollupRows": 23304
+      },
+      "sampleConservation": true,
+      "sqliteQuickCheck": "ok",
+      "restartEqual": true,
+      "repeatedCleanupRollups": 0,
+      "loadMs": 2173.899,
+      "cleanupMs": 175798.865,
+      "queryLatenciesMs": [
+        248.457,
+        260.835,
+        246.983,
+        234.274,
+        206.155
+      ],
+      "queryMedianMs": 246.983,
+      "returnedPoints": 238,
+      "nestedDataPreserved": true,
+      "sizeBefore": {
+        "database": 93761536,
+        "wal": 4363112
+      },
+      "sizeAfter": {
+        "database": 95490048,
+        "wal": 0
+      },
+      "peakWalBytes": 4363112,
+      "checkpoint": [
+        {
+          "busy": 0,
+          "log": 0,
+          "checkpointed": 0
+        }
+      ],
+      "cpuMicroseconds": {
+        "user": 178598641,
+        "system": 1460154
+      },
+      "elapsedMs": 179427.599,
+      "eventLoopDelayMs": {
+        "mean": 35.095,
+        "p99": 72.417,
+        "max": 266.994
+      },
+      "peakRss": 342745088,
+      "peakHeapUsed": 110013208,
+      "snapshots": {
+        "startup": {
+          "rss": 312909824,
+          "heapTotal": 140627968,
+          "heapUsed": 4784160,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 1,
+          "requests": 0
+        },
+        "warmup": {
+          "rss": 312909824,
+          "heapTotal": 140627968,
+          "heapUsed": 6281520,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "loaded": {
+          "rss": 315924480,
+          "heapTotal": 140627968,
+          "heapUsed": 19977168,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "cleaned": {
+          "rss": 138711040,
+          "heapTotal": 24760320,
+          "heapUsed": 12747376,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "recovered": {
+          "rss": 342372352,
+          "heapTotal": 164917248,
+          "heapUsed": 77015360,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        },
+        "postGc": {
+          "rss": 341716992,
+          "heapTotal": 140890112,
+          "heapUsed": 4760680,
+          "external": 1986476,
+          "arrayBuffers": 143631,
+          "handles": 0,
+          "requests": 0
+        }
+      },
+      "cleanup": {
+        "started_at": "2026-09-18T06:48:48.739Z",
+        "completed_at": "2026-09-18T06:51:44.538Z",
+        "duration_ms": 175798.84,
+        "rows_processed": 1136160,
+        "rows_deleted": 1136160,
+        "rollups_created": 638520,
+        "last_error": null,
+        "retention_days": 365,
+        "raw_caps": {
+          "history": 1000000,
+          "telemetry": 1000000
+        },
+        "raw_pressure": {
+          "history": {
+            "trend": false,
+            "ucg": false,
+            "nas": false,
+            "ups": false,
+            "wiim": false,
+            "linux": false
+          },
+          "telemetry": false
+        }
+      }
+    }
+  ]
+}

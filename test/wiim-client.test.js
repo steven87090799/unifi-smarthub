@@ -66,7 +66,9 @@ test('reset fences an old IP in-flight response from the new cache and health st
     oldGate.resolve();
     const oldResult = await oldRequest;
 
-    assert.equal(oldResult.data, '{"ip":"old","state":"play"}');
+    assert.equal(oldResult.source, 'unreachable');
+    assert.equal(oldResult.data, null);
+    assert.equal(oldResult.error, 'configuration_changed');
     assert.equal(newResult.data, '{"ip":"new","state":"play"}');
     assert.deepEqual(hosts, ['192.168.1.20', '192.168.1.21']);
     assert.equal(client.peek('getStatusEx').data, newResult.data);

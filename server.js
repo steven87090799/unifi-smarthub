@@ -414,9 +414,17 @@ app.use(express.static(path.join(__dirname, 'public'), frontendStaticOptions()))
 const internetAxiosClient = createInternetAxiosClient(axios, { proxyMode: INTERNET_PROXY_MODE });
 const wiimArtAxiosClient = axios.create({ proxy: false });
 let unifiCsrfToken = '';
+let unifiConfigGeneration = 0;
+let unifiSessionVersion = 0;
+let unifiLoginRetryAt = 0;
 let unifiAgent = null;
 let unifiTlsPolicy = null;
 function buildUnifiClient() {
+    const generation = unifiConfigGeneration;
+    const assertCurrent = () => {
+        if (shuttingDown) throw new Error('UniFi controller is shutting down');
+        if (generation !== unifiConfigGeneration) throw new Error('UniFi controller configuration changed');
+    };
     const controllerUrl = process.env.UNIFI_CONTROLLER_URL || 'https://127.0.0.1';
     const tls = resolveIntegrationTlsPolicy({
         url: controllerUrl,
@@ -440,16 +448,22 @@ function buildUnifiClient() {
         timeout: 10000
     }));
     c.interceptors.request.use(cfg => {
+        assertCurrent();
+        cfg._smartHubSessionVersion = unifiSessionVersion;
         cfg.headers = cfg.headers || {};
         if (unifiCsrfToken) cfg.headers['x-csrf-token'] = unifiCsrfToken;
         return cfg;
     });
-    c.interceptors.response.use(undefined, async error => {
+    c.interceptors.response.use(response => {
+        assertCurrent();
+        return response;
+    }, async error => {
+        assertCurrent();
         const config = error?.config;
         const response = error?.response;
         if (!shouldRetryControllerRequest({ config, response })) throw error;
         config._smartHubAuthRetry = true;
-        const cookie = await refreshLocalSession();
+        const cookie = await refreshLocalSession({ generation, version: config._smartHubSessionVersion });
         config.headers = rebuildAuthRetryHeaders(config.headers, cookie, unifiCsrfToken);
         return c.request(config);
     });
@@ -473,6 +487,7 @@ const isIpsAlarm = a => a && (a.key === 'ips:alert' || /^EVT_IPS/i.test(a.key ||
 // 本地 API 登入 Session 管理 (併發去重：Cookie 過期瞬間多請求同時進來只登入一次)
 let unifiLoginInflight = null;
 async function getLocalSession() {
+    if (shuttingDown) throw new Error('UniFi controller is shutting down');
     if (isPlaceholder(process.env.UNIFI_USERNAME) || isPlaceholder(process.env.UNIFI_PASSWORD)) {
         throw new Error('unifi_not_configured (UNIFI_USERNAME/PASSWORD 尚未填寫，略過連線)');
     }
@@ -483,17 +498,26 @@ async function getLocalSession() {
     }
     invalidateLocalSession();
     if (unifiLoginInflight) return unifiLoginInflight;
-    unifiLoginInflight = doUnifiLogin().finally(() => { unifiLoginInflight = null; });
-    return unifiLoginInflight;
+    if (now < unifiLoginRetryAt) throw new Error('UniFi Controller Login Backoff');
+    const pending = doUnifiLogin().finally(() => {
+        if (unifiLoginInflight === pending) unifiLoginInflight = null;
+    });
+    unifiLoginInflight = pending;
+    return pending;
 }
 async function doUnifiLogin() {
+    const generation = unifiConfigGeneration;
+    const client = unifiClient;
     try {
         sysLog('UniFi Auth', '發起全新的本地控制器登入請求...');
-        const response = await unifiClient.post('/api/auth/login', {
+        const response = await client.post('/api/auth/login', {
             username: process.env.UNIFI_USERNAME,
             password: process.env.UNIFI_PASSWORD
         });
 
+        if (shuttingDown || generation !== unifiConfigGeneration) {
+            throw new Error('UniFi login is obsolete after configuration change or shutdown');
+        }
         const cookies = response.headers['set-cookie'];
         if (cookies) {
             // A login without a CSRF header must not inherit the old session's token.
@@ -502,31 +526,53 @@ async function doUnifiLogin() {
             cookieExpiry = Date.now() + 15 * 60 * 1000; // 15 分鐘過期
             localSessionLastSuccessAt = Date.now();
             localSessionConsecutiveFailures = 0;
+            unifiLoginRetryAt = 0;
+            unifiSessionVersion += 1;
             sysLog('UniFi Auth', '登入成功，已快取 Session Cookie (15分鐘)。');
             return localCookie;
         }
         throw new Error('No cookie returned from Controller');
     } catch (error) {
+        if (shuttingDown || generation !== unifiConfigGeneration) throw error;
         localSessionLastFailureAt = Date.now();
         localSessionConsecutiveFailures += 1;
+        // A failed single flight alone does not bound sequential callers. No
+        // sleeping promise/timer is retained; a later poll retries after backoff.
+        unifiLoginRetryAt = Date.now() + Math.min(60000, 1000 * 2 ** Math.min(6, localSessionConsecutiveFailures - 1));
         sysLog('UniFi Auth', `控制器登入失敗: ${error.message}`, true);
         throw new Error('UniFi Controller Login Failed: ' + error.message);
     }
 }
 
-function invalidateLocalSession() {
+function invalidateLocalSession({ reset = false } = {}) {
     localCookie = '';
     cookieExpiry = 0;
     unifiCsrfToken = '';
+    if (reset) {
+        unifiConfigGeneration += 1;
+        unifiLoginInflight = null;
+        unifiSessionRefreshInflight = null;
+        unifiLoginRetryAt = 0;
+        localSessionConsecutiveFailures = 0;
+    }
 }
 
-function refreshLocalSession() {
+function refreshLocalSession({ generation = unifiConfigGeneration, version = unifiSessionVersion } = {}) {
+    if (shuttingDown || generation !== unifiConfigGeneration) {
+        return Promise.reject(new Error('UniFi request is obsolete after configuration change or shutdown'));
+    }
+    // A delayed 401 from the previous session must not invalidate the session
+    // already installed by another request in the same rejected wave.
+    if (version !== unifiSessionVersion && localCookie && Date.now() < cookieExpiry) {
+        return Promise.resolve(localCookie);
+    }
     if (unifiSessionRefreshInflight) return unifiSessionRefreshInflight;
-    unifiSessionRefreshInflight = (async () => {
-        invalidateLocalSession();
-        return getLocalSession();
-    })().finally(() => { unifiSessionRefreshInflight = null; });
-    return unifiSessionRefreshInflight;
+    invalidateLocalSession();
+    const pending = getLocalSession().finally(() => {
+        if (unifiSessionRefreshInflight === pending) unifiSessionRefreshInflight = null;
+    });
+    unifiSessionRefreshInflight = pending;
+    return pending;
 }
 
 // 建立 UniFi 官方雲端 Site Manager API 客戶端
@@ -3094,6 +3140,7 @@ const nasRequestRunner = createNasRequestRunner({
     // getNasToken's legacy nested retry here prevents a hidden third login.
     getToken: () => getNasToken({ retryOnSuperseded: false }),
     getLease: getNasTokenLeaseSnapshot,
+    getRequestGeneration: () => nasClient,
     request: (pathName, requestOptions) => nasClient.get(pathName, requestOptions),
     validateResponse: response => {
         if (nasTokenInvalidError(response)) {
@@ -4024,6 +4071,7 @@ function persistEnvVars(updates) {
 
 // 熱重建所有依賴 env 的客戶端與快取 (免重啟)
 function rebuildClients() {
+    invalidateLocalSession({ reset: true }); // fence old clients before replacement
     ['unifi.', 'cloud.', 'nas.', 'nasMonitor.', 'adguard.', 'linux.']
         .forEach(prefix => deviceCollectorCache.invalidatePrefix(prefix));
     unifiClient = buildUnifiClient();
@@ -4036,7 +4084,6 @@ function rebuildClients() {
     siteManagerConnectivityState.reset();
     resetSseUpstream({ reconnect: true });
     wiimIP = normalizeWiimIp(process.env.WIIM_IP);
-    invalidateLocalSession();             // 重置 UniFi session + CSRF token
     nasTokenState.reset();                 // 重置 NAS token 並 fence 舊 request
     nasLoginSingleflight.reset();        // 重建後不得沿用舊登入 Promise
     ppbClient.reset();                    // 重置 PPB session/Agent (host/TLS/CA 可能已變更)

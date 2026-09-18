@@ -128,6 +128,10 @@ function createWiimClient({
         const pending = (async () => {
             let data = null;
             let lastError = null;
+            const obsolete = () => generation !== requestGeneration || getIp() !== requestIp;
+            const supersededResult = () => resultShape({
+                source: 'unreachable', now: now(), error: 'configuration_changed'
+            });
             try {
                 data = await request({
                     protocol: 'https:',
@@ -136,6 +140,7 @@ function createWiimClient({
                     insecureTls: getAllowInsecureTls()
                 });
             } catch (error) {
+                if (obsolete()) return supersededResult();
                 lastError = error;
                 onTransportError(error, { command, protocol: 'https:' });
                 if (getAllowInsecureHttp()) {
@@ -153,6 +158,9 @@ function createWiimClient({
                 }
             }
 
+            // Fencing only the cache is insufficient: callers write history and
+            // trigger notifications from the returned result's freshness.
+            if (obsolete()) return supersededResult();
             if (data !== null && data !== undefined) {
                 const serialized = typeof data === 'string' ? data : JSON.stringify(data);
                 const fetchedAt = now();

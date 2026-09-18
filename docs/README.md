@@ -20,6 +20,7 @@
 | 所有前後端更新頻率 | [POLLING-INTERVALS.md](operations/POLLING-INTERVALS.md) |
 | 裝置整合 | [integrations/](integrations/) |
 | 未完成規劃 | [planning/](planning/) |
+| 2026-09-18 獨立 P1 可靠性審查 | [PRODUCTION_READINESS_P1_RELIABILITY_AUDIT_20260918.md](reports/PRODUCTION_READINESS_P1_RELIABILITY_AUDIT_20260918.md) |
 | 歷史報告與發布說明 | [reports/](reports/) |
 | 長期硬化證據 | [PRODUCTION_LONG_RUN_HARDENING_REPORT.md](reports/PRODUCTION_LONG_RUN_HARDENING_REPORT.md) |
 | 本次 final branch／legacy audit | [PRODUCTION_FINAL_LEGACY_SALVAGE.md](reports/PRODUCTION_FINAL_LEGACY_SALVAGE.md) |
