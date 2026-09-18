@@ -295,10 +295,12 @@
             });
         }
         window.addEventListener('pagehide', () => {
+            wiimProgressTicker.disconnect();
             disconnectPinnedObservers();
             disconnectNasSse();
         });
         window.addEventListener('pageshow', () => {
+            syncWiimProgressTicker();
             if (document.visibilityState !== 'visible') return;
             if (currentPage === 'overview') syncPinned();
             if (currentPage === 'nas') hydratePage('nas', { force: true, only: ['nasAlertConfig'], generation: navigationGeneration });
@@ -1184,6 +1186,23 @@
         validatePollJobReferences();
         const frontendLifecycle = window.SmartHubFrontendLifecycle;
         if (!frontendLifecycle) throw new Error('Frontend lifecycle helper is unavailable');
+        const wiimProgressTicker = frontendLifecycle.createScopedResource({
+            canStart: generation => wiimPageInitialized && generation === navigationGeneration
+                && document.visibilityState === 'visible' && ['wiim', 'overview'].includes(currentPage),
+            close: timer => clearInterval(timer)
+        });
+        function syncWiimProgressTicker() {
+            if (!wiimProgressTicker.isCurrent(wiimProgressTicker.get(), navigationGeneration)) {
+                wiimProgressTicker.disconnect();
+            }
+            wiimProgressTicker.connect(navigationGeneration, generation => {
+                const timer = setInterval(() => {
+                    // A queued callback from a hidden/previous page cannot update the DOM.
+                    if (wiimProgressTicker.isCurrent(timer, generation)) tickWiimProg();
+                }, 1000);
+                return timer;
+            });
+        }
         const hydrationCoordinator = frontendLifecycle.createHydrationCoordinator({
             pages: PAGE_HYDRATION,
             runJob: (key, context) => {
@@ -1203,6 +1222,7 @@
             }
             return hydrationCoordinator.hydratePage(page, { force, only, generation });
         }
+        let pollingGeneration = 0;
         let pollTimers = {};
         let pollStartTimers = {};
         const pollRunning = new Set();
@@ -1268,6 +1288,8 @@
             }
         }
         function applyPolling(runNow = false) {
+            syncWiimProgressTicker();
+            const generation = ++pollingGeneration;
             Object.entries(POLL_JOBS).forEach(([k, j]) => {
                 clearInterval(pollTimers[k]);
                 clearTimeout(pollStartTimers[k]);
@@ -1282,7 +1304,10 @@
                     pageJobs,
                     key: k
                 })) return;
-                const run = () => runPollJob(k, j);
+                const run = () => {
+                    if (generation !== pollingGeneration || document.visibilityState !== 'visible') return;
+                    return runPollJob(k, j);
+                };
                 if (runNow) pollStartTimers[k] = setTimeout(run, 0);
                 pollTimers[k] = setInterval(run, getEffectivePollSec(k) * 1000);
             });
@@ -4811,7 +4836,7 @@
             fetchWiimSystem();
             wiimLoadPresetNames();                 // 以 getPresetInfo 標記捷徑名稱
             wiimCheckEqStat();
-            setInterval(tickWiimProg, 1000);       // 本地進度條毫秒級預估預測
+            syncWiimProgressTicker();
         }
 
         async function fetchWiimPlayback() {

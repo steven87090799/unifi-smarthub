@@ -7,6 +7,7 @@ const PWA_SHELL = Object.freeze([
     '/assets/tailwind.css',
     '/js/bootstrap.js',
     '/js/action-dispatcher.js',
+    '/js/frontend-lifecycle.js',
     '/js/ups-presenter.js',
     '/js/app.js',
     '/js/web-push.js',
@@ -24,19 +25,26 @@ function renderPwaServiceWorker(cacheName) {
 const C=${JSON.stringify(cacheName)};
 const SHELL=${JSON.stringify(PWA_SHELL)};
 self.addEventListener('install',event=>{self.skipWaiting();event.waitUntil(caches.open(C).then(cache=>cache.addAll(SHELL)))});
-self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==C).map(key=>caches.delete(key)))));self.clients.claim()});
+self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==C).map(key=>caches.delete(key)))).then(()=>self.clients.claim()))});
 self.addEventListener('fetch',event=>{
-  if(event.request.method!=='GET')return;
+  if(event.request.method!=='GET'||event.request.cache==='no-store')return;
   const url=new URL(event.request.url);
+  if(url.origin!==self.location.origin)return;
   if(url.pathname.startsWith('/api/')||url.pathname.startsWith('/health'))return;
   if(event.request.mode==='navigate'){
-    event.respondWith(fetch(event.request).catch(()=>caches.match('/login')));
+    event.respondWith(fetch(event.request).catch(()=>caches.open(C).then(cache=>cache.match('/login'))));
     return;
   }
-  event.respondWith(fetch(event.request).then(response=>{
-    if(response.ok&&!response.redirected){const copy=response.clone();caches.open(C).then(cache=>cache.put(event.request,copy))}
-    return response
-  }).catch(()=>caches.match(event.request)));
+  // Only the finite, public shell is eligible; query variants must not grow CacheStorage.
+  if(url.search||!SHELL.includes(url.pathname))return;
+  const network=fetch(event.request);
+  // Register lifetime work synchronously; cache quota failures must not hide a good response.
+  event.waitUntil(network.then(response=>{
+    if(!response.ok||response.redirected||/\\b(?:no-store|private)\\b/i.test(response.headers.get('cache-control')||''))return;
+    const copy=response.clone();
+    return caches.open(C).then(cache=>cache.put(event.request,copy));
+  }).catch(()=>{}));
+  event.respondWith(network.catch(()=>caches.open(C).then(cache=>cache.match(event.request))));
 });
 self.addEventListener('push',event=>{
   let payload={title:'SmartHub',body:'有新的系統通知',url:'/',tag:'smarthub'};
