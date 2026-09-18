@@ -1,0 +1,67 @@
+{
+  "recorded_at": "2026-09-18",
+  "repository": "steven87090799/unifi-smarthub",
+  "pr_number": 30,
+  "pr_url": "https://github.com/steven87090799/unifi-smarthub/pull/30",
+  "validated_pr_head": "0917c5737d7f2406a56edb51d07ec07cf1843d01",
+  "validated_tree": "13c59e19527ccdef79f5cf55a09dd0ceeb8fa3d0",
+  "ci_checkout_merge_sha": "6b7ec0519130ac0a933c61d3f5b946e29fce9405",
+  "workflow": "SmartHub CI",
+  "required_check": "Repository gate",
+  "run_id": 35329054973,
+  "job_id": 105548883964,
+  "run_url": "https://github.com/steven87090799/unifi-smarthub/actions/runs/35329054973",
+  "conclusion": "failure",
+  "tests": {
+    "total": 793,
+    "passed": 793,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 35701.810766
+  },
+  "passed": [
+    "Gitleaks current tree and selected Git history",
+    "Node 24.18.0 / npm 11.16.0 locked npm ci",
+    "JavaScript syntax (208 files)",
+    "793 unit, integration, contract and security tests",
+    "Checked-in CSS",
+    "Compose default and nas-monitor profiles"
+  ],
+  "failed": "Build production images without starting containers",
+  "skipped": [
+    "Standalone documentation step (already included in npm test)",
+    "npm audit --omit=dev --audit-level=low (existing unchanged scope policy)",
+    "Isolated production preflight",
+    "Production container runtime smoke",
+    "Hosted blocking short soak",
+    "SBOM / Trivy",
+    "Exact-head release evidence"
+  ],
+  "npm_ci_automatic_audit": "found 0 vulnerabilities; not an explicit npm audit command",
+  "finding": {
+    "id": "OUT-OF-SCOPE-001",
+    "priority": "P1",
+    "module": "Docker / release build",
+    "file": "Dockerfile:9-14",
+    "symptom": "Current clean CI build cannot install the pinned Alpine packages.",
+    "root_cause": "The immutable Node base is combined with mutable Alpine repositories. Exact package revisions pinned on 2026-09-07 no longer resolve in the repository index used by this run.",
+    "observed_conflicts": [
+      {
+        "requested": "nut=2.8.3-r4",
+        "candidate_in_failed_run": "nut-2.8.3-r5"
+      },
+      {
+        "requested": "tzdata=2026c-r0",
+        "candidate_in_failed_run": "tzdata-2026d-r0"
+      }
+    ],
+    "reproduction": "The original Repository gate runs docker compose with docker-compose.yml and docker-compose.build.yml; apk exits 2 at Dockerfile:9, before application source is copied.",
+    "scope_evidence": "Dockerfile, nas-monitor/Dockerfile, .github/workflows/ci.yml and scripts/ci-scope.js are unchanged from base 5db2b72d86ada93f46297e4d974f7dcedb93dcaa.",
+    "impact": "Release build is blocked. Local production-server smoke and local 90.059-second soak remain valid but cannot substitute for container/image/scanner gates.",
+    "fix": "NOT IMPLEMENTED in the P2/P3 branch. A release-blocker task must deliberately refresh and verify exact package inputs or a reproducible package source, then rebuild and rerun SBOM/Trivy/preflight/runtime gates.",
+    "test": "Actual hosted Docker build is a reproducible failing acceptance test; no blind rerun or gate weakening.",
+    "status": "OUT OF SCOPE / BLOCKED",
+    "residual_risk": "Do not release this branch based on passing JavaScript tests. Do not assume the unexecuted downstream gates pass."
+  },
+  "latest_head_policy": "This file preserves the first exact-head failure. The final PR description and delivery metadata identify the latest HEAD/run; a later documentation-only evidence commit does not repair package availability."
+}

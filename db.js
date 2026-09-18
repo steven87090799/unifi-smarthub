@@ -518,10 +518,13 @@ function createHistoryDb(dataDir, options = {}) {
         ORDER BY bucket_ts ASC, id ASC
         LIMIT ?
     `);
+    // Order by the indexed source time, not its computed bucket alias. The
+    // bucket mapping is monotonic: DISTINCT can stop at LIMIT without sorting
+    // the entire retention range. Bucket aggregation/deletion stays atomic.
     const listHistoryBucketCandidates = {
-        '1m': db.prepare('SELECT DISTINCT ((ts / 60000) * 60000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY bucket_ts ASC LIMIT ?'),
-        '5m': db.prepare('SELECT DISTINCT ((ts / 300000) * 300000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY bucket_ts ASC LIMIT ?'),
-        '1h': db.prepare('SELECT DISTINCT ((ts / 3600000) * 3600000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY bucket_ts ASC LIMIT ?')
+        '1m': db.prepare('SELECT DISTINCT ((ts / 60000) * 60000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT ?'),
+        '5m': db.prepare('SELECT DISTINCT ((ts / 300000) * 300000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT ?'),
+        '1h': db.prepare('SELECT DISTINCT ((ts / 3600000) * 3600000) AS bucket_ts FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT ?')
     };
     const listHistoryBucketRows = db.prepare('SELECT ts, data FROM history WHERE series = ? AND ts >= ? AND ts < ? ORDER BY ts ASC, id ASC');
     const deleteHistoryBucketStmt = db.prepare('DELETE FROM history WHERE series = ? AND ts >= ? AND ts < ?');
@@ -530,14 +533,14 @@ function createHistoryDb(dataDir, options = {}) {
             SELECT DISTINCT ((bucket_ts / 300000) * 300000) AS bucket_ts
             FROM history_rollups
             WHERE series = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
-            ORDER BY bucket_ts ASC
+            ORDER BY history_rollups.bucket_ts ASC
             LIMIT ?
         `),
         '5m': db.prepare(`
             SELECT DISTINCT ((bucket_ts / 3600000) * 3600000) AS bucket_ts
             FROM history_rollups
             WHERE series = ? AND resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
-            ORDER BY bucket_ts ASC
+            ORDER BY history_rollups.bucket_ts ASC
             LIMIT ?
         `)
     };
@@ -597,9 +600,9 @@ function createHistoryDb(dataDir, options = {}) {
         LIMIT ?
     `);
     const listUnifiTelemetryBucketCandidates = {
-        '1m': db.prepare('SELECT DISTINCT device_id, ((sampled_ts / 60000) * 60000) AS bucket_ts FROM unifi_device_telemetry WHERE sampled_ts >= ? AND sampled_ts < ? ORDER BY bucket_ts ASC, device_id ASC LIMIT ?'),
-        '5m': db.prepare('SELECT DISTINCT device_id, ((sampled_ts / 300000) * 300000) AS bucket_ts FROM unifi_device_telemetry WHERE sampled_ts >= ? AND sampled_ts < ? ORDER BY bucket_ts ASC, device_id ASC LIMIT ?'),
-        '1h': db.prepare('SELECT DISTINCT device_id, ((sampled_ts / 3600000) * 3600000) AS bucket_ts FROM unifi_device_telemetry WHERE sampled_ts >= ? AND sampled_ts < ? ORDER BY bucket_ts ASC, device_id ASC LIMIT ?')
+        '1m': db.prepare('SELECT DISTINCT device_id, ((sampled_ts / 60000) * 60000) AS bucket_ts FROM unifi_device_telemetry WHERE sampled_ts >= ? AND sampled_ts < ? ORDER BY sampled_ts ASC, device_id ASC LIMIT ?'),
+        '5m': db.prepare('SELECT DISTINCT device_id, ((sampled_ts / 300000) * 300000) AS bucket_ts FROM unifi_device_telemetry WHERE sampled_ts >= ? AND sampled_ts < ? ORDER BY sampled_ts ASC, device_id ASC LIMIT ?'),
+        '1h': db.prepare('SELECT DISTINCT device_id, ((sampled_ts / 3600000) * 3600000) AS bucket_ts FROM unifi_device_telemetry WHERE sampled_ts >= ? AND sampled_ts < ? ORDER BY sampled_ts ASC, device_id ASC LIMIT ?')
     };
     const listUnifiTelemetryBucketRowsStmt = db.prepare('SELECT sampled_ts, data FROM unifi_device_telemetry WHERE device_id = ? AND sampled_ts >= ? AND sampled_ts < ? ORDER BY sampled_ts ASC, id ASC');
     const deleteUnifiTelemetryBucketStmt = db.prepare('DELETE FROM unifi_device_telemetry WHERE device_id = ? AND sampled_ts >= ? AND sampled_ts < ?');
@@ -608,14 +611,14 @@ function createHistoryDb(dataDir, options = {}) {
             SELECT DISTINCT device_id, ((bucket_ts / 300000) * 300000) AS bucket_ts
             FROM unifi_device_telemetry_rollups
             WHERE resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
-            ORDER BY bucket_ts ASC, device_id ASC
+            ORDER BY unifi_device_telemetry_rollups.bucket_ts ASC, device_id ASC
             LIMIT ?
         `),
         '5m': db.prepare(`
             SELECT DISTINCT device_id, ((bucket_ts / 3600000) * 3600000) AS bucket_ts
             FROM unifi_device_telemetry_rollups
             WHERE resolution = ? AND bucket_ts >= ? AND bucket_ts < ?
-            ORDER BY bucket_ts ASC, device_id ASC
+            ORDER BY unifi_device_telemetry_rollups.bucket_ts ASC, device_id ASC
             LIMIT ?
         `)
     };
