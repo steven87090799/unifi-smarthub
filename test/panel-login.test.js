@@ -131,5 +131,6 @@ test('service worker keeps offline navigation on the public login shell instead 
     assert.ok(!PWA_SHELL.includes('/'));
     const source = renderPwaServiceWorker('smarthub-login-test');
     assert.match(source, /event\.request\.mode==='navigate'/u);
-    assert.match(source, /caches\.match\('\/login'\)/u);
+    assert.match(source, /caches\.open\(C\)\.then\(cache=>cache\.match\('\/login'\)\)/u);
+    assert.doesNotMatch(source, /caches\.match\('\/login'\)/u);
 });

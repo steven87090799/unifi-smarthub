@@ -1,0 +1,317 @@
+{
+  "base_sha": "5db2b72d86ada93f46297e4d974f7dcedb93dcaa",
+  "method": "Same Linux x64, Node 24.18.0, SQLite 3.53.2; synthetic 600-second cadence, one history series, two devices, raw plus seeded 1m rollups; 20 warm candidate-query repetitions. Not real operating days or a container memory-limit test.",
+  "measurements": [
+    {
+      "days": 30,
+      "db_bytes": 4005888,
+      "wal_bytes_after_checkpoint": 0,
+      "history_points": 4320,
+      "telemetry_points": 8640,
+      "history_candidate_median_ms": [
+        0.502,
+        0.036
+      ],
+      "telemetry_candidate_median_ms": [
+        3.482,
+        0.047
+      ],
+      "telemetry_candidate_cpu_20_runs_ms": [
+        70.394,
+        1.428
+      ],
+      "telemetry_candidate_event_loop_max_ms": [
+        5.145,
+        1.26
+      ],
+      "history_read_ms": [
+        28.498,
+        28.085
+      ],
+      "telemetry_read_ms": [
+        50.091,
+        46.919
+      ],
+      "backup_ms": [
+        6.402,
+        5.654
+      ],
+      "backup_sampled_peak_rss_bytes": [
+        109760512,
+        110288896
+      ],
+      "cleanup_ms": [
+        549.054,
+        307.373
+      ]
+    },
+    {
+      "days": 90,
+      "db_bytes": 11689984,
+      "wal_bytes_after_checkpoint": 0,
+      "history_points": 12960,
+      "telemetry_points": 25920,
+      "history_candidate_median_ms": [
+        1.23,
+        0.031
+      ],
+      "telemetry_candidate_median_ms": [
+        10.847,
+        0.048
+      ],
+      "telemetry_candidate_cpu_20_runs_ms": [
+        222.266,
+        1.508
+      ],
+      "telemetry_candidate_event_loop_max_ms": [
+        13.631,
+        1.244
+      ],
+      "history_read_ms": [
+        27.013,
+        31.34
+      ],
+      "telemetry_read_ms": [
+        46.251,
+        35.158
+      ],
+      "backup_ms": [
+        15.956,
+        18.536
+      ],
+      "backup_sampled_peak_rss_bytes": [
+        143220736,
+        143167488
+      ],
+      "cleanup_ms": [
+        null,
+        null
+      ]
+    },
+    {
+      "days": 180,
+      "db_bytes": 23355392,
+      "wal_bytes_after_checkpoint": 0,
+      "history_points": 25920,
+      "telemetry_points": 51840,
+      "history_candidate_median_ms": [
+        2.651,
+        0.032
+      ],
+      "telemetry_candidate_median_ms": [
+        22.596,
+        0.047
+      ],
+      "telemetry_candidate_cpu_20_runs_ms": [
+        460.035,
+        1.177
+      ],
+      "telemetry_candidate_event_loop_max_ms": [
+        26.083,
+        1.237
+      ],
+      "history_read_ms": [
+        23.369,
+        22.391
+      ],
+      "telemetry_read_ms": [
+        34.414,
+        53.889
+      ],
+      "backup_ms": [
+        33.853,
+        30.425
+      ],
+      "backup_sampled_peak_rss_bytes": [
+        170418176,
+        170901504
+      ],
+      "cleanup_ms": [
+        null,
+        null
+      ]
+    },
+    {
+      "days": 365,
+      "db_bytes": 47525888,
+      "wal_bytes_after_checkpoint": 0,
+      "history_points": 52560,
+      "telemetry_points": 105120,
+      "history_candidate_median_ms": [
+        5.429,
+        0.032
+      ],
+      "telemetry_candidate_median_ms": [
+        48.203,
+        0.046
+      ],
+      "telemetry_candidate_cpu_20_runs_ms": [
+        968.315,
+        1.211
+      ],
+      "telemetry_candidate_event_loop_max_ms": [
+        51.708,
+        1.33
+      ],
+      "history_read_ms": [
+        29.083,
+        22.258
+      ],
+      "telemetry_read_ms": [
+        33.017,
+        30.27
+      ],
+      "backup_ms": [
+        50.58,
+        50.67
+      ],
+      "backup_sampled_peak_rss_bytes": [
+        183635968,
+        184463360
+      ],
+      "cleanup_ms": [
+        null,
+        null
+      ]
+    }
+  ],
+  "frontend": {
+    "kind": "deterministic VM execution of real generated service worker and actual app functions; not a timed browser soak",
+    "variants": 1000,
+    "tick_opportunities": 30,
+    "before": {
+      "cache_entries": 1013,
+      "hidden_wiim_timers": 1,
+      "hidden_progress_updates": 30,
+      "physical_devices_contacted": 0
+    },
+    "after": {
+      "cache_entries": 14,
+      "hidden_wiim_timers": 0,
+      "hidden_progress_updates": 0,
+      "physical_devices_contacted": 0
+    }
+  },
+  "logs": {
+    "method": "Real UPS observability state machine; deterministic synthetic clock, not a real-time outage or Docker stdout retention test",
+    "before": {
+      "attempts": 1000,
+      "synthetic_clock_step_ms": 3000,
+      "events": 12,
+      "json_event_bytes": 1840,
+      "kinds": [
+        "degraded",
+        "offline",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "recovered"
+      ]
+    },
+    "after": {
+      "attempts": 1000,
+      "synthetic_clock_step_ms": 3000,
+      "events": 12,
+      "json_event_bytes": 1840,
+      "kinds": [
+        "degraded",
+        "offline",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "summary",
+        "recovered"
+      ]
+    }
+  },
+  "soak": {
+    "duration_ms": 90059,
+    "rss_start_mib": 52.5,
+    "rss_peak_mib": 75.3,
+    "rss_end_mib": 75.3,
+    "heap_start_mib": 5.9,
+    "heap_peak_mib": 11.1,
+    "heap_end_mib": 10.6,
+    "final_timers": 0,
+    "final_sse_clients": 0,
+    "final_browser_sessions": 0,
+    "final_collectors": 0,
+    "unexpected_handles": 0,
+    "unexpected_requests": 0,
+    "unhandled_rejections": 0,
+    "uncaught_exceptions": 0,
+    "exit_code": 0,
+    "not_run": [
+      "24h",
+      "72h",
+      "physical devices"
+    ]
+  },
+  "raw_evidence_sha256": {
+    "performance-before.json": "9f0c269386fa0f0b4134d3860f23b346fc5e18fa0ed93fda4fecefd77e311a39",
+    "performance-after.json": "67136e43824c3b27457cf0a524daa78bed9aabebedbf28def76fa079c7b50408",
+    "frontend-before-after.json": "91378d92993710c6c296f2ecdac5065622f36d53361b0eddf303bc21cb3c8416",
+    "log-suppression.json": "6ddd713b8a577b6c67c25ef06fccfbf0a31680900480557ebcddfc1a1feb6534",
+    "final-tests.tap": "86ae60f8ad038b94d4e6af6a693aa262605e10ae0d74b880e88669be8040480d",
+    "baseline-clean.tap": "171d7707103260f379bfa7b9d880f6521ddeb7a0f59cbb125775ebbe7d20aebb",
+    "smoke.log": "9dab7b1592a03174ebfca45a6292379d3d590e036156e64d3b520fa5bef6b05e",
+    "soak-90s.log": "8a8337ce8babc1b71d6dc7607a109b3321aa4a1c0462702cd3c47f7c82400a7b"
+  },
+  "polling": {
+    "one": {
+      "clients": 1,
+      "upstream_before_after": [
+        1,
+        1
+      ],
+      "request_p95_before_after_ms": [
+        44.931,
+        46.503
+      ]
+    },
+    "tabs": {
+      "clients": 20,
+      "upstream_before_after": [
+        1,
+        1
+      ],
+      "request_p95_before_after_ms": [
+        17.753,
+        16.369
+      ]
+    },
+    "outage": {
+      "clients": 20,
+      "upstream_before_after": [
+        2,
+        2
+      ],
+      "request_p95_before_after_ms": [
+        8.578,
+        7.372
+      ]
+    },
+    "recovery": {
+      "clients": 20,
+      "upstream_before_after": [
+        1,
+        1
+      ],
+      "request_p95_before_after_ms": [
+        7.276,
+        4.647
+      ]
+    }
+  }
+}

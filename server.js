@@ -5486,6 +5486,16 @@ function lastUpsAttemptAt(snapshot) {
     return Math.max(snapshot.lastSuccessAt || 0, snapshot.lastFailureAt || 0);
 }
 
+// A timer may wake just before the freshness boundary, or another caller may
+// have sampled meanwhile. Retry the remaining delay instead of skipping an
+// entire additional interval; keep the existing freshness/singleflight guard.
+function upsRemainingSampleDelayMs() {
+    const maxAgeMs = upsSampleMs();
+    const lastAttemptAt = lastUpsAttemptAt(upsFetchState.snapshot());
+    if (!lastAttemptAt) return maxAgeMs;
+    return Math.min(maxAgeMs, Math.max(1, maxAgeMs - (Date.now() - lastAttemptAt)));
+}
+
 function upsStatusPayload(snapshot, { cached = false } = {}) {
     const lastGood = snapshot.lastGood ? { ...snapshot.lastGood } : null;
     const payload = lastGood || {};
@@ -5683,7 +5693,7 @@ registerBackendSampler({
     name: 'upsSample',
     scopes: ['ups'],
     collect: () => sampleUpsIfDue(upsSampleMs()),
-    getDelayMs: upsSampleMs
+    getDelayMs: upsRemainingSampleDelayMs
 });
 registerBackendSampler({
     name: 'ppbEventSync',
