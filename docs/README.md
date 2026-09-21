@@ -12,6 +12,7 @@
 | 後端定位 | [backend-map.md](reference/backend-map.md) |
 | 前端定位 | [frontend-map.md](reference/frontend-map.md) |
 | 正式發布 | [PRODUCTION-RELEASE-CHECKLIST.md](operations/PRODUCTION-RELEASE-CHECKLIST.md) |
+| 2026-09-18 獨立 P0 審查與修復 | [PRODUCTION_READINESS_P0_AUDIT_20260918.md](reports/PRODUCTION_READINESS_P0_AUDIT_20260918.md) |
 | 最近一次 production blockers 記錄 | [PRODUCTION_RELEASE_BLOCKERS_20260907.md](reports/PRODUCTION_RELEASE_BLOCKERS_20260907.md) |
 | 歷史 Production Acceptance 矩陣 | [PRODUCTION_ACCEPTANCE.md](operations/PRODUCTION_ACCEPTANCE.md) |
 | Production-like staging 驗收 | [PRODUCTION-STAGING-ACCEPTANCE.md](operations/PRODUCTION-STAGING-ACCEPTANCE.md) |

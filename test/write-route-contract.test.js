@@ -628,3 +628,20 @@ test('production server rejects malformed writes before integrations are called'
 test('mock server mirrors the production write-input contract', { timeout: 60_000 }, async t => {
     await exerciseRuntimeContract(t, 'server-mock.js', 'mock');
 });
+
+for (const script of ['server.js', 'server-mock.js']) {
+    test(`${script} rejects mixed-case readonly connection writes without changing isolated configuration`, { timeout: 25_000 }, async t => {
+        const runtime = await startRuntime(script, 'p0-case-boundary');
+        t.after(() => stopRuntime(runtime));
+        const envFile = path.join(runtime.dataDir, '.env');
+        const before = await fs.readFile(envFile, 'utf8');
+        const response = await fetch(`${runtime.baseUrl}/API/connections/`, {
+            method: 'POST',
+            headers: { authorization: READONLY_AUTH, 'content-type': 'application/json' },
+            body: JSON.stringify({ PPB_PASSWORD: 'p0-rejected-fixture-value' })
+        });
+        const text = await response.text();
+        assert.equal(response.status, 403, `${script}: ${text}`);
+        assert.equal(await fs.readFile(envFile, 'utf8'), before);
+    });
+}
