@@ -83,3 +83,11 @@
 rg -n "app\\.(get|post|put|delete).*ups|readUpsLive" server.js
 rg -n "threat-ip|service-policy|web-push" server test
 ```
+
+## P1 可靠性 owner（2026-09-18）
+
+- `server/storage/history-aggregation.js`：raw／rollup 共用遞迴聚合；私有 JSON 統計保留每欄 numeric-valid count／counter 時間，API 移除統計。`db.js` promotion 將 disjoint target 與新來源在同一 transaction 合併。
+- `db.js insertPoint`：count／bytes admission 在失敗 flush 下仍受上限；拒絕新樣本並保留已接收資料。cleanup 先建立 in-flight owner 再執行，避免首個 await 前失敗造成永久 rejected owner。
+- `server.js` UniFi auth：config generation、session version、1–60 秒 login failure backoff；舊請求不更新新設定 session，延遲 401 不反覆作廢已更新 session。
+- NAS request runner 在 token／request／validation 後檢查 client generation；WiiM reset fence 同時作用於回傳值，舊 live response 不可由 consumer 寫入新時間 history。
+- `scripts/p1-reliability-evidence.js`：全新 temporary SQLite 的 30／90／180／365 天等量資料模擬；`scripts/p1-resource-probe.js` 為 opt-in 資源量測 preload，非 production startup。
