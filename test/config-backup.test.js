@@ -280,3 +280,115 @@ test('production startup owns the DATA_DIR lock before applying restore and open
     const database = source.indexOf('historyDb = createHistoryDb');
     assert.ok(lockOwned > 0 && restore > lockOwned && database > restore);
 });
+
+test('restore refuses a busy WAL checkpoint and preserves committed data plus pending work', async t => {
+    const source = await fixture(t);
+    source.database.close();
+    const destination = tempDir(t);
+    const destinationDb = createHistoryDb(destination);
+    destinationDb.close();
+    const file = path.join(destination, 'smarthub.db');
+    const writer = new Database(file);
+    writer.pragma('wal_autocheckpoint = 0');
+    writer.exec('CREATE TABLE restore_sentinel (value TEXT NOT NULL)');
+    writer.pragma('wal_checkpoint(TRUNCATE)');
+    const reader = new Database(file, { readonly: true });
+    reader.exec('BEGIN');
+    reader.prepare('SELECT count(*) FROM restore_sentinel').get();
+    writer.prepare('INSERT INTO restore_sentinel VALUES (?)').run('committed-after-reader-snapshot');
+    writer.close();
+    t.after(() => { if (reader.open) reader.close(); });
+    const service = createConfigBackupService({
+        dataDir: destination, envFile: path.join(destination, '.env'),
+        appVersion: '3.0.0', database: { backup() {} }
+    });
+    service.stageRestore(Buffer.from(JSON.stringify(source.artifact)), 'RESTORE');
+    let result;
+    let failure;
+    try { result = applyPendingRestore({ dataDir: destination }); }
+    catch (error) { failure = error; }
+    if (result?.applied) {
+        const rollback = new Database(path.join(result.backupDirectory, 'smarthub.db'), { readonly: true });
+        const retained = rollback.prepare('SELECT count(*) count FROM restore_sentinel').get().count;
+        rollback.close();
+        t.diagnostic(`unsafe restore proceeded: committed sentinel rows in rollback copy=${retained}, expected=1`);
+    }
+    assert.match(failure?.message || 'restore incorrectly succeeded', /checkpoint.*busy|busy.*checkpoint/i);
+    assert.equal(fs.existsSync(path.join(destination, '.restore-pending')), true);
+    assert.equal(fs.existsSync(path.join(destination, '.restore-transaction.json')), false);
+    reader.close();
+    const retained = new Database(file, { readonly: true });
+    try {
+        assert.deepEqual(retained.prepare('SELECT value FROM restore_sentinel').all(), [
+            { value: 'committed-after-reader-snapshot' }
+        ]);
+        assert.equal(retained.pragma('quick_check')[0].quick_check, 'ok');
+    } finally { retained.close(); }
+    assert.equal(applyPendingRestore({ dataDir: destination }).applied, true);
+});
+
+test('restore aborts before replacement when syncing the rollback snapshot fails', async t => {
+    const f = await fixture(t);
+    f.database.close();
+    f.service.stageRestore(Buffer.from(JSON.stringify(f.artifact)), 'RESTORE');
+    const file = path.join(f.directory, 'smarthub.db');
+    const before = fs.readFileSync(file);
+    const originalOpen = fs.openSync;
+    const originalClose = fs.closeSync;
+    const originalFsync = fs.fsyncSync;
+    const descriptors = new Map();
+    fs.openSync = function trackedOpen(fileName, ...args) {
+        const fd = originalOpen.call(this, fileName, ...args);
+        descriptors.set(fd, String(fileName));
+        return fd;
+    };
+    fs.closeSync = function trackedClose(fd) {
+        descriptors.delete(fd);
+        return originalClose.call(this, fd);
+    };
+    fs.fsyncSync = function failBackupSync(fd) {
+        const name = descriptors.get(fd) || '';
+        if (name.includes(`${path.sep}restore-backups${path.sep}`) && path.basename(name) === 'smarthub.db') {
+            throw Object.assign(new Error('injected rollback snapshot fsync failure'), { code: 'EIO' });
+        }
+        return originalFsync.call(this, fd);
+    };
+    try {
+        assert.throws(() => applyPendingRestore({ dataDir: f.directory }), /injected rollback snapshot fsync failure/u);
+    } finally {
+        fs.openSync = originalOpen;
+        fs.closeSync = originalClose;
+        fs.fsyncSync = originalFsync;
+    }
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.equal(fs.existsSync(path.join(f.directory, '.restore-transaction.json')), false);
+    assert.equal(fs.existsSync(path.join(f.directory, '.restore-pending')), true);
+});
+
+test('replacement failure durably rolls back every original file and allows a later retry', async t => {
+    const f = await fixture(t);
+    f.database.close();
+    f.service.stageRestore(Buffer.from(JSON.stringify(f.artifact)), 'RESTORE');
+    write(path.join(f.directory, 'app-settings.json'), JSON.stringify({ watcherSec: 97 }));
+    const originalRename = fs.renameSync;
+    let injected = false;
+    fs.renameSync = function failConfigReplacement(source, destination) {
+        if (!injected && String(source).endsWith('app-settings.json.restore-new')) {
+            injected = true;
+            throw Object.assign(new Error('injected replacement failure'), { code: 'ENOSPC' });
+        }
+        return originalRename.call(this, source, destination);
+    };
+    try { assert.throws(() => applyPendingRestore({ dataDir: f.directory }), /injected replacement failure/u); }
+    finally { fs.renameSync = originalRename; }
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.directory, 'app-settings.json'))).watcherSec, 97);
+    const retained = new Database(path.join(f.directory, 'smarthub.db'), { readonly: true });
+    try {
+        assert.equal(retained.prepare("SELECT count(*) count FROM history WHERE series='trend'").get().count, 1);
+        assert.equal(retained.pragma('quick_check')[0].quick_check, 'ok');
+    } finally { retained.close(); }
+    assert.equal(fs.existsSync(path.join(f.directory, '.restore-transaction.json')), false);
+    assert.equal(fs.existsSync(path.join(f.directory, '.restore-pending')), true);
+    assert.equal(applyPendingRestore({ dataDir: f.directory }).applied, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(f.directory, 'app-settings.json'))).watcherSec, 45);
+});

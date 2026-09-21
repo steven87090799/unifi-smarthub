@@ -4,6 +4,12 @@ const net = require('net');
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const NAMED_PROXY_RANGES = new Set(['loopback', 'linklocal', 'uniquelocal']);
 
+// Express routes are case-insensitive and accept an optional trailing slash by
+// default. Security classification must cover every spelling the router accepts.
+function policyPath(value) {
+    return String(value).toLowerCase().replace(/\/$/u, '');
+}
+
 function positiveInteger(value, fallback, minimum = 1) {
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : fallback;
@@ -124,7 +130,7 @@ function createPanelSecurity(options = {}) {
     const csrfToken = options.csrfToken || crypto.randomBytes(32).toString('base64url');
     const healthPaths = new Set(options.healthPaths || ['/health', '/healthz', '/health/ready']);
     const allowedOrigins = new Set(normalizeOrigins(options.allowedOrigins));
-    const protectedSafePaths = new Set(options.protectedSafePaths || []);
+    const protectedSafePaths = new Set((options.protectedSafePaths || []).map(policyPath));
     const failures = new Map();
     const eventLog = new Map();
     const sessions = new Map();
@@ -457,8 +463,9 @@ function createPanelSecurity(options = {}) {
     }
 
     function protectWrites(req, res, next) {
-        const isApi = req.path === '/api' || req.path.startsWith('/api/');
-        const needsProtection = isApi && (!SAFE_METHODS.has(req.method) || protectedSafePaths.has(req.path));
+        const requestPath = policyPath(req.path);
+        const isApi = requestPath === '/api' || requestPath.startsWith('/api/');
+        const needsProtection = isApi && (!SAFE_METHODS.has(req.method) || protectedSafePaths.has(requestPath));
         if (!needsProtection) return next();
         if (req.panelAuth?.role !== 'admin') {
             emit('authorization_denied', req, { role: req.panelAuth?.role || 'unknown' });
