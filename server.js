@@ -1,3 +1,5 @@
+const { operationalDependency } = require('./observability/operational-dependency');
+const { collectUnifiThreatEvents } = require('./server/integrations/unifi-threat-events');
 const express = require('express');
 const axios = require('axios');
 const webPushLibrary = require('web-push');
@@ -960,8 +962,7 @@ app.post('/api/wifi/qr', panelSecurity.requireAdmin, async (req, res) => {
 
 async function collectUnifiThreats() {
     const cookie = await getLocalSession();
-    const response = await unifiClient.get('/proxy/network/api/s/default/list/alarm', { headers: { 'Cookie': cookie } });
-    return Array.isArray(response.data?.data) ? response.data.data : [];
+    return collectUnifiThreatEvents(unifiClient, { cookie });
 }
 function getUnifiThreatsCached(options = {}) {
     return readDeviceCollector('unifi.threats', collectUnifiThreats, { ...options, scope: 'trend' });
@@ -969,11 +970,12 @@ function getUnifiThreatsCached(options = {}) {
 function presentUnifiThreats(rawThreats) {
     return rawThreats.filter(isIpsAlarm).map(t => {
             // 嘗試解析威脅種類
+            const message = String(t.msg || '');
             let category = "Intrusion Attempt";
-            if (t.msg.includes("EXPLOIT")) category = "Web Exploit";
-            else if (t.msg.includes("SCAN")) category = "Scanner";
-            else if (t.msg.includes("MALWARE") || t.msg.includes("Trojan")) category = "Malware";
-            else if (t.msg.includes("DOS")) category = "DoS";
+            if (message.includes("EXPLOIT")) category = "Web Exploit";
+            else if (message.includes("SCAN")) category = "Scanner";
+            else if (message.includes("MALWARE") || message.includes("Trojan")) category = "Malware";
+            else if (message.includes("DOS")) category = "DoS";
 
             const geo = t.srcipGeo || {};
             // 內網來源 (OUTBOUND 警報，例如內網設備對外掃描/可疑流量) 沒有 GeoIP，
@@ -988,11 +990,11 @@ function presentUnifiThreats(rawThreats) {
                 src_lon: geo.longitude || null,
                 msg: t.msg,
                 port: t.dst_port ? `${t.dst_port}/${t.proto || 'TCP'}` : 'Any',
-                severity: 'HIGH',
+                severity: t.severity || 'HIGH',
                 category,
                 target_ip: t.dest_ip || 'WAN-IN',
-                target_device: 'UCG-Ultra Core',
-                action_taken: 'BLOCKED'
+                target_device: t.target_device || 'UCG-Ultra Core',
+                action_taken: t.action_taken || 'BLOCKED'
             };
         }).sort((a, b) => new Date(b.datetime) - new Date(a.datetime)); // list/alarm 由舊到新，前端要最新在前
 }
@@ -6126,8 +6128,10 @@ app.get('/api/connections/status', async (req, res) => {
     const ucgCollector = deviceCollectorSnapshot('ucg.hardware');
     const linuxCollector = deviceCollectorSnapshot('linux.stats');
     const adguardCollector = deviceCollectorSnapshot('adguard.overview');
-    const wiimHit = wiimIP ? wiimClient.peek('getStatusEx') : null;
-    const wiimFresh = wiimHit && (wiimHit.source === 'fresh_cache' || wiimHit.source === 'live');
+    const wiimHit = wiimIP ? wiimClient.health('getStatusEx') : null;
+    const wiimFresh = wiimHit?.online && fresh(wiimHit.lastSuccessAt, Math.max(deviceSampleMs('wiim') * 3, 180_000) / 1000);
+    const controller = deviceCollectorSnapshot('unifi.networkDevices');
+    const monitorCollector = deviceCollectorSnapshot('nasMonitor.dockerContainers');
     const cloud = await checkCloudStatus({ probe: false });
     const threatBlocks = threatIpBlockingService.snapshot();
     const adguardPolicies = adguardServicePolicyService.snapshot();
@@ -6149,13 +6153,13 @@ app.get('/api/connections/status', async (req, res) => {
     res.json({
         devices: [
             { name: 'UCG-Ultra (SSH)', configured: !isPlaceholder(process.env.SSH_PASSWORD) && !!process.env.UCG_IP, ok: ucgCollector?.healthy === true, transportMode: sshTransportMode(process.env.UCG_IP, process.env.UCG_SSH_HOST_KEY, process.env.UCG_SSH_ALLOW_UNPINNED ?? (process.env.NODE_ENV !== 'production')), detail: hwCache ? `CPU ${hwCache.data.cpuTemp}°C / ${hwCache.data.cpuUsage}%` : '尚無資料' },
-            { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: !!localCookie && Date.now() < cookieExpiry, transportMode: unifiTlsPolicy?.mode || null, detail: localCookie ? 'Session 有效' : '未登入' },
+            { name: 'UniFi 控制器', configured: !isPlaceholder(process.env.UNIFI_USERNAME), ok: controller?.healthy ?? null, transportMode: unifiTlsPolicy?.mode || null, detail: controller?.healthy ? '最近設備資料讀取成功' : '尚無有效設備資料' },
             { name: 'UniFi 裝置 SSH 溫度', configured: telemetrySsh.configured, ok: telemetrySsh.configured ? (telemetrySsh.cachedDeviceCount ? true : null) : null, transportMode: telemetrySsh.transportMode, detail: telemetrySsh.configured ? `已選 ${telemetrySsh.selectedDeviceCount} 台 · Host Key ${telemetrySsh.hostKeyConfiguredDeviceCount} 台` : '尚未完整設定' },
             { name: 'Site Manager 雲端', configured: cloud.configured, ok: cloud.ok, transportMode: 'verified', detail: cloud.detail },
             { name: 'UniFi 威脅封鎖', configured: threatBlocks.configuration.configured, ok: threatBlocks.reconcile.status === 'healthy' ? true : null, transportMode: networkTransportMode, detail: threatBlocks.configuration.configured ? threatBlocks.reconcile.status : '尚未設定 Integration API' },
             { name: 'UGREEN NAS', configured: nasConfigured(), ok: nasTokenState.isValid(), transportMode: nasTls?.mode || null, detail: nasTokenState.getToken() ? 'Token 有效' : '未登入' },
-            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: null, transportMode: NASMON_TRANSPORT_MODE || null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
-            { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? (wiimFresh && fresh(wiimHit.fetchedAt, 120)) : null, transportMode: wiimTransportMode, detail: wiimIP ? (wiimFresh ? '有回應' : wiimHit ? '最後資料已過期' : '無快取') : '未設定' },
+            { name: 'NAS Monitor (系統B)', configured: nasMonConfigured(), ok: monitorCollector?.healthy ?? null, transportMode: NASMON_TRANSPORT_MODE || null, detail: nasMonConfigured() ? (nasMonAdvancedConfigured() ? '完整模式' : 'Docker only') : '' },
+            { name: 'WiiM Amp', configured: Boolean(wiimIP), ok: wiimIP ? Boolean(wiimFresh) : null, transportMode: wiimTransportMode, detail: wiimIP ? (wiimFresh ? '有回應' : wiimHit ? '最後資料已過期' : '無快取') : '未設定' },
             { name: 'CyberPower UPS', configured: true, ok: upsSnapshot.fetchHealth === FETCH_HEALTH.OFFLINE ? false : (upsSnapshot.fetchHealth === FETCH_HEALTH.HEALTHY ? !!fresh(upsSnapshot.lastSuccessAt, 180) : null), transportMode: ppbTransportMode, detail: upsDetail },
             { name: 'AdGuard Home', configured: adgConfigured(), ok: adguardCollector?.healthy === true, transportMode: adguardConnection.transportMode || null, detail: adgLastOkTs ? '有回應' : '尚無資料' },
             { name: 'AdGuard 裝置政策', configured: adguardPolicies.policies.length > 0, ok: adguardPolicies.reconcile.status === 'healthy' ? true : (adguardPolicies.reconcile.status === 'degraded' ? false : null), detail: `${adguardPolicies.policies.length} 筆 · ${adguardPolicies.reconcile.status}` },
@@ -6190,7 +6194,7 @@ function refreshPublicSystemHealthSnapshot() {
         : historyDb.diagnostics().ok;
     const worker = system?.worker || taskTracker.getStatus();
     const ups = upsFetchState.snapshot();
-    const wiim = wiimIP ? wiimClient.peek('getStatusEx') : null;
+    const wiim = wiimIP ? wiimClient.health('getStatusEx') : null;
     const ucgCollector = deviceCollectorSnapshot('ucg.hardware');
     const linuxCollector = deviceCollectorSnapshot('linux.stats');
     const adguardCollector = deviceCollectorSnapshot('adguard.overview');
@@ -6204,7 +6208,7 @@ function refreshPublicSystemHealthSnapshot() {
         },
         {
             included: !isPlaceholder(process.env.UNIFI_USERNAME) && !isPlaceholder(process.env.UNIFI_PASSWORD),
-            online: Boolean(localCookie) && now < cookieExpiry
+            online: deviceCollectorSnapshot('unifi.networkDevices')?.healthy === true
         },
         {
             included: nasConfigured(),
@@ -6212,7 +6216,7 @@ function refreshPublicSystemHealthSnapshot() {
         },
         {
             included: Boolean(wiimIP),
-            online: wiim?.source !== 'stale_cache' && fresh(wiim?.fetchedAt, 180)
+            online: wiim?.online === true && fresh(wiim.lastSuccessAt, Math.max(deviceSampleMs('wiim') * 3, 180_000) / 1000)
         },
         {
             included: true,
@@ -6262,23 +6266,6 @@ app.get('/api/alerts/critical', (req, res) => {
 });
 
 // Liveness / readiness / 完整 diagnostics；/api/system/status 會沿用上方 Basic Auth。
-function operationalDependency({ configured, lastSuccessAt = null, lastFailureAt = null, consecutiveFailures = 0, staleAfterMs = 180_000, detail = null }) {
-    const now = Date.now();
-    const successTs = typeof lastSuccessAt === 'number' ? lastSuccessAt : Date.parse(lastSuccessAt || '');
-    const staleAge = Number.isFinite(successTs) ? Math.max(0, now - successTs) : null;
-    const status = !configured ? 'not_configured'
-        : !Number.isFinite(successTs) ? (consecutiveFailures ? 'degraded' : 'unknown')
-            : staleAge > staleAfterMs ? (consecutiveFailures > 2 ? 'critical' : 'degraded') : 'healthy';
-    return {
-        configured: Boolean(configured),
-        status,
-        detail,
-        last_success_at: Number.isFinite(successTs) ? new Date(successTs).toISOString() : null,
-        last_failure_at: lastFailureAt ? new Date(typeof lastFailureAt === 'number' ? lastFailureAt : Date.parse(lastFailureAt)).toISOString() : null,
-        stale_age_ms: staleAge,
-        consecutive_failures: Math.max(0, Number(consecutiveFailures) || 0)
-    };
-}
 
 const operationalIssueCodes = Object.freeze({
     process: ERROR_CODES.SYS_MONITOR_FAILED,
@@ -6345,13 +6332,15 @@ registerHealthRoutes(app, {
         const worker = taskTracker.getStatus();
         const telemetry = unifiDeviceTelemetrySnapshot.diagnostics();
         const ups = upsFetchState.snapshot();
-        const wiim = wiimIP ? wiimClient.peek('getStatusEx') : null;
+        const wiim = wiimIP ? wiimClient.health('getStatusEx') : null;
+        const controller = deviceCollectorSnapshot('unifi.networkDevices');
+        const monitorCollector = deviceCollectorSnapshot('nasMonitor.dockerContainers');
         const ucgCollector = deviceCollectorSnapshot('ucg.hardware');
         const linuxCollector = deviceCollectorSnapshot('linux.stats');
         const notificationSettings = loadNotifSettings();
         const recentReports = historyDb.listReportRuns(20);
         const successfulReport = recentReports.find(report => report.deliveryStatus === 'sent');
-        const failedReports = recentReports.filter(report => report.deliveryStatus !== 'sent');
+        const failedReports = recentReports.filter(report => ['failed', 'partial'].includes(report.deliveryStatus) && (!successfulReport || report.completedAt > successfulReport.completedAt));
         const notificationConfigured = notificationSettings.enabled === true && (
             notificationSettings.channel === 'telegram'
                 ? Boolean(notificationSettings.botToken && notificationSettings.chatId)
@@ -6368,16 +6357,16 @@ registerHealthRoutes(app, {
             process: operationalDependency({ configured: true, lastSuccessAt: now, detail: 'event loop running' }),
             sqlite: operationalDependency({ configured: true, lastSuccessAt: database.ok ? now : null, consecutiveFailures: database.ok ? 0 : 1, detail: database.ok ? 'quick health query passed' : database.last_error }),
             worker: operationalDependency({ configured: true, lastSuccessAt: worker.status === 'critical' ? null : now, consecutiveFailures: worker.status === 'critical' ? 1 : 0, detail: worker.status }),
-            ucg_ssh: operationalDependency({ configured: dependencyConfigured.ucg_ssh, lastSuccessAt: ucgCollector?.lastSuccessAt || null, lastFailureAt: ucgCollector?.lastErrorAt || hwLastFailureAt, consecutiveFailures: ucgCollector?.consecutiveFailures ?? hwConsecutiveFailures, detail: ucgCollector?.healthy === false ? 'stale or offline snapshot' : 'read-only SSH sampler' }),
-            unifi_controller: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: localSessionLastSuccessAt, lastFailureAt: localSessionLastFailureAt, consecutiveFailures: localSessionConsecutiveFailures, detail: localCookie ? 'session active' : 'session unavailable' }),
-            unifi_telemetry: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: telemetry.lastSuccessfulAt, lastFailureAt: telemetry.lastFailureAt || telemetry.lastErrorAt, consecutiveFailures: telemetry.consecutiveFailures, detail: telemetry.lastErrorReason || 'snapshot' }),
-            nas: operationalDependency({ configured: dependencyConfigured.nas, lastSuccessAt: nasLastSuccessAt, lastFailureAt: nasLastFailureAt, consecutiveFailures: nasConsecutiveFailures, detail: nasTokenState.isValid() ? 'JWT active' : 'token unavailable' }),
-            nas_monitor: operationalDependency({ configured: dependencyConfigured.nas_monitor, lastSuccessAt: nasMonLastSuccessAt, lastFailureAt: nasMonLastFailureAt, consecutiveFailures: nasMonConsecutiveFailures, detail: nasMonConfigurationError ? 'configuration rejected' : 'last monitor response' }),
+            ucg_ssh: operationalDependency({ configured: dependencyConfigured.ucg_ssh, lastSuccessAt: ucgCollector?.lastSuccessAt || null, lastFailureAt: ucgCollector?.lastErrorAt || hwLastFailureAt, consecutiveFailures: ucgCollector?.consecutiveFailures ?? hwConsecutiveFailures, staleAfterMs: Math.max((ucgCollector?.freshnessMs || 60_000) * 3, 180_000), detail: ucgCollector?.healthy === false ? 'stale or offline snapshot' : 'read-only SSH sampler' }),
+            unifi_controller: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: controller?.lastSuccessAt, lastFailureAt: controller?.lastErrorAt, consecutiveFailures: controller?.consecutiveFailures, staleAfterMs: Math.max((controller?.freshnessMs || 60_000) * 3, 180_000), detail: 'last Controller device response' }),
+            unifi_telemetry: operationalDependency({ configured: dependencyConfigured.controller, lastSuccessAt: telemetry.lastSuccessfulAt, lastFailureAt: telemetry.lastFailureAt || telemetry.lastErrorAt, consecutiveFailures: telemetry.consecutiveFailures, staleAfterMs: Math.max(unifiTelemetrySampleMs() * 3, 60_000), detail: telemetry.lastErrorReason || 'snapshot' }),
+            nas: operationalDependency({ configured: dependencyConfigured.nas, lastSuccessAt: nasLastSuccessAt, lastFailureAt: nasLastFailureAt, consecutiveFailures: nasConsecutiveFailures, staleAfterMs: Math.max(deviceSampleMs('nas') * 3, 180_000), detail: nasTokenState.isValid() ? 'JWT active' : 'token unavailable' }),
+            nas_monitor: operationalDependency({ configured: dependencyConfigured.nas_monitor, lastSuccessAt: monitorCollector?.lastSuccessAt, lastFailureAt: monitorCollector?.lastErrorAt, consecutiveFailures: monitorCollector?.consecutiveFailures, staleAfterMs: Math.max((monitorCollector?.freshnessMs || 60_000) * 3, 180_000), detail: nasMonConfigurationError ? 'configuration rejected' : 'last Docker inventory response' }),
             ups: operationalDependency({ configured: dependencyConfigured.ups, lastSuccessAt: ups.lastSuccessAt, consecutiveFailures: ups.consecutiveFailures, staleAfterMs: 180_000, detail: ups.failureReason || ups.fetchHealth }),
-            adguard: operationalDependency({ configured: dependencyConfigured.adguard, lastSuccessAt: adgLastOkTs || null, lastFailureAt: adgLastFailureAt, consecutiveFailures: adgConsecutiveFailures, detail: adgConfigured() ? 'last sampler result' : null }),
-            linux: operationalDependency({ configured: dependencyConfigured.linux, lastSuccessAt: linuxCollector?.lastSuccessAt || null, lastFailureAt: linuxCollector?.lastErrorAt || linuxLastFailureAt, consecutiveFailures: linuxCollector?.consecutiveFailures ?? linuxConsecutiveFailures, detail: linuxCollector?.healthy === false ? 'stale or offline snapshot' : 'read-only SSH sampler' }),
-            wiim: operationalDependency({ configured: dependencyConfigured.wiim, lastSuccessAt: wiim?.source === 'fresh_cache' ? wiim.fetchedAt : null, detail: wiim?.source === 'stale_cache' ? 'stale status snapshot' : wiim ? 'last status snapshot' : null }),
-            notification_transport: operationalDependency({ configured: notificationConfigured, lastSuccessAt: successfulReport?.completedAt || null, lastFailureAt: failedReports[0]?.completedAt || null, consecutiveFailures: failedReports.length, detail: notificationConfigured ? 'last persisted delivery result' : 'no notification channel configured' })
+            adguard: operationalDependency({ configured: dependencyConfigured.adguard, lastSuccessAt: adgLastOkTs || null, lastFailureAt: adgLastFailureAt, consecutiveFailures: adgConsecutiveFailures, staleAfterMs: Math.max(deviceSampleMs('trend') * 3, 180_000), detail: adgConfigured() ? 'last sampler result' : null }),
+            linux: operationalDependency({ configured: dependencyConfigured.linux, lastSuccessAt: linuxCollector?.lastSuccessAt || null, lastFailureAt: linuxCollector?.lastErrorAt || linuxLastFailureAt, consecutiveFailures: linuxCollector?.consecutiveFailures ?? linuxConsecutiveFailures, staleAfterMs: Math.max((linuxCollector?.freshnessMs || 60_000) * 3, 180_000), detail: linuxCollector?.healthy === false ? 'stale or offline snapshot' : 'read-only SSH sampler' }),
+            wiim: operationalDependency({ configured: dependencyConfigured.wiim, lastSuccessAt: wiim?.lastSuccessAt, lastFailureAt: wiim?.lastErrorAt, consecutiveFailures: wiim?.consecutiveFailures, staleAfterMs: Math.max(deviceSampleMs('wiim') * 3, 180_000), detail: 'last status request; freshness follows sampler interval' }),
+            notification_transport: operationalDependency({ configured: notificationConfigured, lastSuccessAt: successfulReport?.completedAt || null, lastFailureAt: failedReports[0]?.completedAt || null, consecutiveFailures: failedReports.length, staleAfterMs: Infinity, detail: notificationConfigured ? 'last persisted report delivery; not a live transport probe' : 'no notification channel configured' })
         };
         observeOperationalDependencies(dependencies);
         const statuses = Object.values(dependencies).map(entry => entry.status);

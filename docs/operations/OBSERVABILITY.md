@@ -35,6 +35,10 @@ DEBUG_HTTP=1
 
 外部設備都是選配，不 gate readiness。
 
+`/health/operational` 需登入，讀取既有取樣結果。設備新鮮度依取樣間隔保留三個週期（至少 180 秒），避免閒置 600 秒取樣被固定 180 秒門檻誤報；明確連續失敗仍回報 degraded／critical。WiiM 使用請求健康紀錄，不以兩秒 response cache 判定連線。Controller 與 NAS Monitor 分別依設備清單、Docker 清單的取樣結果判讀，token 存在不是成功證據。通知項目僅代表持久化報表交付結果，無紀錄仍是 unknown，不代表已測試 Telegram；事件交付不因三分鐘沒有新報表而過期。
+
+UniFi 威脅事件優先使用 legacy alarm；僅在 endpoint 不存在或 InvalidObject 時改查 v2 system-log/threat-alert。認證、網路錯誤及不完整分頁仍回報失敗，不用空陣列掩蓋。
+
 ## 報表交付
 
 - 每個排程時段使用唯一 `schedule_key` 與 SQLite transaction claim。
