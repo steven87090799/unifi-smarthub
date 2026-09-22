@@ -492,7 +492,7 @@ app.get('/api/threats', (req, res) => {
             category: categories[Math.floor(Math.random() * categories.length)],
             target_ip: targetIps[index],
             target_device: targetDevices[index],
-            action_taken: "BLOCKED"
+            action_taken: index % 2 === 0 ? "BLOCKED" : "DETECTED"
         });
         if (mockThreats.length > 30) mockThreats.pop();
     }
@@ -1543,7 +1543,7 @@ app.get('/api/connections/status', (_req, res) => res.json({
     },
     devices: [
         { name: 'UCG SSH', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: mockConn.UCG_IP },
-        { name: 'UniFi Controller', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: 'Legacy API' },
+        { name: 'UniFi Controller', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: '最近設備資料讀取成功' },
         { name: 'UniFi 裝置 SSH 溫度', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: '已選 1 台 · Host Key 1 台' },
         { name: 'Site Manager', configured: false, ok: null, transportMode: 'verified', detail: '' },
         { name: 'UniFi Threat Blocking', configured: true, ok: true, transportMode: mockConn.TRUSTED_LAN_MODE === 'true' ? 'trusted-lan-insecure' : 'verified', detail: 'healthy' },

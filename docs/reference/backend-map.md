@@ -8,7 +8,7 @@
 |---|---|
 | 面板安全 | `server/middleware/panel-security.js`、`server/routes/panel-auth-routes.js` |
 | 公開登入快照 | `server/services/public-system-health.js` |
-| UniFi 本地／雲端 | `unifiLogin`、`server/integrations/site-manager-client.js` |
+| UniFi 本地／雲端 | `unifiLogin`、`server/integrations/site-manager-client.js`、`server/integrations/unifi-threat-events.js` |
 | UniFi 裝置遙測 | `unifi-device-telemetry*.js`、`server/integrations/unifi-device-thermal-ssh.js` |
 | UCG／Linux SSH | `server/integrations/ssh-command-stream.js`、`ssh-connection-pool.js` |
 | SQLite／設定 | `DATA_DIR`, `historyDb`, `db.js`, `server/storage/` |
@@ -20,7 +20,7 @@
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
 | Web Push | `server/routes/web-push-routes.js`、`server/services/web-push.js` |
 | PWA／同源資產 | `server/services/pwa-service-worker.js`、`server/routes/frontend-asset-routes.js` |
-| 健康與診斷 | `observability/health-routes.js` |
+| 健康與診斷 | `observability/health-routes.js`、`observability/operational-dependency.js` |
 | Scope 取樣 | `activity-lease.js`、`server/services/backend-sampler-registry.js`、`adaptive-sampler.js` |
 | 啟停生命週期 | `startServer`, `shutdown`, `server/storage/instance-lock.js` |
 
