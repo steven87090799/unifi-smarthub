@@ -1,0 +1,14 @@
+# Future-only NAS Monitor log access. This file is not part of the running NAS
+# Compose command. Add it as the last -f file only after target containers have
+# been explicitly marked with com.unifi.smarthub.nas-monitor.logs=true in their
+# own Compose configuration and the resulting logs_allowed list is reviewed.
+# SmartHub and nas-monitor carry a protected label and remain inaccessible.
+services:
+  nas-monitor:
+    environment:
+      NAS_MONITOR_LOGS_ENABLED: "true"
+      NAS_MONITOR_LOG_ALLOW_LABELS: com.unifi.smarthub.nas-monitor.logs=true
+      NAS_MONITOR_LOG_ALLOW_IDS: ""
+      NAS_MONITOR_MUTATIONS_ENABLED: "false"
+      NAS_MONITOR_ACTION_ALLOW_IDS: ""
+      NAS_MONITOR_ACTION_ALLOW_LABELS: ""

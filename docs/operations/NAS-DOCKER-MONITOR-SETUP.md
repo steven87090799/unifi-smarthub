@@ -47,6 +47,8 @@ NAS_MONITOR_LOG_ALLOW_LABELS=com.unifi.smarthub.nas-monitor.logs=true
 
 不要使用過寬 label。完整 64 字元 container ID 也可列入 allowlist，但重建後會失效。
 
+若要先準備 NAS 日誌權限、之後才啟用，可將 `docker-compose.nas-logs.opt-in.yml` 放在部署目錄但先不要加入執行中的 Compose 檔案清單。這份獨立 overlay 只在將來明確以最後一個 `-f` 加入時才啟用日誌 API；它只接受 `com.unifi.smarthub.nas-monitor.logs=true` 的容器，且維持容器啟停操作關閉。先在目標容器各自的 Compose YAML 加此 label，再檢查 NAS Monitor 清單中的 `logs_allowed`；沒有標記的容器不會因總開關開啟而被讀取。SmartHub 主服務與 NAS Monitor 自身的 `protected=true` 仍會阻止日誌讀取，不能用日誌 label 覆蓋。不要把這份 overlay 加入目前正式 Compose 命令，直到核對目標清單和部署窗口。
+
 4. Linux 查詢 socket GID：
 
 ```bash
