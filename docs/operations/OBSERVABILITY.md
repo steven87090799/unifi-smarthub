@@ -98,3 +98,4 @@ curl --user admin http://127.0.0.1:3000/api/system/status
 - AP 曲線按 deviceId 分開，以實際 history 資料繪製；Device SSH 溫度代表所有 thermal zones 最高值，並顯示各區域值。不能用 AP 晶片溫度直接當成 UCG CPU 溫度比較。
 - UCG telemetry 可沿用既有 UCG SSH sampler，限定 Controller host 與 UCG_IP 相符且只有一台 gateway；不新增 SSH 登入。保留原始取樣時間和 ucg_ssh 來源。
 - Radio 狀態合併 `radio_table_stats` 與設定表；不支援的溫度、空 radio/VAP 與未知欄位不顯示成虛構數值。
+- NAS Monitor 容器日誌只取清單中 `logs_allowed=true` 的容器。目前 NAS Compose 明確設定 `NAS_MONITOR_LOGS_ENABLED=false`，日誌端點因此回報 HTTP 403；不得每輪對未授權容器讀取日誌或把權限限制誤報為連線故障。這不會擴大 NAS 的日誌授權；容器狀態／資源監控仍可使用，但容器日誌告警在此部署中沒有啟用。

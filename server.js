@@ -145,6 +145,7 @@ const {
     createDockerLogSnapshot,
     dockerLogCacheKey,
     dockerLogNotificationsEnabled,
+    logAllowedContainers,
     selectTailLines
 } = require('./server/services/docker-log-snapshot');
 const { createNasLoginSingleflight } = require('./server/services/nas-login-singleflight');
@@ -1798,7 +1799,7 @@ async function collectDockerLogSnapshots({ notificationSettings } = {}) {
     const inventoryData = inventorySnapshot?.data ?? inventorySnapshot;
     const containers = containersFromPayload(inventoryData);
     const currentIds = new Set(
-        containers
+        logAllowedContainers(containers)
             .map(container => container?.id)
             .filter(Boolean)
             .map(String)
@@ -1806,7 +1807,7 @@ async function collectDockerLogSnapshots({ notificationSettings } = {}) {
     dockerLogSnapshot?.reconcile(currentIds);
 
     let collected = 0;
-    for (const container of containers.slice(0, 12)) {
+    for (const container of logAllowedContainers(containers)) {
         const containerId = String(container?.id || '');
         if (!containerId) continue;
         try {
@@ -1823,7 +1824,7 @@ async function collectDockerLogSnapshots({ notificationSettings } = {}) {
 }
 async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
     if (!nasMonConfigured()) return [];
-    const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
+    const selected = logAllowedContainers(containers, maxContainers);
     const results = await Promise.all(selected.map(async container => {
         try {
             const data = selectTailLines(readCollectorSnapshot(dockerLogCacheKey(container.id)), lines);
@@ -2196,7 +2197,7 @@ async function scanDockerNotifications(s) {
     // Inventory changes are authoritative for dynamic log keys.  Removal is
     // safe even while a request is in flight: invalidation fences its result
     // from the shared map and the old caller may still settle normally.
-    dockerLogSnapshot?.reconcile(currentIds);
+    dockerLogSnapshot?.reconcile(logAllowedContainers(containers).map(container => String(container.id)));
 
     const dockerLogScanGap = dockerLogFreshnessMs();
     if (dockerLogNotificationsEnabled(s) && Date.now() - lastDockerLogScanTs >= dockerLogScanGap) {
