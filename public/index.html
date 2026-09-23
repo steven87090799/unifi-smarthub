@@ -1680,6 +1680,8 @@
                                 <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">近 24 小時溫度紀錄</p>
                                 <span id="unifi-telemetry-history-count" class="text-[9px] text-slate-600 mono">0 點</span>
                             </div>
+                            <label class="text-[10px] text-slate-400">AP 溫度曲線範圍 <select aria-label="AP 溫度曲線範圍" data-handler-change="hTelemetryRange" class="bg-slate-950 text-slate-300 rounded-lg"><option value="1">近 1 小時</option><option value="6">近 6 小時</option><option value="24" selected>近 24 小時</option><option value="168">近 7 天</option></select></label>
+                            <div id="unifi-temperature-charts"></div>
                             <div id="unifi-telemetry-history" class="space-y-1.5 max-h-48 overflow-y-auto terminal-scroll">
                                 <p class="text-[10px] text-slate-500">尚無歷史資料</p>
                             </div>
@@ -4710,6 +4712,7 @@
                                 <p class="text-slate-400 mono">最低 <span id="ups-v-outv-min" class="text-slate-200">--</span> / 平均 <span id="ups-v-outv-avg" class="text-slate-200">--</span> / 最高 <span id="ups-v-outv-max" class="text-slate-200">--</span></p>
                             </div>
                         </div>
+                        <p id="ups-history-status" role="status" class="text-[10px] text-slate-400">歷史資料載入中</p>
                         <div class="h-64"><canvas id="upsVoltChart"></canvas></div>
                     </div>
 

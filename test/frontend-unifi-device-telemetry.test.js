@@ -16,7 +16,7 @@ test('telemetry UI is external-script driven, scope-aware, and renders truth and
     assert.match(html, /id="unifi-telemetry-state"/u);
     assert.match(html, /id="unifi-telemetry-last-success"/u);
     assert.match(app, /fetch\('\/api\/network\/devices\/telemetry'\)/u);
-    assert.match(app, /fetch\('\/api\/network\/devices\/telemetry\/history\?hours=24'\)/u);
+    assert.match(app, /telemetry\/history\?hours=\$\{unifiTemperatureHours\}/u);
     assert.match(app, /unifi-device-telemetry/u);
     assert.match(app, /unsupported: '不支援'/u);
     assert.match(app, /STALE · 保留最後成功資料/u);
