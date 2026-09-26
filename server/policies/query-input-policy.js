@@ -233,6 +233,10 @@ function parseWiimArtQuery(query) {
 }
 
 function parseHistoryHoursQuery(query, options = {}) {
+    if (isPlainObject(query) && Object.hasOwn(query, 'minutes')) {
+        const { minutes } = parseExactQuery(query, { minutes: integerField({ min: 1, max: (options.max ?? QUERY_LIMITS.historyHours.max) * 60 }) });
+        return { hours: minutes / 60 };
+    }
     return parseExactQuery(query, {
         hours: integerField({ ...QUERY_LIMITS.historyHours, ...options })
     });

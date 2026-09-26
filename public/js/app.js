@@ -1137,6 +1137,7 @@
             isp: { fn: () => fetchIspMetrics() }, nas: { fn: () => fetchNas() },
             nasAdvanced: { fn: ({ generation = navigationGeneration } = {}) => Promise.all([fetchNasAdvanced(), fetchNasCharts(), fetchNasAlerts({ generation }), fetchNasSleepStats()]).then(combineHydrationResults) },
             docker: { fn: () => fetchNasDocker() }, trend: { fn: () => fetchTrends() },
+            notifSettings: { fn: () => fetchNotifSettings() },
             notifLog: { fn: () => Promise.all([fetchNotifLog(), fetchWebPushState()]).then(combineHydrationResults) },
             reportLog: { fn: () => fetchReportLog() }, systemStatus: { fn: () => fetchSystemStatus() }, security: { fn: () => Promise.all([fetchSecuritySettings(), fetchBlockHistory()]).then(combineHydrationResults) },
             settings: { fn: () => fetchAppSettings({ retry: true }) }, connections: { fn: () => Promise.all([fetchConnections(), fetchConfigBackupStatus()]).then(combineHydrationResults) },
@@ -1173,7 +1174,7 @@
             ucg: ['hardware', 'ucgHist', 'ucgSpikes', 'switches', 'unifiTelemetry'],
             nas: ['nas', 'nasAdvanced', 'nasAlertConfig', 'docker'], wiim: ['wiimDeviceInfo'],
             ups: ['upsHistory', 'ppbEvents'], adguard: ['adguard'], linuxhost: ['linuxMon'], tools: [],
-            notify: ['notifLog'], settings: ['reportLog', 'systemStatus', 'security', 'settings', 'connections']
+            notify: ['notifSettings', 'notifLog'], settings: ['reportLog', 'systemStatus', 'security', 'settings', 'connections']
         };
         let wiimPageInitialized = false;
         function validatePollJobReferences() {
@@ -1996,41 +1997,63 @@
         function renderUnifiTelemetryDevice(device, snapshotStale) {
             const temperature = device?.temperature || {};
             const stale = snapshotStale || device?.freshness?.stale || temperature.stale;
-            const statusLabel = UNIFI_TEMPERATURE_STATUS[temperature.status] || '不支援';
-            const temperatureText = temperature.status === 'supported' && Number.isFinite(Number(temperature.value)) && !stale
-                ? `${Number(temperature.value).toFixed(1)}°C`
-                : `${statusLabel}${stale && temperature.status !== 'stale' ? ' · 舊值未採用' : ''}`;
-            const radios = Array.isArray(device?.radios) ? device.radios : [];
-            const vaps = Array.isArray(device?.vaps) ? device.vaps : [];
-            const radioSummary = radios.length
-                ? radios.map(radio => `${escapeHtml(radio.band || radio.name || 'Radio')} Ch ${escapeHtml(radio.channel ?? '--')} · ${telemetryNumber(radio.utilizationPercent, '%')}`).join('<br>')
-                : '無射頻資料';
-            const vapSummary = vaps.length
-                ? vaps.map(vap => `${escapeHtml(vap.ssid || '隱藏 SSID')} · ${vap.up ? 'Up' : 'Down'} · ${telemetryNumber(vap.clientCount)} 台`).join('<br>')
-                : '無 SSID/VAP 資料';
+            const cells = [];
+            const field = (label, value) => { if (value !== null && value !== undefined && value !== '') cells.push(`<div><p class="text-slate-600">${escapeHtml(label)}</p><p class="text-slate-300 mono">${escapeHtml(value)}</p></div>`); };
+            if (temperature.status !== 'unsupported') field('溫度', temperature.status === 'supported' && temperature.value != null
+                ? `${Number(temperature.value).toFixed(1)}°C${stale ? ' · 最後已知' : ''}`
+                : UNIFI_TEMPERATURE_STATUS[temperature.status] || '尚無資料');
+            if (device?.cpu?.value != null) field('CPU', telemetryNumber(device.cpu.value, '%', 1));
+            if (device?.clientCount != null) field('用戶端', telemetryNumber(device.clientCount));
+            if (device?.uplink?.state) field('上聯', [device.uplink.state, device.uplink.speedMbps != null ? `${device.uplink.speedMbps} Mbps` : null, device.uplink.duplex].filter(Boolean).join(' · '));
+            const bands = { ng: '2.4 GHz', na: '5 GHz', '6e': '6 GHz' };
+            for (const radio of device?.radios || []) {
+                const details = [radio.channel != null ? `Ch ${radio.channel}` : null, radio.channelWidthMhz != null ? `${radio.channelWidthMhz} MHz` : null,
+                    radio.utilizationPercent != null ? `使用率 ${radio.utilizationPercent}%` : null, radio.clientCount != null ? `${radio.clientCount} 台` : null].filter(Boolean);
+                if (details.length) field(bands[radio.band] || radio.name || 'Radio', details.join(' · '));
+            }
+            for (const vap of device?.vaps || []) field(`${vap.ssid || '隱藏 SSID'} (${bands[vap.radio] || vap.radio || 'WiFi'})`, `${vap.up ? 'Up' : 'Down'}${vap.clientCount != null ? ` · ${vap.clientCount} 台` : ''}`);
             const traffic = device?.traffic || {};
-            const packets = `${telemetryNumber(traffic.rxPackets)} / ${telemetryNumber(traffic.txPackets)}`;
-            const errors = `${telemetryNumber(traffic.rxErrors)} / ${telemetryNumber(traffic.txErrors)} / ${telemetryNumber(traffic.rxDropped)} / ${telemetryNumber(traffic.txDropped)}`;
-            const stateClass = device?.online ? 'text-emerald-400' : 'text-red-400';
-            return `<article class="rounded-xl border ${stale ? 'border-amber-500/30' : 'border-slate-800/70'} bg-slate-950/45 p-4">
-                <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0"><p class="text-xs font-bold text-slate-200 truncate">${escapeHtml(device?.name || device?.id || '未知設備')}</p>
-                    <p class="text-[9px] text-slate-500 mono truncate">${escapeHtml(device?.model || '--')} · ${escapeHtml(device?.firmware || '--')} · ${escapeHtml(device?.ip || '--')}</p></div>
-                    <span class="text-[9px] font-bold ${stateClass}">${device?.online ? 'Online' : 'Offline'}</span>
-                </div>
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-[10px]">
-                    <div><p class="text-slate-600">溫度</p><p class="font-bold ${temperature.status === 'supported' && !stale ? 'text-cyan-300' : 'text-slate-400'}">${escapeHtml(temperatureText)}</p></div>
-                    <div><p class="text-slate-600">CPU</p><p class="text-slate-300 mono">${telemetryNumber(device?.cpu?.value, '%', 1)}</p></div>
-                    <div><p class="text-slate-600">用戶端</p><p class="text-slate-300 mono">${telemetryNumber(device?.clientCount)}</p></div>
-                    <div><p class="text-slate-600">上聯</p><p class="text-slate-300 mono">${escapeHtml(device?.uplink?.state || '--')} · ${telemetryNumber(device?.uplink?.speedMbps, ' Mbps')} · ${escapeHtml(device?.uplink?.duplex || '--')}</p></div>
-                </div>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/60 text-[9px] text-slate-500">
-                    <p>Radio：<span class="text-slate-400">${radioSummary}</span></p>
-                    <p>SSID/VAP：<span class="text-slate-400">${vapSummary}</span></p>
-                    <p class="sm:col-span-2">RX/TX 封包：<span class="text-slate-400 mono">${packets}</span> · 錯誤/丟棄 RX/TX：<span class="text-slate-400 mono">${errors}</span></p>
-                </div>
-                <p class="text-[9px] text-slate-600 mt-2">流量 RX/TX：${escapeHtml(telemetryBytes(traffic.rxBytes))} / ${escapeHtml(telemetryBytes(traffic.txBytes))} · Uptime：${telemetryNumber(device?.uptimeSeconds, ' 秒')} · 溫度來源：${escapeHtml(temperature.source || '無')} · 取樣：${escapeHtml(telemetryTimestamp(temperature.sampledAt))}${device?.freshness?.errorReason ? ` · ${escapeHtml(device.freshness.errorReason)}` : ''}</p>
+            for (const [key, label] of Object.entries({ rxBytes: '累計接收', txBytes: '累計傳送' })) if (traffic[key] != null) field(label, telemetryBytes(traffic[key]));
+            if (device?.uptimeSeconds != null) field('運行時間', `${Math.floor(device.uptimeSeconds / 86400)} 天 ${Math.floor(device.uptimeSeconds % 86400 / 3600)} 小時`);
+            const source = { device_ssh: '設備 SSH · 全感測器最高值', ucg_ssh: 'UCG SSH · CPU', controller: 'Controller' }[temperature.source];
+            if (source) field('溫度來源', `${source} · ${telemetryTimestamp(temperature.sampledAt)}`);
+            for (const zone of device?.temperatureZones || []) if (zone.temperatureC != null) field(zone.type || zone.zone, `${zone.temperatureC}°C`);
+            return `<article class="rounded-xl border border-slate-800/70 bg-slate-950/45 p-4">
+                <p class="text-xs font-bold text-slate-200">${escapeHtml(device?.name || device?.id || '未知設備')} · ${stale ? 'STALE' : device?.online ? 'Online' : 'Offline'}</p>
+                <p class="text-[9px] text-slate-500 mono">${escapeHtml(device?.model || '')} · ${escapeHtml(device?.firmware || '')} · ${escapeHtml(device?.ip || '')}</p>
+                <div class="grid grid-cols-2 gap-2 mt-3 text-[10px]">${cells.join('')}</div>
             </article>`;
+        }
+        let unifiTemperatureHours = 24;
+        const unifiTemperatureCharts = new Map();
+        function renderUnifiTemperatureCharts(devices, rows) {
+            const wrap = document.getElementById('unifi-temperature-charts');
+            if (!wrap) return;
+            const aps = devices.filter(device => device.type === 'uap');
+            for (const [id, item] of unifiTemperatureCharts) if (!aps.some(device => device.id === id)) {
+                item.chart.destroy(); item.card.remove(); unifiTemperatureCharts.delete(id);
+            }
+            for (const device of aps) {
+                let item = unifiTemperatureCharts.get(device.id);
+                if (!item) {
+                    const card = document.createElement('article'); card.className = 'mt-5 p-4 border border-slate-800/60 rounded-xl';
+                    const title = document.createElement('h4'); title.className = 'text-sm font-bold text-slate-200';
+                    const summary = document.createElement('p'); summary.className = 'text-[10px] text-slate-500';
+                    const frame = document.createElement('div'); frame.style.height = '220px';
+                    const canvas = document.createElement('canvas'); canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', `${device.name} 獨立溫度歷史曲線`);
+                    frame.appendChild(canvas); card.append(title, summary, frame); wrap.appendChild(card);
+                    const chart = new Chart(canvas, { type: 'line', data: { labels: [], datasets: [{ label: '最高感測器溫度 (°C)', data: [], borderColor: '#22d3ee', pointRadius: 1, spanGaps: false }] },
+                        options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { title: { display: true, text: '°C' } } } } });
+                    item = { card, title, summary, chart }; unifiTemperatureCharts.set(device.id, item);
+                }
+                const samples = rows.filter(row => row.deviceId === device.id && row.temperatureStatus === 'supported' && row.temperature != null && Number.isFinite(Number(row.temperature)));
+                const plotted = downsampleRows(samples.map(row => ({ t: row.collectedAt, temperature: row.temperature })), ['temperature']);
+                item.title.textContent = `${device.name} · 獨立溫度歷史`;
+                item.summary.textContent = samples.length ? `近 ${unifiTemperatureHours} 小時 · ${samples.length} 點 · 全感測器最高值；${device.temperature?.stale ? '目前資料已過期' : '依後端取樣週期記錄'}` : '尚無有效溫度樣本';
+                item.chart.data.labels = plotted.map(row => new Date(row.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }));
+                item.chart.data.datasets[0].data = plotted.map(row => row.temperature);
+                item.chart.update('none');
+            }
         }
         async function fetchUnifiDeviceTelemetry() {
             const wrap = document.getElementById('unifi-telemetry-devices');
@@ -2038,12 +2061,13 @@
             try {
                 const [snapshotResponse, historyResponse] = await Promise.all([
                     fetch('/api/network/devices/telemetry'),
-                    fetch('/api/network/devices/telemetry/history?hours=24')
+                    fetch(`/api/network/devices/telemetry/history?hours=${unifiTemperatureHours}`)
                 ]);
                 if (!snapshotResponse.ok || !historyResponse.ok) throw new Error('telemetry request failed');
                 const snapshot = await snapshotResponse.json();
                 const historyPayload = await historyResponse.json();
                 const devices = Array.isArray(snapshot.devices) ? snapshot.devices : [];
+                renderUnifiTemperatureCharts(devices, Array.isArray(historyPayload.data) ? historyPayload.data : []);
                 wrap.innerHTML = devices.length
                     ? devices.map(device => renderUnifiTelemetryDevice(device, snapshot.stale)).join('')
                     : '<p class="text-xs text-slate-500 text-center py-6 xl:col-span-2">Controller 尚未回傳設備資料</p>';
@@ -3998,6 +4022,7 @@
 
         /* ==================== 通知推播 ==================== */
         let notifChannel = 'discord';
+        let notifSettingsLoaded = false;
 
         function setNotifChannel(ch) {
             notifChannel = ch;
@@ -4014,7 +4039,9 @@
 
         async function fetchNotifSettings() {
             try {
-                const s = await (await fetch('/api/notifications/settings')).json();
+                const response = await fetch('/api/notifications/settings');
+                if (!response.ok) throw new Error('通知設定讀取失敗');
+                const s = await response.json();
                 document.getElementById('notif-enabled').checked = !!s.enabled;
                 document.getElementById('notif-webpush-enabled').checked = !!s.webPushEnabled;
                 document.getElementById('notif-chatid').value = s.chatId || '';
@@ -4106,10 +4133,13 @@
                 document.getElementById('notif-webhook-set').classList.toggle('hidden', !s.webhookUrlSet);
                 document.getElementById('notif-token-set').classList.toggle('hidden', !s.botTokenSet);
                 setNotifChannel(s.channel || 'discord');
-            } catch (e) { console.error('notif settings fetch failed', e); }
+                notifSettingsLoaded = true;
+                return { ok: true };
+            } catch (error) { console.error('notif settings fetch failed', error); return { ok: false, retryable: true, error }; }
         }
 
         async function saveNotifSettings() {
+            if (!notifSettingsLoaded) return showToast('通知設定尚未成功載入，請重新進入此頁後再儲存', true);
             const body = {
                 enabled: document.getElementById('notif-enabled').checked,
                 webPushEnabled: document.getElementById('notif-webpush-enabled').checked,
@@ -5762,7 +5792,16 @@
             dbg('UPS', '圖表初始化完成');
         }
 
+        async function readUpsHistory(hours) {
+            const response = await fetch(`/api/ups/history?minutes=${Math.round(hours * 60)}`);
+            if (!response.ok) throw new Error(`UPS history HTTP ${response.status}`);
+            const payload = await response.json();
+            if (!Array.isArray(payload.history)) throw new Error('UPS history payload invalid');
+            return payload.history;
+        }
+        let upsHistoryGeneration = 0;
         async function fetchUps(options = {}) {
+            const historyGeneration = options.includeHistory === false ? null : ++upsHistoryGeneration;
             let firstError = null;
             // 即時狀態
             try {
@@ -5827,7 +5866,10 @@
             }
             // 歷史 + 事件
             try {
-                const h = (await (await fetch(`/api/ups/history?hours=${upsRangeHours}`)).json()).history || [];
+                const h = await readUpsHistory(upsRangeHours);
+                if (historyGeneration !== upsHistoryGeneration) return { ok: true, stale: true };
+                const historyState = document.getElementById('ups-history-status');
+                if (historyState) historyState.textContent = h.length ? `${h.length} 筆有效歷史資料` : '此時段尚無取樣資料';
                 dbg('UPS', `歷史 ${upsRangeHours}h →`, h.length, '點');
                 seedHeroChart(upsHeroChart, upsHeroLabels, [upsHeroBattData, upsHeroVoltData], h, [
                     point => point.batt, point => point.outV
@@ -5851,7 +5893,8 @@
                 vstat('inV', 'ups-v-inv'); vstat('outV', 'ups-v-outv');
                 // 電池/負載圖有自己的時間範圍;與電壓圖相同時共用資料省一次請求
                 const hl = upsLoadRangeHours === upsRangeHours ? h
-                    : ((await (await fetch(`/api/ups/history?hours=${upsLoadRangeHours}`)).json()).history || []);
+                    : await readUpsHistory(upsLoadRangeHours);
+                if (historyGeneration !== upsHistoryGeneration) return { ok: true, stale: true };
                 const fmtL = upsLoadRangeHours > 24
                     ? (p => new Date(p.t).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) + ' ' + new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }))
                     : (p => new Date(p.t).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }));
@@ -5863,6 +5906,10 @@
             } catch (error) {
                 firstError ||= error;
                 dbg('UPS', '歷史讀取失敗', error);
+                if (historyGeneration === upsHistoryGeneration) {
+                    const state = document.getElementById('ups-history-status');
+                    if (state) state.textContent = '歷史讀取失敗，保留上一張圖；稍後自動重試';
+                }
             }
             try {
                 const evs = (await (await fetch('/api/ups/events')).json()).events || [];
@@ -6358,6 +6405,7 @@ const STATIC_EVENT_HANDLERS = Object.freeze({
     "h170"(event) { wiimCmd('setLightOperationBrightConfig:' + encodeURIComponent(document.getElementById('wiim-lcd-json').value)) },
     "h171"(event) { refreshWiimAccessories(this) },
     "h172"(event) { fetchWiimDeviceInfo() },
+    "hTelemetryRange"(event) { unifiTemperatureHours = Number(this.value); fetchUnifiDeviceTelemetry(); },
     "h173"(event) { setUpsRange(1/6, this) },
     "h174"(event) { setUpsRange(0.5, this) },
     "h175"(event) { setUpsRange(1, this) },

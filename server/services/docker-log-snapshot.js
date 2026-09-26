@@ -41,6 +41,11 @@ function dockerLogCacheKey(id) {
     return `${DOCKER_LOG_CACHE_PREFIX}${String(id)}`;
 }
 
+function logAllowedContainers(containers, max = 12) {
+    if (!Array.isArray(containers)) return [];
+    return containers.filter(container => container?.id && container.logs_allowed === true).slice(0, max);
+}
+
 function normalizeContainerIds(containerIds) {
     if (containerIds == null) return new Set();
     if (typeof containerIds === 'string' || typeof containerIds[Symbol.iterator] !== 'function') {
@@ -114,6 +119,7 @@ module.exports = {
     createDockerLogSnapshot,
     dockerLogCacheKey,
     dockerLogNotificationsEnabled,
+    logAllowedContainers,
     normalizeContainerIds,
     normalizeRequestedLines,
     selectTailText,
