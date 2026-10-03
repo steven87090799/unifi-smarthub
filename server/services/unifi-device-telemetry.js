@@ -70,14 +70,20 @@ function findTemperature(device) {
 
 function normalizeRadios(device) {
     const radios = Array.isArray(device?.radio_table) ? device.radio_table : [];
-    return radios.slice(0, 16).map((radio, index) => ({
-        name: boundedText(radio?.name || radio?.radio || `radio-${index + 1}`, 32),
-        band: boundedText(radio?.radio || radio?.band || '', 16) || null,
-        channel: finiteNumber(radio?.channel, { min: 0, max: 10000, integer: true }),
-        channelWidthMhz: finiteNumber(radio?.channel_width ?? radio?.ht, { min: 1, max: 1000, integer: true }),
-        utilizationPercent: finiteNumber(radio?.cu_total ?? radio?.channel_utilization, { min: 0, max: 100 }),
-        clientCount: finiteNumber(radio?.num_sta, { min: 0, max: 100000, integer: true })
-    }));
+    const liveStats = Array.isArray(device?.radio_table_stats) ? device.radio_table_stats : [];
+    return radios.slice(0, 16).map((config, index) => {
+        const stats = liveStats.find(item => item && ((config.name && item.name === config.name)
+            || (item.radio && item.radio === config.radio))) || {};
+        const radio = { ...config, ...Object.fromEntries(Object.entries(stats).filter(([, value]) => value != null)) };
+        return {
+            name: boundedText(radio?.name || radio?.radio || `radio-${index + 1}`, 32),
+            band: boundedText(radio?.radio || radio?.band || '', 16) || null,
+            channel: finiteNumber(radio?.channel, { min: 0, max: 10000, integer: true }),
+            channelWidthMhz: finiteNumber(radio?.channel_width ?? radio?.ht, { min: 1, max: 1000, integer: true }),
+            utilizationPercent: finiteNumber(radio?.cu_total ?? radio?.channel_utilization, { min: 0, max: 100 }),
+            clientCount: finiteNumber(radio?.num_sta, { min: 0, max: 100000, integer: true })
+        };
+    });
 }
 
 function normalizeVaps(device) {
@@ -121,7 +127,7 @@ function temperatureFor(device, direct, collectedAt) {
         return {
             value: direct.thermal.maxTemperatureC,
             status: 'supported',
-            source: 'device_ssh',
+            source: direct.source || 'device_ssh',
             sourceField: direct.thermal.source?.path || '/sys/class/thermal/thermal_zone*/temp',
             sampledAt: direct.thermal.sampledAt || direct.lastSuccessAt || collectedAt,
             stale: false
@@ -162,7 +168,7 @@ function normalizeDevice(device, direct, collectedAt) {
         uplink: {
             deviceId: boundedText(uplink.uplink_mac || uplink.mac, 128).toLowerCase() || null,
             port: finiteNumber(uplink.uplink_remote_port ?? uplink.port_idx ?? uplink.port, { min: 0, max: 65535, integer: true }),
-            state: online && (uplink.up === true || uplink.up === 1 || uplink.up === '1' || String(uplink.state).toLowerCase() === 'up') ? 'up' : 'down',
+            state: !Object.keys(uplink).length ? null : online && (uplink.up === true || uplink.up === 1 || uplink.up === '1' || String(uplink.state).toLowerCase() === 'up') ? 'up' : 'down',
             speedMbps: linkSpeed?.value ?? null,
             duplex: uplink.full_duplex === true || uplink.full_duplex === 1 || String(uplink.duplex).toLowerCase() === 'full'
                 ? 'full'
@@ -180,7 +186,7 @@ function normalizeDevice(device, direct, collectedAt) {
         },
         radios,
         vaps,
-        clientCount: clientCount?.value ?? radios.reduce((sum, radio) => sum + (radio.clientCount || 0), 0),
+        clientCount: clientCount?.value ?? (radios.some(radio => radio.clientCount !== null) ? radios.reduce((sum, radio) => sum + (radio.clientCount || 0), 0) : null),
         cpu: cpu ? { value: cpu.value, unit: 'percent', sourceField: cpu.sourceField } : null,
         temperature: {
             value: temperature.value,

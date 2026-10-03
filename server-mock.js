@@ -387,7 +387,11 @@ const mockUnifiTelemetryDevices = Object.freeze([
         cpu: { value: 27.5, unit: 'percent', sourceField: 'system-stats.cpu' },
         temperature: { value: 61.5, unit: 'celsius', status: 'supported', source: 'device_ssh', sourceField: '/sys/class/thermal/thermal_zone*/temp', sampledAt: new Date().toISOString(), stale: false },
         temperatureZones: [{ zone: 'thermal_zone0', type: 'soc', temperatureC: 61.5, rawMilliCelsius: 61500 }], hostKeyPinned: true
-    }
+    },
+    { id: 'aa:bb:cc:dd:ee:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm',
+      firmware: '5.1.33', ip: '192.168.1.1', online: true, uptimeSeconds: 86400,
+      uplink: { state: 'up', speedMbps: 1000, duplex: 'full' }, traffic: {}, radios: [], vaps: [], clientCount: 25,
+      cpu: { value: 12, unit: 'percent' }, temperature: { value: 52, unit: 'celsius', status: 'supported', source: 'ucg_ssh', sampledAt: new Date().toISOString(), stale: false }, temperatureZones: [] }
 ]);
 
 function mockTelemetrySnapshot() {

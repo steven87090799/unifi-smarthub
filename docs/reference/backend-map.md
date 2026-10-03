@@ -20,7 +20,7 @@
 | 威脅 IP 封鎖 | `server/policies/threat-ip-policy.js`、`server/services/threat-ip-blocking.js` |
 | Web Push | `server/routes/web-push-routes.js`、`server/services/web-push.js` |
 | PWA／同源資產 | `server/services/pwa-service-worker.js`、`server/routes/frontend-asset-routes.js` |
-| 健康與診斷 | `observability/health-routes.js`、`observability/operational-dependency.js` |
+| 健康與診斷 | `observability/health-routes.js`、`observability/operational-dependency.js`、`server/services/connection-observation.js` |
 | Scope 取樣 | `activity-lease.js`、`server/services/backend-sampler-registry.js`、`adaptive-sampler.js` |
 | 啟停生命週期 | `startServer`, `shutdown`, `server/storage/instance-lock.js` |
 

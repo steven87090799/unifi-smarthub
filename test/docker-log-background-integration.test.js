@@ -147,13 +147,14 @@ test('server Docker background gate, manual API, and watcher isolation use share
         alerts: 0
     };
     let malformedInventory = false;
+    let logsAllowed = true;
     const monitor = http.createServer((req, res) => {
         const requestUrl = new URL(req.url, 'http://127.0.0.1');
         if (requestUrl.pathname === '/api/docker/containers') {
             counters.inventory += 1;
             if (malformedInventory) return json(res, 200, { data: { invalid: true } });
             return json(res, 200, {
-                containers: [{ id: 'container-a', name: 'integration-a', state: 'running' }]
+                containers: [{ id: 'container-a', name: 'integration-a', state: 'running', logs_allowed: logsAllowed }]
             });
         }
         if (requestUrl.pathname === '/api/docker/containers/container-a/logs') {
@@ -243,6 +244,13 @@ test('server Docker background gate, manual API, and watcher isolation use share
         });
         assert.ok(counters.inventory > 0);
         assert.ok(counters.logs > 0);
+
+        // An inventory item without log permission must not be probed again.
+        logsAllowed = false;
+        const beforeDenied = counters.logs;
+        await promptNasSampling(runtime);
+        await sleep(300);
+        assert.equal(counters.logs, beforeDenied);
 
         // Case B: globally disabled settings clear the background cache and do not
         // create a new log upstream request.

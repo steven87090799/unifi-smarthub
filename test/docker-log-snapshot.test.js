@@ -7,6 +7,7 @@ const {
     DOCKER_LOG_CANONICAL_LINES,
     createDockerLogSnapshot,
     dockerLogNotificationsEnabled,
+    logAllowedContainers,
     selectTailText
 } = require('../server/services/docker-log-snapshot');
 
@@ -15,6 +16,12 @@ const deferred = () => {
     const promise = new Promise(nextResolve => { resolve = nextResolve; });
     return { promise, resolve };
 };
+
+test('background log selection respects the monitor allowlist before limiting containers', () => {
+    const inventory = Array.from({ length: 14 }, (_, index) => ({ id: `container-${index}`, logs_allowed: index >= 12 }));
+    assert.deepEqual(logAllowedContainers(inventory).map(container => container.id), ['container-12', 'container-13']);
+    assert.deepEqual(logAllowedContainers([{ id: 'a' }, { id: 'b', logs_allowed: false }]), []);
+});
 
 test('text tails remove only the terminal newline delimiter', () => {
     assert.equal(selectTailText('line-1\nline-2\n', 1), 'line-2');

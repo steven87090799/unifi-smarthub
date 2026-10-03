@@ -306,8 +306,9 @@ async function fetchArtwork(value, {
                 response.data?.destroy?.();
                 throw new Error('Artwork request failed');
             }
-            const type = String(response.headers?.['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
-            if (!IMAGE_TYPE.test(type)) {
+            let type = String(response.headers?.['content-type'] || '').split(';', 1)[0].trim().toLowerCase();
+            const deviceWithoutMime = !type && configuredLiteralAllowed(target.url.hostname, target.url.hostname, allowedPrivateAddresses);
+            if (!IMAGE_TYPE.test(type) && !deviceWithoutMime) {
                 response.data?.destroy?.();
                 throw new Error('Artwork response is not an image');
             }
@@ -316,7 +317,13 @@ async function fetchArtwork(value, {
                 response.data?.destroy?.();
                 throw new Error('Artwork exceeds the download limit');
             }
-            return { type, buffer: await readLimitedStream(response.data, maxBytes, signal) };
+            const buffer = await readLimitedStream(response.data, maxBytes, signal);
+            if (deviceWithoutMime) {
+                if (buffer.length >= 3 && buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) type = 'image/jpeg';
+                else if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) type = 'image/png';
+                else throw new Error('Artwork response is not a recognized image');
+            }
+            return { type, buffer };
         } finally {
             agent.destroy?.();
         }

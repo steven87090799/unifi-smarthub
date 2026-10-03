@@ -57,7 +57,10 @@ function telegramError(error) {
     if (status === 400 && /chat not found/i.test(description || '')) {
         return new Error('Telegram：找不到聊天室。Chat ID 必須是數字 (不是 bot 名稱)，且你要先在 Telegram 對這個 bot 送出任一訊息，再按「偵測 Chat ID」');
     }
-    return new Error(`Telegram ${status || ''}: ${description || error?.message || 'delivery failed'}`);
+    const codes = [...new Set([error?.code, ...(error?.errors || []).map(item => item?.code)].filter(code => typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code)))];
+    const failure = new Error(`Telegram ${status || codes.join('/') || 'transport'}: ${description || error?.message || 'network connection failed'}`);
+    if (codes.length) failure.code = codes[0];
+    return failure;
 }
 
 function createNotificationDispatcher({ httpClient } = {}) {

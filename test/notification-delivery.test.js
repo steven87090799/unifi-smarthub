@@ -150,3 +150,13 @@ test('Web Push success cannot erase an ambiguous partial primary delivery', asyn
         title: 'Alert', body: 'Body', settings: { webPushEnabled: true }
     }), error => error === partial);
 });
+
+test('Telegram preserves bounded AggregateError network codes without leaking transport URLs', async () => {
+    const rejected = new AggregateError([{code:'ENETUNREACH'}, {code:'ETIMEDOUT'}]);
+    rejected.code='ETIMEDOUT';
+    const dispatch=createNotificationDispatcher({httpClient:fakeHttp([rejected])});
+    await assert.rejects(dispatch('title','body',{channel:'telegram',botToken:'private-token',chatId:'123'}),error=>{
+        assert.match(error.message,/ETIMEDOUT\/ENETUNREACH/); assert.doesNotMatch(error.message,/private-token/);
+        assert.equal(error.code,'ETIMEDOUT');return true;
+    });
+});

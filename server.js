@@ -77,6 +77,8 @@ const {
     dispatchNotificationFanout
 } = require('./server/integrations/notification-delivery');
 const writeInput = require('./server/policies/write-input-policy');
+const { connectionObservation } = require('./server/services/connection-observation');
+const { isIP } = require('node:net');
 const queryInput = require('./server/policies/query-input-policy');
 const threatIpPolicy = require('./server/policies/threat-ip-policy');
 const adguardServicePolicy = require('./server/policies/adguard-service-policy');
@@ -143,6 +145,7 @@ const {
     createDockerLogSnapshot,
     dockerLogCacheKey,
     dockerLogNotificationsEnabled,
+    logAllowedContainers,
     selectTailLines
 } = require('./server/services/docker-log-snapshot');
 const { createNasLoginSingleflight } = require('./server/services/nas-login-singleflight');
@@ -1358,7 +1361,7 @@ function deviceCollectorSnapshot(name) {
 function readCollectorSnapshot(name, { requireHealthy = true } = {}) {
     const snapshot = deviceCollectorSnapshot(name);
     if (!snapshot || snapshot.data === undefined) throw new Error(`${name} snapshot unavailable`);
-    if (requireHealthy && snapshot.healthy !== true) throw new Error(`${name} snapshot is stale or offline`);
+    if (requireHealthy && connectionObservation(snapshot, collectorFreshnessMs(name)) !== true) throw new Error(`${name} snapshot is stale or offline`);
     return snapshot.data;
 }
 function saveAppSettings(next) {
@@ -1796,7 +1799,7 @@ async function collectDockerLogSnapshots({ notificationSettings } = {}) {
     const inventoryData = inventorySnapshot?.data ?? inventorySnapshot;
     const containers = containersFromPayload(inventoryData);
     const currentIds = new Set(
-        containers
+        logAllowedContainers(containers)
             .map(container => container?.id)
             .filter(Boolean)
             .map(String)
@@ -1804,7 +1807,7 @@ async function collectDockerLogSnapshots({ notificationSettings } = {}) {
     dockerLogSnapshot?.reconcile(currentIds);
 
     let collected = 0;
-    for (const container of containers.slice(0, 12)) {
+    for (const container of logAllowedContainers(containers)) {
         const containerId = String(container?.id || '');
         if (!containerId) continue;
         try {
@@ -1821,7 +1824,7 @@ async function collectDockerLogSnapshots({ notificationSettings } = {}) {
 }
 async function readDockerLogFindings(containers, { lines = 120, maxContainers = 12, maxPerContainer = 8 } = {}) {
     if (!nasMonConfigured()) return [];
-    const selected = containers.filter(c => c && c.id).slice(0, maxContainers);
+    const selected = logAllowedContainers(containers, maxContainers);
     const results = await Promise.all(selected.map(async container => {
         try {
             const data = selectTailLines(readCollectorSnapshot(dockerLogCacheKey(container.id)), lines);
@@ -2194,7 +2197,7 @@ async function scanDockerNotifications(s) {
     // Inventory changes are authoritative for dynamic log keys.  Removal is
     // safe even while a request is in flight: invalidation fences its result
     // from the shared map and the old caller may still settle normally.
-    dockerLogSnapshot?.reconcile(currentIds);
+    dockerLogSnapshot?.reconcile(logAllowedContainers(containers).map(container => String(container.id)));
 
     const dockerLogScanGap = dockerLogFreshnessMs();
     if (dockerLogNotificationsEnabled(s) && Date.now() - lastDockerLogScanTs >= dockerLogScanGap) {
@@ -2245,18 +2248,11 @@ async function notificationWatcher() {
     }
     // UniFi 本地控制器離線 / 恢復 (只在使用者開啟時額外做驗證，避免增加預設輪詢成本)
     if (s.triggerUnifiOffline) {
-        let ok = false;
-        try {
-            readCollectorSnapshot('unifi.health');
-            ok = true;
-        }
-        catch (error) {
-            logRecoverableFailure('watcher.unifiOffline', error, { module: 'watcher.notifications', function: 'checkUnifiOnline', code: ERROR_CODES.EXT_UNIFI_FAILED });
-        }
-        if (unifiWasOnline !== null && ok !== unifiWasOnline && notifBootstrapped) {
+        const ok = connectionObservation(deviceCollectorSnapshot('unifi.health'), collectorFreshnessMs('unifi.health'));
+        if (ok !== null && unifiWasOnline !== null && ok !== unifiWasOnline && notifBootstrapped) {
             await notify(ok ? '✅ UniFi 控制器已恢復連線' : '🌐 UniFi 控制器失去連線', ok ? '本地控制器登入驗證恢復正常' : '無法向本地控制器建立登入 Session，請檢查控制器、網路與帳密');
         }
-        unifiWasOnline = ok;
+        if (ok !== null) unifiWasOnline = ok;
     }
     // UniFi 管理裝置（AP / Switch / Gateway）離線與恢復；首輪建立基準不推送既有狀態。
     if (s.triggerNetworkDeviceOffline || s.triggerUnifiUpgrade) {
@@ -2348,18 +2344,11 @@ async function notificationWatcher() {
     }
     // NAS 原生 API 離線 / 恢復
     if (s.triggerNasOffline && nasConfigured()) {
-        let ok = false;
-        try {
-            readCollectorSnapshot('nas.common');
-            ok = true;
-        }
-        catch (error) {
-            logRecoverableFailure('watcher.nasOffline', error, { module: 'watcher.notifications', function: 'checkNasOnline', code: ERROR_CODES.EXT_NAS_FAILED });
-        }
-        if (nasWasOnline !== null && ok !== nasWasOnline && notifBootstrapped) {
+        const ok = connectionObservation(deviceCollectorSnapshot('nas.common'), collectorFreshnessMs('nas.common'));
+        if (ok !== null && nasWasOnline !== null && ok !== nasWasOnline && notifBootstrapped) {
             await notify(ok ? '✅ NAS 已恢復連線' : '💾 NAS 失去連線', ok ? 'UGOS Pro API 恢復回應' : 'NAS 原生 API 無回應，請檢查 NAS、網路與帳密');
         }
-        nasWasOnline = ok;
+        if (ok !== null) nasWasOnline = ok;
     }
     // WiiM 溫度超標推播 (30 分鐘冷卻，避免洗版)
     if (s.triggerWiimTemp !== false) {
@@ -2381,6 +2370,7 @@ async function notificationWatcher() {
                 if (!c.mac) continue;
                 seenClients.add(c.mac);
                 const ip = String(c.ip || '').trim();
+                const addressKey = `${c.mac}:${isIP(ip)}`;
                 const rssi = Number(c.rssi);
                 const presence = clientPresenceStates.get(c.mac);
                 if (s.triggerClientConnectivity && notifBootstrapped && presence && presence.online === false) {
@@ -2395,20 +2385,20 @@ async function notificationWatcher() {
                 // 首輪只建立既有設備基準；後續的新設備則等待 DHCP/UniFi 回報有效 IP。
                 if (!notifBootstrapped) {
                     knownClientMacs.add(c.mac);
-                    if (ip && ip !== '0.0.0.0') clientIpByMac.set(c.mac, ip);
+                    if (ip && ip !== '0.0.0.0') clientIpByMac.set(addressKey, ip);
                     continue;
                 }
                 if (knownClientMacs.has(c.mac)) {
-                    const previousIp = clientIpByMac.get(c.mac);
+                    const previousIp = clientIpByMac.get(addressKey);
                     if (s.triggerClientIpChange && ip && ip !== '0.0.0.0' && previousIp && previousIp !== ip) {
                         await notify('🔁 網路設備 IP 已變更', `${c.name || c.hostname || c.mac}\n${previousIp} → ${ip} · ${c.is_wired ? '有線' : 'WiFi'}`);
                     }
-                    if (ip && ip !== '0.0.0.0') clientIpByMac.set(c.mac, ip);
+                    if (ip && ip !== '0.0.0.0') clientIpByMac.set(addressKey, ip);
                     continue;
                 }
                 if (!ip || ip === '0.0.0.0') continue;
                 knownClientMacs.add(c.mac);
-                clientIpByMac.set(c.mac, ip);
+                clientIpByMac.set(addressKey, ip);
                 if (s.triggerNewClient) await notify('📱 新設備連上網路', `${c.name || c.hostname || c.mac}\nIP ${ip} · ${c.is_wired ? '有線' : 'WiFi'}`);
             }
             if (s.triggerClientConnectivity) {
@@ -2426,19 +2416,11 @@ async function notificationWatcher() {
     }
     // WiiM 離線/恢復 (轉態才通知)
     if (s.triggerWiimOffline && wiimIP) {
-        let ok = false;
-        try {
-            const result = wiimClient.peek('getStatusEx');
-            ok = Boolean(result && (result.source === 'live' || result.source === 'fresh_cache') && wiimClient.health('getStatusEx')?.online === true);
-        }
-        catch (error) {
-            ok = false;
-            logRecoverableFailure('watcher.wiimOffline', error, { module: 'watcher.notifications', function: 'checkWiimOnline', code: ERROR_CODES.EXT_WIIM_FAILED });
-        }
-        if (wiimWasOnline !== null && ok !== wiimWasOnline && notifBootstrapped) {
+        const ok = connectionObservation(wiimClient.health('getStatusEx'), samplingPolicy.deviceMs('wiim'));
+        if (ok !== null && wiimWasOnline !== null && ok !== wiimWasOnline && notifBootstrapped) {
             await notify(ok ? '🔊 WiiM 已恢復連線' : '🔇 WiiM 失去連線', `裝置 IP ${wiimIP}`);
         }
-        wiimWasOnline = ok;
+        if (ok !== null) wiimWasOnline = ok;
     }
     if (wiimIP && (s.triggerWiimHighVolume || s.triggerWiimPlaybackChange)) {
         try {
@@ -2649,10 +2631,11 @@ async function notificationWatcher() {
             d = null;
             logRecoverableFailure('watcher.linux', error, { module: 'watcher.notifications', function: 'checkLinux', code: ERROR_CODES.EXT_LINUX_FAILED });
         }
-        if (s.triggerLinuxOffline && lnxWasOnline !== null && (!!d) !== lnxWasOnline && notifBootstrapped) {
-            await notify(d ? '🖥️ 小主機已恢復連線' : '🖥️ 小主機失去連線', `${process.env.LINUX_HOST} (SSH)`);
+        const linuxOnline = connectionObservation(deviceCollectorSnapshot('linux.stats'), collectorFreshnessMs('linux.stats'));
+        if (linuxOnline !== null && s.triggerLinuxOffline && lnxWasOnline !== null && linuxOnline !== lnxWasOnline && notifBootstrapped) {
+            await notify(linuxOnline ? '🖥️ 小主機已恢復連線' : '🖥️ 小主機失去連線', `${process.env.LINUX_HOST} (SSH)`);
         }
-        lnxWasOnline = !!d;
+        if (linuxOnline !== null) lnxWasOnline = linuxOnline;
         if (d && s.triggerLinuxTemp !== false && d.cpuTemp != null && d.cpuTemp >= (s.linuxTempAlert ?? 70)
             && Date.now() - lastLinuxTempTs > 30 * 60 * 1000) {
             lastLinuxTempTs = Date.now();
@@ -2826,6 +2809,21 @@ async function collectUnifiDeviceTelemetrySnapshot() {
         }
         directThermalByDevice.set(id, await unifiDeviceThermalCollector.collect(device));
     }));
+    // Reuse the existing UCG SSH sampler only when this Controller is the
+    // configured gateway and its device list has one unambiguous gateway.
+    const gateways = rawDevices.filter(device => ['udm', 'ugw'].includes(device.type));
+    const hardware = deviceCollectorSnapshot('ucg.hardware');
+    let controllerHost = null;
+    try { controllerHost = new URL(process.env.UNIFI_CONTROLLER_URL).hostname; } catch { /* unconfigured */ }
+    if (gateways.length === 1 && controllerHost === process.env.UCG_IP
+        && connectionObservation(hardware, collectorFreshnessMs('ucg.hardware')) === true
+        && hardware.data?.cpuTemp != null && Number.isFinite(Number(hardware.data.cpuTemp))) {
+        directThermalByDevice.set(normalizeDeviceId(gateways[0].mac || gateways[0]._id), {
+            selected: true, status: 'supported', source: 'ucg_ssh',
+            thermal: { maxTemperatureC: Number(hardware.data.cpuTemp),
+                sampledAt: new Date(hardware.lastSuccessAt).toISOString(), source: { path: 'UCG CPU thermal sensor' } }
+        });
+    }
     const collectedAt = new Date().toISOString();
     return presentUnifiDeviceTelemetry(rawDevices, { collectedAt, directThermalByDevice });
 }
@@ -6339,8 +6337,11 @@ registerHealthRoutes(app, {
         const linuxCollector = deviceCollectorSnapshot('linux.stats');
         const notificationSettings = loadNotifSettings();
         const recentReports = historyDb.listReportRuns(20);
-        const successfulReport = recentReports.find(report => report.deliveryStatus === 'sent');
-        const failedReports = recentReports.filter(report => ['failed', 'partial'].includes(report.deliveryStatus) && (!successfulReport || report.completedAt > successfulReport.completedAt));
+        const deliveries = [...recentReports.filter(report => ['sent', 'failed', 'partial'].includes(report.deliveryStatus)).map(report => ({ ts: report.completedAt, ok: report.deliveryStatus === 'sent' })),
+            ...notifLog.map(entry => ({ ts: entry.ts, ok: entry.ok && !entry.partial && !entry.fallback }))]
+            .filter(entry => Number.isFinite(Date.parse(entry.ts))).sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
+        const successfulReport = deliveries.find(entry => entry.ok);
+        const failedReports = deliveries.filter(entry => !entry.ok && (!successfulReport || Date.parse(entry.ts) > Date.parse(successfulReport.ts)));
         const notificationConfigured = notificationSettings.enabled === true && (
             notificationSettings.channel === 'telegram'
                 ? Boolean(notificationSettings.botToken && notificationSettings.chatId)
@@ -6366,7 +6367,7 @@ registerHealthRoutes(app, {
             adguard: operationalDependency({ configured: dependencyConfigured.adguard, lastSuccessAt: adgLastOkTs || null, lastFailureAt: adgLastFailureAt, consecutiveFailures: adgConsecutiveFailures, staleAfterMs: Math.max(deviceSampleMs('trend') * 3, 180_000), detail: adgConfigured() ? 'last sampler result' : null }),
             linux: operationalDependency({ configured: dependencyConfigured.linux, lastSuccessAt: linuxCollector?.lastSuccessAt || null, lastFailureAt: linuxCollector?.lastErrorAt || linuxLastFailureAt, consecutiveFailures: linuxCollector?.consecutiveFailures ?? linuxConsecutiveFailures, staleAfterMs: Math.max((linuxCollector?.freshnessMs || 60_000) * 3, 180_000), detail: linuxCollector?.healthy === false ? 'stale or offline snapshot' : 'read-only SSH sampler' }),
             wiim: operationalDependency({ configured: dependencyConfigured.wiim, lastSuccessAt: wiim?.lastSuccessAt, lastFailureAt: wiim?.lastErrorAt, consecutiveFailures: wiim?.consecutiveFailures, staleAfterMs: Math.max(deviceSampleMs('wiim') * 3, 180_000), detail: 'last status request; freshness follows sampler interval' }),
-            notification_transport: operationalDependency({ configured: notificationConfigured, lastSuccessAt: successfulReport?.completedAt || null, lastFailureAt: failedReports[0]?.completedAt || null, consecutiveFailures: failedReports.length, staleAfterMs: Infinity, detail: notificationConfigured ? 'last persisted report delivery; not a live transport probe' : 'no notification channel configured' })
+            notification_transport: operationalDependency({ configured: notificationConfigured, lastSuccessAt: successfulReport?.ts || null, lastFailureAt: failedReports[0]?.ts || null, consecutiveFailures: failedReports.length, staleAfterMs: Infinity, detail: notificationConfigured ? 'last actual notification/report delivery; not a live transport probe' : 'no notification channel configured' })
         };
         observeOperationalDependencies(dependencies);
         const statuses = Object.values(dependencies).map(entry => entry.status);

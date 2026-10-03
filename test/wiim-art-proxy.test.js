@@ -234,3 +234,14 @@ test('artwork fetcher deduplicates keys and bounds active work and queue', async
     assert.equal(fetcher.queued(), 0);
     assert.equal(fetcher.inFlight(), 0);
 });
+
+test('configured WiiM without Content-Type accepts JPEG signature, rejects non-images and public missing MIME', async () => {
+    const bytes = Buffer.from([0xff,0xd8,0xff,0xdb,0,4,1,2,0xff,0xd9]);
+    const options = { allowedPrivateAddresses:['192.168.1.22'], allowInsecureTls:true,
+        axiosInstance:{get:async()=>({status:200,headers:{},data:Readable.from([bytes])})} };
+    const result = await fetchArtwork('https://192.168.1.22/data/AirplayArtWorkData.jpeg',options);
+    assert.equal(result.type,'image/jpeg'); assert.deepEqual(result.buffer,bytes);
+    await assert.rejects(fetchArtwork('https://192.168.1.22/art', {...options,axiosInstance:{get:async()=>({status:200,headers:{},data:image('<html>not an image</html>')})}}),/recognized image/);
+    await assert.rejects(fetchArtwork('https://8.8.8.8/art',options),/not an image/);
+    await assert.rejects(fetchArtwork('https://192.168.1.22/art',{...options,maxBytes:4}),/limit/);
+});
