@@ -38,7 +38,7 @@ npm test
 npm run check:js
 npm run check:css
 npm run test:smoke
-npm audit --audit-level=low
+npm audit --omit=dev --audit-level=low
 git diff --check
 docker compose --env-file config/.env \
   -f docker-compose.yml -f docker-compose.build.yml config --quiet
@@ -77,11 +77,11 @@ node --test \
   test/release-build.test.js
 ```
 
-任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。Low／Moderate／High／Critical 任一 audit finding 都不得放行。runtime／release scope 的 `SmartHub CI / Repository gate` 另以 pinned Gitleaks binary、`fetch-depth: 0` 與 `--log-opts=--all` 掃描完整 Git history；所有 scope 仍掃描當前樹，不得把 secret report 寫入 log。
+任何失敗先保存第一個證據並找 root cause，不要只重跑到綠燈。正式依賴稽核使用 `npm audit --omit=dev --audit-level=low`，該正式依賴樹中的 Low／Moderate／High／Critical finding 都不得放行；這項 gate 不代表開發工具依賴也沒有已知漏洞。runtime／release scope 的 `SmartHub CI / Repository gate` 另以 pinned Gitleaks binary、`fetch-depth: 0` 與 `--log-opts=--all` 掃描完整 Git history；所有 scope 仍掃描當前樹，不得把 secret report 寫入 log。
 
 本次 production blockers 修復不執行本機 test、install、audit、build、Docker、runtime 或實機驗證；唯一驗證權威是 GitHub Actions exact-head gate。Hosted mock／isolated checks 也不等同真實設備、PPB、AdGuard、WiiM、SSH、Docker socket、disaster recovery 或 24／72 小時 acceptance。
 
-Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 先依變更 scope 分流；runtime／release scope 在 locked install、測試、CSS、low-level audit、Compose 與雙映像 build 後，以實際 Compose image 執行 `RUNTIME_SMOKE_BASE_URL=http://127.0.0.1:3000 npm run test:smoke`，驗證 readiness、登入、CSRF、權限與 restart persistence，並執行 blocking short soak。文件／測試-only scope 不建置未受影響的 image。Hosted gate 不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 已設定 branch protection，將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失則記為 `NOT RUN`。
+Pull Request 的 GitHub Actions workflow 為 `SmartHub CI`，check 名稱為 `Repository gate`。Hosted gate 先依變更 scope 分流；runtime／release scope 在 locked install、測試、CSS、正式依賴稽核、Compose 與雙映像 build 後，以實際 Compose image 執行 `RUNTIME_SMOKE_BASE_URL=http://127.0.0.1:3000 npm run test:smoke`，驗證 readiness、登入、CSRF、權限與 restart persistence，並執行 blocking short soak。文件／測試-only scope 不建置未受影響的 image。Hosted gate 不掛 Docker socket，也不代表正式 NAS 或真實設備已驗證。`main` 已設定 branch protection，將 `Repository gate`（UI 顯示 `SmartHub CI / Repository gate`）設為 strict／up-to-date Required Check，並由管理員 enforcement 保護；若日後讀回缺失則記為 `NOT RUN`。
 
 ### GHCR / NAS 自動更新
 

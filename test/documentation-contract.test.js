@@ -139,7 +139,7 @@ test('the operation manual matches the enforced production gates', () => {
     assert.match(manual, /npm test/u);
     assert.match(manual, /npm run check:css/u);
     assert.match(manual, /npm run test:smoke/u);
-    assert.match(manual, /npm audit --audit-level=low/u);
+    assert.match(manual, /npm audit --omit=dev --audit-level=low/u);
     assert.match(manual, /docker compose --env-file config\/\.env -f docker-compose\.yml -f docker-compose\.build\.yml build unifi-smarthub/u);
     assert.match(manual, /--profile nas-monitor build/u);
     assert.match(manual, /production-preflight/u);

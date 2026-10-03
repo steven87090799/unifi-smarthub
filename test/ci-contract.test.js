@@ -21,7 +21,7 @@ test('GitHub Actions CI is a bounded required-check candidate with all repositor
     assert.match(workflow, /npm test/u);
     assert.match(workflow, /npm run check:css/u);
     assert.match(workflow, /npm run check:js/u);
-    assert.match(workflow, /npm audit --audit-level=low/u);
+    assert.match(workflow, /npm audit --omit=dev --audit-level=low/u);
     assert.match(workflow, /docker compose[\s\S]+config --quiet/u);
     assert.match(workflow, /docker compose[\s\S]+build unifi-smarthub/u);
     assert.match(workflow, /uses:\s*actions\/checkout@[0-9a-f]{40}\s+# v7/u);
