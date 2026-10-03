@@ -140,7 +140,7 @@ test('Docker package inputs are explicitly versioned for the pinned Alpine base'
     for (const fragment of ['tini=0.19.0-r3', 'nut=2.8.3-r5', 'libcrypto3=3.5.7-r0', 'libssl3=3.5.7-r0', 'tzdata=2026d-r0']) {
         assert.ok(mainDockerfile.includes(fragment), `missing ${fragment}`);
     }
-    for (const fragment of ['python3=3.14.7-r1', 'make=4.4.1-r4', 'g++=15.2.0-r5']) {
+    for (const fragment of ['python3=3.14.8-r0', 'make=4.4.1-r4', 'g++=15.2.0-r5']) {
         assert.ok(mainDockerfile.includes(fragment), `missing ${fragment}`);
     }
     for (const fragment of ['tini=0.19.0-r3', 'libcrypto3=3.5.7-r0', 'libssl3=3.5.7-r0']) {

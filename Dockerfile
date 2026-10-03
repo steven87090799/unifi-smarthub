@@ -22,8 +22,9 @@ COPY package*.json ./
 # better-sqlite3 is a native addon. Prebuilt binaries are used when available;
 # these toolchain packages keep builds working on Alpine/architecture combinations
 # without a prebuild.
+# Refreshed the Python toolchain pin after Alpine v3.24 advanced to 3.14.8-r0 on 2026-10-04.
 RUN apk add --no-cache --virtual .build-deps \
-    python3=3.14.7-r1 \
+    python3=3.14.8-r0 \
     make=4.4.1-r4 \
     g++=15.2.0-r5 \
     && npm ci --omit=dev \
