@@ -5,14 +5,14 @@ FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a
 # tzdata：時區資料，配合 TZ 環境變數讓報表排程/日誌時間正確 (預設 UTC 會差 8 小時)
 # Keep the Alpine package inputs explicit alongside the immutable base image.
 # Refreshed unavailable nut/tzdata revisions against Alpine v3.24 on 2026-09-18.
-# Refreshed OpenSSL package pins to the revisions available to hosted builds on 2026-10-04.
+# Refreshed OpenSSL package pins to Alpine v3.24's patched 3.5.9-r0 release on 2026-10-04.
 # Keep exact pins and revalidate the unchanged base digest plus the new SBOM.
 # Moving Alpine indexes do not guarantee retention of older pinned revisions.
 RUN apk add --no-cache \
     tini=0.19.0-r3 \
     nut=2.8.3-r5 \
-    libcrypto3=3.5.7-r0 \
-    libssl3=3.5.7-r0 \
+    libcrypto3=3.5.9-r0 \
+    libssl3=3.5.9-r0 \
     tzdata=2026d-r0
 
 WORKDIR /app
