@@ -122,7 +122,7 @@ jobs:
 
       - name: Audit production dependencies
         if: steps.scope.outputs.run_audit == 'true'
-        run: npm audit --audit-level=low
+        run: npm audit --omit=dev --audit-level=low
 
       - name: Prepare isolated Compose configuration
         if: steps.scope.outputs.run_runtime == 'true'

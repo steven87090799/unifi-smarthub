@@ -34,3 +34,15 @@ test('the locked Express dependency tree contains one patched body-parser versio
     assert.ok(isAtLeast(lockedBodyParsers[0][1].version, '1.20.6'));
     assert.equal(require('body-parser/package.json').version, lockedBodyParsers[0][1].version);
 });
+
+test('the locked production Axios dependency stays on the audited patched release line', () => {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const packageLock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+    const lockedAxios = Object.entries(packageLock.packages)
+        .filter(([location]) => /(?:^|\/)node_modules\/axios$/u.test(location));
+
+    assert.equal(packageJson.dependencies.axios, '^1.20.0');
+    assert.equal(lockedAxios.length, 1, 'only one Axios installation is expected');
+    assert.ok(isAtLeast(lockedAxios[0][1].version, '1.20.0'));
+    assert.equal(require('axios/package.json').version, lockedAxios[0][1].version);
+});

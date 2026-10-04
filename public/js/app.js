@@ -1166,7 +1166,7 @@
         };
         const PAGE_ACTIVITY_SCOPES = {
             overview: ['trend', 'ucg', 'nas', 'wiim', 'ups'], clients: ['trend'], security: ['trend'],
-            cloud: ['trend'], ucg: ['ucg', 'unifi-device-telemetry'], nas: ['nas'], wiim: ['wiim'], ups: ['ups'], linuxhost: ['linux']
+            cloud: ['trend'], adguard: ['trend'], ucg: ['ucg', 'unifi-device-telemetry'], nas: ['nas'], wiim: ['wiim'], ups: ['ups'], linuxhost: ['linux']
         };
         const PAGE_HYDRATION = {
             overview: ['hardware', 'clients', 'threats', 'trend', 'isp', 'nas', 'wiimSystem', 'ups'],

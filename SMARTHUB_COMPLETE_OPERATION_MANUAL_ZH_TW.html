@@ -159,7 +159,7 @@ npm test
 npm run check:css
 npm run test:smoke
 SOAK_TEST_DURATION_MS=90000 SOAK_TEST_TICK_MS=20 npm run test:soak
-npm audit --audit-level=low
+npm audit --omit=dev --audit-level=low
 git diff --check
 
 docker compose --env-file config/.env -f docker-compose.yml -f docker-compose.build.yml config --quiet

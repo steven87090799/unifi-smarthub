@@ -236,7 +236,7 @@ docker compose --env-file config/.env logs | grep Diag
 
 ## 正式發布
 
-Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 會先依變更範圍分流：文件-only 變更只跑文件契約與當前樹 secret scan；測試-only 變更保留完整測試但跳過 image／soak；runtime、依賴、Docker 或 workflow 變更才執行完整測試、`npm audit --audit-level=low`、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，以及真正啟動 Compose image 的 container smoke。Container smoke 會驗證 `/health/ready`、登入、CSRF、權限與 restart 後持久化。
+Pull Request 會執行 GitHub Actions workflow `SmartHub CI`，其 check 名稱為 `Repository gate`。Gate 會先依變更範圍分流：文件-only 變更只跑文件契約與當前樹 secret scan；測試-only 變更保留完整測試但跳過 image／soak；runtime、依賴、Docker 或 workflow 變更才執行完整測試、`npm audit --omit=dev --audit-level=low`（檢查正式映像會安裝的依賴）、Compose／雙映像 build、SBOM／HIGH-CRITICAL container scan、blocking 90 秒 short soak，以及真正啟動 Compose image 的 container smoke。Container smoke 會驗證 `/health/ready`、登入、CSRF、權限與 restart 後持久化。
 
 `main` 的 `SmartHub CI` 成功且產生 exact-head release evidence 後，`Publish SmartHub images` 才會 checkout 同一個 CI head，發布 `ghcr.io/steven87090799/unifi-smarthub-private:sha-<commit>`、`:stable` 與配對的 `-nas-monitor` image；文件／測試-only push 不會重建未變更的 image。推送 `vX.Y.Z` tag 時，則發布 `:vX.Y.Z` 與同一 revision 的 `:sha-<commit>`。兩種發布路徑都支援 `linux/amd64`、`linux/arm64`，並對實際推送的兩個 platform digest 執行 HIGH／CRITICAL Trivy scan。這是 image 發布證據，不等於 NAS 實機驗收；NAS 更新仍應保留 health、SQLite、restart 與 rollback 證據。
 
@@ -268,7 +268,7 @@ docker compose --env-file config/.env up -d --no-build --pull never
 
 `release:build` 會拒絕 dirty worktree，並驗證 SmartHub／NAS Monitor 的版本、revision、image ID 與映像身分。若使用 registry，仍需成對記錄不可變 digest；部署時保留 release JSON 的 `image_ids` 與 registry digest，不能只記錄可重指向的 tag。
 
-Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r4`、`libcrypto3=3.5.8-r0`、`libssl3=3.5.8-r0`、`tzdata=2026c-r0`，以及 build dependencies `python3=3.14.7-r1`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
+Dockerfile 的 release 供應鏈目前固定為 Node `24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd`，直接使用的 Alpine 套件也固定為 `tini=0.19.0-r3`、`nut=2.8.3-r5`、`libcrypto3=3.5.9-r0`、`libssl3=3.5.9-r0`、`tzdata=2026d-r0`，以及 build dependencies `python3=3.14.8-r0`、`make=4.4.1-r4`、`g++=15.2.0-r5`。更新任一 pin 時，必須連同 base digest、SBOM、Trivy 報告與成對 image IDs 一起刷新。
 
 ## 開發原則
 

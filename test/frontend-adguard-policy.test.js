@@ -40,3 +40,11 @@ test('remote policy fields are escaped before rendering and readonly users recei
         "card.classList.add('hidden')"
     ]) assert.ok(source.includes(expression), `missing ${expression}`);
 });
+
+test('visible AdGuard page enables the active backend sampling scope', () => {
+    const scopesStart = app.indexOf('const PAGE_ACTIVITY_SCOPES = {');
+    const scopesEnd = app.indexOf('const PAGE_HYDRATION = {', scopesStart);
+    assert.notEqual(scopesStart, -1);
+    assert.notEqual(scopesEnd, -1);
+    assert.match(app.slice(scopesStart, scopesEnd), /adguard:\s*\['trend'\]/u);
+});
