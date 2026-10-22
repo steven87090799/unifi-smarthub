@@ -15,7 +15,7 @@
 <body>
 <header id="top">
   <h1>SmartHub 完整操作手冊、規格與文件導航</h1>
-  <p>適用於本目錄的 SmartHub 3.0.0。此檔可離線開啟，集中操作介面、資料流、設定、部署、維護、除錯與所有 Markdown 文件的可點選索引；密碼、Token、API Key 一律不應填入本文件或提交至 Git。AI 修改專案時先讀 <code>CLAUDE.md</code> 與 <code>CONTEXT.md</code>，再依任務精讀，不要整個 repository 預讀。</p>
+  <p>適用於本目錄的 SmartHub 3.0.4。此檔可離線開啟，集中操作介面、資料流、設定、部署、維護、除錯與所有 Markdown 文件的可點選索引；密碼、Token、API Key 一律不應填入本文件或提交至 Git。AI 修改專案時先讀 <code>CLAUDE.md</code> 與 <code>CONTEXT.md</code>，再依任務精讀，不要整個 repository 預讀。</p>
   <p class="note"><strong>GHCR／NAS 更新：</strong>正式 NAS 使用根目錄的 registry-only <code>docker-compose.yml</code> 與 <code>scripts/update-nas.sh</code>；<code>main</code> 或 <code>vX.Y.Z</code> tag 通過 <code>SmartHub CI</code> 後，GitHub Actions 才發布配對的 multi-arch image。私有 GHCR 先用只具 <code>read:packages</code> 的 PAT 登入；版本更新可執行 <code>./scripts/update-nas.sh --tag v3.0.1</code>，第一次新 volume 才加 <code>--initialize</code>，需要 Docker Monitor 才加 <code>--profile nas-monitor</code>。最高保證部署把兩個 image ref 固定為同一 release 的 registry digest。</p>
 </header>
 <div class="layout">
@@ -262,6 +262,7 @@ curl --user admin http://127.0.0.1:3000/api/system/status</pre><table><thead><tr
         <article class="doc-card"><h4><a data-doc-path="docs/reports/CONSOLE_UI_REDESIGN_REPORT.md" href="docs/reports/CONSOLE_UI_REDESIGN_REPORT.md">CONSOLE_UI_REDESIGN_REPORT.md</a></h4><p>Console UI 歷史設計與驗證記錄。</p></article>
         <article class="doc-card"><h4><a data-doc-path="docs/reports/SECRET_AUDIT.md" href="docs/reports/SECRET_AUDIT.md">SECRET_AUDIT.md</a></h4><p>ignored env、secret-like paths、token/private-key patterns 與 full-history scanner 邊界。</p><p class="small">完整歷史掃描未執行時明確保留 NOT RUN。</p></article>
         <article class="doc-card"><h4><a data-doc-path="docs/reports/RELEASE-NOTES-v3.0.md" href="docs/reports/RELEASE-NOTES-v3.0.md">RELEASE-NOTES-v3.0.md</a></h4><p>v3.0 發布內容、升級提醒與當時的相容性說明。</p><p class="small">歷史發布記錄；現行部署流程仍以 operations 文件為準。</p></article>
+        <article class="doc-card"><h4><a data-doc-path="docs/reports/FINAL_CONSOLIDATION_20261023.md" href="docs/reports/FINAL_CONSOLIDATION_20261023.md">FINAL_CONSOLIDATION_20261023.md</a></h4><p>3.0.4 依賴、CSS、遙測修復，歷史分支整合判定與清理／實機驗收邊界。</p></article>
       </div>
       <p class="deployment-note"><strong>Production preflight：</strong>SmartHub container 固定以 UID/GID <code>1000:1000</code> 執行；config 目錄與 <code>.env</code> 必須由該 UID 實際可讀寫。啟動前執行 <code>docker compose --env-file config/.env run --rm --no-deps unifi-smarthub node scripts/production-preflight.js --offline</code>，確認 config/data 的 temp fsync、atomic rename、unlink、SQLite quick check 與 writer probe；不要使用 <code>chmod 777</code>／<code>666</code>。本次 production blockers 修復不執行本機 test、install、audit、build、Docker、runtime 或實機驗證；唯一驗證權威是 GitHub Actions exact-head gate。真實設備、Docker socket、disaster recovery 與 24／72 小時 acceptance 維持 NOT RUN。</p>
       <p class="back"><a href="#top">回到頁首 ↑</a></p>

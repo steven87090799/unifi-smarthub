@@ -13,7 +13,7 @@ RUN apk add --no-cache \
     nut=2.8.3-r5 \
     libcrypto3=3.5.9-r0 \
     libssl3=3.5.9-r0 \
-    tzdata=2026d-r0
+    tzdata=2026e-r0
 
 WORKDIR /app
 

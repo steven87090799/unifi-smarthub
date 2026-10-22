@@ -16,8 +16,7 @@ const destination = check ? path.join(temporaryDirectory, 'tailwind.css') : OUTP
 try {
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     const result = spawnSync(process.execPath, [
-        require.resolve('tailwindcss/lib/cli.js'),
-        '-c', path.join(ROOT, 'tailwind.config.cjs'),
+        path.join(path.dirname(require.resolve('@tailwindcss/cli/package.json')), 'dist', 'index.mjs'),
         '-i', path.join(ROOT, 'frontend', 'tailwind.input.css'),
         '-o', destination,
         '--minify'

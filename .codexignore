@@ -1,6 +1,7 @@
 # 依賴與產物
 node_modules/
 package-lock.json
+public/assets/tailwind.css
 
 # 機密與 runtime
 .env

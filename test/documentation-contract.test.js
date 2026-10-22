@@ -117,6 +117,7 @@ test('AI ignore entrypoints stay synchronized and cover large tracked files', ()
     const claudeIgnore = read('.claudeignore');
     assert.equal(claudeIgnore, codexIgnore);
     assert.match(codexIgnore, /^public\/js\/app\.js$/mu);
+    assert.match(codexIgnore, /^public\/assets\/tailwind\.css$/mu);
     assert.match(codexIgnore, /^SMARTHUB_COMPLETE_OPERATION_MANUAL_ZH_TW\.html$/mu);
 
     const patterns = codexIgnore.split(/\r?\n/u)

@@ -391,7 +391,12 @@ const mockUnifiTelemetryDevices = Object.freeze([
     { id: 'aa:bb:cc:dd:ee:03', name: 'UCG Ultra', model: 'UDRULT', type: 'udm',
       firmware: '5.1.33', ip: '192.168.1.1', online: true, uptimeSeconds: 86400,
       uplink: { state: 'up', speedMbps: 1000, duplex: 'full' }, traffic: {}, radios: [], vaps: [], clientCount: 25,
-      cpu: { value: 12, unit: 'percent' }, temperature: { value: 52, unit: 'celsius', status: 'supported', source: 'ucg_ssh', sampledAt: new Date().toISOString(), stale: false }, temperatureZones: [] }
+      cpu: { value: 12, unit: 'percent' }, temperature: { value: 52, unit: 'celsius', status: 'supported', source: 'ucg_ssh', sampledAt: new Date().toISOString(), stale: false }, temperatureZones: [] },
+    { id: 'aa:bb:cc:dd:ee:04', name: '等待遙測的 AP', model: 'U7PRO', type: 'uap',
+      firmware: null, ip: null, online: null, uptimeSeconds: null,
+      uplink: { state: null, speedMbps: null, duplex: null }, traffic: {}, radios: [],
+      vaps: [{ ssid: '等待狀態', radio: null, up: null, clientCount: null }], clientCount: null, cpu: null,
+      temperature: { value: null, unit: 'celsius', status: 'unavailable', source: null, sampledAt: null, stale: false }, temperatureZones: [] }
 ]);
 
 function mockTelemetrySnapshot() {

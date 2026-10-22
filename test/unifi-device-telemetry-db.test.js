@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { createHistoryDb } = require('../db');
+const { createUnifiDeviceTemperatureAlertState } = require('../server/services/unifi-device-temperature-alert-state');
 
 function fixture(t) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'smarthub-unifi-telemetry-'));
@@ -89,4 +90,42 @@ test('emergency telemetry cap downsamples complete buckets before raw deletion',
     assert.equal(secondCleanup.rollups_created, 0);
     assert.equal(db.diagnostics().capacity.telemetry_pressure, false);
     assert.ok(firstCleanup.rollups_created >= 0);
+});
+
+test('unknown online state remains unknown in SQLite and invalid booleans are rejected', t => {
+    const db = createHistoryDb(fixture(t));
+    t.after(() => db.close());
+    const result = db.insertUnifiTelemetryBatch({ collectedAt: new Date().toISOString(), rows: [
+        row('unknown', { online: null }), row('invalid', { online: 'false' })
+    ] });
+    assert.deepEqual(result, { inserted: 1, rejected: 1 });
+    const saved = db.listUnifiTelemetrySince(0)[0];
+    assert.equal(saved.online, null);
+    assert.equal(saved.temperature, null);
+});
+
+test('temperature alert state survives restart and ignores duplicate or older samples', t => {
+    const directory = fixture(t);
+    let db = createHistoryDb(directory);
+    t.after(() => db.close());
+    const createState = () => createUnifiDeviceTemperatureAlertState({
+        now: () => 1000,
+        load: id => db.getUnifiDeviceTemperatureAlertState(id),
+        save: (id, state) => db.saveUnifiDeviceTemperatureAlertState(id, state)
+    });
+    const sample = second => ({ id: 'device-1', temperature: {
+        value: 80, status: 'supported', sampledAt: `2026-01-01T00:00:0${second}.000Z`
+    } });
+    const state = createState();
+    assert.equal(state.evaluate(sample(1)), null);
+    assert.equal(state.evaluate(sample(2)), null);
+    db.close();
+    db = createHistoryDb(directory);
+    const restarted = createState();
+    assert.equal(restarted.evaluate(sample(2)), null);
+    assert.equal(restarted.evaluate(sample(1)), null);
+    assert.equal(restarted.evaluate(sample(3)).type, 'high');
+    db.close();
+    db = createHistoryDb(directory);
+    assert.equal(createState().evaluate(sample(4)), null, 'restart must not repeat an active high-temperature alert');
 });

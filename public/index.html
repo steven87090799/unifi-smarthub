@@ -126,7 +126,7 @@
             position: fixed;
             z-index: -1;
             border-radius: 50%;
-            filter: blur(120px);
+            filter: blur-sm(120px);
             opacity: .16;
             pointer-events: none;
         }
@@ -164,8 +164,8 @@
         /* 主內容卡片統一升級為玻璃材質：漸層半透明 + 高斯模糊 + 上緣高光 + 內外雙陰影 */
         main .rounded-2xl {
             background: linear-gradient(155deg, rgba(30, 41, 59, .42), rgba(10, 16, 30, .55)) !important;
-            backdrop-filter: blur(20px) saturate(1.5);
-            -webkit-backdrop-filter: blur(20px) saturate(1.5);
+            backdrop-filter: blur-sm(20px) saturate(1.5);
+            -webkit-backdrop-filter: blur-sm(20px) saturate(1.5);
             border: 1px solid rgba(148, 163, 184, .14) !important;
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 24px rgba(59, 130, 246, .03), 0 10px 36px rgba(2, 6, 23, .5);
             transition: border-color .3s, box-shadow .3s;
@@ -178,20 +178,20 @@
         /* 卡片內層子卡：較薄的玻璃 */
         main .rounded-2xl .rounded-xl {
             background-color: rgba(2, 6, 23, .4) !important;
-            backdrop-filter: blur(8px);
+            backdrop-filter: blur-sm(8px);
             border-color: rgba(148, 163, 184, .1) !important;
         }
 
         /* 側邊欄與頂欄玻璃化 */
         aside {
             background: rgba(3, 7, 18, .72) !important;
-            backdrop-filter: blur(24px) saturate(1.4);
+            backdrop-filter: blur-sm(24px) saturate(1.4);
             border-right: 1px solid rgba(148, 163, 184, .1) !important;
         }
 
         header {
             background: rgba(3, 7, 18, .55) !important;
-            backdrop-filter: blur(24px) saturate(1.4);
+            backdrop-filter: blur-sm(24px) saturate(1.4);
         }
 
         /* 導航群組標籤 */
@@ -339,7 +339,7 @@
 
         @keyframes hueShift {
             to {
-                filter: blur(120px) hue-rotate(50deg);
+                filter: blur-sm(120px) hue-rotate(50deg);
             }
         }
 
@@ -484,17 +484,17 @@
             0% {
                 opacity: .15;
                 transform: perspective(520px) translateY(42%) rotateX(-78deg);
-                filter: blur(2px);
+                filter: blur-sm(2px);
             }
             58% {
                 opacity: 1;
                 transform: perspective(520px) translateY(-8%) rotateX(9deg);
-                filter: blur(0);
+                filter: blur-sm(0);
             }
             100% {
                 opacity: 1;
                 transform: perspective(520px) translateY(0) rotateX(0);
-                filter: blur(0);
+                filter: blur-sm(0);
             }
         }
 
@@ -858,7 +858,7 @@
 
         /* Modal 與 Toast */
         [role="dialog"] > div { box-shadow: 0 30px 90px rgba(0,0,0,.55); }
-        #toast { max-width: min(430px, calc(100vw - 2rem)); backdrop-filter: blur(18px); }
+        #toast { max-width: min(430px, calc(100vw - 2rem)); backdrop-filter: blur-sm(18px); }
         .nav-active { animation: none !important; }
         .logo-glow { animation: none !important; box-shadow: 0 0 18px rgba(59, 130, 246, .26); }
         .crit-blink { animation: critBlink 1.8s ease-in-out 3; }
@@ -906,7 +906,7 @@
             #crit-alert-banner { max-width: 42vw; padding-inline: .65rem; }
             #threat-map text, #threat-map .map-leader { display: none; }
             body::before, body::after { animation: none !important; }
-            main .rounded-2xl { backdrop-filter: blur(10px) saturate(1.15); -webkit-backdrop-filter: blur(10px) saturate(1.15); }
+            main .rounded-2xl { backdrop-filter: blur-sm(10px) saturate(1.15); -webkit-backdrop-filter: blur-sm(10px) saturate(1.15); }
         }
 
         @media (max-width: 430px) {
@@ -962,7 +962,7 @@
                     </svg>
                 </button>
             </div>
-            <nav class="flex-grow py-2 space-y-1 overflow-y-auto terminal-scroll">
+            <nav class="grow py-2 space-y-1 overflow-y-auto terminal-scroll">
                 <button data-page="overview" data-handler-click="h2"
                     class="nav-btn nav-active w-full flex items-center gap-3 px-5 py-2.5 text-xs font-bold transition text-left">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -1149,7 +1149,7 @@
                 </div>
             </header>
 
-            <main class="flex-grow p-4 md:p-6 max-w-[1600px] w-full mx-auto space-y-6">
+            <main class="grow p-4 md:p-6 max-w-[1600px] w-full mx-auto space-y-6">
 
                 <!-- ==================== 頁面：總覽 ==================== -->
                 <section id="page-overview" class="space-y-6">
@@ -1214,7 +1214,7 @@
                                             class="text-sm text-slate-500">°C</span></p>
                                     <p class="text-[9px] mt-1" id="ov-ucg-temp-status">--</p>
                                 </div>
-                                <div class="flex-grow space-y-2.5">
+                                <div class="grow space-y-2.5">
                                     <div>
                                         <div class="flex justify-between text-[10px] mb-1"><span
                                                 class="text-slate-400">CPU 使用率</span><span class="mono text-slate-300"
@@ -1267,7 +1267,7 @@
                                             class="text-sm text-slate-500">°C</span></p>
                                     <p class="text-[9px] mt-1" id="ov-nas-temp-status">--</p>
                                 </div>
-                                <div class="flex-grow space-y-2.5">
+                                <div class="grow space-y-2.5">
                                     <div>
                                         <div class="flex justify-between text-[10px] mb-1"><span
                                                 class="text-slate-400">CPU 使用率</span><span class="mono text-slate-300"
@@ -1320,7 +1320,7 @@
                                             class="text-sm text-slate-500 ml-0.5 mb-0.5">°C</span></p>
                                     <p class="text-[9px] mt-1" id="ov-wiim-temp-status">--</p>
                                 </div>
-                                <div class="flex-grow space-y-2.5 min-w-0">
+                                <div class="grow space-y-2.5 min-w-0">
                                     <div>
                                         <div class="flex justify-between text-[10px] mb-1"><span
                                                 class="text-slate-400">主機板 (TMP102)</span><span
@@ -1370,7 +1370,7 @@
 
                         <!-- 最近一次攔截威脅 (簡易橫幅，樣式同戰情室縮小版) -->
                         <div data-handler-click="h4"
-                            class="cursor-pointer relative overflow-hidden mb-5 bg-gradient-to-r from-red-950/40 via-slate-950/60 to-slate-950/60 border border-red-800/40 rounded-xl p-4 flex items-center gap-4 hover:border-red-700/60 transition">
+                            class="cursor-pointer relative overflow-hidden mb-5 bg-linear-to-r from-red-950/40 via-slate-950/60 to-slate-950/60 border border-red-800/40 rounded-xl p-4 flex items-center gap-4 hover:border-red-700/60 transition">
                             <div
                                 class="absolute inset-0 bg-[radial-gradient(ellipse_at_left,rgba(239,68,68,0.08),transparent_60%)] pointer-events-none">
                             </div>
@@ -1386,7 +1386,7 @@
                                     </svg>
                                 </div>
                             </div>
-                            <div class="z-10 flex-grow min-w-0">
+                            <div class="z-10 grow min-w-0">
                                 <span
                                     class="text-[9px] text-red-500 uppercase tracking-widest font-black block">最近一次攔截威脅</span>
                                 <p class="text-sm font-black text-slate-100 tracking-wide truncate" id="ov-latest-ip">
@@ -1431,7 +1431,7 @@
                                         威脅時段分佈</span>
                                     <span class="text-[9px] mono text-red-400" id="ov-threat-24h">-- 次攔截</span>
                                 </div>
-                                <div class="flex-grow h-36"><canvas id="ovHourlyChart"></canvas></div>
+                                <div class="grow h-36"><canvas id="ovHourlyChart"></canvas></div>
                             </div>
                             <!-- 最新事件流 -->
                             <div class="lg:col-span-4 bg-slate-950/60 rounded-xl border border-slate-800/60 p-5">
@@ -1492,7 +1492,7 @@
                                 <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UCG-Ultra 處理器 &
                                     核心溫度</h3>
                                 <span
-                                    class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold"
+                                    class="text-[8px] px-1.5 py-0.5 rounded-sm border border-emerald-500/30 text-emerald-400 uppercase font-bold"
                                     title="數據來自 SSH 兩次取樣差值計算">REAL DATA</span>
                             </div>
                             <div class="flex justify-between items-end mb-4">
@@ -1623,12 +1623,12 @@
                                     <div>
                                         <label class="text-[9px] text-slate-500 uppercase font-bold">裝置 IP 或 MAC</label>
                                         <input id="adg-policy-device" placeholder="192.168.1.50"
-                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-1">
+                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-1">
                                     </div>
                                     <div>
                                         <label class="text-[9px] text-slate-500 uppercase font-bold">IANA 時區</label>
                                         <input id="adg-policy-timezone" value="Asia/Taipei"
-                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-1">
+                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-1">
                                     </div>
                                 </div>
                                 <div>
@@ -1642,13 +1642,13 @@
                                 <div>
                                     <p class="text-[9px] text-slate-500 uppercase font-bold mb-2">每週允許時段（未勾選＝全天封鎖）</p>
                                     <div class="space-y-1.5" id="adg-policy-days">
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="mon"><span><input type="checkbox" class="accent-emerald-500 mr-1">週一</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="tue"><span><input type="checkbox" class="accent-emerald-500 mr-1">週二</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="wed"><span><input type="checkbox" class="accent-emerald-500 mr-1">週三</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="thu"><span><input type="checkbox" class="accent-emerald-500 mr-1">週四</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="fri"><span><input type="checkbox" class="accent-emerald-500 mr-1">週五</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="sat"><span><input type="checkbox" class="accent-emerald-500 mr-1">週六</span><input type="time" value="09:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="22:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
-                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="sun"><span><input type="checkbox" class="accent-emerald-500 mr-1">週日</span><input type="time" value="09:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"><input type="time" value="22:00" class="bg-slate-950 border border-slate-800 rounded px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="mon"><span><input type="checkbox" class="accent-emerald-500 mr-1">週一</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="tue"><span><input type="checkbox" class="accent-emerald-500 mr-1">週二</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="wed"><span><input type="checkbox" class="accent-emerald-500 mr-1">週三</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="thu"><span><input type="checkbox" class="accent-emerald-500 mr-1">週四</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="fri"><span><input type="checkbox" class="accent-emerald-500 mr-1">週五</span><input type="time" value="18:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="20:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="sat"><span><input type="checkbox" class="accent-emerald-500 mr-1">週六</span><input type="time" value="09:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="22:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
+                                        <label class="adg-policy-day grid grid-cols-[3.5rem_1fr_1fr] gap-2 items-center text-[10px] text-slate-300" data-day="sun"><span><input type="checkbox" class="accent-emerald-500 mr-1">週日</span><input type="time" value="09:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"><input type="time" value="22:00" class="bg-slate-950 border border-slate-800 rounded-sm px-2 py-1"></label>
                                     </div>
                                 </div>
                                 <button data-handler-click="h36"
@@ -1705,7 +1705,7 @@
                                     </div>
                                     <input type="text" id="clientSearch" data-handler-input="h37"
                                         placeholder="搜尋設備名稱或 IP..."
-                                        class="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-300 w-full sm:w-64 focus:outline-none focus:border-blue-500">
+                                        class="bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-2 text-xs text-slate-300 w-full sm:w-64 focus:outline-hidden focus:border-blue-500">
                                 </div>
                             </div>
                             <div class="overflow-x-auto">
@@ -1779,7 +1779,7 @@
 
                         <!-- 最近一次攔截威脅 (置頂橫幅) -->
                         <div
-                            class="relative overflow-hidden bg-gradient-to-r from-red-950/40 via-slate-950/60 to-slate-950/60 border border-red-800/40 rounded-xl p-5 flex flex-col sm:flex-row items-center gap-5">
+                            class="relative overflow-hidden bg-linear-to-r from-red-950/40 via-slate-950/60 to-slate-950/60 border border-red-800/40 rounded-xl p-5 flex flex-col sm:flex-row items-center gap-5">
                             <div
                                 class="absolute inset-0 bg-[radial-gradient(ellipse_at_left,rgba(239,68,68,0.08),transparent_60%)] pointer-events-none">
                             </div>
@@ -1795,7 +1795,7 @@
                                     </svg>
                                 </div>
                             </div>
-                            <div class="z-10 flex-grow text-center sm:text-left min-w-0">
+                            <div class="z-10 grow text-center sm:text-left min-w-0">
                                 <span
                                     class="text-[10px] text-red-500 uppercase tracking-widest font-black block mb-1">最近一次攔截威脅</span>
                                 <p class="text-lg font-black text-slate-100 tracking-wide" id="threat-source">等待威脅警報中...
@@ -1916,7 +1916,7 @@
                                         <span class="text-[9px] text-slate-400 font-mono">suricata_alert.log</span>
                                         <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
                                     </div>
-                                    <div class="p-3 overflow-y-auto text-[9px] font-mono text-emerald-400 space-y-1.5 flex-grow terminal-scroll"
+                                    <div class="p-3 overflow-y-auto text-[9px] font-mono text-emerald-400 space-y-1.5 grow terminal-scroll"
                                         id="log-console">
                                         <p class="text-slate-500">[SYSTEM] Suricata Core Active.</p>
                                     </div>
@@ -1976,15 +1976,15 @@
                                 <div class="flex flex-wrap items-center gap-2">
                                     <input type="text" id="threatSearch" data-handler-input="h40"
                                         placeholder="搜尋 IP / 國家 / 特徵 / 設備..."
-                                        class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] text-slate-300 w-full sm:w-56 focus:outline-none focus:border-blue-500">
+                                        class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] text-slate-300 w-full sm:w-56 focus:outline-hidden focus:border-blue-500">
                                     <select id="threatSeverity" data-handler-change="h41"
-                                        class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 focus:outline-none focus:border-blue-500">
+                                        class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 focus:outline-hidden focus:border-blue-500">
                                         <option value="">全部危險度</option>
                                         <option value="HIGH">HIGH</option>
                                         <option value="MEDIUM">MEDIUM</option>
                                     </select>
                                     <select id="threatCategory" data-handler-change="h41"
-                                        class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 focus:outline-none focus:border-blue-500">
+                                        class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 focus:outline-hidden focus:border-blue-500">
                                         <option value="">全部類別</option>
                                     </select>
                                     <div
@@ -2091,15 +2091,15 @@
                                 <div>
                                     <p class="text-slate-300 font-bold mb-1">等級對照</p>
                                     <div class="flex flex-wrap gap-2 text-[10px] font-bold">
-                                        <span class="px-2 py-1 rounded" style="color:#10b981;background:#10b98118">A 優良
+                                        <span class="px-2 py-1 rounded-sm" style="color:#10b981;background:#10b98118">A 優良
                                             90–100</span>
-                                        <span class="px-2 py-1 rounded" style="color:#3b82f6;background:#3b82f618">B 良好
+                                        <span class="px-2 py-1 rounded-sm" style="color:#3b82f6;background:#3b82f618">B 良好
                                             75–89</span>
-                                        <span class="px-2 py-1 rounded" style="color:#f59e0b;background:#f59e0b18">C 普通
+                                        <span class="px-2 py-1 rounded-sm" style="color:#f59e0b;background:#f59e0b18">C 普通
                                             60–74</span>
-                                        <span class="px-2 py-1 rounded" style="color:#f97316;background:#f9731618">D 警戒
+                                        <span class="px-2 py-1 rounded-sm" style="color:#f97316;background:#f9731618">D 警戒
                                             40–59</span>
-                                        <span class="px-2 py-1 rounded" style="color:#ef4444;background:#ef444418">F 危險
+                                        <span class="px-2 py-1 rounded-sm" style="color:#ef4444;background:#ef444418">F 危險
                                             <40< /span>
                                     </div>
                                 </div>
@@ -2128,14 +2128,14 @@
                             <div class="space-y-3">
                                 <p class="text-[9px] text-slate-500">僅管理員；QR 由 SmartHub 同源產生，SSID 與密碼不會送往第三方服務。</p>
                                 <input type="text" id="v-ssid" placeholder="SSID" maxlength="32"
-                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500">
+                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-hidden focus:border-emerald-500">
                                 <input type="password" id="v-pass" placeholder="密碼" minlength="8" maxlength="64" autocomplete="new-password"
-                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500">
+                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-hidden focus:border-emerald-500">
                                 <button data-handler-click="h47"
                                     class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold rounded-xl transition">更新
                                     QRCode 憑證</button>
                                 <div class="flex justify-center mt-4">
-                                    <img id="qr-img" src="" class="w-24 h-24 p-1 bg-white rounded hidden">
+                                    <img id="qr-img" src="" class="w-24 h-24 p-1 bg-white rounded-sm hidden">
                                 </div>
                             </div>
                         </div>
@@ -2170,19 +2170,19 @@
                                         class="cloud-tab px-3 py-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 text-[10px] font-bold whitespace-nowrap transition" role="tab" aria-selected="false">VPN <span class="opacity-60 font-normal">SD-WAN</span></button>
                                 </div>
                                 <div id="cloud-sites-content"
-                                    class="space-y-2 flex-grow overflow-y-auto max-h-[220px] terminal-scroll">
+                                    class="space-y-2 grow overflow-y-auto max-h-[220px] terminal-scroll">
                                     <p class="text-xs text-slate-500 text-center py-4">站點資料讀取中...</p>
                                 </div>
                                 <div id="cloud-devices-content"
-                                    class="space-y-2 flex-grow overflow-y-auto max-h-[220px] terminal-scroll hidden">
+                                    class="space-y-2 grow overflow-y-auto max-h-[220px] terminal-scroll hidden">
                                     <p class="text-xs text-slate-500 text-center py-4">設備資料讀取中...</p>
                                 </div>
                                 <div id="cloud-hosts-content"
-                                    class="space-y-2 flex-grow overflow-y-auto max-h-[220px] terminal-scroll hidden">
+                                    class="space-y-2 grow overflow-y-auto max-h-[220px] terminal-scroll hidden">
                                     <p class="text-xs text-slate-500 text-center py-4">主機資料讀取中...</p>
                                 </div>
                                 <div id="cloud-sdwan-content"
-                                    class="space-y-2 flex-grow overflow-y-auto max-h-[220px] terminal-scroll hidden">
+                                    class="space-y-2 grow overflow-y-auto max-h-[220px] terminal-scroll hidden">
                                     <p class="text-xs text-slate-500 text-center py-4">SD-WAN 資料讀取中...</p>
                                 </div>
                             </div>
@@ -2193,7 +2193,7 @@
                                         網路連接品質指標</span>
                                     <span class="text-[9px] text-blue-400 font-mono" id="isp-name">載入中...</span>
                                 </div>
-                                <div class="grid grid-cols-2 gap-3 text-center text-xs flex-grow justify-center">
+                                <div class="grid grid-cols-2 gap-3 text-center text-xs grow justify-center">
                                     <div
                                         class="p-3 bg-slate-900/50 rounded-lg border border-slate-850/60 flex flex-col justify-center">
                                         <p class="text-[9px] text-slate-500 uppercase tracking-wider">延遲 (Latency)</p>
@@ -2243,7 +2243,7 @@
                             <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md">
                                 <div class="flex justify-between items-center mb-4">
                                     <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UGREEN NAS 處理器 & 溫度</h3>
-                                    <span class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UGOS get_all API">REAL DATA</span>
+                                    <span class="text-[8px] px-1.5 py-0.5 rounded-sm border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UGOS get_all API">REAL DATA</span>
                                 </div>
                                 <div class="flex justify-between items-end mb-4">
                                     <div>
@@ -2665,7 +2665,7 @@
                         <!-- 待機狀態 -->
                         <div id="st-idle" class="text-center py-10">
                             <button data-handler-click="h67"
-                                class="px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-sm font-black text-white rounded-2xl transition shadow-lg tracking-widest">開始測速
+                                class="px-10 py-4 bg-linear-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-sm font-black text-white rounded-2xl transition shadow-lg tracking-widest">開始測速
                                 GO</button>
                         </div>
 
@@ -2734,9 +2734,9 @@
                             </h3>
                             <div class="space-y-3">
                                 <input type="text" id="p-mac" placeholder="Switch MAC"
-                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-yellow-500">
+                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-hidden focus:border-yellow-500">
                                 <input type="number" id="p-port" placeholder="Port Index (例如: 4)"
-                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-yellow-500">
+                                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-hidden focus:border-yellow-500">
                                 <button data-handler-click="h68"
                                     class="w-full py-2.5 bg-yellow-600 hover:bg-yellow-500 text-xs font-bold rounded-xl transition">發送
                                     PoE 斷電重啟指令</button>
@@ -2807,7 +2807,7 @@
                                         已設定</span></label>
                                 <input type="text" id="notif-webhook"
                                     placeholder="https://discord.com/api/webhooks/... (留空=不變更)"
-                                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                             </div>
 
                             <!-- Telegram 欄位 -->
@@ -2818,7 +2818,7 @@
                                         Token <span id="notif-token-set" class="text-emerald-400 normal-case hidden">✓
                                             已設定</span></label>
                                     <input type="text" id="notif-token" placeholder="123456:ABC... (留空=不變更)"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                 </div>
                                 <div>
                                     <label
@@ -2826,7 +2826,7 @@
                                         ID <span class="normal-case text-slate-600">(數字，不是 bot 名稱)</span></label>
                                     <div class="flex gap-2">
                                         <input type="text" id="notif-chatid" placeholder="例如 123456789"
-                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[11px] text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                         <button data-handler-click="h74"
                                             class="shrink-0 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] font-bold text-slate-200 rounded-lg transition"
                                             title="先在 Telegram 對你的 bot 傳一句話，再按此自動抓 Chat ID">偵測 Chat ID</button>
@@ -2884,7 +2884,7 @@
                                         <input type="checkbox" id="notif-trig-client-signal" class="accent-blue-500 w-4 h-4">
                                         WiFi 設備訊號弱於
                                         <span class="text-slate-500">−</span><input type="number" id="notif-client-signal" min="50" max="95"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> dBm
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
@@ -2911,7 +2911,7 @@
                                         <input type="checkbox" id="notif-trig-wiim-volume" class="accent-blue-500 w-4 h-4">
                                         WiiM 播放音量超過
                                         <input type="number" id="notif-wiim-volume" min="10" max="100"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
@@ -2927,36 +2927,36 @@
                                         <input type="checkbox" id="notif-trig-nasdisk" class="accent-blue-500 w-4 h-4">
                                         NAS 硬碟溫度超過
                                         <input type="number" id="notif-nasdisk-temp" min="30" max="70"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> °C
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-nasspace" class="accent-blue-500 w-4 h-4">
                                         NAS 儲存空間使用率超過
                                         <input type="number" id="notif-nasspace-pct" min="50" max="99"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-nas-cpu" class="accent-blue-500 w-4 h-4"> NAS CPU 超過
-                                        <input type="number" id="notif-nas-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                        <input type="number" id="notif-nas-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-nas-memory" class="accent-blue-500 w-4 h-4"> NAS 記憶體使用率超過
-                                        <input type="number" id="notif-nas-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                        <input type="number" id="notif-nas-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-ucgtemp" class="accent-blue-500 w-4 h-4">
                                         UCG CPU 溫度超過
                                         <input type="number" id="notif-ucg-temp" min="50" max="95"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> °C (經 SSH)
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-unifi-device-temp" class="accent-blue-500 w-4 h-4">
                                         UniFi 裝置溫度超過
                                         <input type="number" id="notif-unifi-device-temp" min="40" max="100"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> °C（僅真實新鮮資料）
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
@@ -2967,7 +2967,7 @@
                                         <input type="checkbox" id="notif-trig-wan-latency" class="accent-blue-500 w-4 h-4">
                                         WAN 延遲超過
                                         <input type="number" id="notif-wan-latency" min="10" max="5000"
-                                            class="w-16 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-16 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> ms
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
@@ -2982,25 +2982,25 @@
                                         <input type="checkbox" id="notif-trig-upsload" class="accent-blue-500 w-4 h-4">
                                         UPS 負載超過
                                         <input type="number" id="notif-ups-load" min="50" max="99"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-ups-runtime" class="accent-blue-500 w-4 h-4"> UPS 斷電時預估續航少於
-                                        <input type="number" id="notif-ups-runtime" min="1" max="120" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> 分鐘
+                                        <input type="number" id="notif-ups-runtime" min="1" max="120" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> 分鐘
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-upsvolt" class="accent-blue-500 w-4 h-4">
                                         UPS 輸出電壓偏離標準值超過
                                         <input type="number" id="notif-ups-volt" min="3" max="30"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-ups-sag" class="accent-blue-500 w-4 h-4">
                                         市電瞬間壓降低於
                                         <input type="number" id="notif-ups-sag-threshold" min="80" max="125"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> V（220V 系統自動乘 2）
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
@@ -3024,14 +3024,14 @@
                                         <input type="checkbox" id="notif-trig-adg-block-rate" class="accent-blue-500 w-4 h-4">
                                         AdGuard 攔截率超過
                                         <input type="number" id="notif-adg-block-rate" min="1" max="100"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> %（至少 100 次查詢）
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-lnxtemp" class="accent-blue-500 w-4 h-4">
                                         小主機 CPU 溫度超過
                                         <input type="number" id="notif-lnx-temp" min="40" max="95"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> °C
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
@@ -3042,21 +3042,21 @@
                                         <input type="checkbox" id="notif-trig-lnxdisk" class="accent-blue-500 w-4 h-4">
                                         小主機磁碟超過
                                         <input type="number" id="notif-lnx-disk" min="50" max="99"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono"
                                             data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-lnx-cpu" class="accent-blue-500 w-4 h-4"> 小主機 CPU 使用率超過
-                                        <input type="number" id="notif-lnx-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                        <input type="number" id="notif-lnx-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-lnx-memory" class="accent-blue-500 w-4 h-4"> 小主機記憶體使用率超過
-                                        <input type="number" id="notif-lnx-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                        <input type="number" id="notif-lnx-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                     </label>
                                     <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                         <input type="checkbox" id="notif-trig-lnx-load" class="accent-blue-500 w-4 h-4"> 小主機 1 分鐘系統負載超過
                                         <input type="number" id="notif-lnx-load" min="0.1" max="100" step="0.1"
-                                            class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75">
+                                            class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75">
                                     </label>
                                     <div class="pt-3 mt-3 border-t border-slate-800/70 space-y-2.5">
                                         <p class="text-[10px] font-bold text-blue-300 uppercase tracking-wider">Docker、系統健康與連線</p>
@@ -3084,11 +3084,11 @@
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-docker-cpu" class="accent-blue-500 w-4 h-4"> Docker 容器 CPU 超過
-                                            <input type="number" id="notif-docker-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                            <input type="number" id="notif-docker-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-docker-memory" class="accent-blue-500 w-4 h-4"> Docker 容器記憶體使用率超過
-                                            <input type="number" id="notif-docker-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                            <input type="number" id="notif-docker-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-nas-disk-health" class="accent-blue-500 w-4 h-4"> NAS 硬碟健康狀態異常（非 healthy / normal / OK）
@@ -3101,15 +3101,15 @@
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-ucg-cpu" class="accent-blue-500 w-4 h-4"> UCG CPU 使用率超過
-                                            <input type="number" id="notif-ucg-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                            <input type="number" id="notif-ucg-cpu" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-ucg-memory" class="accent-blue-500 w-4 h-4"> UCG 記憶體使用率超過
-                                            <input type="number" id="notif-ucg-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                            <input type="number" id="notif-ucg-memory" min="50" max="100" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-ucg-disk" class="accent-blue-500 w-4 h-4"> UCG 系統碟 eMMC 使用率超過
-                                            <input type="number" id="notif-ucg-disk" min="50" max="99" class="w-14 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
+                                            <input type="number" id="notif-ucg-disk" min="50" max="99" class="w-14 bg-slate-950 border border-slate-800 rounded-sm px-1.5 py-0.5 text-[11px] text-slate-200 font-mono" data-handler-click="h75"> %
                                         </label>
                                         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
                                             <input type="checkbox" id="notif-trig-system-critical" class="accent-blue-500 w-4 h-4"> SmartHub 系統嚴重事件（主機資源、SQLite、卡住的背景工作）
@@ -3129,7 +3129,7 @@
 
                             <div class="flex gap-3 pt-1">
                                 <button data-handler-click="h76"
-                                    class="flex-grow py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition">儲存設定</button>
+                                    class="grow py-2.5 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition">儲存設定</button>
                                 <button data-handler-click="h77"
                                     class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 rounded-xl transition">發送測試</button>
                             </div>
@@ -3178,7 +3178,7 @@
                         </div>
                     </div>
 
-                    <!-- System Diagnostics：由後端資源監控 ring buffer 與 issue tracker 提供 -->
+                    <!-- System Diagnostics：由後端資源監控 ring-3 buffer 與 issue tracker 提供 -->
                     <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl backdrop-blur-md space-y-5">
                         <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                             <div>
@@ -3241,7 +3241,7 @@
                             <p class="text-[10px] text-slate-400 leading-relaxed">僅對私有 IP、loopback、host.docker.internal 與明確 allowlist 內網主機放寬自簽 TLS、HTTP 與 SSH Host Key pinning。Site Manager、Telegram、Discord 與其他公網服務不受影響。</p>
                             <div>
                                 <label class="text-[9px] text-slate-500 uppercase font-bold">可信任內網 hostname allowlist（選填，逗號分隔）</label>
-                                <input id="conn-TRUSTED_LAN_HOSTS" placeholder="nas.home.lan, adguard.home.lan" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                <input id="conn-TRUSTED_LAN_HOSTS" placeholder="nas.home.lan, adguard.home.lan" class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                             </div>
                             <p id="conn-trusted-lan-status" class="text-[9px] text-slate-500">狀態讀取中…</p>
                         </div>
@@ -3253,26 +3253,26 @@
                                 <p class="text-[9px] text-slate-500 leading-relaxed">主控台 → 設定 → 系統 → SSH 開啟並設定密碼</p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">UCG IP</label><input
                                         id="conn-UCG_IP"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH
                                             帳號</label><input id="conn-SSH_USER"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH
                                             Port</label><input id="conn-SSH_PORT"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 密碼 <span
                                             id="connset-SSH_PASSWORD" class="normal-case"></span></label><input
                                         id="conn-SSH_PASSWORD" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">WAN 介面名稱</label><input
                                         id="conn-WAN_IFACE" placeholder="eth4"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
                             <!-- UniFi 本地 -->
@@ -3282,66 +3282,66 @@
                                 </p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">控制器網址</label><input
                                         id="conn-UNIFI_CONTROLLER_URL" placeholder="https://192.168.0.1"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">本地帳號</label><input
                                         id="conn-UNIFI_USERNAME"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">本地密碼 <span
                                             id="connset-UNIFI_PASSWORD" class="normal-case"></span></label><input
                                         id="conn-UNIFI_PASSWORD" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Site Manager API Key
                                         (選填) <span id="connset-UNIFI_API_KEY" class="normal-case"></span></label><input
                                         id="conn-UNIFI_API_KEY" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <p class="text-[9px] text-amber-400 pt-2 leading-relaxed">臨時威脅封鎖使用獨立的 Network Integration API 金鑰與專用 IPV4_ADDRESSES 清單；該清單不可人工混用。</p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Integration API URL（可留空沿用控制器）</label><input
                                         id="conn-UNIFI_NETWORK_API_URL" placeholder="https://192.168.0.1/proxy/network/integration"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Integration API Key <span
                                             id="connset-UNIFI_NETWORK_API_KEY" class="normal-case"></span></label><input
                                         id="conn-UNIFI_NETWORK_API_KEY" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">驗證 Integration API TLS 憑證</label><select
                                         id="conn-UNIFI_NETWORK_TLS_VERIFY"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                         <option value="true">true（預設；建議）</option>
                                         <option value="false">false（必須同時明確啟用 insecure）</option>
                                     </select>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Network CA file（容器內絕對路徑）</label><input
                                         id="conn-UNIFI_NETWORK_CA_FILE" placeholder="/app/config/unifi-network-ca.pem"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">明確停用 TLS 驗證</label><select id="conn-UNIFI_NETWORK_TLS_INSECURE"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                             <option value="false">false（預設）</option><option value="true">true（明確風險）</option>
                                         </select>
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">允許非 loopback HTTP</label><select id="conn-UNIFI_NETWORK_ALLOW_INSECURE_HTTP"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                             <option value="false">false（預設）</option><option value="true">true（明確風險）</option>
                                         </select>
                                     </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Network Site UUID</label><input
                                         id="conn-UNIFI_NETWORK_SITE_ID" placeholder="00000000-0000-0000-0000-000000000000"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">專用 Traffic List UUID</label><input
                                         id="conn-UNIFI_THREAT_BLOCK_LIST_ID" placeholder="00000000-0000-0000-0000-000000000000"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">專用清單名稱</label><input
                                         id="conn-UNIFI_THREAT_BLOCK_LIST_NAME" placeholder="SmartHub Threat Blocks"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
                             <!-- UniFi Device SSH：只有管理員可見 -->
@@ -3350,31 +3350,31 @@
                                 <p class="text-[9px] text-slate-500 leading-relaxed">僅查詢 Controller 已知、MAC 明確允許且使用 Literal IP 的設備。最多 32 台、最多 2 條同時連線；不支援時顯示「不支援」。</p>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 帳號</label><input id="conn-UNIFI_DEVICE_SSH_USER"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5"></div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH Port</label><input id="conn-UNIFI_DEVICE_SSH_PORT"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5"></div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">SSH 密碼 <span id="connset-UNIFI_DEVICE_SSH_PASSWORD" class="normal-case"></span></label><input
                                         id="conn-UNIFI_DEVICE_SSH_PASSWORD" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5"></div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">允許設備 MAC（逗號分隔） <span id="connset-UNIFI_DEVICE_SSH_TARGET_IDS" class="normal-case"></span></label><input
                                         id="conn-UNIFI_DEVICE_SSH_TARGET_IDS" type="password" autocomplete="off"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5"></div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">Host Key（MAC=SHA256:...） <span id="connset-UNIFI_DEVICE_SSH_HOST_KEYS" class="normal-case"></span></label><input
                                         id="conn-UNIFI_DEVICE_SSH_HOST_KEYS" type="password" autocomplete="off"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5"></div>
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5"></div>
                             </div>
                             <!-- WiiM + UPS -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
                                 <p class="text-[11px] font-bold text-violet-400">🎵 WiiM Amp</p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">WiiM IP</label><input
                                         id="conn-WIIM_IP"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <p class="text-[11px] font-bold text-amber-400 pt-2">⚡ CyberPower UPS</p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">資料來源</label>
                                     <select id="conn-UPS_SOURCE"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                         <option value="auto">自動 (PPB → NUT → pwrstat → pmset)</option>
                                         <option value="ppb">PowerPanel Business REST（Docker 已驗證）</option>
                                         <option value="nut">NUT (upsc)</option>
@@ -3384,7 +3384,7 @@
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">明確來源失敗時的回退</label>
                                     <select id="conn-UPS_ALLOW_FALLBACK"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                         <option value="false">關閉（fail-closed，建議）</option>
                                         <option value="true">開啟（允許改用其他來源）</option>
                                     </select>
@@ -3393,53 +3393,53 @@
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">NUT
                                             主機</label><input id="conn-NUT_HOST" placeholder="localhost"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">NUT UPS
                                             名稱</label><input id="conn-NUT_UPS_NAME" placeholder="cyberpower"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">pwrstat 路徑
                                         (選填)</label><input id="conn-PWRSTAT_PATH" placeholder="/usr/local/bin/pwrstat"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div class="grid grid-cols-3 gap-2">
                                     <div class="col-span-2"><label class="text-[9px] text-slate-500 uppercase font-bold">PPB 主機</label><input
                                             id="conn-PPB_HOST" placeholder="host.docker.internal"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">PPB Port</label><input
                                             id="conn-PPB_PORT" placeholder="3052"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">PPB 帳號</label><input
                                         id="conn-PPB_USER"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">PPB 密碼 <span
                                             id="connset-PPB_PASSWORD" class="normal-case"></span></label><input
                                         id="conn-PPB_PASSWORD" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">驗證 PPB TLS 憑證</label><select
                                         id="conn-PPB_TLS_VERIFY"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                         <option value="true">true（安全預設）</option>
                                         <option value="false">false（需同時明確啟用下方不安全模式）</option>
                                     </select>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">PPB 不安全 TLS 模式</label><select
                                         id="conn-PPB_TLS_INSECURE"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                         <option value="false">false（建議）</option>
                                         <option value="true">true（僅限受控內網並接受風險）</option>
                                     </select>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">PPB 私有 CA 絕對路徑</label><input
                                         id="conn-PPB_CA_FILE" placeholder="/app/config/ppb-ca.pem"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
                             <!-- UGREEN NAS -->
@@ -3450,21 +3450,21 @@
                                     <div class="col-span-2"><label
                                             class="text-[9px] text-slate-500 uppercase font-bold">NAS IP</label><input
                                             id="conn-NAS_HOST"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">Port</label><input
                                             id="conn-NAS_PORT" placeholder="9443"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">帳號</label><input
                                         id="conn-NAS_USER"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">密碼 <span
                                             id="connset-NAS_PASSWORD" class="normal-case"></span></label><input
                                         id="conn-NAS_PASSWORD" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
                             <!-- NAS Monitor -->
@@ -3473,19 +3473,19 @@
                                 <p class="text-[9px] text-slate-500 leading-relaxed">內建 Docker Monitor 可讀取部署主機的真實容器；完整外部服務另提供警報與進階歷史。操作方式見 <span class="mono text-blue-400">docs/operations/NAS-DOCKER-MONITOR-SETUP.md</span></p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">模式 <span id="connset-NAS_MONITOR_MODE" class="normal-case"></span></label><select
                                         id="conn-NAS_MONITOR_MODE"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                         <option value="docker_only">docker_only（內建，只管理 Docker）</option>
                                         <option value="full">full（完整外部 NAS Monitor）</option>
                                     </select>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">服務網址 <span id="connset-NAS_MONITOR_URL" class="normal-case"></span></label><input
                                         id="conn-NAS_MONITOR_URL" placeholder="http://nas-monitor:8000 或 https://monitor.internal"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">API Key <span
                                             id="connset-NAS_MONITOR_API_KEY" class="normal-case"></span></label><input
                                         id="conn-NAS_MONITOR_API_KEY" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     <p class="text-[8px] text-amber-500/80 mt-1">URL、key、mode 是同一個信任組；會先安全寫入，再由協調 recreate 主服務與 monitor 一起生效。普通 restart 不會套用半套設定。</p>
                                 </div>
                             </div>
@@ -3495,38 +3495,38 @@
                                 <p class="text-[9px] text-slate-500 leading-relaxed">優先填 HTTPS origin。遠端 HTTP 會傳送 Basic 管理帳密，除非明確接受風險，否則後端拒絕連線。</p>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">HTTPS / HTTP Origin</label><input
                                         id="conn-ADGUARD_URL" placeholder="https://adguard.internal:3000"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div class="grid grid-cols-3 gap-2">
                                     <div class="col-span-2"><label class="text-[9px] text-slate-500 uppercase font-bold">舊版 Host（僅相容）</label><input
                                             id="conn-ADGUARD_HOST" placeholder="192.168.1.250"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">Port</label><input
                                             id="conn-ADGUARD_PORT" placeholder="80"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     </div>
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">管理帳號</label><input
                                         id="conn-ADGUARD_USER"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">管理密碼 <span
                                             id="connset-ADGUARD_PASSWORD" class="normal-case"></span></label><input
                                         id="conn-ADGUARD_PASSWORD" type="password"
-                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input conn-secret w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                                 <div class="grid grid-cols-2 gap-2">
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">允許遠端 HTTP</label><select
                                             id="conn-ADGUARD_ALLOW_INSECURE_HTTP"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                             <option value="false">false（預設；拒絕）</option>
                                             <option value="true">true（明確接受明文風險）</option>
                                         </select>
                                     </div>
                                     <div><label class="text-[9px] text-slate-500 uppercase font-bold">驗證 HTTPS TLS</label><select
                                             id="conn-ADGUARD_TLS_VERIFY"
-                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                            class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                             <option value="true">true（預設；建議）</option>
                                             <option value="false">false（僅限受信內網）</option>
                                         </select>
@@ -3534,14 +3534,14 @@
                                 </div>
                                 <div><label class="text-[9px] text-slate-500 uppercase font-bold">自簽 CA 檔（選填）</label><input
                                         id="conn-ADGUARD_CA_FILE" placeholder="/app/config/adguard-ca.pem"
-                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500 mt-0.5">
+                                        class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500 mt-0.5">
                                 </div>
                             </div>
                             <!-- Internet egress policy -->
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4 space-y-2.5">
                                 <p class="text-[11px] font-bold text-cyan-400">🌐 Internet 對外 Proxy Policy <span id="connset-SMARTHUB_INTERNET_PROXY_MODE" class="normal-case"></span></p>
                                 <select id="conn-SMARTHUB_INTERNET_PROXY_MODE"
-                                    class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 mt-0.5">
+                                    class="conn-input w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500 mt-0.5">
                                     <option value="disabled">disabled（預設；忽略 ambient proxy）</option>
                                     <option value="environment">environment（明確使用 HTTP(S)_PROXY）</option>
                                 </select>
@@ -3601,7 +3601,7 @@
                                 <label
                                     class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">頻率</label>
                                 <select id="report-freq" data-handler-change="h86"
-                                    class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
+                                    class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500">
                                     <option value="daily">每日</option>
                                     <option value="twice">每日兩次</option>
                                     <option value="every6h">每 6 小時</option>
@@ -3613,14 +3613,14 @@
                                     class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">發送時間
                                     (時)</label>
                                 <input type="number" id="report-hour" min="0" max="23"
-                                    class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                    class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                             </div>
                             <div id="report-hour2-wrap" class="hidden">
                                 <label
                                     class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">第二次時間
                                     (時)</label>
                                 <input type="number" id="report-hour2" min="0" max="23"
-                                    class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                    class="w-24 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                             </div>
                             <button data-handler-click="h87"
                                 class="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-200 rounded-xl transition">立即產生預覽</button>
@@ -3690,14 +3690,14 @@
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制可見 SmartHub 分頁多久向後端取得一次最新資料並更新畫面。只影響前端顯示，不直接控制歷史資料取樣。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-deviceActiveFrontendPollSec"
                                         min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">有人瀏覽時：後端設備取樣間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制有可見 SmartHub 分頁時，伺服器多久主動向一般裝置取樣並寫入歷史資料。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-deviceActiveBackendSampleSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -3705,33 +3705,33 @@
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制沒有任何可見 SmartHub 分頁時，伺服器多久向一般裝置取樣並寫入歷史資料。預設 600 秒。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-deviceIdleBackendSampleSec"
                                         min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-cyan-500/20 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UniFi 遙測：頁面可見時</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">只有 UCG 頁面可見時使用此取樣間隔；不會加速 UPS、NAS 或 WiiM。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-unifiTelemetryActiveSec" min="15"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-cyan-500/20 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UniFi 遙測：背景閒置時</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">沒有 UCG 頁面 Lease 時的專用背景取樣間隔；預設 300 秒。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-unifiTelemetryIdleSec" min="60"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">瀏覽器 heartbeat 間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制可見分頁多久向後端回報仍在使用中，不等於設備取樣間隔。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-heartbeatSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">瀏覽器活躍判定逾時</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">後端多久沒有收到 heartbeat 後，將該分頁判定為離線。此值必須大於 heartbeat 間隔。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-activeLeaseSec" min="2"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -3740,7 +3740,7 @@
                                         class="text-slate-300">有沒有新威脅 / NAS 嚴重警報要推播</span>（Discord/Telegram）。設短推播更即時。
                                 </p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-watcherSec" min="5"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -3749,56 +3749,56 @@
                                         class="text-slate-300">自動隔離受感染的內網設備</span>（需先在「資安」頁開啟自動防禦聯動，否則此排程不動作）。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-autoDefenseSec"
                                         min="5"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 前端更新間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制 UPS 頁面可見時，多久更新一次 UPS 畫面。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsFrontendPollSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS Active 後端取樣間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制有人瀏覽時，UPS 後端取樣與歷史寫入頻率。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsActiveBackendSampleSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS Idle 後端取樣間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制沒有人瀏覽時，UPS 後端取樣與歷史寫入頻率。UPS 不使用一般裝置的 600 秒設定。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsIdleBackendSampleSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS 圖表與事件更新間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制 UPS 頁面歷史圖與事件列表的更新頻率，避免即時狀態更新時重複讀取大型歷史資料。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsHistoryFrontendPollSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS PPB 事件前端更新間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制 UPS 頁面向 PowerPanel Business 讀取原生事件紀錄的前端更新頻率。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsPpbEventsFrontendPollSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS PPB 事件 Active 後端同步間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制有人瀏覽 UPS 時，後端同步 PowerPanel Business 原生事件的頻率。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsPpbEventActiveBackendSampleSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
                                 <label class="text-[11px] font-bold text-slate-300 block mb-1">UPS PPB 事件 Idle 後端同步間隔</label>
                                 <p class="text-[10px] text-slate-500 leading-relaxed mb-2.5">控制沒有人瀏覽時，後端同步 PowerPanel Business 原生事件的頻率。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-upsPpbEventIdleBackendSampleSec" min="1"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -3807,7 +3807,7 @@
                                     攔截、儲存成功等）顯示幾秒後自動消失。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-toastSec" min="1"
                                         max="60"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">秒</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -3816,7 +3816,7 @@
                                         class="text-slate-300">NAS 日誌推播、UPS 斷電等關鍵事件不會被延遲</span>。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-historyFlushMin"
                                         min="1" max="60"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">分鐘</span></div>
                             </div>
                             <div class="bg-slate-950/50 border border-slate-800/50 rounded-xl p-4">
@@ -3826,7 +3826,7 @@
                                         class="text-slate-300">曲線圖可選的最長範圍受此限制</span>（例如要看 30 天圖就至少設 30）。</p>
                                 <div class="flex items-center gap-2"><input type="number" id="srv-historyKeepDays"
                                         min="1" max="365"
-                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"><span
+                                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"><span
                                         class="text-[10px] text-slate-600 shrink-0">天</span></div>
                             </div>
                         </div>
@@ -3848,7 +3848,7 @@
                                 id="wiim-art"><svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
 
                             <!-- 曲目資訊與進度條 -->
-                            <div class="flex-grow min-w-0 w-full space-y-4 md:ml-2">
+                            <div class="grow min-w-0 w-full space-y-4 md:ml-2">
                                 <div>
                                     <h3 class="text-xl font-black text-white tracking-wide truncate" id="wiim-htitle">
                                         載入中...</h3>
@@ -3859,14 +3859,14 @@
                                 <!-- 進度條 (可點擊跳轉 setPlayerCmd:seek) -->
                                 <div class="flex items-center gap-3 text-[10px] text-slate-500 mono">
                                     <span id="wiim-pcur">0:00</span>
-                                    <div class="relative flex-grow h-5 py-1.5 cursor-pointer group touch-none select-none" id="wiim-pwrap"
+                                    <div class="relative grow h-5 py-1.5 cursor-pointer group touch-none select-none" id="wiim-pwrap"
                                         role="slider" aria-label="播放進度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
                                         data-handler-pointerdown="h90" data-handler-pointermove="h91" data-handler-pointerup="h92" data-handler-pointercancel="h93"
                                         data-handler-dblclick="h94"
                                         title="點擊或拖曳調整播放位置">
                                         <div
                                             class="h-1.5 bg-slate-950 border border-slate-800 rounded-full overflow-hidden group-hover:border-blue-500/50 transition">
-                                            <div class="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
+                                            <div class="h-full bg-linear-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300"
                                                 id="wiim-pbar" style="width: 0%"></div>
                                         </div>
                                         <div id="wiim-progress-cat" class="hidden pointer-events-none absolute z-10 -top-2.5 -translate-x-1/2 transition-[left] duration-300" style="left:0%" aria-hidden="true">
@@ -3898,7 +3898,7 @@
                                     </div>
 
                                     <!-- 音量與靜音 -->
-                                    <div class="flex items-center gap-2 flex-grow max-w-sm">
+                                    <div class="flex items-center gap-2 grow max-w-sm">
                                         <span
                                             class="cursor-pointer select-none shrink-0 text-slate-300 hover:text-white transition"
                                             id="wiim-vico" data-handler-click="h99"><svg class="w-4 h-4"
@@ -3910,13 +3910,13 @@
                                                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
                                             </svg></span>
                                         <button data-handler-click="h100"
-                                            class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">−</button>
+                                            class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded-sm text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">−</button>
                                         <input type="range" id="wiim-vol" min="0" max="100"
                                             class="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                             data-handler-input="h101"
                                             data-handler-change="h102">
                                         <button data-handler-click="h103"
-                                            class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">＋</button>
+                                            class="px-1.5 py-0.5 bg-slate-800/80 border border-slate-700/60 rounded-sm text-[10px] text-slate-300 hover:bg-slate-700 transition shrink-0">＋</button>
                                         <span id="wiim-volval"
                                             class="text-xs text-slate-400 mono w-8 text-right">--</span>
                                     </div>
@@ -4087,20 +4087,20 @@
                                     <label
                                         class="flex items-center gap-1.5 cursor-pointer select-none ml-2 text-slate-400 hover:text-slate-200">
                                         <input type="checkbox" id="wiim-showDots" data-handler-change="h114"
-                                            class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
+                                            class="rounded-sm bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
                                         顯示資料點
                                     </label>
                                     <label
                                         class="flex items-center gap-1.5 cursor-pointer select-none text-slate-400 hover:text-slate-200"
                                         title="5 點移動平均，撫平感測器整數跳動">
                                         <input type="checkbox" id="wiim-smooth" checked data-handler-change="h115"
-                                            class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
+                                            class="rounded-sm bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
                                         平滑曲線
                                     </label>
                                     <label
                                         class="flex items-center gap-1.5 cursor-pointer select-none text-slate-400 hover:text-slate-200">
                                         <input type="checkbox" id="wiim-liveScroll" checked
-                                            class="rounded bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
+                                            class="rounded-sm bg-slate-850 border-slate-700 text-blue-500 focus:ring-0 focus:ring-offset-0">
                                         即時捲動
                                     </label>
                                     <span class="ml-auto text-[10px] text-slate-500 font-mono" id="wiim-chart-status">近
@@ -4132,10 +4132,10 @@
                                 <div class="flex flex-wrap items-center gap-2 mt-3 text-[11px] text-slate-500">
                                     <span>警示門檻：CPU ≥</span>
                                     <input type="number" id="wiim-cpu-alert" min="40" max="110"
-                                        class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                        class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                     <span>°C、主機板 ≥</span>
                                     <input type="number" id="wiim-board-alert" min="35" max="100"
-                                        class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                        class="w-16 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                     <span>°C</span>
                                     <button data-handler-click="h123"
                                         class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-[10px] font-bold text-white rounded-lg transition">儲存門檻</button>
@@ -4178,7 +4178,7 @@
                                 <div
                                     class="flex mb-6 overflow-x-auto terminal-scroll gap-1 rounded-xl bg-slate-950/45 p-1">
                                     <button data-handler-click="h124"
-                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-sm shadow-blue-500/20 transition shrink-0 whitespace-nowrap">音訊
+                                        class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-xs shadow-blue-500/20 transition shrink-0 whitespace-nowrap">音訊
                                         DSP</button>
                                     <button data-handler-click="h125"
                                         class="wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap">均衡器</button>
@@ -4213,7 +4213,7 @@
                                             取樣率切換延遲 (ms)</label>
                                         <div class="flex gap-2">
                                             <input type="number" id="wiim-spdif" value="500" min="0" max="3000"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                             <button
                                                 data-handler-click="h132"
                                                 class="px-4 py-2 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-300 rounded-xl transition shrink-0">設定</button>
@@ -4226,7 +4226,7 @@
                                         <div class="space-y-2">
                                             <input type="text" id="wiim-gain-json"
                                                 value='{"config":[{"gain":"0","mode":"10","name":"wifi"}],"enable":1,"max_gain":"10.0","min_gain":"-10.0"}'
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-300 font-mono focus:outline-hidden focus:border-blue-500">
                                             <div class="flex gap-2">
                                                 <button data-handler-click="h133"
                                                     class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg transition">讀取</button>
@@ -4261,7 +4261,7 @@
                                             EQ 預設</label>
                                         <div class="flex gap-2">
                                             <select id="wiim-eq-list"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-blue-500">
                                                 <option value="Flat">Flat</option>
                                             </select>
                                             <button
@@ -4276,7 +4276,7 @@
                                         <div class="space-y-2">
                                             <input type="text" id="wiim-eq-band"
                                                 value='{"EQBand":[{"index":0,"param_name":"band31hz","value":60}]}'
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-300 font-mono focus:outline-hidden focus:border-blue-500">
                                             <div class="flex gap-2">
                                                 <button data-handler-click="h140"
                                                     class="px-3 py-1.5 bg-slate-850 hover:bg-slate-800 border border-slate-800 text-[10px] font-bold text-slate-300 rounded-lg transition">讀取頻段</button>
@@ -4328,7 +4328,7 @@
                                             class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">開始藍牙掃描</label>
                                         <div class="flex gap-2">
                                             <input type="number" id="wiim-btsec" value="10"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500"
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500"
                                                 placeholder="掃描秒數">
                                             <button
                                                 data-handler-click="h148"
@@ -4351,7 +4351,7 @@
                                             MAC</label>
                                         <div class="flex gap-2">
                                             <input type="text" id="wiim-btmac" placeholder="xx:xx:xx:xx:xx:xx"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                             <button
                                                 data-handler-click="h153"
                                                 class="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition">連線</button>
@@ -4373,7 +4373,7 @@
                                         <div class="flex gap-2">
                                             <input type="text" id="wiim-stream-url"
                                                 placeholder="http://.../stream.mp3 或 .m3u 清單網址"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                             <button data-handler-click="h155"
                                                 class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-xl transition shrink-0">▶
                                                 播放</button>
@@ -4387,7 +4387,7 @@
                                             (Multiroom)</label>
                                         <div class="flex gap-2">
                                             <input type="text" id="wiim-group-ip" placeholder="主設備 IP (本機加入該群組)"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                             <button
                                                 data-handler-click="h156"
                                                 class="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition shrink-0">加入</button>
@@ -4433,7 +4433,7 @@
                                             / 待機排程</label>
                                         <div class="flex gap-2 items-center">
                                             <input type="number" id="wiim-shutdown-sec" placeholder="秒數 (0=取消)" min="0"
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 font-mono focus:outline-hidden focus:border-blue-500">
                                             <button
                                                 data-handler-click="h164"
                                                 class="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white rounded-lg transition shrink-0">設定</button>
@@ -4465,7 +4465,7 @@
                                         <div class="space-y-2">
                                             <input type="text" id="wiim-lcd-json"
                                                 value='{"auto_sense_enable":0,"default_bright":1,"disable":0}'
-                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-300 font-mono focus:outline-none focus:border-blue-500">
+                                                class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-[10px] text-slate-300 font-mono focus:outline-hidden focus:border-blue-500">
                                             <div class="flex gap-2">
                                                 <button
                                                     data-handler-click="h170"
@@ -4570,7 +4570,7 @@
                             <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 shadow-xl relative overflow-hidden backdrop-blur-md">
                                 <div class="flex justify-between items-center mb-4">
                                     <h3 class="text-xs font-bold text-slate-400 tracking-wider uppercase">UPS 輸出電壓 & 電池電量</h3>
-                                    <span class="text-[8px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UPS 取樣">REAL DATA</span>
+                                    <span class="text-[8px] px-1.5 py-0.5 rounded-sm border border-emerald-500/30 text-emerald-400 uppercase font-bold" title="數據來自 UPS 取樣">REAL DATA</span>
                                 </div>
                                 <div class="flex justify-between items-end mb-4">
                                     <div>
@@ -4826,7 +4826,7 @@
         </div>
     </div>
 
-    <!-- Docker 日誌彈窗 (置於頂層，避免被 backdrop-blur 祖先影響 fixed 定位) -->
+    <!-- Docker 日誌彈窗 (置於頂層，避免被 backdrop-blur-sm 祖先影響 fixed 定位) -->
     <div id="docker-log-modal" role="dialog" aria-modal="true" aria-labelledby="docker-log-title" aria-hidden="true" class="fixed inset-0 z-[70] hidden items-center justify-center bg-black/70 p-4"
         data-handler-click="h190">
         <div class="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-3xl max-h-[80vh] flex flex-col">
@@ -4839,7 +4839,7 @@
                         class="text-slate-400 hover:text-white text-lg leading-none">&times;</button>
                 </div>
             </div>
-            <pre class="p-4 text-[10px] text-emerald-400 mono overflow-auto flex-grow terminal-scroll"
+            <pre class="p-4 text-[10px] text-emerald-400 mono overflow-auto grow terminal-scroll"
                 id="docker-log-body">載入中...</pre>
         </div>
     </div>

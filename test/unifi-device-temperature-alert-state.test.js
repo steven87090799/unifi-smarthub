@@ -24,3 +24,14 @@ test('critical is immediate while stale, unsupported, and offline-like samples d
     assert.equal(state.evaluate(sample(80, '2', { freshness: { stale: true } })), null);
     assert.equal(state.evaluate({ ...sample(80, '3'), temperature: { value: 80, sampledAt: '3', status: 'unsupported', stale: false } }), null);
 });
+
+test('a failed persistent save cannot advance or consume the alert sample', () => {
+    let fail = true;
+    const state = createUnifiDeviceTemperatureAlertState({ save: () => {
+        if (fail) throw new Error('SQLite unavailable');
+    } });
+    assert.throws(() => state.evaluate(sample(95, '1')), /SQLite unavailable/u);
+    assert.equal(state.snapshot('device-1'), null);
+    fail = false;
+    assert.equal(state.evaluate(sample(95, '1')).type, 'critical');
+});

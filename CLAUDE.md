@@ -51,7 +51,7 @@ rg -n "SMARTHUB_IMAGE|production-preflight|update-nas|Repository gate" README.md
 
 ## 3. 目前系統的一頁定位
 
-- Node.js `24.18.0`、Express `5.2.1`；套件版本以 `package.json` 與 lockfile 為準，產品版本目前為 `3.0.0`。
+- Node.js `24.18.0`、Express `5.2.1`；套件版本以 `package.json` 與 lockfile 為準，產品版本目前為 `3.0.4`。
 - 正式組裝入口是 `server.js`；可測試 owner 在 `server/`；SQLite／WAL／retention／備份在 `db.js` 與 `server/storage/`。
 - 前端是 `public/index.html` 的 14 頁 SPA；主要行為在 `public/js/app.js`，生命週期在 `frontend-lifecycle.js`，安全動態操作在 `action-dispatcher.js`。
 - `server-mock.js` 是前端契約的假資料邊界，不是另一套產品邏輯；前端可見契約要與 production、mock、test 一起維護。

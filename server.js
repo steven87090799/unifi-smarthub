@@ -2677,7 +2677,11 @@ const clientPresenceStates = new Map();
 const networkDeviceStates = new Map();
 const wifiSsidStates = new Map();
 const unifiUpgradeAlertTs = new Map();
-const unifiDeviceTemperatureAlertState = createUnifiDeviceTemperatureAlertState({ maxEntries: 1000 });
+const unifiDeviceTemperatureAlertState = createUnifiDeviceTemperatureAlertState({
+    maxEntries: 1000,
+    load: deviceId => historyDb.getUnifiDeviceTemperatureAlertState(deviceId),
+    save: (deviceId, state) => historyDb.saveUnifiDeviceTemperatureAlertState(deviceId, state)
+});
 const notifiedNasLogIds = new Set();
 const notifiedNasSleepWakeIds = new Set();
 let wiimWasOnline = null;
@@ -4255,6 +4259,7 @@ app.post('/api/connections', (req, res) => {
         unifiDeviceThermalCollector.reset();
         unifiDeviceTelemetrySnapshot.clear();
         unifiDeviceTemperatureAlertState.clear();
+        historyDb.clearUnifiDeviceTemperatureAlertState();
         requestPromptSampling(['unifi-device-telemetry']);
     }
     if (updatedKeys.some(key => !key.startsWith('UNIFI_DEVICE_SSH_')

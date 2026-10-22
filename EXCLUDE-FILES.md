@@ -7,6 +7,7 @@
 | `.env`, `.env.*` | 機密 | 實機連線除錯，且只檢查必要欄位 |
 | `data/` | SQLite、設定與 runtime 歷史 | 儲存、遷移或資料異常 |
 | `node_modules/`, `package-lock.json` | 體積大 | 依賴或安全問題 |
+| `public/assets/tailwind.css` | 產生的 CSS，超過 100 KiB | 先讀 frontend source，再檢查產出 |
 | `server.js`, `public/index.html`, `public/js/app.js` | 大型主檔 | 先讀對應 map，再切片 |
 | `server-mock.js`, `db.js`, `observability/` | 低頻實作 | mock、SQLite、診斷任務 |
 | `docs/integrations/` | 整合參考 | 修改對應設備 |

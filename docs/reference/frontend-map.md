@@ -64,6 +64,7 @@ UPS 歷史與 PPB 事件各預設 10 秒；完整且可調整的頻率見 [POLLI
 - `public/js/web-push.js`：瀏覽器訂閱／取消訂閱；Web Push 是額外通知 fan-out。
 - `frontend/console.css`：Console UI tokens、responsive sidebar、表格與動態效果；與 Tailwind 合併建置，互動沿用 `public/js/app.js`。
 - `public/assets/tailwind.css`：由 `npm run build:css` 產生；`npm run check:css` 驗證。
+- CSS 使用 Tailwind 4 與獨立 CLI；`frontend/tailwind.input.css` 明確指定 source 與相容預設，保留 console 視覺樣式。遙測未知 online／VAP 狀態顯示 Unknown。
 - Chart.js、D3、TopoJSON、world-atlas：由 `/vendor/<package>/<version>/...` 同源提供。
 - `/sw.js`：由後端產生；API／health 不進 cache，通知點擊只接受 same-origin path。
 - UniFi 遙測沿用已在 PWA shell 的 `/js/app.js`，沒有新增 executable asset；cache name 仍由 build revision 版本化。

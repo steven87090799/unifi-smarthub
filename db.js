@@ -177,6 +177,16 @@ function createHistoryDb(dataDir, options = {}) {
         );
         CREATE INDEX IF NOT EXISTS idx_unifi_device_telemetry_rollups_time
             ON unifi_device_telemetry_rollups(resolution, bucket_ts, device_id);
+        CREATE TABLE IF NOT EXISTS unifi_device_temperature_alert_state (
+            device_id TEXT PRIMARY KEY,
+            state TEXT NOT NULL,
+            consecutive_high INTEGER NOT NULL,
+            consecutive_recovery INTEGER NOT NULL,
+            last_sampled_at TEXT,
+            last_alert_ts INTEGER NOT NULL,
+            last_recovery_ts INTEGER NOT NULL,
+            updated_ts INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS ups_events (
             id INTEGER PRIMARY KEY,
             start_ts INTEGER NOT NULL,
@@ -567,6 +577,22 @@ function createHistoryDb(dataDir, options = {}) {
     const insertUnifiTelemetryStmt = db.prepare(`
         INSERT OR IGNORE INTO unifi_device_telemetry (sampled_ts, device_id, data)
         VALUES (@sampled_ts, @device_id, @data)
+    `);
+    const getUnifiTemperatureAlertStateStmt = db.prepare('SELECT * FROM unifi_device_temperature_alert_state WHERE device_id = ?');
+    const saveUnifiTemperatureAlertStateStmt = db.prepare(`
+        INSERT INTO unifi_device_temperature_alert_state (
+            device_id, state, consecutive_high, consecutive_recovery, last_sampled_at, last_alert_ts, last_recovery_ts, updated_ts
+        ) VALUES (@deviceId, @state, @consecutiveHigh, @consecutiveRecovery, @lastSampledAt, @lastAlertAt, @lastRecoveryAt, @updatedTs)
+        ON CONFLICT(device_id) DO UPDATE SET
+            state = excluded.state, consecutive_high = excluded.consecutive_high,
+            consecutive_recovery = excluded.consecutive_recovery, last_sampled_at = excluded.last_sampled_at,
+            last_alert_ts = excluded.last_alert_ts, last_recovery_ts = excluded.last_recovery_ts, updated_ts = excluded.updated_ts
+    `);
+    const pruneUnifiTemperatureAlertStateStmt = db.prepare(`
+        DELETE FROM unifi_device_temperature_alert_state
+        WHERE updated_ts < ? OR device_id NOT IN (
+            SELECT device_id FROM unifi_device_temperature_alert_state ORDER BY updated_ts DESC, device_id LIMIT 1000
+        )
     `);
     const listUnifiTelemetryStmt = db.prepare(`
         SELECT sampled_ts, device_id, data
@@ -1774,7 +1800,11 @@ function createHistoryDb(dataDir, options = {}) {
                 if (integer && !Number.isSafeInteger(number)) return undefined;
                 return number;
             };
-            const online = value.online === true;
+            const online = value.online === true ? true : value.online === false ? false : null;
+            if (value.online != null && online === null) {
+                rejected += 1;
+                continue;
+            }
             const temperatureStatus = typeof value.temperatureStatus === 'string'
                 ? value.temperatureStatus.slice(0, 32)
                 : 'unavailable';
@@ -1798,7 +1828,7 @@ function createHistoryDb(dataDir, options = {}) {
                 type: value.type == null ? null : String(value.type).slice(0, 32),
                 online,
                 cpu,
-                temperature: online && temperatureStatus === 'supported' ? temperature : null,
+                temperature: online === true && temperatureStatus === 'supported' ? temperature : null,
                 temperatureStatus,
                 temperatureSource: value.temperatureSource == null ? null : String(value.temperatureSource).slice(0, 32),
                 clientCount,
@@ -2047,6 +2077,39 @@ function createHistoryDb(dataDir, options = {}) {
         insertUnifiTelemetryBatch,
         listUnifiTelemetrySince,
         listUnifiTelemetryHistory,
+        getUnifiDeviceTemperatureAlertState(deviceId) {
+            const id = typeof deviceId === 'string' ? deviceId.trim().toLowerCase() : '';
+            if (!id || id.length > 128) return null;
+            const row = getUnifiTemperatureAlertStateStmt.get(id);
+            return row ? {
+                alertActive: row.state === 'active', consecutiveHigh: row.consecutive_high,
+                consecutiveRecovery: row.consecutive_recovery, lastSampledAt: row.last_sampled_at,
+                lastAlertAt: row.last_alert_ts, lastRecoveryAt: row.last_recovery_ts
+            } : null;
+        },
+        clearUnifiDeviceTemperatureAlertState() {
+            db.prepare('DELETE FROM unifi_device_temperature_alert_state').run();
+        },
+        saveUnifiDeviceTemperatureAlertState(deviceId, state) {
+            const id = typeof deviceId === 'string' ? deviceId.trim().toLowerCase() : '';
+            if (!id || id.length > 128 || !state || typeof state !== 'object') return false;
+            const nonNegative = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+            const data = {
+                deviceId: id, state: state.alertActive === true ? 'active' : 'idle',
+                consecutiveHigh: nonNegative(state.consecutiveHigh),
+                consecutiveRecovery: nonNegative(state.consecutiveRecovery),
+                lastSampledAt: typeof state.lastSampledAt === 'string' ? state.lastSampledAt.slice(0, 64) : null,
+                lastAlertAt: nonNegative(state.lastAlertAt),
+                lastRecoveryAt: nonNegative(state.lastRecoveryAt),
+                updatedTs: Number(currentTime())
+            };
+            const now = Number(currentTime());
+            return db.transaction(() => {
+                saveUnifiTemperatureAlertStateStmt.run(data);
+                pruneUnifiTemperatureAlertStateStmt.run(now - 90 * 86400000);
+                return true;
+            })();
+        },
         flush,
         checkpoint() {
             flush();
