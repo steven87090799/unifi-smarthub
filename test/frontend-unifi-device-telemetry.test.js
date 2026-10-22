@@ -20,6 +20,9 @@ test('telemetry UI is external-script driven, scope-aware, and renders truth and
     assert.match(app, /unifi-device-telemetry/u);
     assert.match(app, /unsupported: '不支援'/u);
     assert.match(app, /STALE · 保留最後成功資料/u);
+    assert.match(app, /device\?\.online === true \? 'Online' : device\?\.online === false \? 'Offline' : 'Unknown'/u);
+    assert.match(app, /vap\.up === true \? 'Up' : vap\.up === false \? 'Down' : 'Unknown'/u);
+    assert.match(mock, /online: null/u);
     assert.doesNotMatch(html, /<script(?!\s+src=)[^>]*>/iu);
     assert.doesNotMatch(html, /\son(?:click|change|input)\s*=/iu);
 });

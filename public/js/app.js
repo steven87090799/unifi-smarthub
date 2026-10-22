@@ -2011,7 +2011,7 @@
                     radio.utilizationPercent != null ? `使用率 ${radio.utilizationPercent}%` : null, radio.clientCount != null ? `${radio.clientCount} 台` : null].filter(Boolean);
                 if (details.length) field(bands[radio.band] || radio.name || 'Radio', details.join(' · '));
             }
-            for (const vap of device?.vaps || []) field(`${vap.ssid || '隱藏 SSID'} (${bands[vap.radio] || vap.radio || 'WiFi'})`, `${vap.up ? 'Up' : 'Down'}${vap.clientCount != null ? ` · ${vap.clientCount} 台` : ''}`);
+            for (const vap of device?.vaps || []) field(`${vap.ssid || '隱藏 SSID'} (${bands[vap.radio] || vap.radio || 'WiFi'})`, `${vap.up === true ? 'Up' : vap.up === false ? 'Down' : 'Unknown'}${vap.clientCount != null ? ` · ${vap.clientCount} 台` : ''}`);
             const traffic = device?.traffic || {};
             for (const [key, label] of Object.entries({ rxBytes: '累計接收', txBytes: '累計傳送' })) if (traffic[key] != null) field(label, telemetryBytes(traffic[key]));
             if (device?.uptimeSeconds != null) field('運行時間', `${Math.floor(device.uptimeSeconds / 86400)} 天 ${Math.floor(device.uptimeSeconds % 86400 / 3600)} 小時`);
@@ -2019,7 +2019,7 @@
             if (source) field('溫度來源', `${source} · ${telemetryTimestamp(temperature.sampledAt)}`);
             for (const zone of device?.temperatureZones || []) if (zone.temperatureC != null) field(zone.type || zone.zone, `${zone.temperatureC}°C`);
             return `<article class="rounded-xl border border-slate-800/70 bg-slate-950/45 p-4">
-                <p class="text-xs font-bold text-slate-200">${escapeHtml(device?.name || device?.id || '未知設備')} · ${stale ? 'STALE' : device?.online ? 'Online' : 'Offline'}</p>
+                <p class="text-xs font-bold text-slate-200">${escapeHtml(device?.name || device?.id || '未知設備')} · ${stale ? 'STALE' : device?.online === true ? 'Online' : device?.online === false ? 'Offline' : 'Unknown'}</p>
                 <p class="text-[9px] text-slate-500 mono">${escapeHtml(device?.model || '')} · ${escapeHtml(device?.firmware || '')} · ${escapeHtml(device?.ip || '')}</p>
                 <div class="grid grid-cols-2 gap-2 mt-3 text-[10px]">${cells.join('')}</div>
             </article>`;
@@ -2173,7 +2173,7 @@
                 tr.setAttribute('role', 'button');
                 tr.setAttribute('aria-label', `查看 ${c.name || c.ip} 的客戶端詳情`);
                 tr.innerHTML = `
-                <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'} flex items-center gap-1.5">${escapeHtml(c.name)}${c.aliased ? '<span class="text-[8px] px-1 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/25 rounded font-normal">自訂</span>' : ''}<button type="button" data-client-action="rename" title="自訂名稱" class="text-slate-600 hover:text-blue-400 transition"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7m-1.5-9.5a2.12 2.12 0 013 3L12 18l-4 1 1-4 9.5-9.5z"/></svg></button></p><p class="text-[9px] text-slate-500 mono">${escapeHtml(c.mac)} | ${escapeHtml(c.ip)}</p></div></td>
+                <td class="py-3 pl-2"><div><p class="font-bold ${c.blocked ? 'text-red-400 line-through' : 'text-slate-200'} flex items-center gap-1.5">${escapeHtml(c.name)}${c.aliased ? '<span class="text-[8px] px-1 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/25 rounded-sm font-normal">自訂</span>' : ''}<button type="button" data-client-action="rename" title="自訂名稱" class="text-slate-600 hover:text-blue-400 transition"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7m-1.5-9.5a2.12 2.12 0 013 3L12 18l-4 1 1-4 9.5-9.5z"/></svg></button></p><p class="text-[9px] text-slate-500 mono">${escapeHtml(c.mac)} | ${escapeHtml(c.ip)}</p></div></td>
                 <td>${c.is_wifi ? `<span class="text-blue-400 font-semibold inline-flex items-center gap-1">${ICON_WIFI} Wi-Fi (${escapeHtml(c.wifi_signal)}dBm)</span>` : `<span class="text-emerald-400 font-semibold inline-flex items-center gap-1">${ICON_LAN} LAN</span>`}</td>
                 <td class="mono text-slate-400"><span class="inline-flex items-center gap-0.5">${ICON_DOWN} ${(c.rx_bytes / 1048576).toFixed(1)}MB</span> / <span class="inline-flex items-center gap-0.5">${ICON_UP} ${(c.tx_bytes / 1048576).toFixed(1)}MB</span></td>
                 <td class="text-right py-3 pr-2"><button type="button" data-client-action="block" class="px-2.5 py-1.5 ${c.blocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'} text-white font-bold rounded-lg text-[10px] transition">${c.blocked ? '解封' : '斷網'}</button></td>`;
@@ -2589,7 +2589,7 @@
                             <p class="font-bold text-slate-200">${escapeHtml(cfg.name)}</p>
                             <p class="text-[9px] text-slate-500">類型: ${escapeHtml(cfg.type)}</p>
                         </div>
-                        <span class="px-2 py-0.5 rounded text-[8px] bg-blue-950 text-blue-400 border border-blue-900/40 font-bold">CONNECTED</span>
+                        <span class="px-2 py-0.5 rounded-sm text-[8px] bg-blue-950 text-blue-400 border border-blue-900/40 font-bold">CONNECTED</span>
                     </div>`;
                 });
                 return { ok: true, data: configs };
@@ -2674,15 +2674,15 @@
                 return `
                 <tr class="hover:bg-slate-900/40 transition border-b border-slate-850/30">
                     <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(timeStr)}</td>
-                    <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[8px] border font-bold uppercase tracking-wider" style="color:${catColor};border-color:${catColor}44;background:${catColor}18;">${escapeHtml(t.category)}</span></td>
-                    <td class="py-2.5"><span class="px-1.5 py-0.5 rounded text-[8px] border font-bold ${sevColor}">${escapeHtml(t.severity || '-')}</span></td>
+                    <td class="py-2.5"><span class="px-2 py-0.5 rounded-sm text-[8px] border font-bold uppercase tracking-wider" style="color:${catColor};border-color:${catColor}44;background:${catColor}18;">${escapeHtml(t.category)}</span></td>
+                    <td class="py-2.5"><span class="px-1.5 py-0.5 rounded-sm text-[8px] border font-bold ${sevColor}">${escapeHtml(t.severity || '-')}</span></td>
                     <td class="py-2.5 mono text-[11px] text-slate-200">${escapeHtml(t.src_ip)} <span class="text-[9px] text-slate-500">(${escapeHtml(t.src_country)})</span></td>
                     <td class="py-2.5 mono text-[11px] text-slate-300">${escapeHtml(t.target_ip)} <span class="text-[9px] text-slate-500">(${escapeHtml(t.target_device)})</span></td>
                     <td class="py-2.5 text-[11px] text-slate-450 truncate max-w-xs" title="${escapeHtml(t.msg)}">${escapeHtml(t.msg)}</td>
                     <td class="py-2.5 mono text-[10px] text-slate-400">${escapeHtml(t.port)}</td>
                     <td class="py-2.5 text-right whitespace-nowrap">
                         <span class="font-black text-red-500 text-[10px] uppercase tracking-wider">${escapeHtml(t.action_taken)}</span>
-                        ${canBlock ? `<button data-action="copy-src-ip" data-ip="${escapeActionData(t.src_ip)}" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 002 2v8a2 2 0 002 2z"/></svg></button><button data-action="threat-block" data-ip="${escapeActionData(t.src_ip)}" title="加入有期限的 UniFi 封鎖清單" class="ml-1.5 px-1.5 py-0.5 rounded border border-red-900/60 text-[9px] font-bold text-red-400 hover:bg-red-950/60">臨時封鎖</button>` : ''}
+                        ${canBlock ? `<button data-action="copy-src-ip" data-ip="${escapeActionData(t.src_ip)}" title="複製來源 IP" class="ml-1.5 text-slate-500 hover:text-blue-400 align-middle"><svg class="w-3 h-3 inline" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 002 2v8a2 2 0 002 2z"/></svg></button><button data-action="threat-block" data-ip="${escapeActionData(t.src_ip)}" title="加入有期限的 UniFi 封鎖清單" class="ml-1.5 px-1.5 py-0.5 rounded-sm border border-red-900/60 text-[9px] font-bold text-red-400 hover:bg-red-950/60">臨時封鎖</button>` : ''}
                     </td>
                 </tr>`;
             }).join('');
@@ -2923,7 +2923,7 @@
                 <div class="flex items-center gap-2 text-[10px] border-b border-slate-800/40 pb-1.5">
                     <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:${c};"></span>
                     <span class="mono text-slate-300 shrink-0">${escapeHtml(t.src_ip)}</span>
-                    <span class="text-slate-500 truncate flex-grow">${escapeHtml(t.category)} · ${escapeHtml(t.src_country)}</span>
+                    <span class="text-slate-500 truncate grow">${escapeHtml(t.category)} · ${escapeHtml(t.src_country)}</span>
                     <span class="text-slate-600 mono shrink-0">${new Date(t.datetime).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>`;
                 }).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
@@ -3226,8 +3226,8 @@
                     const tColor = temp == null ? '#64748b' : temp >= 55 ? '#ef4444' : temp >= 48 ? '#f59e0b' : '#10b981';
                     // 休眠/運轉徽章
                     const stateBadge = sleeping
-                        ? '<span class="px-1.5 py-0.5 rounded text-[8px] border font-bold bg-slate-700/40 text-slate-400 border-slate-600/40">💤 休眠中</span>'
-                        : '<span class="px-1.5 py-0.5 rounded text-[8px] border font-bold bg-blue-500/10 text-blue-400 border-blue-500/20">● 運轉中</span>';
+                        ? '<span class="px-1.5 py-0.5 rounded-sm text-[8px] border font-bold bg-slate-700/40 text-slate-400 border-slate-600/40">💤 休眠中</span>'
+                        : '<span class="px-1.5 py-0.5 rounded-sm text-[8px] border font-bold bg-blue-500/10 text-blue-400 border-blue-500/20">● 運轉中</span>';
                     // 線條 SVG 硬碟圖示 (SSD/HDD 兩款)
                     const icon = isSsd
                         ? '<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="7" y1="10" x2="7" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><circle cx="16.5" cy="12" r="1.3" fill="currentColor" stroke="none"/></svg>'
@@ -3243,7 +3243,7 @@
                             </div>
                         </div>
                         <div class="text-right shrink-0 ml-2">
-                            <span class="px-2 py-0.5 rounded text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${good ? '健康' : escapeHtml(health)}</span>
+                            <span class="px-2 py-0.5 rounded-sm text-[9px] border font-bold uppercase ${good ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}">${good ? '健康' : escapeHtml(health)}</span>
                             <p class="text-[10px] mono mt-0.5" style="color:${tColor}">${sleeping ? '<span class="text-slate-500">休眠</span>' : (temp != null ? temp + '°C' : '')}</p>
                             <p class="text-[8px] text-slate-600 group-hover:text-blue-400 transition mt-0.5">點擊看 SMART ›</p>
                         </div>
@@ -3286,7 +3286,7 @@
                         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-[11px] mb-1.5">
                             <span class="font-bold text-slate-200 flex items-center gap-2 min-w-0">${escapeHtml(name)}
                                 <input type="text" maxlength="30" data-volume-alias-key="${escapeHtml(volumeKey)}" value="${escapeHtml(customName)}" placeholder="自訂名稱"
-                                    class="w-28 px-2 py-1 rounded-md bg-slate-900/80 border border-slate-700/70 text-[9px] font-normal text-blue-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                                    class="w-28 px-2 py-1 rounded-md bg-slate-900/80 border border-slate-700/70 text-[9px] font-normal text-blue-300 placeholder:text-slate-600 focus:outline-hidden focus:border-blue-500"
                                     aria-label="${escapeHtml(name)} 自訂名稱">
                                 <span class="text-[9px] text-slate-500 mono">${escapeHtml(raid)} ${escapeHtml(fsType)}</span>
                             </span>
@@ -3515,19 +3515,19 @@
                     const mounts = (c.mounts || []).map(m => `${m.destination}${m.read_write ? '' : ' (唯讀)'}`).join(' · ') || '無掛載';
                     const allowedActions = new Set(Array.isArray(c.allowed_actions) ? c.allowed_actions : []);
                     const actionButtons = [];
-                    if (on && allowedActions.has('restart')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="restart" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded">重啟</button>');
-                    if (on && allowedActions.has('stop')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="stop" class="px-2 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-bold rounded ml-1">停止</button>');
-                    if (!on && allowedActions.has('start')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="start" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded">啟動</button>');
+                    if (on && allowedActions.has('restart')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="restart" class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[9px] font-bold rounded-sm">重啟</button>');
+                    if (on && allowedActions.has('stop')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="stop" class="px-2 py-1 bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-bold rounded-sm ml-1">停止</button>');
+                    if (!on && allowedActions.has('start')) actionButtons.push('<button type="button" data-docker-index="' + index + '" data-docker-action="start" class="px-2 py-1 bg-emerald-600/80 hover:bg-emerald-600 text-white text-[9px] font-bold rounded-sm">啟動</button>');
                     return `
                     <tr class="hover:bg-slate-900/30">
                         <td class="py-2.5 pr-3"><p class="font-bold text-slate-200">${escapeHtml(c.name)}</p><p class="text-[9px] text-slate-500 mono truncate max-w-[220px]">${escapeHtml(c.image)}</p><p class="text-[8px] text-slate-700 mono">ID ${escapeHtml(String(c.id || '').slice(0, 12))}${c.compose_service ? ` · ${escapeHtml(c.compose_service)}` : ''}</p></td>
-                        <td class="py-2.5 pr-3"><span class="px-2 py-0.5 rounded text-[9px] border font-bold ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-500 border-slate-700/40'}">${on ? '運行中' : '已停止'}</span>${health ? `<span class="ml-1 text-[8px] ${health === 'healthy' ? 'text-emerald-400' : health === 'unhealthy' ? 'text-red-400' : 'text-slate-500'}">${escapeHtml(health)}</span>` : ''}<p class="text-[8px] text-slate-600 mt-0.5">重啟 ${Number(c.restart_count || 0)} 次 · ${c.oom_killed ? '<span class="text-red-400">OOM</span>' : '無 OOM'}</p></td>
+                        <td class="py-2.5 pr-3"><span class="px-2 py-0.5 rounded-sm text-[9px] border font-bold ${on ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-slate-700/30 text-slate-500 border-slate-700/40'}">${on ? '運行中' : '已停止'}</span>${health ? `<span class="ml-1 text-[8px] ${health === 'healthy' ? 'text-emerald-400' : health === 'unhealthy' ? 'text-red-400' : 'text-slate-500'}">${escapeHtml(health)}</span>` : ''}<p class="text-[8px] text-slate-600 mt-0.5">重啟 ${Number(c.restart_count || 0)} 次 · ${c.oom_killed ? '<span class="text-red-400">OOM</span>' : '無 OOM'}</p></td>
                         <td class="py-2.5 pr-3 mono text-[10px] text-slate-300">${on ? `${cpuPct}%<p class="text-[8px] text-slate-600 mt-0.5">${pids} PID</p>` : '-'}</td>
                         <td class="py-2.5 pr-3 mono text-[10px] text-slate-300">${on ? `${memUsage} / ${memLimit} MB <span class="text-slate-600">(${memPct}%)</span>` : '-'} </td>
                         <td class="py-2.5 pr-3 mono text-[9px] text-slate-400"><p>↓ ${diagBytes(c.network_rx_bytes)} · ↑ ${diagBytes(c.network_tx_bytes)}</p><p class="text-slate-600 mt-0.5">讀 ${diagBytes(c.block_read_bytes)} · 寫 ${diagBytes(c.block_write_bytes)}</p></td>
                         <td class="py-2.5 text-right whitespace-nowrap">
                             ${actionButtons.join('')}
-                            ${c.logs_allowed === true ? `<button type="button" data-docker-index="${index}" data-docker-action="logs" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded ml-1">日誌</button>` : ''}
+                            ${c.logs_allowed === true ? `<button type="button" data-docker-index="${index}" data-docker-action="logs" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded-sm ml-1">日誌</button>` : ''}
                         </td>
                     </tr>
                     <tr class="text-[8px] text-slate-600 bg-slate-950/20">
@@ -3632,11 +3632,11 @@
                         return `
                         <div class="flex items-center gap-3 p-3 rounded-lg border ${cls} ${a.acknowledged ? 'opacity-50' : ''}">
                             <span class="text-[9px] font-black uppercase tracking-wider shrink-0 w-16">${escapeHtml(a.level)}</span>
-                            <div class="flex-grow min-w-0">
+                            <div class="grow min-w-0">
                                 <p class="text-[11px] text-slate-200 truncate">${escapeHtml(a.message)}</p>
                                 <p class="text-[9px] text-slate-500 mono">${escapeHtml(a.metric)} · ${escapeHtml(new Date(a.datetime).toLocaleString('zh-TW'))}</p>
                             </div>
-                            ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button type="button" data-alert-index="${index}" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded shrink-0">確認</button>`}
+                            ${a.acknowledged ? '<span class="text-[9px] text-slate-500 shrink-0">已確認</span>' : `<button type="button" data-alert-index="${index}" class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[9px] font-bold rounded-sm shrink-0">確認</button>`}
                         </div>`;
                     }).join('');
                     list._smarthubAlerts = events;
@@ -3670,7 +3670,7 @@
                 ];
                 const tabsEl = document.getElementById('nas-log-level-tabs');
                 if (tabsEl) tabsEl.innerHTML = LVL_META.map(([k, label, onCls, offCls]) =>
-                    `<button data-action="nas-log-filter" data-filter="${escapeActionData(k)}" class="px-2 py-0.5 rounded font-bold transition ${nasLogFilter === k ? onCls : offCls + ' hover:text-slate-200'}">${label} ${counts[k] || 0}</button>`).join('');
+                    `<button data-action="nas-log-filter" data-filter="${escapeActionData(k)}" class="px-2 py-0.5 rounded-sm font-bold transition ${nasLogFilter === k ? onCls : offCls + ' hover:text-slate-200'}">${label} ${counts[k] || 0}</button>`).join('');
                 let logs = nasLogFilter === 'all' ? logsAll : logsAll.filter(l => l.level === nasLogFilter);
                 const sev = logsAll.filter(l => l.level !== 'info').length;
                 document.getElementById('nas-alert-count').innerText = r.total ? `— 共 ${r.total.toLocaleString()} 筆${sev ? `，⚠ 近期 ${sev} 筆需注意` : '，近期全部正常'}` : '';
@@ -3683,7 +3683,7 @@
                     list.innerHTML += `
                     <div class="nas-event-row grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-3 p-2.5 rounded-lg border ${cls}">
                         <span class="text-[9px] font-black uppercase tracking-wider whitespace-nowrap ${severe ? '' : 'opacity-60'}">${icon[l.level] || ''}${escapeHtml(l.level)}</span>
-                        <div class="flex-grow min-w-0">
+                        <div class="grow min-w-0">
                             <p class="text-[11px] ${severe ? 'font-bold' : ''} text-slate-200 truncate" title="${escapeHtml(l.content)}">${escapeHtml(l.content)}</p>
                             <p class="text-[9px] text-slate-500 mono">${escapeHtml(mod)} · ${escapeHtml(l.operator)} · ${escapeHtml(new Date(l.ts).toLocaleString('zh-TW'))}</p>
                         </div>
@@ -3902,7 +3902,7 @@
                             <div class="flex items-center gap-2 text-[10px]">
                                 <span class="text-slate-300 font-bold w-14 shrink-0">${dr.name}</span>
                                 <span class="mono text-slate-400 w-32 shrink-0">睡 ${dr.sleepHours}h (${dr.sleepPct}%)</span>
-                                <div class="flex-grow">${bar(dr.sleepPct)}</div>
+                                <div class="grow">${bar(dr.sleepPct)}</div>
                                 <span class="mono text-slate-500 w-40 shrink-0 text-right">${dr.sessions}次 · 均${dr.avgMin}分 · 最長${dr.longestMin}分</span>
                             </div>`).join('')}
                         </div>
@@ -4715,7 +4715,7 @@
                     return `<details class="rounded-lg border ${cls} p-3 group">
                         <summary class="cursor-pointer list-none flex items-start gap-2">
                             <span class="text-[10px] font-bold ${cls.split(' ')[0]}">${label}</span>
-                            <span class="text-[10px] text-slate-300 flex-grow">${escapeHtml(run.trigger === 'scheduled' ? '排程報表' : '手動報表')}</span>
+                            <span class="text-[10px] text-slate-300 grow">${escapeHtml(run.trigger === 'scheduled' ? '排程報表' : '手動報表')}</span>
                             <span class="text-[9px] text-slate-500 mono">${escapeHtml(new Date(run.ts).toLocaleString('zh-TW'))}</span>
                         </summary>
                         <p class="text-[9px] text-slate-500 mt-2">${escapeHtml(run.channel ? `管道：${run.channel}` : '未經推播管道送出')}</p>
@@ -4742,7 +4742,7 @@
                 el.innerHTML = log.map(e => `
                 <div class="flex items-start gap-3 p-3 rounded-lg border ${e.ok ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-red-500/20 bg-red-500/5'}">
                     <span class="text-sm shrink-0 mt-0.5">${e.ok ? '✅' : '⚠️'}</span>
-                    <div class="flex-grow min-w-0">
+                    <div class="grow min-w-0">
                         <p class="text-[11px] font-bold text-slate-200">${escapeHtml(e.title)}</p>
                         <p class="text-[10px] text-slate-400 whitespace-pre-line break-all">${escapeHtml(e.body)}</p>
                         ${e.error ? `<p class="text-[9px] text-red-400 mt-0.5">${escapeHtml(e.error)}</p>` : ''}
@@ -5446,7 +5446,7 @@
             btns.forEach(b => {
                 b.className = 'wiim-subtab-btn px-3 py-2 text-xs font-bold text-slate-400 hover:text-slate-200 hover:bg-slate-800/70 rounded-lg transition shrink-0 whitespace-nowrap';
             });
-            btn.className = 'wiim-subtab-btn px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-sm shadow-blue-500/20 transition shrink-0 whitespace-nowrap';
+            btn.className = 'wiim-subtab-btn px-3 py-2 text-xs font-bold text-white bg-blue-600 rounded-lg shadow-xs shadow-blue-500/20 transition shrink-0 whitespace-nowrap';
 
             const subpages = document.querySelectorAll('.wiim-subpage');
             subpages.forEach(p => p.classList.add('hidden'));
@@ -5968,7 +5968,7 @@
                     <div class="ppb-event-row flex items-center gap-3 p-2 rounded-lg border text-[11px] ${cls[e.level] || cls.info}">
                         <span class="shrink-0">${icon[e.level] || icon.info}</span>
                         <span class="text-[8px] uppercase text-slate-500 mono shrink-0">${escapeHtml(e.source || 'ups')}</span>
-                        <span class="flex-grow text-slate-300">${escapeHtml(e.desc)}</span>
+                        <span class="grow text-slate-300">${escapeHtml(e.desc)}</span>
                         <span class="text-slate-500 mono shrink-0">${escapeHtml(e.ts)}</span>
                     </div>`).join('') : '<p class="text-xs text-slate-500 text-center py-4">尚無事件</p>';
                 return { ok: true, data: r };
@@ -5999,7 +5999,7 @@
                 const bar = (n, max, name, val, color) => `
                     <div class="flex items-center gap-2 text-[11px]">
                         <span class="w-40 truncate text-slate-300" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
-                        <div class="flex-grow bg-slate-950 h-1.5 rounded-full overflow-hidden"><div class="${color} h-full rounded-full" style="width:${Math.max(val / max * 100, 2)}%"></div></div>
+                        <div class="grow bg-slate-950 h-1.5 rounded-full overflow-hidden"><div class="${color} h-full rounded-full" style="width:${Math.max(val / max * 100, 2)}%"></div></div>
                         <span class="mono text-slate-500 w-12 text-right">${escapeHtml(val != null && val.toLocaleString ? val.toLocaleString() : val)}</span>
                     </div>`;
                 const tb = st.top_blocked_domains || [];
@@ -6020,7 +6020,7 @@
                     <div class="flex items-center gap-3 p-1.5 rounded-lg text-[10px] ${e.blocked ? 'bg-red-500/5 border border-red-500/15' : 'bg-slate-950/30'}">
                         <span class="mono text-slate-500 shrink-0">${new Date(e.time).toLocaleTimeString('zh-TW', { hour12: false })}</span>
                         <span class="shrink-0 font-bold ${e.blocked ? 'text-red-400' : 'text-emerald-500'}">${e.blocked ? '攔截' : '放行'}</span>
-                        <span class="flex-grow truncate mono text-slate-300" title="${escapeHtml(e.domain)}">${escapeHtml(e.domain)}</span>
+                        <span class="grow truncate mono text-slate-300" title="${escapeHtml(e.domain)}">${escapeHtml(e.domain)}</span>
                         <span class="mono text-slate-600 shrink-0">${escapeHtml(e.client)}</span>
                     </div>`).join('') || '<p class="text-xs text-slate-500 text-center py-4">無資料</p>';
         }
@@ -6065,7 +6065,7 @@
                     const stateClass = policy.syncState === 'applied' ? 'text-emerald-400' : policy.syncState === 'error' ? 'text-red-400' : 'text-amber-300';
                     return `<div class="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
                         <div class="flex items-start gap-3">
-                            <div class="min-w-0 flex-grow">
+                            <div class="min-w-0 grow">
                                 <p class="text-xs font-bold text-slate-200 mono">${escapeHtml(policy.deviceId)}</p>
                                 <p class="text-[10px] text-slate-400 mt-1">${escapeHtml(labels)} · ${escapeHtml(policy.timeZone)}</p>
                                 <p class="text-[9px] text-slate-500 mt-1">允許：${escapeHtml(windows || '無（全天封鎖）')}</p>

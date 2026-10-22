@@ -32,5 +32,7 @@
 
 ## Console UI 歷史設計
 
+- [3.0.4 最終整合與清理](reports/FINAL_CONSOLIDATION_20261023.md)
+
 - [設計基線](reports/CONSOLE_UI_REDESIGN_BASELINE.md)
 - [改版報告](reports/CONSOLE_UI_REDESIGN_REPORT.md)

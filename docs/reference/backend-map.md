@@ -48,6 +48,7 @@
 - 除公開健康與登入資產外，API 受 Session／Basic 相容驗證保護；異動另需 admin、Origin、CSRF 與輸入驗證。
 - `/api/public/system-health` 只讀記憶體中的最小摘要，不觸發 SSH、設備 API 或 DB 聚合。
 - UniFi 裝置遙測 GET 只讀專用記憶體快照／SQLite history；只有 `unifiDeviceTelemetry` sampler 可查 Controller、開 Device SSH、寫 history。失敗保留最後成功值並標示 stale，stale／offline 溫度不入庫也不推進通知狀態。
+- 缺少 Controller 狀態保留 null，不能冒充 offline／down／零；Device SSH 保留所有有效 zone 的最高溫並明確標示來源，UCG 重用 CPU sampler。溫度告警狀態由 SQLite 保存，最多 1000 台／90 天，重啟不重複通知；SSH 設定變更會清除該狀態。
 - Device SSH 由 MAC allowlist（最多 32 台）與 Controller 已知設備雙重限制，只接受安全 Literal IP、固定 thermal command、12 秒 deadline 與 128 KiB output cap；每台可釘選 SHA256 Host Key，最多同時兩個工作。
 - WiiM `GET /api/wiim/cmd` 只允許讀取；異動使用 POST、高風險命令需精確確認。
 - WiiM `WIIM_IP` 為選配且只接受 literal IPv4/IPv6；留空時 status/history/command/art/sampler/watcher 都不觸發裝置讀取，封面代理以 numeric IPv4/IPv6（含 mapped／compatible IPv6）分類並拒絕 transition/special ranges，所有 DNS 答案都驗證後 pin，redirect 每跳重驗證，最多 4 個 upstream／16 個 queue／7 秒 deadline，並有 Trusted LAN 私有 target／明確 legacy opt-in 的 TLS/HTTP、redirect/MIME/大小與 bounded LRU 限制。

@@ -58,10 +58,10 @@ test('temperature truth gate rejects unsupported, out-of-range, and offline resi
 test('SSH temperature is accepted only when selected, supported, fresh, and online', () => {
     const direct = new Map([['aa:bb:cc:dd:ee:01', {
         selected: true, status: 'supported', stale: false, hostKeyPinned: true,
-        thermal: { maxTemperatureC: 58.25, sampledAt: COLLECTED_AT, source: { path: '/sys/class/thermal/thermal_zone*/temp' }, zones: [{ zone: 'thermal_zone0' }] }
+        thermal: { maxTemperatureC: 88, cpuTemperatureC: 58.25, sampledAt: COLLECTED_AT, source: { path: '/sys/class/thermal/thermal_zone*/temp' }, zones: [{ zone: 'thermal_zone0' }] }
     }]]);
     const normalized = presentUnifiDeviceTelemetry([device({ has_temperature: false })], { collectedAt: COLLECTED_AT, directThermalByDevice: direct }).devices[0];
-    assert.equal(normalized.temperature.value, 58.25);
+    assert.equal(normalized.temperature.value, 88);
     assert.equal(normalized.temperature.source, 'device_ssh');
     assert.equal(normalized.hostKeyPinned, true);
     direct.get(normalized.id).stale = true;
@@ -85,4 +85,29 @@ test('malformed and duplicate Controller devices remain bounded and deterministi
 
 test('stale snapshots produce no history rows', () => {
     assert.deepEqual(telemetryHistoryRows({ collectedAt: COLLECTED_AT, stale: true, devices: [device()] }), []);
+});
+
+test('missing and partial Controller fields stay unknown through history conversion', () => {
+    const snapshot = presentUnifiDeviceTelemetry([device({
+        state: undefined, num_sta: undefined, uplink: { speed: 2500 },
+        radio_table: [{ num_sta: 3 }, {}], vap_table: [{}]
+    })], { collectedAt: COLLECTED_AT });
+    const normalized = snapshot.devices[0];
+    assert.equal(normalized.online, null);
+    assert.equal(normalized.uplink.state, null);
+    assert.equal(normalized.clientCount, null);
+    assert.equal(normalized.vaps[0].up, null);
+    assert.equal(normalized.temperature.status, 'unavailable');
+    assert.equal(telemetryHistoryRows(snapshot)[0].online, null);
+});
+
+test('an unselected or out-of-range SSH sensor cannot become a temperature reading', () => {
+    for (const thermal of [{ maxTemperatureC: 999 }, { maxTemperatureC: null }, {}]) {
+        const direct = new Map([['aa:bb:cc:dd:ee:01', { selected: true, status: 'supported', stale: false, thermal }]]);
+        const normalized = presentUnifiDeviceTelemetry([device()], { directThermalByDevice: direct }).devices[0];
+        assert.equal(normalized.temperature.value, null);
+        assert.equal(normalized.temperature.status, 'unsupported');
+    }
+    const direct = new Map([['aa:bb:cc:dd:ee:01', { selected: false, status: 'supported', thermal: { maxTemperatureC: 60 } }]]);
+    assert.equal(presentUnifiDeviceTelemetry([device()], { directThermalByDevice: direct }).devices[0].temperature.value, null);
 });

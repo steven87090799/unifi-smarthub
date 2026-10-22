@@ -27,7 +27,7 @@ test('radio live statistics join configuration; missing capabilities stay unknow
     assert.equal(empty.clientCount,null); assert.equal(empty.uplink.state,null);
 });
 test('gateway SSH temperature retains its distinct source and original sample time', () => {
-    const d = presentUnifiDeviceTelemetry([{mac:'aa:bb:cc:dd:ee:01',state:1,type:'udm'}], {directThermalByDevice:new Map([['aa:bb:cc:dd:ee:01',{status:'supported',source:'ucg_ssh',thermal:{maxTemperatureC:52,sampledAt:'2026-09-22T00:00:00Z'}}]])}).devices[0];
+    const d = presentUnifiDeviceTelemetry([{mac:'aa:bb:cc:dd:ee:01',state:1,type:'udm'}], {directThermalByDevice:new Map([['aa:bb:cc:dd:ee:01',{selected:true,status:'supported',source:'ucg_ssh',thermal:{maxTemperatureC:52,sampledAt:'2026-09-22T00:00:00Z'}}]])}).devices[0];
     assert.equal(d.temperature.value,52); assert.equal(d.temperature.source,'ucg_ssh'); assert.equal(d.temperature.sampledAt,'2026-09-22T00:00:00Z');
 });
 test('notification page hydration includes settings, and reports a failed fetch for retry', async () => {

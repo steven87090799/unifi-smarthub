@@ -1,6 +1,6 @@
 {
   "name": "unifi-smarthub-production",
-  "version": "3.0.0",
+  "version": "3.0.4",
   "description": "Production Secure Proxy for UniFi Controller and UCG-Ultra",
   "main": "server.js",
   "engines": {
@@ -31,11 +31,13 @@
     "world-atlas": "2.0.2"
   },
   "devDependencies": {
-    "tailwindcss": "3.4.19"
+    "@tailwindcss/cli": "4.3.3",
+    "tailwindcss": "4.3.3"
   },
   "overrides": {
     "postcss": "8.5.23",
     "nanoid": "3.3.18",
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "@parcel/watcher": "2.6.0"
   }
 }
