@@ -15,6 +15,12 @@ test('general device sampling uses central Active 5s and Idle 600s settings', ()
     assert.equal(policy.deviceMs('nas'), 600_000);
 });
 
+test('UPS keeps sampling every 5 seconds with no viewer when settings are absent', () => {
+    const policy = createDeviceSamplingPolicy({ isActive: () => false });
+    assert.equal(policy.upsMs(), 5_000);
+    assert.equal(policy.ppbEventMs(), 60_000);
+});
+
 test('PPB event sampling stays on its independent UPS Active/Idle settings', () => {
     let upsActive = true;
     const policy = createDeviceSamplingPolicy({

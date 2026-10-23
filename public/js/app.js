@@ -1237,7 +1237,7 @@
             activeLeaseSec: 30,
             upsFrontendPollSec: 3,
             upsActiveBackendSampleSec: 3,
-            upsIdleBackendSampleSec: 10,
+            upsIdleBackendSampleSec: 5,
             upsHistoryFrontendPollSec: 10,
             upsPpbEventsFrontendPollSec: 10,
             upsPpbEventActiveBackendSampleSec: 10,

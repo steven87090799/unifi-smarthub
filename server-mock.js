@@ -1063,7 +1063,7 @@ let mockAppSettings = {
     deviceActiveFrontendPollSec: 5, deviceActiveBackendSampleSec: 5, deviceIdleBackendSampleSec: 600,
     unifiTelemetryActiveSec: 60, unifiTelemetryIdleSec: 300,
     heartbeatSec: 5, activeLeaseSec: 30,
-    upsFrontendPollSec: 3, upsActiveBackendSampleSec: 3, upsIdleBackendSampleSec: 10,
+    upsFrontendPollSec: 3, upsActiveBackendSampleSec: 3, upsIdleBackendSampleSec: 5,
     upsHistoryFrontendPollSec: 10, upsPpbEventsFrontendPollSec: 10,
     upsPpbEventActiveBackendSampleSec: 10, upsPpbEventIdleBackendSampleSec: 60,
     watcherSec: 20,

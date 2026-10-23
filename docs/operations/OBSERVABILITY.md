@@ -94,7 +94,7 @@ curl --user admin http://127.0.0.1:3000/api/system/status
 - IPv4 與 IPv6 位址各自比較 DHCP 變化，避免 Controller 交替回報兩種位址而產生假 IP 變更通知。
 - 通知 transport health 合併實際推播結果及持久化報表結果；跳過、partial 或 Web Push fallback 不代表主要 Telegram 管道投遞成功。Telegram 網路例外保留有限的錯誤碼，避免僅顯示 delivery failed；不自動重送結果不明的訊息。
 - 部分 WiiM AirPlay JPEG 不提供 Content-Type。只有精確設定的 WiiM literal 位址可在缺少標頭時，以 JPEG／PNG signature 辨識；公開 CDN、redirect、大小與非圖片限制仍保留。
-- UPS 短歷史使用整數 `minutes=10`／`minutes=30`；hours 仍維持原本嚴格整數驗證。錯誤回應不可解讀為「沒有資料」。UPS 預設焦點 3 秒、背景 10 秒持續取樣，前端歷史每 10 秒刷新。此取樣不能保證捕捉兩次讀值之間的瞬間事件；需配合 PPB 事件紀錄。
+- UPS 短歷史使用整數 `minutes=10`／`minutes=30`；hours 仍維持原本嚴格整數驗證。錯誤回應不可解讀為「沒有資料」。UPS 預設焦點 3 秒、背景 5 秒持續取樣，前端歷史每 10 秒刷新。此取樣不能保證捕捉兩次讀值之間的瞬間事件；需配合 PPB 事件紀錄。
 - AP 曲線按 deviceId 分開，以實際 history 資料繪製；Device SSH 溫度代表所有 thermal zones 最高值，並顯示各區域值。不能用 AP 晶片溫度直接當成 UCG CPU 溫度比較。
 - UCG telemetry 可沿用既有 UCG SSH sampler，限定 Controller host 與 UCG_IP 相符且只有一台 gateway；不新增 SSH 登入。保留原始取樣時間和 ucg_ssh 來源。
 - Radio 狀態合併 `radio_table_stats` 與設定表；不支援的溫度、空 radio/VAP 與未知欄位不顯示成虛構數值。
