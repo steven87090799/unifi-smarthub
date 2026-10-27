@@ -1226,11 +1226,10 @@ const APP_DEFAULTS = {
     unifiTelemetryIdleSec: 300,
     heartbeatSec: 5,
     activeLeaseSec: 30,
-    // Preserve the previous UPS defaults: live status was 3s while viewed and
-    // its unattended collector was 10s.
+    // Keep live status at 3s while viewed and sample every 5s unattended.
     upsFrontendPollSec: 3,
     upsActiveBackendSampleSec: 3,
-    upsIdleBackendSampleSec: 10,
+    upsIdleBackendSampleSec: 5,
     upsHistoryFrontendPollSec: 10,
     upsPpbEventsFrontendPollSec: 10,
     upsPpbEventActiveBackendSampleSec: 10,

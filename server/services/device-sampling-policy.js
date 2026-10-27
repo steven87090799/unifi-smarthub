@@ -4,7 +4,7 @@ const DEFAULTS = Object.freeze({
     deviceActiveBackendSampleSec: 5,
     deviceIdleBackendSampleSec: 600,
     upsActiveBackendSampleSec: 3,
-    upsIdleBackendSampleSec: 10,
+    upsIdleBackendSampleSec: 5,
     upsPpbEventActiveBackendSampleSec: 10,
     upsPpbEventIdleBackendSampleSec: 60,
     unifiTelemetryActiveSec: 60,

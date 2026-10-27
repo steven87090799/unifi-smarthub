@@ -100,7 +100,7 @@ test('Express 5 lockfile and bootstrap preserve strict query, body, URL, and asy
     assert.match(packageJson.dependencies.express, /^\^5\./u);
     assert.equal(packageLock.packages['node_modules/express'].version, '5.2.1');
     assert.equal(packageLock.packages['node_modules/qs'].version, '6.16.0');
-    assert.equal(packageLock.packages['node_modules/body-parser'].version, '2.3.0');
+    assert.equal(packageLock.packages['node_modules/body-parser'].version, '2.4.0');
 
     for (const source of [productionSource, mockSource]) {
         assert.match(source, /app\.set\('query parser', 'extended'\)/u);
